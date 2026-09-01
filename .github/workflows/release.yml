@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  MANIFEST: Cargo.toml
+
+jobs:
+  release_metadata:
+    name: Resolve release identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate vX.Y.Z tag against Cargo.toml
+        id: meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="$REF_NAME"
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "Stable release tag must be exact vX.Y.Z, received $tag" >&2
+            exit 1
+          fi
+          manifest_version="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text())["package"]["version"])')"
+          if [ "$manifest_version" != "$version" ]; then
+            echo "Cargo.toml version $manifest_version does not match tag $tag" >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag_name=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+  macos_build:
+    name: Build macOS release assets
+    needs: release_metadata
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.release_metadata.outputs.tag_name }}
+
+      - name: Bind checkout to the tag commit
+        env:
+          TAG_NAME: ${{ needs.release_metadata.outputs.tag_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          resolved="$(git rev-parse "$TAG_NAME^{commit}")"
+          test "$resolved" = "$SOURCE_SHA"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Cargo test
+        run: cargo test --manifest-path $MANIFEST
+
+      - name: Cargo release build
+        run: cargo build --release --manifest-path $MANIFEST
+
+      - name: Stage assets and evidence
+        env:
+          VERSION: ${{ needs.release_metadata.outputs.version }}
+          TAG_NAME: ${{ needs.release_metadata.outputs.tag_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64|aarch64) asset_arch=arm64 ;;
+            x86_64) asset_arch=x64 ;;
+            *) echo "unsupported arch $arch" >&2; exit 1 ;;
+          esac
+          mkdir -p dist
+          asset="openkakao-cli-darwin-${asset_arch}"
+          cp target/release/openkakao-cli "dist/$asset"
+          chmod +x "dist/$asset"
+          (cd dist && shasum -a 256 "$asset" > SHA256SUMS.txt)
+          digest="$(awk '{print $1}' dist/SHA256SUMS.txt)"
+          ./target/release/openkakao-cli --version
+          ASSET="$asset" DIGEST="$digest" python3 -c '
+          import json, os, pathlib
+          evidence = {
+              "schema": "openkakao-bot-release-evidence-v1",
+              "version": os.environ["VERSION"],
+              "tag": os.environ["TAG_NAME"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "channel": "stable",
+              "assets": [{"name": os.environ["ASSET"], "sha256": os.environ["DIGEST"]}],
+          }
+          pathlib.Path("dist/openkakao-bot-release-evidence-v1.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          '
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish and verify GitHub Release
+    needs: [release_metadata, macos_build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.release_metadata.outputs.tag_name }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ needs.release_metadata.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          name: openkakao-bot ${{ needs.release_metadata.outputs.version }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*
+
+      - name: Verify immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release_metadata.outputs.tag_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          resolved="$(git rev-parse "$TAG_NAME^{commit}")"
+          test "$resolved" = "$SOURCE_SHA" || {
+            echo "Release tag $TAG_NAME resolves to $resolved, expected $SOURCE_SHA" >&2
+            exit 1
+          }
+          python3 - <<'PY'
+          import json, os, subprocess
+          tag = os.environ["TAG_NAME"]
+          raw = subprocess.check_output(["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{tag}"])
+          release = json.loads(raw)
+          if release["tag_name"] != tag or release["draft"] is not False or release["prerelease"] is not False:
+              raise SystemExit("GitHub Release identity/state does not match the requested release")
+          assets = {a["name"] for a in release["assets"]}
+          evidence = json.loads(open("dist/openkakao-bot-release-evidence-v1.json").read())
+          expected = {row["name"] for row in evidence["assets"]} | {
+              "SHA256SUMS.txt",
+              "openkakao-bot-release-evidence-v1.json",
+          }
+          missing = sorted(expected - assets)
+          if missing:
+              raise SystemExit("GitHub Release is missing assets: " + ", ".join(missing))
+          print("verified", sorted(assets))
+          PY

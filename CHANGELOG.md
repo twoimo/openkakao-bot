@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-01
+
+First GitHub release of the private `openkakao-bot` agent snapshot. Tag `v1.8.0` matches `Cargo.toml`. Release assets are produced by `.github/workflows/release.yml` (tag SHA + checksum evidence, same shape as Gajae Code / tzudong: no draft, verify assets after publish). Homebrew tap publish from the public CLI workflow is not used here.
+
+
 ### Changed
 - `???`처럼 검색 토큰이 없는 인바운드는 컨텍스트 검색만 건너뛰고, 스타일·응답시간 번들은 최근 샘플로 내려가게 했습니다. 예전에는 `context-reply-bundle`이 통째로 죽어 kakao-test 인가 답변이 `retrieval_command_failed`로 스킵됐습니다.
 - `context-reply-bundle` 조회 제한을 5초에서 30초로 늘렸습니다. 짧은 제한 때문에 토큰 있는 인바운드도 `retrieval_command_failed`로 스킵되던 경우를 줄입니다.
