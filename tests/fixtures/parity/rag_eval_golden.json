@@ -1,0 +1,269 @@
+{
+  "citation_metrics": [
+    [
+      0.6666666666666666,
+      0.6666666666666666
+    ],
+    [
+      1.0,
+      0.3333333333333333
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.6666666666666666
+    ]
+  ],
+  "evidence_composition": [
+    [
+      "recent",
+      7
+    ],
+    [
+      "timing",
+      1
+    ],
+    [
+      "media",
+      1
+    ]
+  ],
+  "citation_positions": {
+    "citations": 5,
+    "window_len_mean": 2.75,
+    "age_distribution": [
+      [
+        "0",
+        2
+      ],
+      [
+        "1",
+        1
+      ],
+      [
+        "2",
+        1
+      ],
+      [
+        "3",
+        1
+      ]
+    ],
+    "recall_at_k": [
+      [
+        3,
+        0.8
+      ],
+      [
+        5,
+        1.0
+      ],
+      [
+        7,
+        1.0
+      ],
+      [
+        10,
+        1.0
+      ],
+      [
+        13,
+        1.0
+      ]
+    ],
+    "precision_at_k": [
+      [
+        3,
+        0.4167
+      ],
+      [
+        5,
+        0.4375
+      ],
+      [
+        7,
+        0.4375
+      ],
+      [
+        10,
+        0.4375
+      ],
+      [
+        13,
+        0.4375
+      ]
+    ],
+    "rerank_empty": 2,
+    "rerank_scored": 3,
+    "rerank_fallbacks": [
+      [
+        "none",
+        3
+      ],
+      [
+        "timeout",
+        1
+      ],
+      [
+        "empty_pool",
+        1
+      ]
+    ]
+  },
+  "cohort": {
+    "n": 5,
+    "models": [
+      [
+        "gpt-x",
+        2
+      ],
+      [
+        "claude-y",
+        1
+      ],
+      [
+        "localmodel",
+        1
+      ],
+      [
+        "none",
+        1
+      ]
+    ],
+    "citation_recall_mean": 0.5333,
+    "citation_recall_median": 0.6667,
+    "pool_utilization_mean": 0.3333,
+    "context_match_mean": 3.3333,
+    "style_match_mean": 3.5,
+    "best_context_score_mean": 0.5,
+    "best_style_score_mean": 0.7,
+    "prior_similarity_mean": 0.4,
+    "reply_len_p50": 9.0,
+    "drafts_mean": 1.0,
+    "terminal_status": [
+      [
+        "sent",
+        2
+      ],
+      [
+        "skipped",
+        1
+      ]
+    ]
+  },
+  "per_model": [
+    [
+      "claude-y",
+      {
+        "n": 1,
+        "models": [
+          [
+            "claude-y",
+            1
+          ]
+        ],
+        "citation_recall_mean": 0.0,
+        "citation_recall_median": 0.0,
+        "pool_utilization_mean": 0.0,
+        "context_match_mean": null,
+        "style_match_mean": null,
+        "best_context_score_mean": null,
+        "best_style_score_mean": null,
+        "prior_similarity_mean": null,
+        "reply_len_p50": null,
+        "drafts_mean": null,
+        "terminal_status": []
+      }
+    ],
+    [
+      "gpt-x",
+      {
+        "n": 2,
+        "models": [
+          [
+            "gpt-x",
+            2
+          ]
+        ],
+        "citation_recall_mean": 0.8333,
+        "citation_recall_median": 0.8333,
+        "pool_utilization_mean": 0.5,
+        "context_match_mean": 2.0,
+        "style_match_mean": 3.5,
+        "best_context_score_mean": 0.8,
+        "best_style_score_mean": 0.7,
+        "prior_similarity_mean": 0.4,
+        "reply_len_p50": 9.0,
+        "drafts_mean": 1.5,
+        "terminal_status": [
+          [
+            "sent",
+            1
+          ],
+          [
+            "skipped",
+            1
+          ]
+        ]
+      }
+    ],
+    [
+      "localmodel",
+      {
+        "n": 1,
+        "models": [
+          [
+            "localmodel",
+            1
+          ]
+        ],
+        "citation_recall_mean": 0.0,
+        "citation_recall_median": 0.0,
+        "pool_utilization_mean": 0.0,
+        "context_match_mean": 6.0,
+        "style_match_mean": null,
+        "best_context_score_mean": 0.2,
+        "best_style_score_mean": null,
+        "prior_similarity_mean": null,
+        "reply_len_p50": 2.0,
+        "drafts_mean": 0.0,
+        "terminal_status": [
+          [
+            "sent",
+            1
+          ]
+        ]
+      }
+    ],
+    [
+      "none",
+      {
+        "n": 1,
+        "models": [
+          [
+            "none",
+            1
+          ]
+        ],
+        "citation_recall_mean": 1.0,
+        "citation_recall_median": 1.0,
+        "pool_utilization_mean": 0.6667,
+        "context_match_mean": null,
+        "style_match_mean": null,
+        "best_context_score_mean": null,
+        "best_style_score_mean": null,
+        "prior_similarity_mean": null,
+        "reply_len_p50": 29.0,
+        "drafts_mean": null,
+        "terminal_status": []
+      }
+    ]
+  ]
+}

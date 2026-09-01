@@ -1,0 +1,115 @@
+{
+  "max_int64": 9223372036854775807,
+  "cases": [
+    {
+      "value": "db:1:1",
+      "expected_chat_id": null,
+      "allowed": true
+    },
+    {
+      "value": "db:42:7",
+      "expected_chat_id": null,
+      "allowed": true
+    },
+    {
+      "value": "db:42:7",
+      "expected_chat_id": 42,
+      "allowed": true
+    },
+    {
+      "value": "db:42:7",
+      "expected_chat_id": 84,
+      "allowed": false
+    },
+    {
+      "value": "db:42:0",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:0:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:042:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:42:1:2",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:42:1 OR 1=1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:42:9999999999999999999",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:9999999999999999999:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:9223372036854775806:9223372036854775806",
+      "expected_chat_id": null,
+      "allowed": true
+    },
+    {
+      "value": "db:9223372036854775807:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "DB:1:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:1:1 ",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": " db:1:1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:1:",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db::1",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "",
+      "expected_chat_id": null,
+      "allowed": false
+    },
+    {
+      "value": "db:12345:67890",
+      "expected_chat_id": null,
+      "allowed": true
+    },
+    {
+      "value": "db:12345:67890",
+      "expected_chat_id": 12345,
+      "allowed": true
+    },
+    {
+      "value": "db:12345:67890",
+      "expected_chat_id": 999,
+      "allowed": false
+    }
+  ]
+}

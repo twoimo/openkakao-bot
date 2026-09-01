@@ -1,0 +1,350 @@
+name: openkakao-cli Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Cargo fmt
+        run: cargo fmt --manifest-path Cargo.toml --check
+
+      - name: Cargo clippy
+        run: cargo clippy --manifest-path Cargo.toml -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --manifest-path Cargo.toml
+
+      - name: Fake-only Python AutoReply tests
+        run: >-
+          python3 -m unittest
+          tests.test_auto_reply_cli_runtime
+          tests.test_auto_reply_service_entry
+          tests.test_auto_reply_session_monitor
+          tests.test_auto_reply_session_packager
+          tests.test_auto_reply_tui
+
+      - name: Verify fake-only AutoReply launchd harness
+        run: sh scripts/test-auto-reply-launchd-artifacts.sh
+
+  build-aarch64:
+    runs-on: macos-14
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+          cache: false
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+
+      - name: Build
+        run: cargo build --release --target "$TARGET" --manifest-path Cargo.toml
+
+      - name: Package artifact
+        run: |
+          ASSET="openkakao-cli-${TARGET}.tar.gz"
+          PACKAGE_DIR="${RUNNER_TEMP}/openkakao-cli-package"
+          rm -rf "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/scripts" "$PACKAGE_DIR/docs"
+          cp "target/${TARGET}/release/openkakao-cli" "$PACKAGE_DIR/openkakao-cli"
+          cp scripts/auto_reply*.py "$PACKAGE_DIR/scripts/"
+          cp scripts/auto-reply-schema.json "$PACKAGE_DIR/scripts/"
+          cp \
+            scripts/prepare-auto-reply-session-runtime.py \
+            scripts/install-auto-reply-service.sh \
+            scripts/status-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-session-monitor.sh \
+            "$PACKAGE_DIR/scripts/"
+          cp config.example.toml "$PACKAGE_DIR/config.example.toml"
+          cp docs/auto-reply-launchd-supervision.md "$PACKAGE_DIR/docs/"
+          tar -C "$PACKAGE_DIR" -czf "$ASSET" .
+          shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'openkakao-cli'
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'config.example.toml'
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'docs/auto-reply-launchd-supervision.md'
+          for runtime in \
+            scripts/auto-reply-supervisor.py \
+            scripts/auto-reply-db-watch.py \
+            scripts/auto-reply-worker.py \
+            scripts/auto-reply-apple-watch.py \
+            scripts/auto_reply_ax_ui.py \
+            scripts/auto_reply_metrics.py \
+            scripts/auto-reply-service.py \
+            scripts/auto-reply-session-monitor.py \
+            scripts/auto-reply-tui.py \
+            scripts/auto-reply-schema.json \
+            scripts/prepare-auto-reply-session-runtime.py \
+            scripts/install-auto-reply-service.sh \
+            scripts/status-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-session-monitor.sh; do
+            tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx "$runtime"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openkakao-cli-${{ env.TARGET }}
+          path: |
+            openkakao-cli-${{ env.TARGET }}.tar.gz
+            openkakao-cli-${{ env.TARGET }}.tar.gz.sha256
+
+  build-x86_64:
+    runs-on: macos-15-intel
+    env:
+      TARGET: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+          cache: false
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+
+      - name: Build
+        run: cargo build --release --target "$TARGET" --manifest-path Cargo.toml
+
+      - name: Package artifact
+        run: |
+          ASSET="openkakao-cli-${TARGET}.tar.gz"
+          PACKAGE_DIR="${RUNNER_TEMP}/openkakao-cli-package"
+          rm -rf "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/scripts" "$PACKAGE_DIR/docs"
+          cp "target/${TARGET}/release/openkakao-cli" "$PACKAGE_DIR/openkakao-cli"
+          cp scripts/auto_reply*.py "$PACKAGE_DIR/scripts/"
+          cp scripts/auto-reply-schema.json "$PACKAGE_DIR/scripts/"
+          cp \
+            scripts/prepare-auto-reply-session-runtime.py \
+            scripts/install-auto-reply-service.sh \
+            scripts/status-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-session-monitor.sh \
+            "$PACKAGE_DIR/scripts/"
+          cp config.example.toml "$PACKAGE_DIR/config.example.toml"
+          cp docs/auto-reply-launchd-supervision.md "$PACKAGE_DIR/docs/"
+          tar -C "$PACKAGE_DIR" -czf "$ASSET" .
+          shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'openkakao-cli'
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'config.example.toml'
+          tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx 'docs/auto-reply-launchd-supervision.md'
+          for runtime in \
+            scripts/auto-reply-supervisor.py \
+            scripts/auto-reply-db-watch.py \
+            scripts/auto-reply-worker.py \
+            scripts/auto-reply-apple-watch.py \
+            scripts/auto_reply_ax_ui.py \
+            scripts/auto_reply_metrics.py \
+            scripts/auto-reply-service.py \
+            scripts/auto-reply-session-monitor.py \
+            scripts/auto-reply-tui.py \
+            scripts/auto-reply-schema.json \
+            scripts/prepare-auto-reply-session-runtime.py \
+            scripts/install-auto-reply-service.sh \
+            scripts/status-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-service.sh \
+            scripts/uninstall-auto-reply-session-monitor.sh; do
+            tar -tzf "$ASSET" | sed 's#^\./##' | grep -Fx "$runtime"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openkakao-cli-${{ env.TARGET }}
+          path: |
+            openkakao-cli-${{ env.TARGET }}.tar.gz
+            openkakao-cli-${{ env.TARGET }}.tar.gz.sha256
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [verify, build-aarch64, build-x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract changelog section
+        id: changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          HEADER="## [${VERSION}]"
+          awk -v hdr="$HEADER" '
+            index($0, hdr) == 1 { f = 1; next }
+            /^## \[/ { if (f) exit }
+            f
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No changelog section for ${VERSION}; falling back to generated notes."
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          generate_release_notes: ${{ steps.changelog.outputs.generate }}
+          files: |
+            dist/openkakao-cli-aarch64-apple-darwin.tar.gz
+            dist/openkakao-cli-aarch64-apple-darwin.tar.gz.sha256
+            dist/openkakao-cli-x86_64-apple-darwin.tar.gz
+            dist/openkakao-cli-x86_64-apple-darwin.tar.gz.sha256
+
+  update-homebrew-tap:
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Fetch Homebrew token
+        id: doppler
+        run: |
+          set -euo pipefail
+          TOKEN=$(doppler secrets get HOMEBREW_TAP_TOKEN --plain 2>/dev/null)
+          if [ -z "$TOKEN" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN not found in Doppler"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "HOMEBREW_TAP_TOKEN=$TOKEN" >> "$GITHUB_OUTPUT"
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARM_SHA=$(awk '{print $1}' dist/openkakao-cli-aarch64-apple-darwin.tar.gz.sha256)
+          X86_SHA=$(awk '{print $1}' dist/openkakao-cli-x86_64-apple-darwin.tar.gz.sha256)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
+          echo "x86_sha=$X86_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: JungHoonGhae/homebrew-openkakao
+          token: ${{ steps.doppler.outputs.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
+          X86_SHA: ${{ steps.meta.outputs.x86_sha }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/openkakao-cli.rb <<FORMULA
+          class OpenkakaoCli < Formula
+            desc "Unofficial KakaoTalk CLI for macOS"
+            homepage "https://github.com/${REPO}"
+            version "${VERSION}"
+            license "MIT"
+            depends_on "python@3.13"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPO}/releases/download/${TAG}/openkakao-cli-aarch64-apple-darwin.tar.gz"
+                sha256 "${ARM_SHA}"
+              else
+                url "https://github.com/${REPO}/releases/download/${TAG}/openkakao-cli-x86_64-apple-darwin.tar.gz"
+                sha256 "${X86_SHA}"
+              end
+            end
+
+            def install
+              bin.install "openkakao-cli"
+              libexec.install "scripts"
+              pkgshare.install "config.example.toml"
+              pkgshare.install "docs"
+            end
+
+            test do
+              assert_match "openkakao-cli", shell_output("#{bin}/openkakao-cli --help")
+              %w[
+                auto-reply-supervisor.py
+                auto-reply-db-watch.py
+                auto-reply-worker.py
+                auto-reply-apple-watch.py
+                auto_reply_ax_ui.py
+                auto_reply_metrics.py
+                auto-reply-service.py
+                auto-reply-session-monitor.py
+                auto-reply-tui.py
+                auto-reply-schema.json
+                prepare-auto-reply-session-runtime.py
+                install-auto-reply-service.sh
+                status-auto-reply-service.sh
+                uninstall-auto-reply-service.sh
+                uninstall-auto-reply-session-monitor.sh
+              ].each do |runtime|
+                assert_predicate libexec/"scripts/#{runtime}", :exist?
+              end
+              assert_predicate pkgshare/"config.example.toml", :exist?
+              assert_predicate pkgshare/"docs/auto-reply-launchd-supervision.md", :exist?
+            end
+          end
+          FORMULA
+
+      - name: Commit and push formula update
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/openkakao-cli.rb
+          if git diff --cached --quiet; then
+            echo "No formula changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update openkakao-cli ${VERSION}"
+          git push
