@@ -36,6 +36,15 @@ jobs:
       - name: Launchd artifact harness
         run: sh scripts/test-auto-reply-launchd-artifacts.sh
 
+      - name: Fake-only Python AutoReply tests
+        run: >-
+          python3 -m unittest
+          tests.test_auto_reply_cli_runtime
+          tests.test_auto_reply_service_entry
+          tests.test_auto_reply_session_monitor
+          tests.test_auto_reply_session_packager
+          tests.test_auto_reply_tui
+
   macos:
     name: macOS cargo test
     runs-on: macos-14
