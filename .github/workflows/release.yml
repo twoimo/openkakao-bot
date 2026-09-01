@@ -65,7 +65,6 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
           resolved="$(git rev-parse "$TAG_NAME^{commit}")"
           test "$resolved" = "$SOURCE_SHA"
 
@@ -156,7 +155,6 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
           resolved="$(git rev-parse "$TAG_NAME^{commit}")"
           test "$resolved" = "$SOURCE_SHA" || {
             echo "Release tag $TAG_NAME resolves to $resolved, expected $SOURCE_SHA" >&2
