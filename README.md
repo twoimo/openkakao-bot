@@ -29,8 +29,8 @@ openkakao-cli (Rust Engine)
         ▼
 Agent Decision Pipeline
         │
-        ├─► Open Weights (Google Gemma, Alibaba Qwen, DeepSeek on Apple Silicon)
-        ├─► Frontier APIs (Anthropic Claude, OpenAI GPT, Google Gemini)
+        ├─► Open Weights (Google Gemma 3, Qwen 3 / 2.5, DeepSeek V4 on Apple Silicon)
+        ├─► Frontier APIs (Anthropic Claude 3.7, OpenAI GPT-5 / 4.5, Google Gemini 2.5)
         │
         ▼ (Native macOS Accessibility Dispatch)
 KakaoTalk Composer
@@ -50,18 +50,19 @@ KakaoTalk Composer
 
 ## Model Support
 
-`openkakao-bot` supports both local open-weight models and frontier cloud APIs:
+`openkakao-bot` supports latest local open-weight models and frontier cloud APIs:
 
 ### 1. Local & Open Weights (Apple Silicon Optimized)
 Optimized for low-latency, private on-device inference via MLX, Ollama, and local servers:
-- **Google Gemma** (Gemma 2 / Gemma 3)
-- **Alibaba Qwen** (Qwen 2.5, Qwen 2.5 Coder)
-- **DeepSeek** & other open-weight models
+- **Google Gemma** (Gemma 3 / Gemma 2)
+- **Alibaba Qwen** (Qwen 3, Qwen 2.5, Qwen 2.5-Coder)
+- **DeepSeek** (DeepSeek V4, V3, R1)
+- **GLM & Kimi** (GLM-5.2, Kimi K2.7)
 
 ### 2. Frontier Model Providers
 Direct integration with cloud model providers:
-- **Anthropic** (Claude 3.5 Sonnet, Claude 3.7 Sonnet)
-- **OpenAI** (GPT-4o, GPT-4.5)
+- **Anthropic** (Claude 3.7 Sonnet, Claude 3.5 Sonnet)
+- **OpenAI** (GPT-5, GPT-4.5, o3 / o1)
 - **Google** (Gemini 2.5 Pro / Flash)
 
 ---
@@ -102,7 +103,7 @@ self_nickname = "Your Name"
 # Runtime and Model Selection
 # Local Open Weights:
 # reply_runner_kind = "ollama" # or "mlx"
-# reply_model = "qwen2.5-coder:7b" # or "gemma2:9b"
+# reply_model = "gemma3:12b" # or "qwen3:8b", "qwen2.5-coder:14b"
 
 # Cloud Frontier APIs:
 # reply_runner_kind = "anthropic" # or "openai", "gemini"
