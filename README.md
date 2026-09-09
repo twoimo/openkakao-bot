@@ -38,8 +38,8 @@ openkakao-cli (Rust Engine)
         ▼
 Agent Decision Pipeline
         │
-        ├─► Open Weights (Google Gemma 3, Qwen 3 / 2.5, DeepSeek V4 on Apple Silicon)
-        ├─► Frontier APIs (Anthropic Claude 3.7, OpenAI GPT-5 / 4.5, Google Gemini 2.5)
+        ├─► Open Weights (Google Gemma 4, Alibaba Qwen 3.8, DeepSeek V4, Kimi K3)
+        ├─► Frontier APIs (Anthropic Claude 3.7, OpenAI GPT-6 / 5, Google Gemini 3)
         │
         ▼ (Native macOS Accessibility Dispatch)
 KakaoTalk Composer
@@ -59,20 +59,20 @@ KakaoTalk Composer
 
 <h2 id="model-support">Model Support</h2>
 
-`openkakao-bot` supports latest local open-weight models and frontier cloud APIs:
+`openkakao-bot` supports the latest local open-weight models and frontier cloud APIs:
 
 ### 1. Local & Open Weights (Apple Silicon Optimized)
 Optimized for low-latency, private on-device inference via MLX, Ollama, and local servers:
-- **Google Gemma** (Gemma 3 / Gemma 2)
-- **Alibaba Qwen** (Qwen 3, Qwen 2.5, Qwen 2.5-Coder)
-- **DeepSeek** (DeepSeek V4, V3, R1)
-- **GLM & Kimi** (GLM-5.2, Kimi K2.7)
+- **Google Gemma**: Gemma 4 (31B, 12B Unified, E4B, E2B), Gemma 3
+- **Alibaba Qwen**: Qwen 3.8 (Qwen3.8-27B, Qwen3.8-Max), Qwen 3, Qwen 2.5-Coder
+- **DeepSeek**: DeepSeek V4-Flash, V4, V3, R1
+- **Moonshot & Zhipu**: Kimi K3, K2.7 Code, GLM-5.2
 
 ### 2. Frontier Model Providers
 Direct integration with cloud model providers:
-- **Anthropic** (Claude 3.7 Sonnet, Claude 3.5 Sonnet)
-- **OpenAI** (GPT-5, GPT-4.5, o3 / o1)
-- **Google** (Gemini 2.5 Pro / Flash)
+- **Anthropic**: Claude 3.7 Sonnet, Claude 3.5 Sonnet / Haiku
+- **OpenAI**: GPT-6 Astra, GPT-5, GPT-4.5, o3 / o1
+- **Google**: Gemini 3 Pro / Flash, Gemini 2.5
 
 ---
 
@@ -112,11 +112,11 @@ self_nickname = "Your Name"
 # Runtime and Model Selection
 # Local Open Weights:
 # reply_runner_kind = "ollama" # or "mlx"
-# reply_model = "gemma3:12b" # or "qwen3:8b", "qwen2.5-coder:14b"
+# reply_model = "gemma4:12b" # or "qwen3.8:27b", "deepseek-v4-flash"
 
 # Cloud Frontier APIs:
 # reply_runner_kind = "anthropic" # or "openai", "gemini"
-# reply_model = "claude-3-7-sonnet"
+# reply_model = "claude-3-7-sonnet" # or "gpt-6-astra", "gemini-3-flash"
 ```
 
 ### 4. Run
