@@ -10,13 +10,22 @@
 [![Rust](https://img.shields.io/badge/core-Rust-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[English](README.md) • [한국어](README.ko.md)
+<p align="center">
+  <a href="#features"><b>Features</b></a> •
+  <a href="#architecture"><b>Architecture</b></a> •
+  <a href="#model-support"><b>Model Support</b></a> •
+  <a href="#quick-start"><b>Quick Start</b></a> •
+  <a href="#configuration"><b>Configuration</b></a> •
+  <a href="README.ko.md"><b>한국어 문서 (Korean)</b></a>
+</p>
 
 </div>
 
 ---
 
 `openkakao-bot` is an autonomous local agent for the macOS KakaoTalk desktop client. It observes designated chatrooms, retrieves conversation context from local databases, and drafts replies using your preferred LLM runtime without calling Kakao servers.
+
+<h2 id="architecture">Architecture</h2>
 
 ```text
 KakaoTalk macOS (Local SQLCipher DB)
@@ -38,7 +47,7 @@ KakaoTalk Composer
 
 ---
 
-## Features
+<h2 id="features">Features</h2>
 
 - **100% On-Device Privacy**: Chat history, local vector memories, and credentials never leave your Mac.
 - **Fast Local Ingestion**: High-performance Rust core decrypts and reads local SQLite databases directly.
@@ -48,7 +57,7 @@ KakaoTalk Composer
 
 ---
 
-## Model Support
+<h2 id="model-support">Model Support</h2>
 
 `openkakao-bot` supports latest local open-weight models and frontier cloud APIs:
 
@@ -67,7 +76,7 @@ Direct integration with cloud model providers:
 
 ---
 
-## Quick Start
+<h2 id="quick-start">Quick Start</h2>
 
 ### 1. Build from Source
 
@@ -83,7 +92,7 @@ In macOS **System Settings -> Privacy & Security**:
 - **Full Disk Access**: Grant to your Terminal (or `AutoReplyMenu.app`) to read local database files.
 - **Accessibility**: Grant to allow typing replies into KakaoTalk.
 
-### 3. Configuration
+<h3 id="configuration">3. Configuration</h3>
 
 ```bash
 mkdir -p ~/.config/openkakao
