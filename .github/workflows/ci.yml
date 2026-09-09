@@ -57,7 +57,7 @@ jobs:
           rustflags: ""
 
       - name: Cache cargo registry and build
-        uses: actions/cache@1bd1e32a3bdc45362d1e72693637ccab84c8af25  # v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
