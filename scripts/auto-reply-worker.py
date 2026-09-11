@@ -5782,6 +5782,7 @@ def _policy_valid_draft(
     recipient: str | None = None,
     register: str | None = None,
     laughter_allowed: bool | None = None,
+    awe_allowed: bool | None = None,
     reasons_out: list[str] | None = None,
 ) -> bool:
 
@@ -5795,7 +5796,9 @@ def _policy_valid_draft(
         return reject("empty")
     if len(text) > 220:
         return reject("too_long")
-    if not _outbound_reaction_allows(text, inbound, laughter_allowed=laughter_allowed):
+    if not _outbound_reaction_allows(
+        text, inbound, laughter_allowed=laughter_allowed, awe_allowed=awe_allowed
+    ):
         return reject("reaction_mismatch")
     if not _outbound_question_allows(text, inbound):
         return reject("question_unanswered")
@@ -6134,6 +6137,7 @@ def select_ranked_reply(
     link_previews: list[dict] | None = None,
     register: str | None = None,
     laughter_allowed: bool | None = None,
+    awe_allowed: bool | None = None,
 ) -> dict:
     recipient = _event_author_nickname(event)
     candidates: list[str] = []
@@ -6153,6 +6157,7 @@ def select_ranked_reply(
             recipient=recipient,
             register=register,
             laughter_allowed=laughter_allowed,
+            awe_allowed=awe_allowed,
         ):
             candidates.append(text)
         if len(candidates) >= 8:
@@ -6197,6 +6202,21 @@ def select_ranked_reply(
             "scores": [],
             "winner_index": None,
             "fallback": "all_policy_rejected",
+        }
+    # Operator instruction #11: never send two replies in a row that end with
+    # the same final particle. The ranker already prefers a different ending,
+    # but when every draft shares the previous one the reply is held instead of
+    # being sent (AHP: register_style).
+    previous_ending = _last_self_reply_ending(recent_conversation)
+    if previous_ending and all(
+        _reply_ending(candidate) == previous_ending for candidate in candidates
+    ):
+        return {
+            "reply": "",
+            "drafts": candidates,
+            "scores": [],
+            "winner_index": None,
+            "fallback": "same_ending_hold",
         }
     if len(candidates) == 1:
         return {
@@ -6244,6 +6264,7 @@ def select_ranked_reply(
             recipient=recipient,
             register=register,
             laughter_allowed=laughter_allowed,
+            awe_allowed=awe_allowed,
             reasons_out=reasons,
         )
         if ok_now:
@@ -6977,6 +6998,10 @@ def _retrieval_receipt(analysis: dict) -> dict:
         "attempted": bool(provenance.get("retrieval_attempted")),
         "error": str(provenance.get("retrieval_error") or "")[:80] or None,
         "evidence_ids": len(evidence_ids) if isinstance(evidence_ids, list) else 0,
+        "retrieved_evidence_ids": int(
+            analysis.get("retrieved_evidence_ids") or 0
+        ),
+        "prompt_evidence_ids": int(analysis.get("prompt_evidence_ids") or 0),
         "context_matches": int(analysis.get("context_match_count") or 0),
         "style_matches": int(analysis.get("style_match_count") or 0),
         "links_requested": int(provenance.get("links_requested") or 0),
@@ -7679,9 +7704,13 @@ def sample_response_delay_for_analysis(
     model already carries this room's three-component mixture. Forcing the
     immediate component for questions, the short one otherwise, and then
     clamping to ``SCHEDULED_REPLY_DELAY_CAP_SECONDS`` meant the mixture never
-    applied: every reply left as soon as generation finished. Generation has
-    already consumed part of the delay by the time this runs, so subtract that
-    elapsed time instead of adding a fresh full delay on top of it.
+    applied: every reply left as soon as generation finished.
+
+    Two anchors matter and must not be mixed. ``delay_seconds`` /
+    ``remaining_seconds`` is how much of the sampled wait is still owed from
+    now, measured so the queue row (created_at ~ now) can record it.
+    ``anchor_delay_seconds`` / ``sampled_delay_seconds`` is the full delay from
+    the inbound timestamp, which is the only correct anchor for the due time.
     """
     del analysis  # kept in the signature for callers that pass it
     sampled = sample_response_delay(stats, rng=rng)
@@ -7694,9 +7723,12 @@ def sample_response_delay_for_analysis(
             elapsed = 0.0
         if not math.isfinite(elapsed):
             elapsed = 0.0
+    remaining = max(0.0, sampled_seconds - elapsed)
     sampled["sampled_delay_seconds"] = round(sampled_seconds, 1)
     sampled["elapsed_seconds"] = round(elapsed, 1)
-    sampled["delay_seconds"] = round(max(0.0, sampled_seconds - elapsed), 1)
+    sampled["remaining_seconds"] = round(remaining, 1)
+    sampled["delay_seconds"] = round(remaining, 1)
+    sampled["anchor_delay_seconds"] = round(sampled_seconds, 1)
     return sampled
 
 
@@ -8792,6 +8824,66 @@ def _recent_laughter_context(recent_conversation: list[dict] | None) -> bool:
     return False
 
 
+AWE_RATE_FLOOR = 0.002
+
+
+def _profile_awe_rate(profile: dict | None) -> float | None:
+    """Share of clean owner samples in this room that carry a ㄷ reaction."""
+    if not isinstance(profile, dict):
+        return None
+    tokens = profile.get("common_tokens")
+    if tokens is None:
+        tokens = profile.get("common_tokens_json")
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except (TypeError, ValueError):
+            return None
+    sample_count = profile.get("sample_count")
+    if not isinstance(tokens, dict) or not isinstance(sample_count, int) or sample_count <= 0:
+        return None
+    runs = 0
+    for token, count in tokens.items():
+        if not isinstance(token, str) or not re.fullmatch(r"ㄷ{2,}", token):
+            continue
+        try:
+            runs += int(count)
+        except (TypeError, ValueError):
+            continue
+    return runs / sample_count
+
+
+def _recent_awe_context(recent_conversation: list[dict] | None) -> bool:
+    rows = [row for row in (recent_conversation or []) if isinstance(row, dict)]
+    for row in rows[-4:]:
+        if _is_self_chat_row(row):
+            continue
+        if _inbound_invites_awe(str(row.get("message") or "")):
+            return True
+    return False
+
+
+def _room_awe_allows(
+    inbound: str,
+    recent_conversation: list[dict] | None,
+    *profiles: dict | None,
+) -> bool:
+    """Allow ㄷㄷ in the reply from the clean profile's own reaction budget.
+
+    Same shape as the laughter allowance: a question or task turn is never a
+    reaction turn, the regenerated profile rate has to clear its floor, and the
+    turn itself has to look like a reaction turn. The token used to be allowed
+    only when the inbound already carried ㄷㄷ, which is the input dependency the
+    reviewer flagged.
+    """
+    if _inbound_asks_question(inbound) or _reply_asks_question(inbound):
+        return False
+    rates = [rate for rate in (_profile_awe_rate(item) for item in profiles) if rate is not None]
+    if not rates or max(rates) < AWE_RATE_FLOOR:
+        return False
+    return _inbound_invites_awe(inbound) or _recent_awe_context(recent_conversation)
+
+
 def _room_laughter_allows(
     inbound: str,
     recent_conversation: list[dict] | None,
@@ -8805,17 +8897,15 @@ def _room_laughter_allows(
     and the turn must still be laughable: either someone laughed in the last few
     turns, or this inbound does. Syntax bans (ㅎ, 1-2 character runs) stay.
     """
-    # Unchanged: when the other person laughed, the reply may laugh too.
-    if _inbound_invites_laughter(inbound):
-        return True
-    # A question or a task is never a laughter turn.
+    # A question or a task is never a laughter turn, whatever the inbound carries.
     if _inbound_asks_question(inbound) or _reply_asks_question(inbound):
         return False
+    # The clean profile's frequency is the budget. An inbound laughter token on
+    # its own no longer bypasses the floor.
     rates = [rate for rate in (_profile_laughter_rate(item) for item in profiles) if rate is not None]
     if not rates or max(rates) < LAUGHTER_RATE_FLOOR:
         return False
-    # Only a room that laughs often enough, on a turn where someone just did.
-    return _recent_laughter_context(recent_conversation)
+    return _inbound_invites_laughter(inbound) or _recent_laughter_context(recent_conversation)
 
 
 def _reply_laughter_policy_allows(reply: str, inbound: str | None = None) -> bool:
@@ -8831,6 +8921,7 @@ def _outbound_reaction_allows(
     inbound: str = "",
     *,
     laughter_allowed: bool | None = None,
+    awe_allowed: bool | None = None,
 ) -> bool:
     if not _reply_laughter_policy_allows(reply):
         return False
@@ -8838,7 +8929,9 @@ def _outbound_reaction_allows(
         _inbound_invites_laughter(inbound) or laughter_allowed is True
     ):
         return False
-    if re.search(r"ㄷ{2,}", reply) and not _inbound_invites_awe(inbound):
+    if re.search(r"ㄷ{2,}", reply) and not (
+        _inbound_invites_awe(inbound) or awe_allowed is True
+    ):
         return False
     compact = re.sub(r"\s+", "", reply)
     if compact.startswith("응") and not compact.startswith("응답"):
@@ -8853,13 +8946,14 @@ def _sanitize_outbound_reaction(
     inbound: str = "",
     *,
     laughter_allowed: bool | None = None,
+    awe_allowed: bool | None = None,
 ) -> str:
     """Drop disallowed laughter/awe/ack tokens. Empty means the draft cannot be sent."""
     text = " ".join(str(reply or "").split())
     if not text:
         return ""
     if _outbound_reaction_allows(
-        text, inbound, laughter_allowed=laughter_allowed
+        text, inbound, laughter_allowed=laughter_allowed, awe_allowed=awe_allowed
     ) and _outbound_question_allows(text, inbound):
         return text
     text = text.replace("ㅎ", "")
@@ -8867,7 +8961,7 @@ def _sanitize_outbound_reaction(
         text = re.sub(r"ㅋ{1,2}(?!ㅋ)", "", text)
     else:
         text = re.sub(r"ㅋ+", "", text)
-    if not _inbound_invites_awe(inbound):
+    if not _inbound_invites_awe(inbound) and awe_allowed is not True:
         text = re.sub(r"ㄷ{2,}", "", text)
     text = " ".join(text.split())
     compact = re.sub(r"\s+", "", text)
@@ -8877,7 +8971,9 @@ def _sanitize_outbound_reaction(
     if (
         text
         and len(text) <= 220
-        and _outbound_reaction_allows(text, inbound, laughter_allowed=laughter_allowed)
+        and _outbound_reaction_allows(
+            text, inbound, laughter_allowed=laughter_allowed, awe_allowed=awe_allowed
+        )
         and _outbound_question_allows(text, inbound)
     ):
         return text
@@ -9355,6 +9451,35 @@ def _past_send_grace(event: dict, upper: object, *, now: float | None = None) ->
     except (TypeError, ValueError, OverflowError):
         return True
     return current >= deadline + PRE_SEND_RETRY_GRACE_SECONDS
+
+
+def _pre_mutation_send_hold(
+    reply: str,
+    *,
+    event: dict,
+    connection: sqlite3.Connection | None,
+) -> str | None:
+    """Last hold check that can still prevent the composing mutation.
+
+    The read-only preflight and the composer allowlist write can take seconds,
+    so a draft that was valid when the job was claimed can age out, or the room
+    can move on, before the mutation runs. Committing ``sending`` has no way
+    back, which is why this runs immediately before it (AHP:
+    intervention_timing).
+    """
+    if event.get("proactive") is True:
+        return None
+    # Only a scheduled draft carries its own persisted response window. Without
+    # one this layer has no deadline to trust; the earlier stale-backlog gate in
+    # process_job owns that case.
+    persisted_upper = event.get("response_window_upper_seconds")
+    if persisted_upper is not None and _past_send_grace(event, persisted_upper):
+        return "stale_backlog"
+    if conversation_advanced_past_event(event) is True:
+        return "conversation_advanced"
+    return _send_time_repeat_hold(
+        event, reply, _event_recent_conversation(event), connection
+    )
 
 
 def _send_time_repeat_hold(
@@ -10331,7 +10456,30 @@ def generate_reply(
     # (AHP: observability, evidence_delivery).
     prompt_digest = hashlib.sha256(prompt_bytes).hexdigest()[:16]
 
+    def _prompt_evidence_ids(payload: object) -> set[str]:
+        found: set[str] = set()
+        if not isinstance(payload, dict):
+            return found
+        for key in (
+            "context_evidence",
+            "style_register",
+            "prior_reply_decisions",
+            "recent_conversation",
+        ):
+            for item in payload.get(key) or []:
+                if isinstance(item, dict) and isinstance(item.get("evidence_id"), str):
+                    found.add(item["evidence_id"])
+        return found
+
+    prompt_evidence_ids = _prompt_evidence_ids(prompt)
+    retrieved_evidence_ids = len(supplied_evidence_ids)
     laughter_allowed = _room_laughter_allows(
+        message,
+        recent_conversation,
+        recipient_style_profile,
+        style_profile,
+    )
+    awe_allowed = _room_awe_allows(
         message,
         recent_conversation,
         recipient_style_profile,
@@ -10344,7 +10492,10 @@ def generate_reply(
             "prompt_bytes": len(prompt_bytes),
             "prompt_sha256": prompt_digest,
             "model": active_model,
+            "retrieved_evidence_ids": retrieved_evidence_ids,
+            "prompt_evidence_ids": len(prompt_evidence_ids),
             "laughter_allowed": bool(laughter_allowed),
+            "awe_allowed": bool(awe_allowed),
             "generation_seconds": (
                 round(float(gen_elapsed), 2)
                 if isinstance(gen_elapsed, (int, float))
@@ -10586,6 +10737,7 @@ def generate_reply(
                 or _reply_model_sees_images(active_model)
             ),
             laughter_allowed=laughter_allowed,
+            awe_allowed=awe_allowed,
         )
         if parsed is not None:
             if _capacity_probe and parsed != {
@@ -10818,6 +10970,7 @@ def _parse_model_decision(
     inbound: str = "",
     bind_image_evidence: bool = False,
     laughter_allowed: bool | None = None,
+    awe_allowed: bool | None = None,
 ) -> dict | None:
     required_evidence_ids = set(required_evidence_ids or ())
     media_supplied = {
@@ -10928,6 +11081,7 @@ def _parse_model_decision(
             reply,
             inbound,
             laughter_allowed=laughter_allowed,
+            awe_allowed=awe_allowed,
         )
         folded = (sanitized or reply).casefold()
         identity_blocked = any(
@@ -11322,16 +11476,19 @@ def send_reply(
     expected_target_chat_id: int | None = None,
     expected_owner: str | None = None,
     expected_epoch: int | None = None,
+    hold_out: list[str] | None = None,
 ) -> bool:
     # This is the final automatic-outbound boundary. Revalidate here so a
     # pre-policy or externally corrupted scheduled row can never bypass the
     # model-output parser and reach local-send.
     inbound = str((event or {}).get("message") or "")
     recorded_laughter = (event or {}).get("laughter_allowed")
+    recorded_awe = (event or {}).get("awe_allowed")
     if not _outbound_reaction_allows(
         reply,
         inbound,
         laughter_allowed=recorded_laughter if isinstance(recorded_laughter, bool) else None,
+        awe_allowed=recorded_awe if isinstance(recorded_awe, bool) else None,
     ) or not _outbound_question_allows(reply, inbound):
         return False
     if (event or {}).get("proactive") is not True and not _outbound_register_allows(
@@ -11554,6 +11711,16 @@ def send_reply(
         return False
     if _WORKER_HEALTH is not None and not _WORKER_HEALTH.local_ready():
         return False
+    if event is not None:
+        # Re-check age, conversation tail and repetition against durable
+        # evidence *after* the read-only preflight and immediately before the
+        # sending transition. Reporting the reason through ``hold_out`` lets the
+        # caller record a proven no-send skip instead of an uncertain delivery.
+        hold = _pre_mutation_send_hold(reply, event=event, connection=connection)
+        if hold:
+            if hold_out is not None:
+                hold_out.append(hold)
+            return False
     if event is not None and event_id and connection is not None:
         _journal_checkpoint(
             connection,
@@ -12356,11 +12523,27 @@ def analyze_event(event: dict) -> dict:
                 "drafts": list(model.get("drafts") or []),
             }
 
-        laughter_allowed = _room_laughter_allows(
-            message,
-            recent_conversation,
-            recipient_style_profile,
-            style_profile,
+        recorded_laughter = model.get("laughter_allowed")
+        laughter_allowed = (
+            recorded_laughter
+            if isinstance(recorded_laughter, bool)
+            else _room_laughter_allows(
+                message,
+                recent_conversation,
+                recipient_style_profile,
+                style_profile,
+            )
+        )
+        recorded_awe = model.get("awe_allowed")
+        awe_allowed = (
+            recorded_awe
+            if isinstance(recorded_awe, bool)
+            else _room_awe_allows(
+                message,
+                recent_conversation,
+                recipient_style_profile,
+                style_profile,
+            )
         )
         ranked = select_ranked_reply(
             message,
@@ -12371,6 +12554,7 @@ def analyze_event(event: dict) -> dict:
             link_previews=previews,
             register=str((recipient_style_profile or {}).get("register") or "") or None,
             laughter_allowed=laughter_allowed,
+            awe_allowed=awe_allowed,
         )
         result.update(
             {
@@ -12382,7 +12566,10 @@ def analyze_event(event: dict) -> dict:
                 "prompt_bytes": model.get("prompt_bytes"),
                 "prompt_sha256": model.get("prompt_sha256"),
                 "model_endpoint_reachable": model.get("model_endpoint_reachable"),
+                "retrieved_evidence_ids": model.get("retrieved_evidence_ids"),
+                "prompt_evidence_ids": model.get("prompt_evidence_ids"),
                 "laughter_allowed": bool(laughter_allowed),
+                "awe_allowed": bool(awe_allowed),
                 "generation_seconds": model.get("generation_seconds"),
                 "drafts": list(ranked.get("drafts") or []),
                 "rerank_scores": list(ranked.get("scores") or []),
@@ -12412,6 +12599,13 @@ def analyze_event(event: dict) -> dict:
             result["decision"] = "reply"
             result["reason"] = "unknown_detail"
             result["category"] = "question"
+        elif ranked.get("fallback") == "same_ending_hold":
+            # Every draft repeated the previous final particle; staying silent
+            # is the instructed behaviour.
+            result["decision"] = "skip"
+            result["reason"] = "same_ending_hold"
+            result["category"] = "policy"
+            result["reply"] = ""
         elif ranked.get("fallback") == "all_policy_rejected" or not result["reply"]:
             if (
                 _inbound_asks_question(message)
@@ -13017,6 +13211,9 @@ def process_job(
                 if isinstance(event.get("laughter_allowed"), bool)
                 else None
             ),
+            awe_allowed=(
+                event.get("awe_allowed") if isinstance(event.get("awe_allowed"), bool) else None
+            ),
         ):
             if not durable_policy_skip(
                 event,
@@ -13106,6 +13303,7 @@ def process_job(
                 return
             complete_event(event_id, "")
             return
+        hold_reasons: list[str] = []
         if not send_reply(
             reply,
             event=event,
@@ -13114,7 +13312,38 @@ def process_job(
             expected_target_chat_id=_fence_int(event.get("chat_id")),
             expected_owner=str(event.get("owner_id") or "").strip() or None,
             expected_epoch=_fence_int(event.get("source_epoch")),
+            hold_out=hold_reasons,
         ):
+            if hold_reasons:
+                # The hold fired before `sending` was committed, so this is a
+                # proven no-send: record the policy skip instead of retrying an
+                # expired or repeated draft.
+                hold_reason = hold_reasons[0]
+                if not durable_policy_skip(event, event_id, hold_reason, category="policy"):
+                    finish_delivery_unknown(
+                        event,
+                        event_id,
+                        connection,
+                        reply=reply,
+                        error_class=hold_reason,
+                    )
+                    return
+                if not settle_processing_transition(
+                    event,
+                    event_id,
+                    connection,
+                    status="skipped",
+                    due_at=None,
+                    decision="skip",
+                    reason=hold_reason,
+                    category="policy",
+                    reply=None,
+                    scheduled_delay_seconds=None,
+                    error_class=hold_reason,
+                ):
+                    return
+                complete_event(event_id, "")
+                return
             # Inspect the durable send phase before classifying newer room
             # activity.  Once ``sending`` is committed, Return may already
             # have been posted even when a successor arrived or the local DB
@@ -13160,30 +13389,9 @@ def process_job(
             )
             return
 
-        # Last worker-owned boundary before the AX mutation: re-check the same
-        # repetition/burst rules so no path reaches the send without them
-        # (AHP: intervention_timing).
-        final_hold = _send_time_repeat_hold(
-            event, reply, _event_recent_conversation(event), connection
-        )
-        if final_hold:
-            if not durable_policy_skip(event, event_id, final_hold, category="policy"):
-                finish_delivery_unknown(event, event_id, connection)
-                return
-            if not settle_processing_transition(
-                event,
-                event_id,
-                connection,
-                status="skipped",
-                due_at=None,
-                decision="skip",
-                reason=final_hold,
-                category="policy",
-                error_class=final_hold,
-            ):
-                return
-            complete_event(event_id, "")
-            return
+        # The repetition/burst hold already ran inside send_reply immediately
+        # before the sending transition; checking again here would only be able
+        # to mis-record a reply that already reached the room.
         if not update_context_decision(event_id, "sending"):
             update_job(
                 event_id,
@@ -13333,6 +13541,14 @@ def process_job(
                     error_class=f"model_{analysis['model_failure_class']}",
                 ):
                     return
+                # A deferred attempt still consumed retrieval and a prompt, so
+                # its receipt is recorded too; the scheduled receipt alone left
+                # failed and unparsed attempts unprovable (AHP: observability).
+                persist_reply_evidence_ledger(
+                    analysis_event,
+                    analysis,
+                    status="deferred",
+                )
                 return
             if event.get("attachment") == "image" and (
                 event.get("image_paths") or event.get("image_path")
@@ -13401,8 +13617,15 @@ def process_job(
                 elapsed_seconds=_elapsed_since_inbound(event),
             )
         delay_seconds = float(timing_sample["delay_seconds"])
+        # `delay_seconds` is the wait that is still owed from now, which is what
+        # the queue row records (its created_at is ~now). The due time must
+        # instead be anchored on the inbound plus the full sampled delay:
+        # sent_at + (sampled - elapsed) would fire `elapsed` seconds early.
+        anchor_delay_seconds = float(
+            timing_sample.get("sampled_delay_seconds", delay_seconds)
+        )
         response_upper = float(timing_sample["response_window_upper_seconds"])
-        due_at = response_due_at(event.get("sent_at"), delay_seconds)
+        due_at = response_due_at(event.get("sent_at"), anchor_delay_seconds)
     except (RetrievalError, ValueError):
         finish_delivery_unknown(event, event_id, connection)
         return
@@ -13421,6 +13644,7 @@ def process_job(
     scheduled_event["response_window_upper_seconds"] = response_upper
     scheduled_event["response_timing"] = timing_sample
     scheduled_event["laughter_allowed"] = bool(analysis.get("laughter_allowed"))
+    scheduled_event["awe_allowed"] = bool(analysis.get("awe_allowed"))
     scheduled_event["generation_seconds"] = analysis.get("generation_seconds")
     scheduled_event = scrub_media_event(scheduled_event)
     if not settle_processing_transition(

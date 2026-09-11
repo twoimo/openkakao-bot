@@ -254,6 +254,13 @@ def sync_context_index(chat_id: int, *, initial: bool = False) -> dict:
             str(chat_id),
             "--chat",
             CHAT,
+            # The room delivery queue is the second send authority: a terminal
+            # `sent` job proves the assistant wrote an outgoing self row, which
+            # must never be learned as an owner sample. This watcher runs the
+            # startup and periodic sync, so omitting it would leave a path where
+            # a bot reply the decision ledger never recorded is learned again.
+            "--queue",
+            str(QUEUE),
         ],
         timeout=900.0 if initial else 90.0,
     )

@@ -1055,6 +1055,44 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(
             module._policy_valid_draft("남는 휴가 부럽다", "머하고 놀지", [])
         )
+    def test_pre_mutation_gate_holds_an_expired_scheduled_draft(self):
+        module = self._load_auto_reply_module("auto_reply_pre_mutation_gate_test")
+        now = time.time()
+        expired = {
+            "event_id": "db:42:1",
+            "log_id": 1,
+            "chat_id": 42,
+            "sent_at": int(now - 1000),
+            "response_window_upper_seconds": 60.0,
+            "message": "이거 봤어",
+            "author_nickname": "현준",
+        }
+        # 1000s old against a 60s window plus the 120s retry grace.
+        self.assertEqual(
+            module._pre_mutation_send_hold("오 좋네요", event=expired, connection=None),
+            "stale_backlog",
+        )
+        fresh = dict(
+            expired,
+            sent_at=int(now - 10),
+            response_window_upper_seconds=600.0,
+        )
+        self.assertIsNone(
+            module._pre_mutation_send_hold("오 좋네요", event=fresh, connection=None)
+        )
+        # Without a persisted window this layer has no deadline to trust.
+        self.assertIsNone(
+            module._pre_mutation_send_hold(
+                "오 좋네요", event={"sent_at": 1, "message": "x"}, connection=None
+            )
+        )
+        # A proactive announcement is not on the reply clock.
+        self.assertIsNone(
+            module._pre_mutation_send_hold(
+                "세금 일정", event={**expired, "proactive": True}, connection=None
+            )
+        )
+
     def test_laughter_allowance_follows_clean_profile_frequency(self):
         module = self._load_auto_reply_module("auto_reply_laughter_profile_test")
         laughers = {"sample_count": 1000, "common_tokens": {"ㅋㅋㅋ": 40, "그냥": 5}}
@@ -1073,8 +1111,39 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertFalse(module._room_laughter_allows("이거 왜 이래?", laughing_recent, laughers))
         # Nobody laughed and the inbound carries no laughter token.
         self.assertFalse(module._room_laughter_allows(plain_inbound, silent_recent, laughers))
-        # The inbound's own laughter still works without any profile.
-        self.assertTrue(module._room_laughter_allows("아 웃기네ㅋㅋㅋ", silent_recent))
+        # An inbound laughter token no longer bypasses the clean-profile floor.
+        self.assertFalse(module._room_laughter_allows("아 웃기네ㅋㅋㅋ", silent_recent))
+        self.assertTrue(
+            module._room_laughter_allows("아 웃기네ㅋㅋㅋ", silent_recent, laughers)
+        )
+        # A question turn stays excluded even with a laughing room and an inbound token.
+        self.assertFalse(
+            module._room_laughter_allows("이거 웃긴 거야ㅋㅋㅋ?", laughing_recent, laughers)
+        )
+        # ㄷ (awe) follows the same profile-based rule instead of staying input-only.
+        awed = {"sample_count": 1000, "common_tokens": {"ㄷㄷ": 6}}
+        self.assertAlmostEqual(module._profile_awe_rate(awed), 0.006)
+        # Awe follows the same budget: the clean profile plus a reaction turn.
+        self.assertTrue(module._room_awe_allows("ㄷㄷ 이거 대박", silent_recent, awed))
+        self.assertFalse(module._room_awe_allows("ㄷㄷ 이거 대박", silent_recent, quiet))
+        self.assertFalse(module._room_awe_allows("ㄷㄷ 이거 대박", silent_recent))
+        self.assertFalse(module._room_awe_allows("규모가 크네", silent_recent, awed))
+        # A question turn is excluded for awe too ('뭐임' is a question).
+        self.assertFalse(module._room_awe_allows("ㄷㄷ 이거 뭐임", silent_recent, awed))
+        self.assertTrue(
+            module._outbound_reaction_allows("ㄷㄷ 이거 뭐임", "이거 뭐임", awe_allowed=True)
+        )
+        self.assertFalse(module._outbound_reaction_allows("ㄷㄷ 이거 뭐임", "이거 뭐임"))
+        # Same-ending drafts are held instead of sent.
+        held = module.select_ranked_reply(
+            "그건 좀 세네",
+            "그건 좀 세긴 하네요",
+            ["역시 세긴 하네요"],
+            {"author_nickname": "문승현"},
+            [{"is_self": True, "message": "그럼 딱 맞겠네요"}],
+        )
+        self.assertEqual(held["fallback"], "same_ending_hold")
+        self.assertEqual(held["reply"], "")
 
         self.assertTrue(
             module._outbound_reaction_allows(
@@ -1141,6 +1210,8 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "prompt_bytes": 1234,
                 "prompt_sha256": "ab" * 8,
                 "model_endpoint_reachable": None,
+                "retrieved_evidence_ids": 5,
+                "prompt_evidence_ids": 3,
                 "context_match_count": 3,
                 "style_match_count": 2,
                 "provenance": {
@@ -1169,12 +1240,46 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "attempted": True,
                 "error": None,
                 "evidence_ids": 2,
+                "retrieved_evidence_ids": 5,
+                "prompt_evidence_ids": 3,
                 "context_matches": 3,
                 "style_matches": 2,
                 "links_requested": 1,
                 "links_retrieved": 1,
             },
         )
+
+    def test_deferred_attempt_receipt_records_the_retrieval_half(self):
+        module = self._load_auto_reply_module("auto_reply_deferred_receipt_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "reply-evidence.jsonl"
+            module.EVIDENCE_LEDGER = ledger
+            event = {
+                "event_id": "db:417780809780519:9",
+                "log_id": 9,
+                "author_nickname": "현준",
+                "message": "이거 봤어",
+            }
+            analysis = {
+                "decision": None,
+                "reason": "model_temporarily_unavailable",
+                "category": "uncertain",
+                "reply": "",
+                "prompt_bytes": 1200,
+                "prompt_sha256": "cd" * 8,
+                "retrieved_evidence_ids": 4,
+                "prompt_evidence_ids": 2,
+                "model_failure_class": "runner_timeout",
+                "provenance": {"retrieval_attempted": True},
+            }
+            self.assertIsNotNone(
+                module.persist_reply_evidence_ledger(event, analysis, status="deferred")
+            )
+            record = json.loads(ledger.read_text(encoding="utf-8").strip())
+        self.assertEqual(record["status"], "deferred")
+        self.assertEqual(record["prompt_sha256"], "cd" * 8)
+        self.assertEqual(record["retrieval"]["retrieved_evidence_ids"], 4)
+        self.assertEqual(record["retrieval"]["prompt_evidence_ids"], 2)
 
     def test_delivery_ledger_splits_the_wait_into_stage_legs(self):
         module = self._load_auto_reply_module("auto_reply_delivery_ledger_test")
@@ -2503,6 +2608,10 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "42",
                 "--chat",
                 db_watch.CHAT,
+                # The room queue is the second send authority; the watcher runs
+                # the startup and periodic sync, so it must forward it.
+                "--queue",
+                str(db_watch.QUEUE),
             ],
         )
         invalid = dict(valid, authoritative=False)

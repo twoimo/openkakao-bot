@@ -843,6 +843,11 @@ enum Commands {
         chat: String,
         #[arg(long)]
         db: Option<String>,
+        /// Room delivery queue whose terminal `sent` jobs are the second send
+        /// authority. A reply confirmed only in the queue would otherwise be
+        /// learned as an owner style sample on import.
+        #[arg(long)]
+        queue: Option<String>,
     },
     #[command(name = "context-sync-local", hide = true)]
     /// Incrementally refresh a chat's context index from the local database.
@@ -6276,12 +6281,22 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::ContextIndex { input, chat, db } => {
+        Commands::ContextIndex {
+            input,
+            chat,
+            db,
+            queue,
+        } => {
             let db_path = db
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(openkakao_cli::context::default_db_path);
-            let count =
-                openkakao_cli::context::index_csv(&db_path, &chat, std::path::Path::new(&input))?;
+            let queue_path = queue.as_deref().map(std::path::Path::new);
+            let count = openkakao_cli::context::index_csv_with_queue(
+                &db_path,
+                &chat,
+                std::path::Path::new(&input),
+                queue_path,
+            )?;
             if json {
                 println!(
                     "{}",

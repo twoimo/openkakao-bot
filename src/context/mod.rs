@@ -2044,8 +2044,6 @@ pub fn repair_bot_sent_style_samples(
         report.matched_rows += 1;
         if eligible == 0 {
             report.already_ineligible += 1;
-        } else {
-            affected_sources.insert(source.clone(), true);
         }
         report.matches.push(SelfSendRepairMatch {
             source: source.clone(),
@@ -2069,16 +2067,26 @@ pub fn repair_bot_sent_style_samples(
                 mark_bot_sent_features(&features_json, &send.event_id, offset)
             ],
         )?;
-        report.deleted_recipient_samples += tx.execute(
+        let deleted_recipients = tx.execute(
             "DELETE FROM owner_recipient_style_samples WHERE style_message_id = ?1",
             params![style_id],
         )?;
-        if source_row > 0 {
-            report.deleted_response_samples += tx.execute(
+        report.deleted_recipient_samples += deleted_recipients;
+        let deleted_samples = if source_row > 0 {
+            tx.execute(
                 "DELETE FROM response_time_samples
                  WHERE source = ?1 AND chat_id = ?2 AND reply_log_id = ?3",
                 params![source, chat_id, source_row],
-            )?;
+            )?
+        } else {
+            0
+        };
+        report.deleted_response_samples += deleted_samples;
+        // A source is stale whenever anything actually changed, including a row
+        // that was already style-ineligible: its response-time samples were just
+        // deleted, so the aggregates derived from them must be regenerated too.
+        if eligible != 0 || deleted_samples > 0 || deleted_recipients > 0 {
+            affected_sources.insert(source.clone(), true);
         }
     }
 
@@ -2509,6 +2517,22 @@ pub fn live_context_sync_state(
 }
 
 pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
+    index_csv_with_queue(db_path, chat, input, None)
+}
+
+/// Import one chat history CSV, excluding replies the assistant itself sent.
+///
+/// A CSV row carries no room log id, so the send authorities are matched by
+/// exact text inside [`SELF_SEND_REPAIR_WINDOW_SECONDS`]: the decision ledger
+/// plus, when the caller can name it, the room delivery queue. Both are needed
+/// because a reply that only the queue recorded as `sent` would otherwise be
+/// learned as an owner sample on the next import.
+pub fn index_csv_with_queue(
+    db_path: &Path,
+    chat: &str,
+    input: &Path,
+    queue_path: Option<&Path>,
+) -> Result<usize> {
     if chat.trim().is_empty() {
         anyhow::bail!("chat name must not be empty");
     }
@@ -2533,11 +2557,19 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
         anyhow::bail!("CSV must contain Date, User, and Message columns");
     };
     let required = date_idx.max(user_idx).max(message_idx);
-    // A bot reply that was already confirmed in this context database must not
-    // be re-learned as an owner style sample when the chat history is imported
-    // from CSV. The CSV row carries no room log id, so the decision ledger is
-    // the only addressable authority here.
-    let confirmed_sends = confirmed_self_sends_with_connection(&conn, chat).unwrap_or_default();
+    // A bot reply that was already confirmed must not be re-learned as an owner
+    // style sample when the chat history is imported from CSV.
+    let mut confirmed_sends = confirmed_self_sends_with_connection(&conn, chat).unwrap_or_default();
+    if let Some(queue) = queue_path {
+        for send in confirmed_self_sends_from_queue(queue)? {
+            if !confirmed_sends
+                .iter()
+                .any(|existing| existing.event_id == send.event_id)
+            {
+                confirmed_sends.push(send);
+            }
+        }
+    }
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM context_messages WHERE source = ?1", [&source])?;
     tx.execute(
@@ -2563,9 +2595,27 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
         }
         let date = row.get(date_idx).unwrap_or_default().to_string();
         let user = row.get(user_idx).unwrap_or_default().to_string();
+        let row_sent_at = parse_chat_date(&date).map(|value| value.and_utc().timestamp());
+        // Identify a bot-sent row *before* it can become style, pacing or
+        // recipient evidence. A confirmed send is not a human reply, so it must
+        // not produce a response-time sample either.
+        let bot_send = if user == STYLE_USER {
+            row_sent_at.and_then(|sent_at| {
+                let (matched, ambiguous) = match_confirmed_send(&confirmed_sends, &message, sent_at);
+                matched
+                    .filter(|_| !ambiguous)
+                    .map(|send| (send, sent_at - send.sent_at))
+            })
+        } else {
+            None
+        };
         if let Some(current_at) = parse_chat_date(&date) {
             if user == STYLE_USER {
-                if let Some(previous_at) = previous_human_at.take() {
+                if bot_send.is_some() {
+                    // Drop the pending prompt instead of pairing a later human
+                    // reply with it: this turn was the assistant, not the owner.
+                    previous_human_at = None;
+                } else if let Some(previous_at) = previous_human_at.take() {
                     let delay = (current_at - previous_at).num_seconds();
                     if (0..=MAX_RESPONSE_DELAY_SECONDS).contains(&delay) {
                         response_delays.push(delay as f64);
@@ -2585,19 +2635,11 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
         insert_message_topics(&tx, tx.last_insert_rowid(), chat, &source, &date, &message)?;
         if user == STYLE_USER {
             let mut features = classify_style_message(&message);
-            if let Some(current_at) = parse_chat_date(&date) {
-                let row_sent_at = current_at.and_utc().timestamp();
-                let (matched, ambiguous) =
-                    match_confirmed_send(&confirmed_sends, &message, row_sent_at);
-                if let Some(send) = matched.filter(|_| !ambiguous) {
-                    features.style_eligible = false;
-                    features.content_kind = "bot_sent_reply";
-                    features.features_json = mark_bot_sent_features(
-                        &features.features_json,
-                        &send.event_id,
-                        row_sent_at - send.sent_at,
-                    );
-                }
+            if let Some((send, offset)) = bot_send {
+                features.style_eligible = false;
+                features.content_kind = "bot_sent_reply";
+                features.features_json =
+                    mark_bot_sent_features(&features.features_json, &send.event_id, offset);
             }
             tx.prepare_cached(
                 "INSERT INTO owner_style(source, chat, date, user_name, message, vector, source_row, content_kind, style_eligible, policy_version, features_json)
@@ -8608,6 +8650,168 @@ mod tests {
             )
             .unwrap();
         assert_eq!(sample_count, 1);
+    }
+
+    #[test]
+    fn csv_import_excludes_a_queue_only_confirmed_send() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("csv-queue-send.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let reply = "역시 세긴 하네요";
+        let sent_at = chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let queue = dir.path().join("reply-queue.sqlite3");
+        {
+            let conn = Connection::open(&queue).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE reply_jobs(event_id TEXT, status TEXT, reply TEXT, updated_at REAL);",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reply_jobs VALUES('queue-only','sent',?1,?2)",
+                params![reply, sent_at as f64],
+            )
+            .unwrap();
+        }
+        let path = dir.path().join("chat.csv");
+        fs::write(
+            &path,
+            "Date,User,Message\n\
+2026-01-01 10:00:00,문승현,그건 좀 세네\n\
+2026-01-01 10:00:04,최연우,역시 세긴 하네요\n",
+        )
+        .unwrap();
+        // No decision-ledger row exists for this reply: only the room queue
+        // proves the assistant wrote it.
+        assert_eq!(
+            index_csv_with_queue(&db, "부자멘토멘티", &path, Some(&queue)).unwrap(),
+            2
+        );
+        let conn = open_db_readonly(&db).unwrap();
+        let (kind, eligible): (String, i64) = conn
+            .query_row(
+                "SELECT content_kind, style_eligible FROM owner_style WHERE message=?1",
+                params![reply],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "bot_sent_reply");
+        assert_eq!(eligible, 0);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM owner_style WHERE style_eligible=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn csv_import_does_not_learn_pacing_from_a_bot_reply() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("csv-bot-pacing.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let bot_reply = "역시 세긴 하네요";
+        let bot_sent_at = chrono::NaiveDateTime::parse_from_str(
+            "2026-01-01 10:00:04",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap()
+        .and_utc()
+        .timestamp();
+        record_sent_reply(
+            &db,
+            "bot-pacing",
+            "부자멘토멘티",
+            bot_reply,
+            &chrono::DateTime::<Utc>::from_timestamp(bot_sent_at, 0)
+                .unwrap()
+                .to_rfc3339(),
+        );
+        let path = dir.path().join("chat.csv");
+        fs::write(
+            &path,
+            "Date,User,Message\n\
+2026-01-01 09:59:30,문승현,그건 좀 세네\n\
+2026-01-01 10:00:04,최연우,역시 세긴 하네요\n\
+2026-01-01 10:01:00,문승현,다음 얘기 하자\n\
+2026-01-01 10:01:30,최연우,그건 좀 웃기네\n",
+        )
+        .unwrap();
+        index_csv(&db, "부자멘토멘티", &path).unwrap();
+        let conn = open_db_readonly(&db).unwrap();
+        // Only the genuine human pair (10:01:00 -> 10:01:30) may be measured.
+        let sample_count: i64 = conn
+            .query_row(
+                "SELECT sample_count FROM response_time_stats WHERE chat=?1",
+                params!["부자멘토멘티"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sample_count, 1);
+    }
+
+    #[test]
+    fn repair_rebuilds_a_source_whose_matched_rows_were_already_ineligible() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("repair-ineligible.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let chat_id = 7;
+        let chat = "방";
+        let link = "https://example.test/notice";
+        let events = vec![
+            live_event(chat_id, 1, "민수", "이거 봐", 1_000),
+            live_event(chat_id, 2, STYLE_USER, link, 1_030),
+        ];
+        let ingested = ingest_live_context_events(
+            &db,
+            TEST_ACCOUNT_FINGERPRINT,
+            chat_id,
+            chat,
+            0,
+            &events,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(ingested.style_messages, 1);
+        assert_eq!(ingested.response_samples, 1);
+        {
+            let conn = open_db_readonly(&db).unwrap();
+            let eligible: i64 = conn
+                .query_row(
+                    "SELECT style_eligible FROM owner_style WHERE message=?1",
+                    params![link],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            // A URL row is style-ineligible but still produced a pacing sample.
+            assert_eq!(eligible, 0);
+        }
+        let sends = vec![ConfirmedSelfSend {
+            event_id: "queue:ineligible".into(),
+            text: link.into(),
+            sent_at: 1_031,
+        }];
+        let report = repair_bot_sent_style_samples(&db, chat, chat_id, &sends, false).unwrap();
+        assert_eq!(report.matched_rows, 1);
+        assert_eq!(report.already_ineligible, 1);
+        assert_eq!(report.deleted_response_samples, 1);
+        assert_eq!(report.rebuilt_sources.len(), 1);
+        let conn = open_db_readonly(&db).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM response_time_samples WHERE chat_id=?1",
+                params![chat_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
     }
 
 }
