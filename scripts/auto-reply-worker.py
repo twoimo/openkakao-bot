@@ -12518,6 +12518,12 @@ def analyze_event(event: dict) -> dict:
             "prompt_sha256": model.get("prompt_sha256"),
             "model": str(model.get("model") or _active_reply_model()),
             "model_endpoint_reachable": model.get("model_endpoint_reachable"),
+            # The evidence counts belong with the rest of the receipt: an early
+            # deferred return copies no top-level analysis keys, so a receipt
+            # that only carried them there recorded 0 retrieved ids.
+            "retrieved_evidence_ids": model.get("retrieved_evidence_ids"),
+            "prompt_evidence_ids": model.get("prompt_evidence_ids"),
+            "generation_seconds": model.get("generation_seconds"),
         }
         if not model.get("should_reply"):
             failure_class = str(model.get("model_failure_class") or "")

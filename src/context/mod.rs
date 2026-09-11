@@ -2021,6 +2021,35 @@ fn recompute_imported_response_time_stats(
     if let Some(stats) = summarize_response_delays(chat, source, STYLE_USER, delays) {
         insert_response_time_stats(conn, &stats)?;
     }
+    // The source also owns a style profile. Rebuilding only the pacing numbers
+    // would leave the style aggregate describing rows the repair just changed.
+    let style_messages = {
+        let mut stmt = conn.prepare(
+            "SELECT message FROM owner_style
+             WHERE source = ?1 AND chat = ?2 AND user_name = ?3
+               AND style_eligible = 1 AND policy_version = ?4
+             ORDER BY source_row ASC, id ASC",
+        )?;
+        let mapped = stmt.query_map(
+            params![source, chat, STYLE_USER, STYLE_POLICY_VERSION],
+            |row| row.get::<_, String>(0),
+        )?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut accumulator = StyleProfileAccumulator::default();
+    for message in &style_messages {
+        let features = classify_style_message(message);
+        if features.style_eligible {
+            accumulator.add(message, &features);
+        }
+    }
+    conn.execute(
+        "DELETE FROM owner_style_profile WHERE chat = ?1 AND source = ?2 AND user_name = ?3",
+        params![chat, source, STYLE_USER],
+    )?;
+    if let Some(profile) = accumulator.finish(chat, source, STYLE_USER) {
+        insert_style_profile(conn, &profile, &Utc::now().to_rfc3339())?;
+    }
     Ok(sample_count)
 }
 
@@ -8948,6 +8977,20 @@ mod tests {
                 ],
             )
             .unwrap();
+            // A genuine owner row so the rebuilt style profile has a sample.
+            conn.execute(
+                "INSERT INTO owner_style(source, chat, date, user_name, message, vector,
+                    source_row, content_kind, style_eligible, policy_version, features_json)
+                 VALUES (?1, ?2, '2026-01-01 09:58:00', '최연우', '그건 좀 세긴 하네', ?3, 2,
+                    'ordinary_conversation', 1, ?4, '{}')",
+                params![
+                    source,
+                    chat,
+                    vector_to_bytes(&encode_vector("그건 좀 세긴 하네")),
+                    STYLE_POLICY_VERSION
+                ],
+            )
+            .unwrap();
             // The legacy importer wrote the pacing aggregate itself and kept no
             // per-reply samples: a 34s "human" reply that was really the bot.
             conn.execute(
@@ -8979,6 +9022,16 @@ mod tests {
             )
             .unwrap(),
             0
+        );
+        // The rebuilt profile must describe the rows the repair left behind.
+        assert_eq!(
+            conn.query_row(
+                "SELECT sample_count FROM owner_style_profile WHERE source = ?1",
+                params![source],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 
