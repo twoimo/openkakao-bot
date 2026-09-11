@@ -71,6 +71,7 @@ First GitHub release of the private `openkakao-bot` agent snapshot. Tag `v1.8.0`
 - 단체 채팅방 표는 선택을 유지하고 셀을 가운데 정렬합니다. 즉시 긱뉴스는 추가된 방도 요청 대상에 넣고, 카카오톡 창이 없으면 경고합니다.
 
 ### Added
+- 전송 확정 시점의 증거 원장(`reply-evidence.jsonl`) 기록을 추가했습니다. 이벤트별로 수신 시각, 큐 적재 시각, **감지 지연(detect_delay_seconds)**, 전송 지연, 확정된 outgoing log id, 모델을 한 줄로 남깁니다. 예약 시점 기록(검색 건수·근거 ID)과 같은 `event_id`로 연결됩니다. AHP 기준 evidence_delivery/observability 실측용입니다.
 
 
 - 메뉴바 **자가 개선**이 실시간 파이프라인으로 동작합니다: 잔여 정리·재조화 → 세션 기동(멈춰 있을 때 최신 베이크를 detached 기동) → 감시·감독·창·워커·모델 5개 램프가 초록이 될 때까지 2초 간격 폴링. 창은 채팅방 창이 열려 있어야 한다는 안내를 유지하며 카카오톡을 포커스하지 않습니다.

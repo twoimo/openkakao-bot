@@ -7004,6 +7004,78 @@ def persist_reply_evidence_ledger(
     return ledger_path
 
 
+def record_delivery_ledger(
+    event: dict,
+    reply: str,
+    *,
+    job: dict | None = None,
+    connection: sqlite3.Connection | None = None,
+) -> Path | None:
+    """Append the delivery half of the evidence receipt.
+
+    The scheduled record holds the retrieval half (counts, evidence ids, profile
+    provenance). This adds the delivery half so the chain
+    inbound→enqueued→scheduled→sent, the outgoing log id and the measured
+    delays can be read per event from one file (AHP: evidence_delivery,
+    observability).
+    """
+    del connection  # confirmation reads the local DB itself
+    event_id = str(event.get("event_id") or "").strip()
+    if not event_id:
+        return None
+    inbound_log_id = _fence_int(event.get("log_id"))
+    inbound_sent_at = _fence_int(event.get("sent_at"))
+    outgoing_log_id = None
+    if reply and inbound_log_id is not None:
+        try:
+            outgoing_log_id = _confirmed_self_reply_log_id(reply, inbound_log_id)
+        except (OSError, TypeError, ValueError):
+            outgoing_log_id = None
+    enqueued_at = None
+    if isinstance(job, dict):
+        try:
+            enqueued_at = float(job.get("created_at"))
+        except (TypeError, ValueError, OverflowError):
+            enqueued_at = None
+    now = time.time()
+    payload = {
+        "recorded_at": utc_now(),
+        "event_id": event_id,
+        "chat": CHAT,
+        "author": str(event.get("author_nickname") or "").strip(),
+        "log_id": inbound_log_id,
+        "status": "sent",
+        "decision": "reply",
+        "reply": str(reply or "").strip()[:500],
+        "outgoing_log_id": outgoing_log_id,
+        "inbound_sent_at": inbound_sent_at,
+        "enqueued_at": enqueued_at,
+        "detect_delay_seconds": (
+            round(enqueued_at - float(inbound_sent_at), 1)
+            if enqueued_at is not None and inbound_sent_at is not None
+            else None
+        ),
+        "send_delay_seconds": (
+            round(now - float(inbound_sent_at), 1)
+            if inbound_sent_at is not None
+            else None
+        ),
+        "model": _active_reply_model(),
+        "reasoning_effort": REPLY_REASONING_EFFORT,
+    }
+    try:
+        EVIDENCE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        with open(EVIDENCE_LEDGER, "a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(EVIDENCE_LEDGER, QUEUE_FILE_MODE)
+    except (OSError, TypeError, ValueError):
+        return None
+    return EVIDENCE_LEDGER
+
+
 @perf.timed("auto_reply.context_bundle")
 def run_context_reply_bundle(message: str, event: dict) -> dict:
     if not BIN.exists():
@@ -12761,6 +12833,7 @@ def process_job(
             record_delivery_unknown(event_id, reply)
             return
 
+        record_delivery_ledger(event, reply, job=job, connection=connection)
         sent_at = utc_now()
         if not update_context_decision(event_id, "sent", reply, sent_at):
             # The context update command can commit and then lose its stdout.
