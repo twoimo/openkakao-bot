@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 토픽 분류·assistant-tell 검사가 needle/tell마다 소문자 문자열을 새로 만들던 할당을 제거했습니다. 어휘가 이미 소문자라는 불변식은 테스트로 고정했습니다.
 - `doctor`의 로컬 DB 신원 확인이 `ioreg` 프로세스와 plist 파싱을 네 번 하던 것을 두 번으로 줄였습니다(결과 동일).
 - `auto-reply` 실패 메시지에 러너 경로와 관찰된 버전/표준출력을 함께 넣었습니다. Codex 모델을 골라도 `reply_runner`는 gjc로 남는 조합에서 원인이 드러나지 않던 문제를 진단 가능하게 만든 것입니다.
+- 컨텍스트 DB 연결의 busy timeout을 5초에서 30초로 올렸습니다. 여러 방이 같은 컨텍스트 DB를 동기화하면서 5초를 넘겨 잠금 오류가 나던 경우를 기다려 넘깁니다.
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 시작이 중단되거나 `context_sync_transient`로 펜스된 방이 `capability_state: "starting"`으로 남으면, 커서 게이트가 복구 분기를 못 찾아 "requires reconciliation before restart"로 거부하던 문제를 고쳤습니다. 인플라이트도 없고 acked 워터마크도 마지막 확정 경계라 `ready` 잔류물과 동일하게 재개합니다.
+- 콜드 스타트에서 컨텍스트 동기화가 경합으로 실패하면 상태 저장 실패가 치명 펜스로 승격돼 워처가 종료되던 문제를 고쳤습니다. 방은 펜스 상태로 두고 재시도합니다.
+- `db-watch`가 컨텍스트 동기화 실패를 기록할 때 원인 문자열을 버리고 거친 분류만 남겨 추적이 불가능하던 문제를 고쳤습니다.
 - 훅 프로세스의 `stdin` 쓰기가 타임아웃 밖에 있어, 표준입력을 읽지 않는 훅에서 파이프가 차면 watch 루프가 무한 대기할 수 있었습니다. 쓰기와 종료 대기를 같은 deadline에 묶었습니다.
 - `stop_auto_reply_children`이 SIGKILL 직후 반환해, TERM을 무시한 손자 프로세스가 남은 상태로 "정지 완료"를 보고할 수 있었습니다. 자식 reap 후 프로세스 그룹이 빌 때까지 한도 내에서 기다립니다.
 - `reconnect_delay`의 `2u64.pow()`가 지수 65 이상에서 debug panic, release wrap을 냈습니다. 포화 연산으로 바꿨습니다.
