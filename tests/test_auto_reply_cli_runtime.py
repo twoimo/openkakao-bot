@@ -1722,6 +1722,101 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(settled[0].get("error_class"), "pre_send_unavailable")
         self.assertGreater(settled[0].get("due_at") - now, 0.0)
 
+    def test_reply_question_gate_catches_interrogative_copula(self):
+        module = self._load_auto_reply_module("auto_reply_interrogative_tail_test")
+        self.assertTrue(module._reply_asks_question("보내시고 어우는 뭐예요"))
+        self.assertTrue(module._reply_asks_question("왜요"))
+        self.assertFalse(module._reply_asks_question("그럼 딱 맞겠네요"))
+        self.assertFalse(module._outbound_question_allows("보내시고 어우는 뭐예요", "어우"))
+        self.assertTrue(module._outbound_question_allows("뭐예요", "뭐예요"))
+
+    def test_rank_selection_varies_the_previous_ending(self):
+        module = self._load_auto_reply_module("auto_reply_ending_variation_test")
+        self.assertEqual(
+            module._reply_ending("계정만 만들면 되는거면 구독은 의미없죠"), "죠"
+        )
+        self.assertEqual(
+            module._reply_ending("제목은 폭탄인데 내용은 지원이네요"), "네요"
+        )
+        inbound = "이번주에 소나기 온대"
+        drafts = ["우산 챙겨야죠", "우산 챙길게요", "우산 챙겨야겠네요"]
+
+        class PreferLast:
+            def rank(self, query, drafts):
+                return {"ok": True, "fallback": "none", "scores": [0.1, 0.2, 0.9]}
+
+        chosen = module.select_ranked_reply(
+            inbound,
+            drafts[2],
+            drafts,
+            {"author_nickname": "현준"},
+            [
+                {
+                    "is_self": True,
+                    "self_receipt": True,
+                    "message": "오늘은 우산 챙겨야겠네요",
+                    "sent_at": 100,
+                }
+            ],
+            client=PreferLast(),
+        )
+        self.assertNotEqual(module._reply_ending(str(chosen.get("reply") or "")), "네요")
+        self.assertTrue(chosen.get("reply"))
+
+    def test_send_time_repeat_hold_reads_durable_sent_replies(self):
+        module = self._load_auto_reply_module("auto_reply_send_time_repeat_test")
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            """
+            CREATE TABLE reply_jobs(
+                event_id TEXT PRIMARY KEY,
+                event_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reply TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        try:
+            event = {
+                "chat_id": 417780809780519,
+                "message": "어우",
+                "author_nickname": "현준",
+                "sent_at": 200,
+                "is_self": False,
+            }
+            connection.execute(
+                """
+                INSERT INTO reply_jobs(
+                    event_id, event_json, status, created_at, updated_at, reply
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    "db:417780809780519:1234567890123",
+                    json.dumps(dict(event, log_id=1234567890123, is_self=False)),
+                    "sent",
+                    200.0,
+                    200.0,
+                    "프라이빗 장소라면서 할인은 선착순이네요",
+                ),
+            )
+            connection.commit()
+            hold = module._send_time_repeat_hold(
+                event,
+                "프라이빗 장소라면서 할인은 선착순이네요",
+                [],
+                connection,
+            )
+            self.assertEqual(hold, "similar_recent_self")
+            clean = module._send_time_repeat_hold(
+                event, "그건 좀 아쉽네요", [], connection
+            )
+            self.assertNotEqual(clean, "similar_recent_self")
+        finally:
+            connection.close()
+
     def test_behavior_memory_excludes_delivery_and_operational_outcomes(self):
         module = self._load_auto_reply_module(
             "auto_reply_behavior_memory_filter_test"

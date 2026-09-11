@@ -250,6 +250,53 @@ MEDIA_UNAVAILABLE_CLARIFICATION = "사진이 안 열리네 다시 보내봐"
 MEDIA_UNAVAILABLE_CLARIFICATION_REASON = "media_unavailable_clarification"
 REPLY_LAUGHTER_POLICY_REASON = "reply_laughter_policy_violation"
 AI_TELL_PROBE = "그래? 어떤 부분이 AI처럼 느껴졌는데"
+# Interrogative tails treated as a question even without "?".
+_INTERROGATIVE_TAILS = (
+    "뭐예요",
+    "뭐에요",
+    "뭐야",
+    "뭐지",
+    "뭔데",
+    "뭡니까",
+    "뭐임",
+    "뭐냐",
+    "왜예요",
+    "왜요",
+    "어떻게요",
+    "어디예요",
+    "누구예요",
+    "언제예요",
+    "얼마예요",
+    "몇이에요",
+    "무슨 말이에요",
+    "무슨 뜻이에요",
+)
+# Final particles tracked by the operator's ending-variation instruction.
+_REPLY_ENDINGS = (
+    "네요",
+    "어요",
+    "에요",
+    "예요",
+    "나요",
+    "까요",
+    "군요",
+    "구요",
+    "시죠",
+    "지요",
+    "죠",
+    "여",
+    "요",
+    "네",
+    "임",
+    "음",
+    "함",
+    "다",
+    "지",
+    "야",
+    "해",
+    "까",
+    "냐",
+)
 EVIDENCE_LEDGER = Path(
     os.environ.get(
         "OPENKAKAO_REPLY_EVIDENCE_LEDGER",
@@ -6040,6 +6087,20 @@ def _photo_fallback_reply(
     return chosen
 
 
+def _reply_ending(text: str) -> str:
+    """Final particle of a reply, for the ending-variation instruction."""
+    compact = "".join(str(text or "").split()).rstrip(".!~…")
+    for ending in _REPLY_ENDINGS:
+        if compact.endswith(ending):
+            return ending
+    return compact[-1:] if compact else ""
+
+
+def _last_self_reply_ending(recent_conversation: list[dict] | None) -> str:
+    texts = _recent_self_texts(recent_conversation or [])
+    return _reply_ending(texts[-1]) if texts else ""
+
+
 def select_ranked_reply(
     inbound: str,
     preferred: str,
@@ -6141,6 +6202,14 @@ def select_ranked_reply(
         order = list(range(len(candidates)))
         if fallback == "none":
             fallback = "timeout"
+    # Operator instruction #11: never send two replies in a row that end with
+    # the same final particle. Keep the ranker's order inside each group.
+    previous_ending = _last_self_reply_ending(recent_conversation)
+    if len(candidates) > 1 and previous_ending:
+        order = sorted(
+            order,
+            key=lambda index: _reply_ending(candidates[index]) == previous_ending,
+        )
     policy_rejections: list[dict] = []
     for index in order:
         reasons: list[str] = []
@@ -8883,6 +8952,87 @@ def _partner_streak_hold_reason(
     return None
 
 
+def _recent_sent_self_rows(
+    connection: sqlite3.Connection | None, event: dict
+) -> list[dict]:
+    """Self rows for replies this worker already sent, straight from the queue.
+
+    The analysis-time recent_conversation is a snapshot that can predate a
+    sibling job finishing its send, which is how one inbound burst produced two
+    replies seconds apart. The final send boundary re-reads durable evidence.
+    """
+    if connection is None:
+        return []
+    chat_id = _fence_int(event.get("chat_id"))
+    if chat_id is None:
+        return []
+    try:
+        rows = connection.execute(
+            """
+            SELECT reply, updated_at
+              FROM reply_jobs
+             WHERE status = 'sent'
+               AND reply IS NOT NULL
+               AND trim(reply) <> ''
+               AND json_extract(event_json, '$.chat_id') = ?
+               AND json_extract(event_json, '$.is_self') = 0
+             ORDER BY updated_at DESC
+             LIMIT 4
+            """,
+            (chat_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    out: list[dict] = []
+    for row in reversed(rows):
+        text = " ".join(str(row["reply"] or "").split())
+        if not text:
+            continue
+        out.append(
+            {
+                "is_self": True,
+                "self_receipt": True,
+                "message": text,
+                "sent_at": int(float(row["updated_at"])),
+                "author_nickname": "최연우",
+            }
+        )
+    return out
+
+
+def _send_time_repeat_hold(
+    event: dict,
+    reply: str,
+    recent_conversation: list[dict] | None,
+    connection: sqlite3.Connection | None,
+) -> str | None:
+    """Repetition / one-per-burst hold re-evaluated at the send boundary.
+
+    Returns a skip reason or ``None`` to continue with the AX send.
+    """
+    inbound = str(event.get("message") or "")
+    if str(event.get("attachment") or "") == "image" or event.get("image_paths"):
+        return None
+    fresh = _recent_sent_self_rows(connection, event)
+    if not fresh:
+        return None
+    combined = [
+        row for row in (recent_conversation or []) if isinstance(row, dict)
+    ] + fresh
+    combined.sort(key=lambda row: _fence_int(row.get("sent_at")) or 0)
+    if _outbound_similar_recent_self(reply, combined):
+        return "similar_recent_self"
+    hold = _partner_streak_hold_reason(
+        event,
+        inbound,
+        combined,
+        None,
+        attachment=str(event.get("attachment") or ""),
+        media_bundle_digest="",
+    )
+    return hold
+
+
 def _merge_recent_sent_self(
     recent_conversation: list[dict], extra: object
 ) -> list[dict]:
@@ -9002,14 +9152,19 @@ def _outbound_restatement_allows(reply: str, inbound: str = "") -> bool:
     return True
 def _inbound_asks_question(text: str) -> bool:
     body = str(text or "").strip()
-    return bool(
+    if bool(
         "?" in body
         or "？" in body
         or re.search(r"(나요|까요|인가요|거야|거예요|임\?)\s*$", body)
         or re.search(r"(답변|설명|대답|알려|말해)\s*해\s*(줘|봐|줄래)?\s*$", body)
         or re.search(r"(알려줘|설명해|답변해|말해줘|대답해|요약해)\s*(줘)?\s*[.!?]*$", body)
         or re.search(r"(벌써|휴가가|끗이네|끝나|아쉽)", body)
-    )
+    ):
+        return True
+    # Same interrogative tails the outbound gate treats as a question, so a
+    # genuine "뭐예요" inbound keeps its reply rights and the suppress-exception.
+    compact = " ".join(body.split()).rstrip(".!~…")
+    return any(compact.endswith(tail) for tail in _INTERROGATIVE_TAILS)
 
 
 def _reply_asks_question(text: str) -> bool:
@@ -9024,6 +9179,13 @@ def _reply_asks_question(text: str) -> bool:
         return True
     if body.startswith("또 뭐") or re.match(r"(또\s*)?뭐[\s는가이]", body):
         return True
+    # Interrogative word + copula (뭐예요 / 뭐야 / 왜예요 …). The operator
+    # instruction forbids asking by default, and a bare 의문사+예요/야 reply
+    # used to slip past the outbound question gate.
+    compact = " ".join(body.split()).rstrip(".!~…")
+    for tail in _INTERROGATIVE_TAILS:
+        if compact.endswith(tail):
+            return True
     return False
 
 
@@ -12442,6 +12604,31 @@ def process_job(
         # Re-read the durable queue immediately before entering sending state.
         if connection is not None and _superseded_by(connection, event):
             finish_burst_superseded(event, event_id, connection)
+            return
+        # The operator allows at most one reply per inbound burst and forbids
+        # repeating a recent reply shape. Both were only checked during the
+        # model analysis, which can race with a sibling job still sending, so
+        # the final boundary re-checks them against durable queue evidence.
+        repeat_hold = _send_time_repeat_hold(
+            event, reply, _event_recent_conversation(event), connection
+        )
+        if repeat_hold:
+            if not durable_policy_skip(event, event_id, repeat_hold, category="policy"):
+                finish_delivery_unknown(event, event_id, connection)
+                return
+            if not settle_processing_transition(
+                event,
+                event_id,
+                connection,
+                status="skipped",
+                due_at=None,
+                decision="skip",
+                reason=repeat_hold,
+                category="policy",
+                error_class=repeat_hold,
+            ):
+                return
+            complete_event(event_id, "")
             return
         if not send_reply(
             reply,

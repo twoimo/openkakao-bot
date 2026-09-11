@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 한 인바운드 묶음에 답장이 2건 나가는 문제를 전송 직전 경계에서 다시 막습니다. `already_commented`·유사 답장 검사가 모델 분석 시점에만 돌아, 형제 작업이 전송을 끝내기 전에 분석된 두 번째 답장이 그대로 나갔습니다. 이제 AX 변경 직전에 큐의 `sent` 답장을 다시 읽어 `similar_recent_self`/`already_commented`로 건너뜁니다.
+- 운영자 지시(어미 다양화)를 코드로도 강제합니다. 후보 초안 중 직전 최연우 답장과 같은 어미(네요/죠/요…)로 끝나는 안은 뒤로 미루고 다른 어미를 먼저 씁니다.
+- 답장이 `뭐예요`처럼 의문사+서술격으로 끝나면 질문으로 인식합니다(기존 게이트가 놓쳐 '보내시고 어우는 뭐예요'가 나갔습니다). 같은 규칙을 인바운드 판정에도 적용해 진짜 질문은 답장 권한을 유지합니다.
 - AX를 쓸 수 없는 동안(카카오톡 종료, 컴포저 점유) 답장 생성 후 전송 직전 단계가 `response_window_upper_seconds` 키를 요구해 실패했습니다. 큐 이벤트는 즉시 답장 결정 경로에서 그 키를 저장하지 않으므로 대기(defer) 대신 `delivery_unknown`으로 올라가고, 시도 횟수를 다 쓴 뒤 `stale_backlog`으로 건너뛰어 **생성된 답장이 조용히 버려졌습니다**. 이제 저장된 윈도가 없으면 문서화된 상한(`PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS = 300s`)으로 고정해 정상적으로 대기·재시도합니다. 즉시 대기 회귀 테스트를 추가했습니다.
 - 시작이 중단되거나 `context_sync_transient`로 펜스된 방이 `capability_state: "starting"`으로 남으면, 커서 게이트가 복구 분기를 못 찾아 "requires reconciliation before restart"로 거부하던 문제를 고쳤습니다. 인플라이트도 없고 acked 워터마크도 마지막 확정 경계라 `ready` 잔류물과 동일하게 재개합니다.
 - 커서 게이트가 `pending`·`acknowledging` 단계의 잔류 후보를 거부해 수동 조정을 요구하던 문제를 고쳤습니다. watcher 자신의 복구(`_reconcile_ingress_journal`)가 그 두 단계를 재생 가능으로 취급하는데 게이트만 `idle`·`hooking`만 받아 기준이 어긋나 있었습니다. `sending` 이후는 그대로 제외합니다.
