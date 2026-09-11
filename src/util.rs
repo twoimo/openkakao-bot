@@ -180,13 +180,15 @@ pub fn extract_chat_type(room_info: &bson::Document) -> String {
 }
 
 pub fn truncate(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let mut truncated = s.chars().take(max_chars).collect::<String>();
+    // Single pass: collect at most `max_chars` characters, then use the
+    // remaining iterator state as the "was it longer?" signal instead of
+    // counting every character first.
+    let mut chars = s.chars();
+    let mut truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
         truncated.push_str("...");
-        truncated
     }
+    truncated
 }
 
 pub fn parse_since_date(since: Option<&str>) -> Result<Option<i64>> {
@@ -575,6 +577,16 @@ pub fn get_creds() -> Result<crate::model::KakaoCredentials> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_keeps_boundaries_and_ellipsis() {
+        assert_eq!(truncate("hello", 5), "hello");
+        assert_eq!(truncate("hello", 6), "hello");
+        assert_eq!(truncate("hello", 4), "hell...");
+        assert_eq!(truncate("", 0), "");
+        assert_eq!(truncate("가나다라", 2), "가나...");
+        assert_eq!(truncate("가나다라", 4), "가나다라");
+    }
 
     #[test]
     fn test_mask_token_short() {

@@ -167,7 +167,7 @@ fn threshold_code_carries_no_raw_content() {
     obs.topic_similarity = 0.1;
     for (_, code) in detect_signals(&obs, 0.5) {
         assert!(!code.contains("http"));
-        assert!(!code.contains('/') || code.starts_with("owner") || code.contains('@') || true);
+        assert!(!code.contains('/') || code.starts_with("owner") || code.contains('@'));
         assert!(!code.is_empty());
     }
 }

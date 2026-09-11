@@ -19,6 +19,7 @@
 //!     (R5.9), and
 //!   * the set of room labels has the same size as the number of rooms — every
 //!     room stays distinguishable even with blank or duplicated titles (R5.11).
+//!
 //! A companion pure-function property pins the priority rule of [`classify`]:
 //! when more than one candidate holds, the verdict is selected in the order
 //! `unsupported` → `blocked` → `fail` → `pass`, and the function is total —

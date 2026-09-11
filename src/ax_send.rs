@@ -95,7 +95,7 @@ impl From<String> for BindingToken {
     }
 }
 
-pub(crate) fn normalize_binding_message(value: &str) -> String {
+pub fn normalize_binding_message(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed == AX_DELETED_MESSAGE_TOKEN {
         return String::new();
@@ -160,7 +160,9 @@ pub(crate) fn normalize_local_binding_message(
             let valid_count = match message.message_type {
                 2 | 14 => sources.len() == 1,
                 27 => (2..=crate::media::MAX_IMAGE_INPUTS).contains(&sources.len()),
-                _ => unreachable!("image-bearing message types are matched above"),
+                // The outer match already narrowed to 2/14/27. Treat any other
+                // type as an invalid count so a future caller cannot panic here.
+                _ => false,
             };
             if !valid_count {
                 anyhow::bail!("local image attachment count is invalid for transcript binding");
@@ -392,7 +394,7 @@ fn local_binding_token(message: &crate::local_db::LocalMessage) -> anyhow::Resul
     Ok(token)
 }
 
-pub(crate) fn normalize_local_binding_suffix(
+pub fn normalize_local_binding_suffix(
     messages: &[crate::local_db::LocalMessage],
 ) -> Vec<(i64, BindingToken)> {
     let hidden_ids = hidden_local_log_ids(messages);
@@ -417,7 +419,7 @@ pub(crate) fn normalize_local_binding_suffix(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TranscriptSuffixMatch {
+pub struct TranscriptSuffixMatch {
     pub matched_count: usize,
     pub matched_distinct: usize,
     pub matched_utf8_bytes: usize,
@@ -425,7 +427,7 @@ pub(crate) struct TranscriptSuffixMatch {
 }
 
 impl TranscriptSuffixMatch {
-    pub(crate) fn is_strong(self) -> bool {
+    pub fn is_strong(self) -> bool {
         if self.matched_count == 0 {
             return false;
         }
@@ -547,7 +549,7 @@ fn mention_tokens_compatible(ax: &str, local: &str) -> bool {
         ax_i += 1;
         local_i += 1;
     }
-    return ax_i == ax_chars.len() && local_i == local_chars.len();
+    ax_i == ax_chars.len() && local_i == local_chars.len()
 }
 
 fn transcript_endpoint_matches(ax: &str, local: &str) -> bool {
@@ -691,7 +693,7 @@ fn match_binding_tokens(
 /// have painted a local media row yet, or AX may show a share-button image the
 /// local suffix has not included. Drop only those media tokens and keep a
 /// strong older suffix. Ordinary text at the local endpoint still has to match.
-pub(crate) fn binding_kind_tail(values: &[String], count: usize) -> String {
+pub fn binding_kind_tail(values: &[String], count: usize) -> String {
     let kinds = values
         .iter()
         .rev()
@@ -713,6 +715,8 @@ pub(crate) fn binding_kind_tail(values: &[String], count: usize) -> String {
     kinds.into_iter().rev().collect::<Vec<_>>().join(">")
 }
 
+// Test-only helper: the live path uses `match_local_binding_suffix`.
+#[cfg(test)]
 pub(crate) fn match_transcript_suffix(
     ax_texts: &[String],
     local_texts: &[String],
@@ -725,7 +729,7 @@ pub(crate) fn match_transcript_suffix(
     match_binding_tokens(ax_texts, &local_tokens)
 }
 
-pub(crate) fn match_local_binding_suffix(
+pub fn match_local_binding_suffix(
     ax_texts: &[String],
     local_pairs: &[(i64, BindingToken)],
 ) -> TranscriptSuffixMatch {
@@ -1098,7 +1102,7 @@ pub struct BoundSendFailure {
 }
 
 impl BoundSendFailure {
-    pub(crate) fn new(error: anyhow::Error, mutation_started: bool) -> Self {
+    pub fn new(error: anyhow::Error, mutation_started: bool) -> Self {
         Self {
             mutation_started,
             error,
@@ -1522,7 +1526,7 @@ mod match_tests {
     #[test]
     fn transcript_match_accepts_full_visible_ax_tail_when_window_virtualizes() {
         let ax = ["메시지가 삭제되었습니다.", "졸리다"]
-            .map(|text| normalize_binding_message(text))
+            .map(normalize_binding_message)
             .into_iter()
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>();
@@ -3093,10 +3097,11 @@ mod imp {
     fn type_text_to_pid(pid: i32, text: &str) -> Result<()> {
         let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| anyhow!("failed to create CGEventSource"))?;
+        // Both events carry the same payload; encode once instead of per event.
+        let utf16: Vec<u16> = text.encode_utf16().collect();
         for down in [true, false] {
             let event = CGEvent::new_keyboard_event(source.clone(), 0, down)
                 .map_err(|_| anyhow!("failed to create keyboard CGEvent"))?;
-            let utf16: Vec<u16> = text.encode_utf16().collect();
             event.set_string_from_utf16_unchecked(&utf16);
             event.post_to_pid(pid);
         }
@@ -3867,8 +3872,8 @@ mod imp {
                 .collect::<Vec<_>>();
             let local_pairs = local_tail
                 .iter()
-                .cloned()
                 .filter(|token| !token.text.is_empty())
+                .cloned()
                 .map(|token| (0_i64, token))
                 .collect::<Vec<_>>();
             let matched = super::match_local_binding_suffix(&ax_texts, &local_pairs);
@@ -3924,8 +3929,8 @@ mod imp {
             .collect::<Vec<_>>();
         let local_pairs = local_tail
             .iter()
-            .cloned()
             .filter(|token| !token.text.is_empty())
+            .cloned()
             .map(|token| (0_i64, token))
             .collect::<Vec<_>>();
         let matched = super::match_local_binding_suffix(&ax_texts, &local_pairs);

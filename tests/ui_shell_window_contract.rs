@@ -187,7 +187,6 @@ fn auto_refresh_cadence_matches_requirements() {
     let idle = AutoRefresh::new(0, ());
     assert!(!idle.should_refresh(59_999));
     assert!(idle.should_refresh(FALLBACK_REFRESH_INTERVAL_MS));
-    assert!(FALLBACK_REFRESH_INTERVAL_MS <= 60_000);
 
     // Event path: a change makes refresh due at once, deadline <= 3s.
     let mut driven = AutoRefresh::new(0, ());
@@ -197,7 +196,8 @@ fn auto_refresh_cadence_matches_requirements() {
         driven.must_refresh_by(),
         Some(10_000 + EVENT_REFRESH_DEADLINE_MS)
     );
-    assert!(EVENT_REFRESH_DEADLINE_MS <= 3_000);
+    // The R9.2 and R9.3 bounds are enforced at compile time next to the
+    // constants in `openkakao_cli::ui_shell`.
 }
 
 /// R9.12: when a refresh fails, the previously shown data stays on screen and a

@@ -1415,6 +1415,10 @@ impl LinkForwarder<'_> {
 
     /// Append a redacted journal record carrying only the stage, result code,
     /// elapsed time, and the two image counts (R6.11).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one positional argument per recorded field keeps the call sites readable"
+    )]
     fn journal_event(
         &self,
         link_key: &str,
@@ -1476,11 +1480,7 @@ fn miss_reasons(
 /// A short plain-language reason an image could not be acquired, from the
 /// ladder's per-rung attempts (R6.6).
 fn acquire_miss_reason(outcome: &LadderOutcome) -> String {
-    if outcome
-        .attempts
-        .iter()
-        .any(|a| *a == StepAttempt::PermissionMissing)
-    {
+    if outcome.attempts.contains(&StepAttempt::PermissionMissing) {
         "화면 기록 권한이 없어 일부 이미지를 가져오지 못했어요.".to_string()
     } else if outcome.attempts.iter().all(|a| *a == StepAttempt::TimedOut) {
         "이미지 확보가 시간 안에 끝나지 않았어요.".to_string()

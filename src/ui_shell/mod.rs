@@ -265,10 +265,14 @@ impl WindowShell {
 /// The deadline, in milliseconds, by which a refresh must run after a change
 /// event is observed (R9.2 — "within 3 seconds").
 pub const EVENT_REFRESH_DEADLINE_MS: u64 = 3_000;
+// R9.2 is a compile-time invariant of the constant, not a runtime test.
+const _: () = assert!(EVENT_REFRESH_DEADLINE_MS <= 3_000);
 
 /// The maximum interval, in milliseconds, between automatic refreshes when no
 /// change event arrives (R9.3 — "at least every 60 seconds").
 pub const FALLBACK_REFRESH_INTERVAL_MS: u64 = 60_000;
+// R9.3, same reasoning as above.
+const _: () = assert!(FALLBACK_REFRESH_INTERVAL_MS <= 60_000);
 
 /// Auto-refresh state machine over an arbitrary screen snapshot `T` (R9.2,
 /// R9.3, R9.4).
@@ -290,7 +294,7 @@ pub struct AutoRefresh<T> {
     showing_failure: bool,
 }
 
-impl<T: Clone> AutoRefresh<T> {
+impl<T> AutoRefresh<T> {
     /// Start with an initial screen shown at time `now` (ms).
     pub fn new(now: u64, initial: T) -> Self {
         Self {
@@ -386,10 +390,14 @@ pub const HISTORY_WINDOW_LIMIT: usize = 200;
 /// The deadline, in ms, for showing the initial history list when the window
 /// opens (R2.3 — "within 3 seconds").
 pub const HISTORY_INITIAL_DEADLINE_MS: u64 = 3_000;
+// R2.3, enforced where the constant is defined.
+const _: () = assert!(HISTORY_INITIAL_DEADLINE_MS <= 3_000);
 
 /// The deadline, in ms, for appending a newly occurred stage to the list (R2.4
 /// — "within 5 seconds").
 pub const HISTORY_APPEND_DEADLINE_MS: u64 = 5_000;
+// R2.4, enforced where the constant is defined.
+const _: () = assert!(HISTORY_APPEND_DEADLINE_MS <= 5_000);
 
 /// A beginner-friendly Korean label for a flow (R2.7).
 fn flow_label(flow: FlowKind) -> &'static str {
@@ -477,6 +485,8 @@ pub struct MemoryView {
 /// The deadline, in ms, for showing the memory list and the RAG comparison list
 /// after the window opens (R8.1, R8.2, R8.3 — "within 3 seconds").
 pub const MEMORY_OPEN_DEADLINE_MS: u64 = 3_000;
+// R8.1, enforced where the constant is defined.
+const _: () = assert!(MEMORY_OPEN_DEADLINE_MS <= 3_000);
 
 /// Build the memory window's screen model (R8.2, R8.3). Returns a
 /// plain-language failure message on a database error so the caller can keep
@@ -963,11 +973,7 @@ mod tests {
 
     // ----- Auto-refresh state machine (R9.2, R9.3, R9.4) -----
 
-    #[test]
-    fn cadence_bounds_meet_requirements() {
-        assert!(EVENT_REFRESH_DEADLINE_MS <= 3_000, "R9.2 within 3s");
-        assert!(FALLBACK_REFRESH_INTERVAL_MS <= 60_000, "R9.3 at least every 60s");
-    }
+    // R9.2 / R9.3 bounds are enforced at compile time next to the constants.
 
     #[test]
     fn change_event_makes_refresh_due_within_three_seconds() {

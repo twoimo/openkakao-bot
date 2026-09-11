@@ -266,8 +266,10 @@ fn already_posted_slot_is_not_reposted() {
 #[test]
 fn only_fresh_items_are_posted() {
     let now = instant_in_open_slot(BASE);
-    let mut cursor = GeekNewsCursor::default();
-    cursor.seen_ids = vec![10, 11]; // already seen
+    let cursor = GeekNewsCursor {
+        seen_ids: vec![10, 11], // already seen
+        ..Default::default()
+    };
     let feed = FakeFeed {
         xml: feed_xml(&[(10, "old"), (11, "old"), (12, "new")]),
     };
@@ -284,8 +286,10 @@ fn only_fresh_items_are_posted() {
 #[test]
 fn no_fresh_items_does_not_send() {
     let now = instant_in_open_slot(BASE);
-    let mut cursor = GeekNewsCursor::default();
-    cursor.seen_ids = vec![10, 11];
+    let cursor = GeekNewsCursor {
+        seen_ids: vec![10, 11],
+        ..Default::default()
+    };
     let feed = FakeFeed {
         xml: feed_xml(&[(10, "a"), (11, "b")]),
     };

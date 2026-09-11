@@ -827,9 +827,11 @@ fn is_assistant_tell_style(message: &str) -> bool {
         "i'm an ai",
         "i am an ai",
     ];
-    TELLS
-        .iter()
-        .any(|tell| message.contains(tell) || lower.contains(&tell.to_ascii_lowercase()))
+    // Every tell is either non-ASCII (Hangul, untouched by ASCII lowercasing)
+    // or already ASCII-lowercase, so `lower.contains(tell)` is exactly the
+    // original `message.contains(tell) || lower.contains(tell_lower)` test
+    // without allocating a throwaway String per tell.
+    TELLS.iter().any(|tell| lower.contains(*tell))
 }
 
 fn is_spectator_narration_style(message: &str) -> bool {
@@ -1150,7 +1152,10 @@ fn classify_message_topics(message: &str) -> Vec<&'static str> {
     for (topic, needles) in TOPIC_LEXICON {
         let matched = needles.iter().any(|needle| {
             if needle.bytes().all(|byte| byte.is_ascii()) {
-                lower.contains(&needle.to_ascii_lowercase())
+                // See `topic_lexicon_ascii_needles_are_lowercase`: every ASCII
+                // needle is already lowercase, so matching the precomputed
+                // lowercase haystack avoids one String per needle per message.
+                lower.contains(*needle)
             } else {
                 text.contains(needle)
             }
@@ -2283,14 +2288,21 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
             }
         }
         let vector = encode_vector(&format!("{} {}", user, message));
-        tx.execute("INSERT INTO context_messages(source, chat, date, user_name, message, vector) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![source, chat, date, user, message, vector_to_bytes(&vector)])?;
+        // `tx.execute` re-parses this INSERT on every CSV row; the prepared
+        // statement cache keeps the parse cost to one per connection.
+        tx.prepare_cached("INSERT INTO context_messages(source, chat, date, user_name, message, vector) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+            .and_then(|mut stmt| {
+                stmt.execute(params![source, chat, date, user, message, vector_to_bytes(&vector)])
+            })?;
         insert_message_topics(&tx, tx.last_insert_rowid(), chat, &source, &date, &message)?;
         if user == STYLE_USER {
             let features = classify_style_message(&message);
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO owner_style(source, chat, date, user_name, message, vector, source_row, content_kind, style_eligible, policy_version, features_json)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
+            )
+            .and_then(|mut stmt| {
+                stmt.execute(params![
                     source,
                     chat,
                     date,
@@ -2302,8 +2314,8 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
                     features.style_eligible as i64,
                     STYLE_POLICY_VERSION,
                     features.features_json,
-                ],
-            )?;
+                ])
+            })?;
             if features.style_eligible {
                 profile_accumulator.add(&message, &features);
             }
@@ -3566,6 +3578,12 @@ fn search_with_connection(
     )
 }
 
+// Mirrors the sibling search entry points' parameter shape (scope, query,
+// mode, limit, exclusion, embedder); bundling them is an API change, not a fix.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "search entry points share one signature"
+)]
 fn search_with_connection_excluding(
     conn: &Connection,
     chat: Option<&str>,
@@ -5709,6 +5727,32 @@ mod tests {
             "사용량 많으면 플러스가 낫긴 하지"
         ));
     }
+    #[test]
+    fn topic_lexicon_ascii_needles_are_lowercase() {
+        // `classify_message_topics` matches ASCII needles against the already
+        // lowercased haystack without re-lowercasing them (saves one String per
+        // needle per message). That shortcut is only correct while every ASCII
+        // needle is stored lowercase; this guards future lexicon edits.
+        for (topic, needles) in TOPIC_LEXICON {
+            for needle in *needles {
+                if needle.bytes().all(|byte| byte.is_ascii()) {
+                    assert_eq!(
+                        *needle,
+                        needle.to_ascii_lowercase(),
+                        "topic `{topic}` has a non-lowercase ASCII needle `{needle}`"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn assistant_tell_style_matches_case_insensitively() {
+        assert!(is_assistant_tell_style("I CAN HELP with that"));
+        assert!(is_assistant_tell_style("도와드릴 수 있어요"));
+        assert!(!is_assistant_tell_style("오늘 저녁에 뭐 해?"));
+    }
+
     #[test]
     fn classify_message_topics_assigns_contact_and_ax() {
         assert_eq!(

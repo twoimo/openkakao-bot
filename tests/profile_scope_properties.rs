@@ -309,7 +309,7 @@ proptest! {
                 // built-in name is ever substituted.
                 prop_assert_eq!(value.as_str(), trimmed);
                 let len = value.chars().count();
-                prop_assert!(len >= 1 && len <= OWNER_NAME_MAX_CHARS);
+                prop_assert!((1..=OWNER_NAME_MAX_CHARS).contains(&len));
             }
             OwnerName::Unset(reason) => match reason {
                 UnsetReason::Missing => prop_assert!(raw.is_none()),
@@ -363,7 +363,7 @@ proptest! {
         prop_assert_eq!(loaded.owner_display_name.as_str(), name.as_str());
 
         let len = profile.owner_display_name.chars().count();
-        prop_assert!(len >= 1 && len <= OWNER_NAME_MAX_CHARS);
+        prop_assert!((1..=OWNER_NAME_MAX_CHARS).contains(&len));
     }
 }
 

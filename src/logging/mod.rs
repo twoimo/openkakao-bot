@@ -308,7 +308,7 @@ pub fn validate_event_id(
     let chat_id = parse_id_field(chat_raw)?;
     let log_id = parse_id_field(log_raw)?;
     let max = MAX_INT64 as i128;
-    if !(0 < chat_id && chat_id < max) || !(0 < log_id && log_id < max) {
+    if !(0 < chat_id && chat_id < max && 0 < log_id && log_id < max) {
         return Err(EventIdError::OutOfRange);
     }
     if let Some(expected) = expected_chat_id {

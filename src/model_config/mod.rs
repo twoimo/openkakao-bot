@@ -262,10 +262,12 @@ impl ModelConfigStore for InMemoryModelConfigStore {
         // Clone the pointed-to value into an owned snapshot. The read lock is
         // held only for the pointer clone; the snapshot is independent of any
         // later swap.
+        // Recover the snapshot even if an earlier writer panicked: the stored
+        // `Arc` is still valid, and a poisoned lock must not abort the caller.
         let guard = self
             .inner
             .read()
-            .expect("model-config lock poisoned on read");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         (**guard).clone()
     }
 
@@ -276,7 +278,7 @@ impl ModelConfigStore for InMemoryModelConfigStore {
         let mut guard = self
             .inner
             .write()
-            .expect("model-config lock poisoned on write");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let next_version = guard.version.saturating_add(1);
         *guard = Arc::new(ModelConfig {
             reply: new.reply,

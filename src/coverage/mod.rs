@@ -484,7 +484,7 @@ fn feature_support(room: &CatalogRoom, feature: Feature) -> Option<UnsupportedRe
 fn evaluate_cell(
     room: &CatalogRoom,
     feature: Feature,
-    probe: &(dyn CellProbe),
+    probe: &dyn CellProbe,
     budget: &CoverageBudget,
 ) -> Verdict {
     if let Some(reason) = feature_support(room, feature) {

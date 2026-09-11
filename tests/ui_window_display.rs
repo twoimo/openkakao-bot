@@ -29,8 +29,7 @@ use openkakao_cli::memory::{
 };
 use openkakao_cli::ui_shell::{
     delete_confirmation_message, history_view, memory_view, perform_delete, HistoryView,
-    PendingDelete, HISTORY_APPEND_DEADLINE_MS, HISTORY_INITIAL_DEADLINE_MS, HISTORY_WINDOW_LIMIT,
-    MEMORY_OPEN_DEADLINE_MS,
+    PendingDelete, HISTORY_WINDOW_LIMIT,
 };
 use rusqlite::Connection;
 
@@ -50,7 +49,6 @@ fn stage_event(stage: Stage, status: StageStatus, at: i64) -> PipelineEvent {
 /// Korean, and the initial-display deadline is within three seconds.
 #[test]
 fn history_shows_recorded_stages_newest_first() {
-    assert!(HISTORY_INITIAL_DEADLINE_MS <= 3_000);
     let store = SqliteHistoryStore::open_in_memory().expect("store");
     store
         .append(stage_event(Stage::Detect, StageStatus::Success, 1_000))
@@ -74,7 +72,6 @@ fn history_shows_recorded_stages_newest_first() {
 /// within five seconds.
 #[test]
 fn history_appends_a_new_stage() {
-    assert!(HISTORY_APPEND_DEADLINE_MS <= 5_000);
     let store = SqliteHistoryStore::open_in_memory().expect("store");
     store
         .append(stage_event(Stage::Detect, StageStatus::Success, 1_000))
@@ -144,7 +141,7 @@ fn history_lookup_failure_shows_plain_notice_and_preserves() {
 /// and RAG comparison results together, within the three-second deadline.
 #[test]
 fn memory_window_lists_notes_references_and_comparisons() {
-    assert!(MEMORY_OPEN_DEADLINE_MS <= 3_000);
+    // The R8.1 deadline bound is enforced at compile time next to the constant.
 
     // A store that has a note, a reference pack, and one comparison row. The
     // reference and comparison tables are the ones the real schema uses; they
