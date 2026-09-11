@@ -1055,6 +1055,147 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(
             module._policy_valid_draft("남는 휴가 부럽다", "머하고 놀지", [])
         )
+    def test_reply_evidence_ledger_links_retrieval_and_prompt(self):
+        module = self._load_auto_reply_module("auto_reply_evidence_ledger_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "reply-evidence.jsonl"
+            module.EVIDENCE_LEDGER = ledger
+            event = {
+                "event_id": "db:417780809780519:1",
+                "log_id": 1,
+                "author_nickname": "현준",
+                "message": "이거 봤어",
+            }
+            analysis = {
+                "decision": "reply",
+                "reason": "social_reply",
+                "category": "reaction",
+                "reply": "오 좋네요",
+                "prompt_bytes": 1234,
+                "prompt_sha256": "ab" * 8,
+                "model_endpoint_reachable": None,
+                "context_match_count": 3,
+                "style_match_count": 2,
+                "provenance": {
+                    "retrieval_attempted": True,
+                    "retrieval_evidence_ids": ["context:a", "recent:1"],
+                    "links_requested": 1,
+                    "links_retrieved": 1,
+                    "context_sync": {"inserted_events": 4},
+                },
+            }
+            self.assertIsNotNone(
+                module.persist_reply_evidence_ledger(
+                    event,
+                    analysis,
+                    status="scheduled",
+                    delay_seconds=12.0,
+                )
+            )
+            record = json.loads(ledger.read_text(encoding="utf-8").strip())
+        self.assertEqual(record["prompt_bytes"], 1234)
+        self.assertEqual(record["prompt_sha256"], "ab" * 8)
+        self.assertEqual(record["context_sync"], {"inserted_events": 4})
+        self.assertEqual(
+            record["retrieval"],
+            {
+                "attempted": True,
+                "error": None,
+                "evidence_ids": 2,
+                "context_matches": 3,
+                "style_matches": 2,
+                "links_requested": 1,
+                "links_retrieved": 1,
+            },
+        )
+
+    def test_retrieval_receipt_reports_failure_without_evidence(self):
+        module = self._load_auto_reply_module("auto_reply_retrieval_receipt_test")
+        receipt = module._retrieval_receipt(
+            {
+                "context_match_count": 0,
+                "provenance": {
+                    "retrieval_attempted": True,
+                    "retrieval_error": "retrieval_command_failed",
+                },
+            }
+        )
+        self.assertTrue(receipt["attempted"])
+        self.assertEqual(receipt["error"], "retrieval_command_failed")
+        self.assertEqual(receipt["evidence_ids"], 0)
+        self.assertEqual(receipt["context_matches"], 0)
+
+    def test_link_only_caption_is_rejected_for_honorific_recipient(self):
+        module = self._load_auto_reply_module("auto_reply_link_caption_test")
+        opinion = (
+            "https://theopiniontimes.news/5480%EC%96%B5-%EC%9C%B5%EC%9E%90-%ED%8F%AD%ED%83%84"
+            "-%ED%84%B0%EC%A7%84%EB%8B%A4-%EC%A0%95%EB%B6%80%C2%B7%EA%B8%88%EC%9C%B5%EA%B6%8C"
+            "-%EC%9C%A0%EB%A7%9D-%EC%A4%91%EA%B2%AC"
+        )
+        previews = [
+            {
+                "url": opinion,
+                "title": "5480억 융자 폭탄 터진다 정부·금융권 유망 중견기업 지원",
+                "complete": True,
+            }
+        ]
+        reasons: list[str] = []
+        self.assertFalse(
+            module._policy_valid_draft(
+                "제목은 폭탄인데 내용은 지원이네요",
+                opinion,
+                [],
+                previews,
+                recipient="현준",
+                register="honorific",
+                reasons_out=reasons,
+            )
+        )
+        self.assertIn("link_caption", reasons)
+        self.assertTrue(
+            module._policy_valid_draft(
+                "융자 규모가 크긴 하네요",
+                opinion,
+                [],
+                previews,
+                recipient="현준",
+                register="honorific",
+            )
+        )
+        self.assertTrue(
+            module._policy_valid_draft(
+                "제목은 폭탄인데 내용은 지원이네요",
+                opinion,
+                [],
+                previews,
+                recipient="문승현",
+                register="informal",
+            )
+        )
+        self.assertTrue(
+            module._policy_valid_draft(
+                "제목은 폭탄인데 내용은 지원이네요",
+                opinion,
+                [],
+                recipient="현준",
+            )
+        )
+        self.assertTrue(module._inbound_is_link_only(opinion))
+        self.assertFalse(module._inbound_is_link_only(f"{opinion} 이건?"))
+        self.assertTrue(
+            module._outbound_restates_shared_link(
+                "프라이빗 장소라면서 할인은 선착순이네요",
+                "https://datepop.co.kr/exhibition/5",
+                [
+                    {
+                        "url": "https://datepop.co.kr/exhibition/5",
+                        "text": "프라이빗 장소라면서 할인은 선착순으로 진행됩니다",
+                        "complete": True,
+                    }
+                ],
+            )
+        )
+
     def test_youtube_title_label_is_rejected(self):
         module = self._load_auto_reply_module("auto_reply_youtube_label_test")
         inbound = "https://www.youtube.com/watch?v=llZ1ii59BVs 이건?"

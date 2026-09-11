@@ -5800,6 +5800,13 @@ def _policy_valid_draft(
         return reject("question_unanswered")
     if not _outbound_register_allows(text, recipient=recipient, register=register):
         return reject("register_mismatch")
+    if (
+        link_previews is not None
+        and _recipient_requires_honorific(recipient, register)
+        and _inbound_is_link_only(inbound)
+        and _outbound_restates_shared_link(text, inbound, link_previews)
+    ):
+        return reject("link_caption")
     if _outbound_repeats_learned_tell(text, inbound):
         return reject("repeats_learned_tell")
     if _outbound_echoes_inbound(text, inbound):
@@ -6950,6 +6957,29 @@ def sync_live_context_index(chat_id: int) -> dict:
     return value
 
 
+def _retrieval_receipt(analysis: dict) -> dict:
+    """Compact retrieval outcome for one decision.
+
+    Records whether grounded context lookup ran, how it ended and how many
+    evidence ids reached the prompt, so a reviewer can tell "the model ignored
+    the evidence" apart from "the evidence never arrived" without storing raw
+    conversation (AHP: observability, evidence_delivery).
+    """
+    provenance = analysis.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    evidence_ids = provenance.get("retrieval_evidence_ids")
+    return {
+        "attempted": bool(provenance.get("retrieval_attempted")),
+        "error": str(provenance.get("retrieval_error") or "")[:80] or None,
+        "evidence_ids": len(evidence_ids) if isinstance(evidence_ids, list) else 0,
+        "context_matches": int(analysis.get("context_match_count") or 0),
+        "style_matches": int(analysis.get("style_match_count") or 0),
+        "links_requested": int(provenance.get("links_requested") or 0),
+        "links_retrieved": int(provenance.get("links_retrieved") or 0),
+    }
+
+
 def persist_reply_evidence_ledger(
     event: dict,
     analysis: dict,
@@ -6978,7 +7008,9 @@ def persist_reply_evidence_ledger(
             "category": analysis.get("category"),
             "reply": str(analysis.get("reply") or "").strip()[:500],
             "prompt_bytes": analysis.get("prompt_bytes"),
+            "prompt_sha256": analysis.get("prompt_sha256"),
             "model_endpoint_reachable": analysis.get("model_endpoint_reachable"),
+            "retrieval": _retrieval_receipt(analysis),
             "evidence_ids": _decision_evidence_ids(event, analysis),
             "recent_conversation": list(analysis.get("recent_conversation") or [])[:RECENT_MESSAGE_LIMIT],
             "context_match_count": int(analysis.get("context_match_count") or 0),
@@ -8880,6 +8912,76 @@ def _link_preview_source_texts(link_previews: list[dict] | None) -> list[str]:
             if text and text not in values:
                 values.append(text)
     return values
+_URL_IN_TEXT = re.compile(r"https?://\S+", re.I)
+_LINK_CAPTION_MARKER = re.compile(
+    r"(제목|헤드라인|내용은|내용 보니|기사|뉴스|본문|슬러그)",
+    re.I,
+)
+
+
+def _inbound_is_link_only(inbound: str) -> bool:
+    """True when the other person sent a link and nothing else."""
+    text = " ".join(str(inbound or "").split())
+    if not text:
+        return False
+    without_links = " ".join(_URL_IN_TEXT.sub(" ", text).split())
+    return not without_links and bool(_URL_IN_TEXT.search(text))
+
+
+def _link_slug_texts(inbound: str) -> list[str]:
+    """Decode URL path/query words so a slug restatement is detectable offline.
+
+    Korean slugs carry the headline words, which is how the 2026-09-11 caption
+    could be written without reading the page at all.
+    """
+    values: list[str] = []
+    for url in extract_urls(inbound):
+        parsed = urllib.parse.urlparse(url)
+        raw = " ".join([parsed.path or "", parsed.query or ""])
+        for chunk in re.split(r"[&/]+", raw):
+            for piece in re.split(r"[=+]+", chunk):
+                if not piece.strip():
+                    continue
+                try:
+                    decoded = urllib.parse.unquote_plus(piece)
+                except (TypeError, ValueError):
+                    decoded = piece
+                decoded = " ".join(decoded.replace("-", " ").replace("_", " ").split())
+                if decoded:
+                    values.append(decoded)
+    return values[:24]
+
+
+def _outbound_restates_shared_link(
+    reply: str,
+    inbound: str,
+    link_previews: list[dict] | None,
+) -> bool:
+    """True when the draft captions the shared link instead of reacting to it.
+
+    A caption names or paraphrases the other page: a 제목/내용 phrasing, or a
+    short reply whose content words come from the link title, description or
+    slug. Operator instruction #16 forbids that shape for the honorific
+    recipient, and both measured 2026-09-11 replies were exactly this shape
+    (제목은 폭탄인데 내용은 지원이네요 / 프라이빗 장소라면서 할인은 선착순이네요).
+    """
+    compact = " ".join(str(reply or "").split())
+    if not compact:
+        return False
+    if _LINK_CAPTION_MARKER.search(compact):
+        return True
+    reply_tokens = _content_tokens(compact)
+    if not reply_tokens or len(reply_tokens) > 8:
+        return False
+    sources = list(_link_preview_source_texts(link_previews or []))
+    sources.extend(_link_slug_texts(inbound))
+    for source in sources:
+        source_tokens = _content_tokens(source)
+        if source_tokens and len(source_tokens & reply_tokens) >= 2:
+            return True
+    return False
+
+
 def _outbound_youtube_title_label(reply: str, inbound: str) -> bool:
     if not re.search(r"(?:youtu\.be|youtube\.com)/", str(inbound or ""), re.I):
         return False
@@ -9713,6 +9815,7 @@ DEFAULT_REPLY_INSTRUCTIONS = tuple([
             "Do not use stock AI shapes like '아니 그럼 … ㄷㄷ', '오 드디어', '리셋 파는 거', 'ㅇㅇ 일단', or '되는 동안 계속 써봐야지'.",
             "Do not paraphrase the inbound. If they said 법무부네 이건, do not answer 이번엔 법무부네. If this account already took a view on 대만 44, do not send a second 비싼/싼 variant.",
             "If they shared a link, reel, or clip and then reacted (ㅋㅋ, 개웃기, 재미, 허무), reply to that reaction like a person in the room. Do not caption the post from the URL or og:title, and never send X 릴스네요 / 영상이네요 / 링크네요. Match 현준 with short 존댓말 empathy, not a useful_information label.",
+            "When the inbound is only a link and the recipient is 현준, never caption it: no 제목/내용 phrasing, no restating the headline, og:title or the URL words, and no useful_information label. Send one short 존댓말 take or acknowledgement instead.",
             "최연우 rarely asks questions; do not ask by default except a bare ?? to a mention. 어떻게/왜/또 뭐/알려줘봐/궁금하 counts as a question even without ?.",
             "If inbound accuses this account of being AI/봇/자동응답/기계, do not use a canned line. Write one short, curious 최연우 question asking which part felt off, in this room's register. Vary wording every time. Examples of tone only, never copy: 그래? 어떤 부분이 AI처럼 느껴졌는데 / 뭐가 그렇게 느껴졌는데 / 어느 부분이. Never deny or confirm being human or AI.",
             "If inbound answers that probe with what felt off, or says they can detect AI/봇 (ai 판단/판별/알아보는 방법/들켰), treat it as durable style feedback: never repeat those self phrases, never explain the detection method, and do not confirm or deny being AI. Use learned_style_tells as avoid-only register, not as facts. Do not ask the probe again unless they accuse again.",
@@ -10100,9 +10203,23 @@ def generate_reply(
         approx = len(json.dumps(prompt, ensure_ascii=False).encode("utf-8", "replace"))
         return {**empty, "reason": "model_prompt_overflow", "prompt_bytes": approx}
     active_model = _generation_reply_model(bool(normalized_image_paths))
+    # The prompt text itself is never persisted. The digest plus the byte count
+    # are the receipt that links one decision to the exact prompt that produced
+    # it, including prompts that only reached a failed or unparsed attempt
+    # (AHP: observability, evidence_delivery).
+    prompt_digest = hashlib.sha256(prompt_bytes).hexdigest()[:16]
+
+    def with_prompt_receipt(payload: dict) -> dict:
+        return {
+            **payload,
+            "prompt_bytes": len(prompt_bytes),
+            "prompt_sha256": prompt_digest,
+            "model": active_model,
+        }
+
     print(
         f"[reply-gen] start prompt_bytes={len(prompt_bytes)} "
-        f"model={active_model}",
+        f"prompt_sha256={prompt_digest} model={active_model}",
         file=sys.stderr,
         flush=True,
     )
@@ -10252,11 +10369,13 @@ def generate_reply(
             failure_class=failure_class,
             retry_at=retry_at,
         )
-        return _deferred_model_result(
-            empty,
-            failure_class,
-            retry_at,
-            model_invoked=True,
+        return with_prompt_receipt(
+            _deferred_model_result(
+                empty,
+                failure_class,
+                retry_at,
+                model_invoked=True,
+            )
         )
 
     try:
@@ -10352,14 +10471,16 @@ def generate_reply(
                     failure_class="circuit_unavailable",
                     retry_at=lease_retry_at,
                 )
-                return _deferred_model_result(
-                    empty,
-                    "circuit_unavailable",
-                    lease_retry_at,
-                    model_invoked=True,
+                return with_prompt_receipt(
+                    _deferred_model_result(
+                        empty,
+                        "circuit_unavailable",
+                        lease_retry_at,
+                        model_invoked=True,
+                    )
                 )
             _publish_model_status("available")
-            return parsed
+            return with_prompt_receipt(parsed)
     if returncode == 0 and not _capacity_probe:
         # rc=0 output that failed schema salvage is a skip. Never open
         # account-wide invalid_output because Gemini/Qwen omitted keys,
@@ -10375,14 +10496,16 @@ def generate_reply(
                 failure_class="circuit_unavailable",
                 retry_at=lease_retry_at,
             )
-            return _deferred_model_result(
-                empty,
-                "circuit_unavailable",
-                lease_retry_at,
-                model_invoked=True,
+            return with_prompt_receipt(
+                _deferred_model_result(
+                    empty,
+                    "circuit_unavailable",
+                    lease_retry_at,
+                    model_invoked=True,
+                )
             )
         _publish_model_status("available")
-        return {
+        return with_prompt_receipt({
             **empty,
             "should_reply": False,
             "reason": (
@@ -10396,7 +10519,7 @@ def generate_reply(
             "category": "uncertain",
             "evidence_ids": [],
             "model_invoked": True,
-        }
+        })
     failure_class, retry_after = _classify_model_failure(
         returncode,
         stdout_bytes,
@@ -12036,6 +12159,15 @@ def analyze_event(event: dict) -> dict:
                 f"media:{media_bundle_digest}" if image_paths else ""
             ),
         )
+        # The generation receipt stays with the same event as the retrieval
+        # receipt, so the stored decision can be traced to the exact prompt that
+        # produced it without holding the prompt text itself.
+        provenance["generation"] = {
+            "prompt_bytes": model.get("prompt_bytes"),
+            "prompt_sha256": model.get("prompt_sha256"),
+            "model": str(model.get("model") or _active_reply_model()),
+            "model_endpoint_reachable": model.get("model_endpoint_reachable"),
+        }
         if not model.get("should_reply"):
             failure_class = str(model.get("model_failure_class") or "")
             retry_at = model.get("model_defer_until")
@@ -12093,6 +12225,9 @@ def analyze_event(event: dict) -> dict:
                 "category": str(model.get("category") or "information"),
                 "reply": str(ranked.get("reply") or "").strip(),
                 "evidence_ids": list(model.get("evidence_ids") or []),
+                "prompt_bytes": model.get("prompt_bytes"),
+                "prompt_sha256": model.get("prompt_sha256"),
+                "model_endpoint_reachable": model.get("model_endpoint_reachable"),
                 "drafts": list(ranked.get("drafts") or []),
                 "rerank_scores": list(ranked.get("scores") or []),
                 "rerank_winner_index": ranked.get("winner_index"),
