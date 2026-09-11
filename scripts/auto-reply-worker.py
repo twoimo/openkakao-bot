@@ -299,6 +299,13 @@ REPLY_JOB_RETENTION_BATCH_SIZE = 100
 REPLY_JOB_RETENTION_INTERVAL_SECONDS = 60.0
 MIN_REPLY_DELAY_SECONDS = 0.4
 PRE_SEND_RETRY_GRACE_SECONDS = 120.0
+# The sampled response window is persisted only on the scheduled path. A row
+# that reaches the pre-AX gate without it (an immediate reply decision, or a
+# queue row written before the window existed) still has to defer inside a
+# bounded window. Escalating a recoverable "AX unavailable" into
+# delivery_unknown burns the attempt budget and ends as a lost stale_backlog
+# skip, so use the documented upper bound of the pacing policy instead.
+PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS = 300.0
 PRE_SEND_PREFLIGHT_ATTEMPTS = 4
 PRE_SEND_PREFLIGHT_RETRY_SECONDS = 0.2
 COMPOSER_OCCUPIED_DEFER_SECONDS = 20.0
@@ -12024,12 +12031,15 @@ def defer_scheduled_pre_send_unavailable(
     """
     current = time.time() if now is None else float(now)
     try:
+        upper = event.get("response_window_upper_seconds")
+        if upper is None:
+            upper = PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS
         deadline = response_due_at(
             event.get("sent_at"),
-            event["response_window_upper_seconds"],
+            upper,
             now=current,
         )
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError):
         finish_delivery_unknown(event, event_id, connection)
         return
     occupied = bool(event.get("_composer_occupied"))
@@ -12243,11 +12253,14 @@ def process_job(
             if event.get("proactive") is True:
                 stale_backlog = False
             else:
+                persisted_upper = event.get("response_window_upper_seconds")
                 stale_backlog = event_exceeds_response_upper(
                     event,
-                    event["response_window_upper_seconds"],
+                    persisted_upper
+                    if persisted_upper is not None
+                    else PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS,
                 )
-        except (KeyError, RetrievalError):
+        except RetrievalError:
             finish_delivery_unknown(event, event_id, connection)
             return
         if stale_backlog and not str(job.get("reply") or "").strip():

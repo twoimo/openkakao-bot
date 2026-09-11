@@ -1687,6 +1687,41 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             module.settle_processing_transition = original
         self.assertEqual(len(retry), 1)
         self.assertGreaterEqual(retry[0] - now, 19.0)
+
+    def test_pre_send_defer_keeps_formed_reply_without_response_window(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_pre_send_defer_default_window"
+        )
+        event = {"sent_at": int(time.time()) - 10}
+        now = time.time()
+        settled = []
+        unknown = []
+        original_settle = module.settle_processing_transition
+        original_unknown = module.finish_delivery_unknown
+
+        def capture_settle(*args, **kwargs):
+            settled.append(kwargs)
+            return True
+
+        def capture_unknown(*args, **kwargs):
+            unknown.append(kwargs)
+            return True
+
+        module.settle_processing_transition = capture_settle
+        module.finish_delivery_unknown = capture_unknown
+        try:
+            module.defer_scheduled_pre_send_unavailable(
+                event, "db:42:1", None, now=now
+            )
+        finally:
+            module.settle_processing_transition = original_settle
+            module.finish_delivery_unknown = original_unknown
+        self.assertEqual(unknown, [])
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0].get("status"), "scheduled")
+        self.assertEqual(settled[0].get("error_class"), "pre_send_unavailable")
+        self.assertGreater(settled[0].get("due_at") - now, 0.0)
+
     def test_behavior_memory_excludes_delivery_and_operational_outcomes(self):
         module = self._load_auto_reply_module(
             "auto_reply_behavior_memory_filter_test"
