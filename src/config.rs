@@ -436,20 +436,21 @@ pub fn validate_auto_reply_startup(
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || !matches!(
                 config.model.provider.as_deref(),
-                Some("gjc") | Some("google-antigravity")
+                Some("gjc") | Some("google-antigravity") | Some("opencode-go-session")
             )
         {
             anyhow::bail!(
-                "GJC reply runner requires model.privacy_mode=remote_explicit and model.provider=gjc or google-antigravity"
+                "GJC reply runner requires model.privacy_mode=remote_explicit and model.provider=gjc, google-antigravity or opencode-go-session"
             );
         }
         if !matches!(
             config.auto_reply.reply_model.as_deref(),
             Some("google-antigravity/gemini-3.7-flash-tiered")
-                | Some("google-antigravity/gemini-3.6-flash-tiered"),
+                | Some("google-antigravity/gemini-3.6-flash-tiered")
+                | Some("opencode-go-session/deepseek-v4.1-flash"),
         ) {
             anyhow::bail!(
-                "GJC reply runner must explicitly attest reply_model=google-antigravity/gemini-3.7-flash-tiered or google-antigravity/gemini-3.6-flash-tiered"
+                "GJC reply runner must explicitly attest reply_model=google-antigravity/gemini-3.7-flash-tiered, google-antigravity/gemini-3.6-flash-tiered or opencode-go-session/deepseek-v4.1-flash"
             );
         }
     }
@@ -641,6 +642,12 @@ mod tests {
         config.auto_reply.reply_service_tier = Some("default".into());
         assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_ok());
         config.auto_reply.reply_model = Some("gpt-5.6-luna".into());
+        assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_err());
+        config.auto_reply.reply_model = Some("opencode-go-session/deepseek-v4.1-flash".into());
+        assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_ok());
+        config.model.provider = Some("opencode-go-session".into());
+        assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_ok());
+        config.model.provider = Some("not-a-provider".into());
         assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_err());
     }
 

@@ -1512,12 +1512,17 @@ struct AutoReplyRunner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AutoReplyLlmChoice {
     GjcGemini37Flash,
+    GjcOpencodeDeepseek41Flash,
     CodexGpt56Luna,
 }
 
 impl AutoReplyLlmChoice {
-    fn all() -> [Self; 2] {
-        [Self::GjcGemini37Flash, Self::CodexGpt56Luna]
+    fn all() -> [Self; 3] {
+        [
+            Self::GjcGemini37Flash,
+            Self::GjcOpencodeDeepseek41Flash,
+            Self::CodexGpt56Luna,
+        ]
     }
 
     fn from_model(model: &str) -> Option<Self> {
@@ -1529,6 +1534,10 @@ impl AutoReplyLlmChoice {
             | "gemini"
             | "gemini-3.7-flash"
             | "gemini-3.6-flash" => Some(Self::GjcGemini37Flash),
+            "opencode-go-session/deepseek-v4.1-flash"
+            | "opencode-go/deepseek-v4.1-flash"
+            | "deepseek-v4.1-flash"
+            | "opencode-go" => Some(Self::GjcOpencodeDeepseek41Flash),
             "gpt-5.6-luna" | "codex" | "luna" => Some(Self::CodexGpt56Luna),
             _ => None,
         }
@@ -1537,6 +1546,7 @@ impl AutoReplyLlmChoice {
     fn label(self) -> &'static str {
         match self {
             Self::GjcGemini37Flash => "Gajae-Code Gemini 3.7 Flash (high)",
+            Self::GjcOpencodeDeepseek41Flash => "OpenCode Go DeepSeek V4.1 Flash",
             Self::CodexGpt56Luna => "Codex GPT-5.6 Luna",
         }
     }
@@ -1544,16 +1554,26 @@ impl AutoReplyLlmChoice {
     fn model(self) -> &'static str {
         match self {
             Self::GjcGemini37Flash => "google-antigravity/gemini-3.7-flash-tiered",
+            Self::GjcOpencodeDeepseek41Flash => "opencode-go-session/deepseek-v4.1-flash",
             Self::CodexGpt56Luna => "gpt-5.6-luna",
         }
     }
 
     fn apply(self, config: &mut config::OpenKakaoConfig) {
         match self {
-            Self::GjcGemini37Flash => {
+            Self::GjcGemini37Flash | Self::GjcOpencodeDeepseek41Flash => {
                 config.model.privacy_mode = Some("remote_explicit".into());
                 config.model.allow_egress = true;
-                config.model.provider = Some("google-antigravity".into());
+                config.model.provider = Some(
+                    if self == Self::GjcOpencodeDeepseek41Flash {
+                        // OpenCode Go is reached through the session-headed
+                        // local provider entry in ~/.gjc/agent/models.yml.
+                        "opencode-go-session"
+                    } else {
+                        "google-antigravity"
+                    }
+                    .into(),
+                );
                 config.model.retention = Some("provider-policy".into());
                 config.auto_reply.reply_runner_kind = Some("gjc".into());
                 config.auto_reply.reply_model = Some(self.model().into());
@@ -1590,7 +1610,7 @@ fn select_auto_reply_llm(
 ) -> Result<AutoReplyLlmChoice> {
     if let Some(requested) = requested {
         return AutoReplyLlmChoice::from_model(requested).with_context(|| {
-            format!("unknown reply model {requested:?}; use gemini-3.7-flash or gpt-5.6-luna")
+            format!("unknown reply model {requested:?}; use gemini-3.7-flash, deepseek-v4.1-flash or gpt-5.6-luna")
         });
     }
     if json_output || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
@@ -1627,23 +1647,25 @@ fn probe_auto_reply_llm(
 ) -> Result<()> {
     let runner = validate_auto_reply_runner(config)?;
     let output = match choice {
-        AutoReplyLlmChoice::GjcGemini37Flash => Command::new(&runner.path)
-            .args([
-                "-p",
-                "--no-session",
-                "--no-rules",
-                "--no-lsp",
-                "--no-title",
-                "--no-tools",
-                "--mode",
-                "text",
-                "--model",
-                choice.model(),
-                "Reply with exactly OK",
-            ])
-            .stdin(Stdio::null())
-            .output()
-            .context("probe Gajae-Code reply model")?,
+        AutoReplyLlmChoice::GjcGemini37Flash | AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => {
+            Command::new(&runner.path)
+                .args([
+                    "-p",
+                    "--no-session",
+                    "--no-rules",
+                    "--no-lsp",
+                    "--no-title",
+                    "--no-tools",
+                    "--mode",
+                    "text",
+                    "--model",
+                    choice.model(),
+                    "Reply with exactly OK",
+                ])
+                .stdin(Stdio::null())
+                .output()
+                .context("probe Gajae-Code reply model")?
+        }
         AutoReplyLlmChoice::CodexGpt56Luna => Command::new(&runner.path)
             .arg("--version")
             .stdin(Stdio::null())
@@ -1653,7 +1675,7 @@ fn probe_auto_reply_llm(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     match choice {
-        AutoReplyLlmChoice::GjcGemini37Flash => {
+        AutoReplyLlmChoice::GjcGemini37Flash | AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => {
             if output.status.success() && stdout.contains("OK") {
                 // Authenticated Gemini vision path is live.
             } else if stderr.to_ascii_lowercase().contains("no api key") {
@@ -8495,6 +8517,22 @@ mod tests {
                 .model(),
             "gpt-5.6-luna"
         );
+        assert_eq!(
+            AutoReplyLlmChoice::from_model("deepseek-v4.1-flash")
+                .expect("opencode deepseek alias")
+                .model(),
+            "opencode-go-session/deepseek-v4.1-flash"
+        );
+        let mut config = config::OpenKakaoConfig::default();
+        AutoReplyLlmChoice::from_model("deepseek-v4.1-flash")
+            .expect("opencode deepseek alias")
+            .apply(&mut config);
+        assert_eq!(
+            config.model.provider.as_deref(),
+            Some("opencode-go-session")
+        );
+        assert_eq!(config.auto_reply.reply_runner_kind.as_deref(), Some("gjc"));
+        assert_eq!(AutoReplyLlmChoice::all().len(), 3);
     }
 
     #[test]

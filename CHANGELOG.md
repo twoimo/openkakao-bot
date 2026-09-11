@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
 
 ### Changed
+- 답변 모델 선택지에 **OpenCode Go DeepSeek V4.1 Flash**(`opencode-go-session/deepseek-v4.1-flash`)를 추가했습니다. gjc 러너 허용 목록과 프로바이더 어테스테이션(`opencode-go-session`)을 함께 확장했고 `--model deepseek-v4.1-flash` 별칭으로도 선택됩니다. OpenCode Go는 `x-opencode-session` 헤더가 필요해 `~/.gjc/agent/models.yml`에 세션 헤더를 가진 로컬 프로바이더 항목으로 선언합니다.
+- AX 전송이 시작되지 못한 이유(프리플라이트 rc/status/reason)를 워커 로그에 남깁니다. 지금까지는 카카오톡 종료·AX 권한 부재·외부 초안 점유가 모두 이유 없이 `delivery_unknown`으로만 기록됐습니다. 채팅 내용은 로그에 남기지 않습니다.
 - 폴링 크기 가드가 매 폴링마다 페이로드 전체를 버퍼로 만들던 것을 바이트 카운터로 바꿨습니다. 판정 기준(1MiB)과 short-circuit 순서는 그대로입니다.
 - PBKDF2가 반복마다 HMAC 키 스케줄을 다시 만들고 32바이트를 새로 할당하던 것을 키드 상태 재사용으로 바꿨습니다. 키 유도 결과는 참조 파생값 테스트로 동일함을 유지합니다.
 - `poll_after`가 폴링마다 SQL 3종을 재파싱하던 것을 prepared-statement 캐시로 돌렸습니다. CSV 컨텍스트 인덱싱의 INSERT 2종도 같습니다.
