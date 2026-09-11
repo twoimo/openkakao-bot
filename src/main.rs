@@ -3427,7 +3427,12 @@ fn enrollment_cursor_authority_for_target(
             state
                 .get("candidate_phase")
                 .and_then(serde_json::Value::as_str),
-            Some("idle" | "hooking")
+            // The watcher's own recovery (`_reconcile_ingress_journal`) accepts a
+            // candidate in any of these pre-delivery phases, so refusing to
+            // start on them asked for a manual reconciliation the system could
+            // perform itself. `sending` and later stay excluded: delivery may
+            // already have begun there.
+            Some("idle" | "pending" | "hooking" | "acknowledging")
         ) && leftover_in_flight_is_absent_or_orphaned(&state)
             && (is_empty_json_array(state.get("pending_gaps"))
                 || state.get("pending_gaps") == Some(&serde_json::json!(["reconcile_required"])))

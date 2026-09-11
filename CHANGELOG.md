@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - 시작이 중단되거나 `context_sync_transient`로 펜스된 방이 `capability_state: "starting"`으로 남으면, 커서 게이트가 복구 분기를 못 찾아 "requires reconciliation before restart"로 거부하던 문제를 고쳤습니다. 인플라이트도 없고 acked 워터마크도 마지막 확정 경계라 `ready` 잔류물과 동일하게 재개합니다.
+- 커서 게이트가 `pending`·`acknowledging` 단계의 잔류 후보를 거부해 수동 조정을 요구하던 문제를 고쳤습니다. watcher 자신의 복구(`_reconcile_ingress_journal`)가 그 두 단계를 재생 가능으로 취급하는데 게이트만 `idle`·`hooking`만 받아 기준이 어긋나 있었습니다. `sending` 이후는 그대로 제외합니다.
 - 콜드 스타트에서 컨텍스트 동기화가 경합으로 실패하면 상태 저장 실패가 치명 펜스로 승격돼 워처가 종료되던 문제를 고쳤습니다. 방은 펜스 상태로 두고 재시도합니다.
 - `db-watch`가 컨텍스트 동기화 실패를 기록할 때 원인 문자열을 버리고 거친 분류만 남겨 추적이 불가능하던 문제를 고쳤습니다.
 - 훅 프로세스의 `stdin` 쓰기가 타임아웃 밖에 있어, 표준입력을 읽지 않는 훅에서 파이프가 차면 watch 루프가 무한 대기할 수 있었습니다. 쓰기와 종료 대기를 같은 deadline에 묶었습니다.
