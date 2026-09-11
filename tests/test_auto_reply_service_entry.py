@@ -41,6 +41,40 @@ def load_entry(name):
     return module
 
 
+class CatalogSelectorTests(unittest.TestCase):
+    def test_named_catalog_room_binds_its_title(self):
+        module = load_entry("auto_reply_catalog_selector_test")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "menubar-room-catalog.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "rooms": [
+                            {
+                                "chat_id": 417780809780519,
+                                "auto_reply": True,
+                                "title": "부자멘토멘티",
+                            },
+                            {"chat_id": 99, "auto_reply": True},
+                            {"chat_id": 42, "auto_reply": False, "title": "꺼진방"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                module._catalog_selectors(root),
+                ["bind:417780809780519:부자멘토멘티", "id:99"],
+            )
+
+    def test_missing_catalog_is_empty(self):
+        module = load_entry("auto_reply_catalog_selector_missing_test")
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertEqual(module._catalog_selectors(Path(raw)), [])
+
+
 class AutoReplyServiceEntryTests(unittest.TestCase):
     maxDiff = None
 

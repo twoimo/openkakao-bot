@@ -437,6 +437,24 @@ def _check_payload(stdout: bytes) -> dict[str, Any]:
     return value
 
 
+def _receipt_selectors_for_verification(
+    receipt: dict[str, Any],
+    chat: str | list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Selectors a receipt must be verified against.
+
+    An empty `--chat` means the preflight derived the rooms itself (the catalog
+    fallback), so the receipt's own attested list is the comparison basis. An
+    explicit `--chat` stays strict: the receipt has to attest exactly that list.
+    """
+    requested = _normalize_chat_selectors(chat)
+    raw = receipt.get("chat_selectors")
+    attested = tuple(str(item) for item in raw) if isinstance(raw, list) else ()
+    if requested and attested != requested:
+        raise SystemExit("launchd preflight selector identity does not match")
+    return attested
+
+
 def _verify_receipt(
     receipt: dict[str, Any],
     python: Path,
@@ -476,7 +494,16 @@ def _verify_receipt(
 
 
 def _catalog_selectors(state_root: Path) -> list[str]:
-    """auto_reply catalog rooms as explicit `id:<chat_id>` selectors."""
+    """auto_reply catalog rooms as explicit selectors.
+
+    A named group room cannot be attested from its ID alone: the local chat row
+    keeps an empty `chat_name` and the CLI therefore needs `bind:<id>:<title>`
+    to compare the open window title. The menu writes the real room title into
+    the catalog (R6.7), so use it when it is present. A room without a title
+    keeps the plain `id:` form and lets the CLI decide; the per-room filter then
+    drops it with the reason recorded. A title-only `id:` selector used to fail
+    every catalog room and stop the whole host (2026-09-12 outage).
+    """
     path = state_root / "menubar-room-catalog.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -488,10 +515,14 @@ def _catalog_selectors(state_root: Path) -> list[str]:
         if not isinstance(room, dict) or room.get("auto_reply") is not True:
             continue
         chat_id = room.get("chat_id")
-        if isinstance(chat_id, int) and not isinstance(chat_id, bool) and chat_id > 0:
-            selector = f"id:{chat_id}"
-            if selector not in out:
-                out.append(selector)
+        if not (
+            isinstance(chat_id, int) and not isinstance(chat_id, bool) and chat_id > 0
+        ):
+            continue
+        title = str(room.get("title") or "").strip()
+        selector = f"bind:{chat_id}:{title}" if title else f"id:{chat_id}"
+        if selector not in out:
+            out.append(selector)
     return out
 
 
@@ -679,7 +710,13 @@ def run_production(
     )
     receipt = _read_receipt(_receipt_path(state_root))
     _verify_receipt(
-        receipt, python, entry, binary, config, chat_selectors, state_root
+        receipt,
+        python,
+        entry,
+        binary,
+        config,
+        _receipt_selectors_for_verification(receipt, chat),
+        state_root,
     )
     # A failed activation can create the durable reconciliation fence while
     # this process is performing its fresh preflight.  Re-attest immediately
@@ -715,7 +752,7 @@ def _fresh_session_preflight(
         entry,
         binary,
         config,
-        _normalize_chat_selectors(chat),
+        _receipt_selectors_for_verification(receipt, chat),
         state_root,
     )
 
