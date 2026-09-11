@@ -7133,13 +7133,25 @@ def run_context_reply_bundle(message: str, event: dict) -> dict:
     recipient_profile_raw = value.get("recipient_style_profile")
     if not isinstance(recipient_profile_raw, dict):
         raise RetrievalError("recipient_style_profile_unavailable")
-    if set(recipient_profile_raw) != {
+    # The Rust bundle also carries the R3.3 derived honorific/formality pair.
+    # Requiring an exact 5-key set rejected every real bundle
+    # (retrieval_recipient_style_profile_malformed) and silently dropped the
+    # whole evidence path: context, style examples, prior decisions and the
+    # response-time distribution.
+    required_profile_keys = {
         "recipient",
         "direct_sample_count",
         "confidence_sum",
         "used_fallback",
         "profile",
-    } or recipient_profile_raw.get("recipient") != recipient:
+    }
+    optional_profile_keys = {"honorific", "formality"}
+    raw_profile_keys = set(recipient_profile_raw)
+    if (
+        not required_profile_keys.issubset(raw_profile_keys)
+        or raw_profile_keys - required_profile_keys - optional_profile_keys
+        or recipient_profile_raw.get("recipient") != recipient
+    ):
         raise RetrievalError("recipient_style_profile_malformed")
     direct_sample_count = recipient_profile_raw.get("direct_sample_count")
     confidence_sum = recipient_profile_raw.get("confidence_sum")
@@ -7165,6 +7177,8 @@ def run_context_reply_bundle(message: str, event: dict) -> dict:
         "confidence_sum": float(confidence_sum),
         "used_fallback": used_fallback,
         "profile": parsed_recipient_profile,
+        "derived_honorific": str(recipient_profile_raw.get("honorific") or ""),
+        "derived_formality": str(recipient_profile_raw.get("formality") or ""),
         **_recipient_register_hint(
             parsed_recipient_profile,
             used_fallback=used_fallback,
