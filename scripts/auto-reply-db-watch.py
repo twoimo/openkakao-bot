@@ -4075,7 +4075,16 @@ def main() -> int:
                         now=context_sync_now,
                     )
                     if not save_state(state, _require_ready=False):
-                        raise DbFence("state_persist_failed")
+                        # A cold start can reach here before the supervisor has
+                        # published its own status, which `save_state` requires
+                        # to match. That is a race, not a reason to exit the
+                        # watcher: keep the room fenced and retry on the capped
+                        # schedule. The fenced state is published on the next
+                        # heartbeat once the supervisor status lands.
+                        print(
+                            "[db-watch] context_sync_transient_unpersisted",
+                            flush=True,
+                        )
                     _wait_context_sync_startup_retry(
                         state,
                         retry_delay=retry_delay,
@@ -4103,7 +4112,14 @@ def main() -> int:
                 fence="context_sync_unavailable",
             )
             save_state(state, _require_ready=False)
-            print(f"[db-watch] context_sync_unavailable:{_fixed_fence_reason(exc)}", flush=True)
+            # Keep the underlying message: the coarse reason class alone
+            # ("db_fence") hid whether the sync failed on contention, a schema
+            # problem, or a timeout.
+            print(
+                f"[db-watch] context_sync_unavailable:"
+                f"{_fixed_fence_reason(exc)}:{str(exc).strip()[:200]}",
+                flush=True,
+            )
             return 1
         while True:
             try:

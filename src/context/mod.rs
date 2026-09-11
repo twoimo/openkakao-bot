@@ -4476,13 +4476,22 @@ pub fn get_reply_decision(db_path: &Path, event_id: &str) -> Result<Option<Reply
     .optional()
     .map_err(Into::into)
 }
+/// How long a context-DB connection waits for a competing writer before
+/// failing with SQLITE_BUSY.
+///
+/// Every AutoReply room syncs the same context database, and on a multi-hundred
+/// megabyte database a concurrent `context-sync-local` run can hold the write
+/// lock for longer than five seconds. Timing out there fences the room and
+/// exits its watcher, so wait the contention out instead.
+const CONTEXT_DB_BUSY_TIMEOUT_SECS: u64 = 30;
+
 fn open_db_readonly(path: &Path) -> Result<Connection> {
     if path.is_symlink() || !path.is_file() {
         anyhow::bail!("{CONTEXT_RETRIEVAL_MIGRATION_REQUIRED}");
     }
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open context database read-only: {}", path.display()))?;
-    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.busy_timeout(Duration::from_secs(CONTEXT_DB_BUSY_TIMEOUT_SECS))?;
     Ok(conn)
 }
 
@@ -4528,7 +4537,7 @@ fn open_db(path: &Path) -> Result<Connection> {
     }
     let was_missing = !path.exists();
     let conn = Connection::open(path)?;
-    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.busy_timeout(Duration::from_secs(CONTEXT_DB_BUSY_TIMEOUT_SECS))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
