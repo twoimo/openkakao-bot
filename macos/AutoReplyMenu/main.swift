@@ -636,6 +636,18 @@ func parseConfig(_ args: [String]) -> Config {
             string: "~/Library/Logs/AutoReplyMenu"
         ).expandingTildeInPath
     }
+    if config.bin.isEmpty {
+        // GUI launches (launchd, Finder, login items) do not inherit a PATH that
+        // contains the bundled CLI. Without --bin the Python layer cannot list
+        // KakaoTalk rooms, so 단체 채팅방 fell back to the catalog room alone with an
+        // `id:<chat_id>` title. Default to the CLI shipped inside this bundle.
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/bin/openkakao-cli")
+            .path
+        if FileManager.default.isExecutableFile(atPath: bundled) {
+            config.bin = bundled
+        }
+    }
     return config
 }
 
@@ -1572,24 +1584,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorItem.target = self
         vectorItem.isEnabled = true
         menu.addItem(vectorItem)
-        // 라이브옵스 창 네 개 (task 11, R1/R5/R8/R9). 다른 창과 똑같이 클릭하면
-        // 별도 창이 열립니다. 판단은 전부 코어가 하고, 창은 문자열만 그립니다.
-        let durabilityItem = NSMenuItem(title: "대량 검증…", action: #selector(showDurabilityWindow), keyEquivalent: "")
-        durabilityItem.target = self
-        durabilityItem.isEnabled = true
-        menu.addItem(durabilityItem)
-        let coverageItem = NSMenuItem(title: "기능 점검…", action: #selector(showCoverageWindow), keyEquivalent: "")
-        coverageItem.target = self
-        coverageItem.isEnabled = true
-        menu.addItem(coverageItem)
-        let improvementItem = NSMenuItem(title: "자기개선…", action: #selector(showImprovementWindow), keyEquivalent: "")
-        improvementItem.target = self
-        improvementItem.isEnabled = true
-        menu.addItem(improvementItem)
-        let onboardingItem = NSMenuItem(title: "권한 설정…", action: #selector(showOnboardingWindow), keyEquivalent: "")
-        onboardingItem.target = self
-        onboardingItem.isEnabled = true
-        menu.addItem(onboardingItem)
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "메뉴 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
