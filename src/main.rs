@@ -3421,21 +3421,14 @@ fn enrollment_cursor_authority_for_target(
             && acked.is_subset(&observed)
             && acked_watermark > 0
             && acked_watermark <= freshly_attested_watermark;
-        let leftover_ready_idle = state.get("schema_version") == Some(&serde_json::Value::from(3))
-            && state.get("target_chat_id") == Some(&serde_json::Value::from(target.chat_id))
-            && state.get("target_chat_name")
-                == Some(&serde_json::Value::String(target.chat_name.clone()))
-            && state.get("capability_state")
-                == Some(&serde_json::Value::String("ready".to_string()))
-            && state.get("delivery_enabled") == Some(&serde_json::Value::Bool(true))
-            && state.get("fence") == Some(&serde_json::Value::String("ready".to_string()))
-            && matches!(
-                state
-                    .get("candidate_phase")
-                    .and_then(serde_json::Value::as_str),
-                Some("idle" | "hooking")
-            )
-            && leftover_in_flight_is_absent_or_orphaned(&state)
+        // Shared shape for a leftover room whose cursor is idle and whose acked
+        // watermark is still the last confirmed delivery boundary.
+        let leftover_idle_shape_ok = matches!(
+            state
+                .get("candidate_phase")
+                .and_then(serde_json::Value::as_str),
+            Some("idle" | "hooking")
+        ) && leftover_in_flight_is_absent_or_orphaned(&state)
             && (is_empty_json_array(state.get("pending_gaps"))
                 || state.get("pending_gaps") == Some(&serde_json::json!(["reconcile_required"])))
             && state
@@ -3452,6 +3445,28 @@ fn enrollment_cursor_authority_for_target(
             && acked.is_subset(&observed)
             && acked_watermark > 0
             && acked_watermark <= freshly_attested_watermark;
+        let leftover_identity_ok = state.get("schema_version") == Some(&serde_json::Value::from(3))
+            && state.get("target_chat_id") == Some(&serde_json::Value::from(target.chat_id))
+            && state.get("target_chat_name")
+                == Some(&serde_json::Value::String(target.chat_name.clone()));
+        let leftover_ready_idle = leftover_identity_ok
+            && leftover_idle_shape_ok
+            && state.get("capability_state")
+                == Some(&serde_json::Value::String("ready".to_string()))
+            && state.get("delivery_enabled") == Some(&serde_json::Value::Bool(true))
+            && state.get("fence") == Some(&serde_json::Value::String("ready".to_string()));
+        // A start that was interrupted, or that fenced on a retryable condition
+        // such as `context_sync_transient`, leaves the persisted capability at
+        // "starting". Nothing is in flight and the acked watermark is still the
+        // last confirmed boundary, so it is exactly as resumable as a "ready"
+        // leftover. Without this branch the room stayed blocked on "requires
+        // reconciliation before restart" until an operator intervened.
+        let leftover_starting_idle = leftover_identity_ok
+            && leftover_idle_shape_ok
+            && state.get("capability_state")
+                == Some(&serde_json::Value::String("starting".to_string()))
+            && state.get("delivery_enabled") == Some(&serde_json::Value::Bool(false))
+            && state.get("fence") == Some(&serde_json::Value::String("starting".to_string()));
         let live_supervisor = leftover_supervisor_is_live(&room_root, target).unwrap_or(false);
         if live_supervisor
             && state.get("schema_version") == Some(&serde_json::Value::from(3))
@@ -3487,7 +3502,7 @@ fn enrollment_cursor_authority_for_target(
                     .and_then(serde_json::Value::as_i64),
             });
         }
-        if leftover_ready_idle && !live_supervisor {
+        if (leftover_ready_idle || leftover_starting_idle) && !live_supervisor {
             leftover_supervisor_is_terminal(&room_root, target, &state)?;
             validate_private_regular_file(&state_path, 256 * 1024)?;
             return Ok(AutoReplyCursorAuthority {
