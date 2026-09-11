@@ -9117,6 +9117,16 @@ def _recent_sent_self_rows(
     return out
 
 
+def _past_send_grace(event: dict, upper: object, *, now: float | None = None) -> bool:
+    """True once the response window plus the retry grace has fully passed."""
+    current = time.time() if now is None else float(now)
+    try:
+        deadline = response_due_at(event.get("sent_at"), upper, now=current)
+    except (TypeError, ValueError, OverflowError):
+        return True
+    return current >= deadline + PRE_SEND_RETRY_GRACE_SECONDS
+
+
 def _send_time_repeat_hold(
     event: dict,
     reply: str,
@@ -9128,12 +9138,28 @@ def _send_time_repeat_hold(
     Returns a skip reason or ``None`` to continue with the AX send.
     """
     inbound = str(event.get("message") or "")
-    if str(event.get("attachment") or "") == "image" or event.get("image_paths"):
-        return None
     fresh = _recent_sent_self_rows(connection, event)
     if fresh is None:
         return "sent_history_unavailable"
     if not fresh:
+        return None
+    inbound_sent_at = _fence_int(event.get("sent_at"))
+    last_self_sent_at = 0
+    for row in fresh:
+        value = _fence_int(row.get("sent_at"))
+        if value is not None and value > last_self_sent_at:
+            last_self_sent_at = value
+    if (
+        inbound_sent_at is not None
+        and last_self_sent_at
+        and inbound_sent_at <= last_self_sent_at
+    ):
+        # The inbound was already on screen when the previous reply went out, so
+        # it belongs to the same contiguous utterance: neither the question nor
+        # the photo exception may buy a second reply for it.
+        return "already_commented"
+    if str(event.get("attachment") or "") == "image" or event.get("image_paths"):
+        # A photo that arrived after the last reply is a new turn.
         return None
     combined = [
         row for row in (recent_conversation or []) if isinstance(row, dict)
@@ -12612,9 +12638,18 @@ def process_job(
         except RetrievalError:
             finish_delivery_unknown(event, event_id, connection)
             return
-        if stale_backlog and not str(job.get("reply") or "").strip():
-            finish_scheduled_stale_backlog(event, event_id, connection)
-            return
+        if stale_backlog:
+            persisted_upper = event.get("response_window_upper_seconds")
+            if not str(job.get("reply") or "").strip() or _past_send_grace(
+                event,
+                persisted_upper
+                if persisted_upper is not None
+                else PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS,
+            ):
+                # Past the window plus grace a formed draft must not go out
+                # either: the room has moved on and an old reply reads as a bot.
+                finish_scheduled_stale_backlog(event, event_id, connection)
+                return
         if event.get("proactive") is True:
             advanced = False
         else:
@@ -12822,6 +12857,30 @@ def process_job(
             )
             return
 
+        # Last worker-owned boundary before the AX mutation: re-check the same
+        # repetition/burst rules so no path reaches the send without them
+        # (AHP: intervention_timing).
+        final_hold = _send_time_repeat_hold(
+            event, reply, _event_recent_conversation(event), connection
+        )
+        if final_hold:
+            if not durable_policy_skip(event, event_id, final_hold, category="policy"):
+                finish_delivery_unknown(event, event_id, connection)
+                return
+            if not settle_processing_transition(
+                event,
+                event_id,
+                connection,
+                status="skipped",
+                due_at=None,
+                decision="skip",
+                reason=final_hold,
+                category="policy",
+                error_class=final_hold,
+            ):
+                return
+            complete_event(event_id, "")
+            return
         if not update_context_decision(event_id, "sending"):
             update_job(
                 event_id,

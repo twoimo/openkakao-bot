@@ -1784,7 +1784,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "chat_id": 417780809780519,
                 "message": "어우",
                 "author_nickname": "현준",
-                "sent_at": 200,
+                "sent_at": 2060,
                 "is_self": False,
             }
             connection.execute(
@@ -1910,6 +1910,72 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(module._reply_ending("지원이네요!!"), "네요")
         self.assertEqual(module._reply_ending("선착순이네요 ㅋㅋ"), "네요")
         self.assertFalse(module._reply_asks_question("그럼 딱 맞겠네요"))
+
+    def test_send_hold_narrows_question_and_photo_exceptions(self):
+        module = self._load_auto_reply_module("auto_reply_send_hold_narrow_test")
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            "CREATE TABLE reply_jobs(event_id TEXT PRIMARY KEY, event_json TEXT NOT NULL,"
+            " status TEXT NOT NULL, reply TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO reply_jobs VALUES(?,?,?,?,?,?)",
+            (
+                "db:1:100",
+                json.dumps({"chat_id": 1, "is_self": False, "log_id": 100}),
+                "sent",
+                "프라이빗 장소라면서 할인은 선착순이네요",
+                1030.0,
+                1030.0,
+            ),
+        )
+        connection.commit()
+        try:
+            same_utterance = module._send_time_repeat_hold(
+                {
+                    "chat_id": 1,
+                    "message": "흠?",
+                    "sent_at": 1010,
+                    "log_id": 110,
+                    "attachment": "",
+                    "image_paths": [],
+                },
+                "45곳에 5480억이면 업체당 백억은 넘네요",
+                [],
+                connection,
+            )
+            self.assertEqual(same_utterance, "already_commented")
+            later_question = module._send_time_repeat_hold(
+                {
+                    "chat_id": 1,
+                    "message": "이거 뭐예요?",
+                    "sent_at": 1050,
+                    "log_id": 120,
+                    "attachment": "",
+                    "image_paths": [],
+                },
+                "그건 좀 아쉽네요",
+                [],
+                connection,
+            )
+            self.assertIsNone(later_question)
+            later_photo = module._send_time_repeat_hold(
+                {
+                    "chat_id": 1,
+                    "message": "사진",
+                    "sent_at": 1050,
+                    "log_id": 130,
+                    "attachment": "image",
+                    "image_paths": ["/tmp/x.png"],
+                },
+                "그건 좀 아쉽네요",
+                [],
+                connection,
+            )
+            self.assertIsNone(later_photo)
+        finally:
+            connection.close()
 
     def test_behavior_memory_excludes_delivery_and_operational_outcomes(self):
         module = self._load_auto_reply_module(
@@ -9285,7 +9351,9 @@ print(json.dumps({
                     mock.patch.object(module, "complete_event") as complete,
                 ):
                     module.process_job(job, previous, connection)
-                sender.assert_called_once()
+                # Past the window plus grace a formed draft is dropped before
+                # the AX attempt: an expired reply must not reach KakaoTalk.
+                sender.assert_not_called()
                 complete.assert_called_once_with(event["event_id"], "")
                 row = connection.execute(
                     """
