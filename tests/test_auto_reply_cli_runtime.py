@@ -1817,6 +1817,86 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_pacing_samples_the_learned_mixture_and_subtracts_elapsed(self):
+        module = self._load_auto_reply_module("auto_reply_pacing_mixture_test")
+        sample_count = 10_000
+        stats = {
+            "sample_count": sample_count,
+            "average_seconds": 899.0,
+            "median_seconds": 15.0,
+            "p90_seconds": 1027.7,
+            "min_seconds": 0.0,
+            "max_seconds": 79_557.0,
+            "max_window_seconds": 86_400,
+            "stddev_seconds": 1.0,
+            "distribution": {
+                "schema_version": module.RESPONSE_TIME_DISTRIBUTION_SCHEMA_VERSION,
+                "policy_version": module.RESPONSE_TIME_DISTRIBUTION_POLICY_VERSION,
+                "model_kind": module.RESPONSE_TIME_DISTRIBUTION_MODEL_KIND,
+                "fit_transform": module.RESPONSE_TIME_DISTRIBUTION_FIT_TRANSFORM,
+                "sample_count": sample_count,
+                "retained_sample_count": sample_count,
+                "tail_winsorized_count": 0,
+                "split_seconds": [17.0, 388.0],
+                "global_upper_seconds": 1027.7,
+                "components": [
+                    {
+                        "name": "immediate",
+                        "sample_count": 5300,
+                        "weight": 0.53,
+                        "normal_location_seconds": 7.1,
+                        "normal_scale_seconds": 3.3,
+                        "lower_seconds": 5.0,
+                        "upper_seconds": 17.0,
+                    },
+                    {
+                        "name": "short",
+                        "sample_count": 3130,
+                        "weight": 0.313,
+                        "normal_location_seconds": 100.3,
+                        "normal_scale_seconds": 60.0,
+                        "lower_seconds": 18.0,
+                        "upper_seconds": 388.0,
+                    },
+                    {
+                        "name": "delayed",
+                        "sample_count": 1570,
+                        "weight": 0.157,
+                        "normal_location_seconds": 888.4,
+                        "normal_scale_seconds": 150.0,
+                        "lower_seconds": 390.0,
+                        "upper_seconds": 1027.7,
+                    },
+                ],
+            },
+        }
+        rng = random.Random(11)
+        seen: dict[str, int] = {}
+        for _ in range(400):
+            picked = module.sample_response_delay_for_analysis(
+                stats,
+                {"category": "social", "reason": "casual_agreement"},
+                rng=rng,
+                elapsed_seconds=5.0,
+            )
+            seen[picked["component"]] = seen.get(picked["component"], 0) + 1
+        # The learned mixture has three components; the old code could only ever
+        # pick immediate/short and clamped the result to two seconds.
+        self.assertIn("delayed", seen)
+        self.assertIn("short", seen)
+        self.assertIn("immediate", seen)
+        charged = module.sample_response_delay_for_analysis(
+            stats, {}, rng=random.Random(5), elapsed_seconds=9999.0
+        )
+        self.assertEqual(charged["delay_seconds"], 0.0)
+        remaining = module.sample_response_delay_for_analysis(
+            stats, {}, rng=random.Random(1), elapsed_seconds=0.0
+        )
+        self.assertEqual(
+            round(remaining["sampled_delay_seconds"], 1),
+            round(remaining["delay_seconds"], 1),
+        )
+
     def test_behavior_memory_excludes_delivery_and_operational_outcomes(self):
         module = self._load_auto_reply_module(
             "auto_reply_behavior_memory_filter_test"

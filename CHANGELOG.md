@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
 
 ### Changed
+- 답장 지연이 학습된 응답시간 혼합(immediate 53% / short 31% / delayed 16%)을 그대로 쓰고, **이미 지난 시간을 차감**합니다. 이전에는 질문·조언은 immediate, 나머지는 short로 강제하고 2초 상한을 걸어 혼합이 전혀 반영되지 않았습니다. 생성이 끝난 시점의 경과 시간을 빼므로 지연을 이중으로 부과하지 않습니다.
 - 메뉴바 **단체 채팅방** 창이 카카오톡의 모든 단체방을 이름과 함께 보여줍니다. GUI 실행(launchd/Finder)은 번들 CLI 경로를 PATH에서 찾지 못해 `--bin` 없이 뜨는 경우가 있었고, 그러면 Python 계층이 `local-chats --groups`를 못 돌려 카탈로그에 등록된 방 1개만 `id:<chat_id>` 제목으로 남았습니다. 이제 `--bin`이 없으면 앱 번들 안의 CLI(`Contents/Resources/bin/openkakao-cli`)를 기본값으로 씁니다. 실측: 방 193개, `id:` 제목 0개.
 - 메뉴바에서 **대량 검증 / 기능 점검 / 자기개선 / 권한 설정** 항목을 제거했습니다(Swift 메뉴 구성만; 해당 창 구현 코드는 남아 있습니다).
 - 답변 모델 선택지에 **OpenCode Go DeepSeek V4.1 Flash**(`opencode-go-session/deepseek-v4.1-flash`)를 추가했습니다. gjc 러너 허용 목록과 프로바이더 어테스테이션(`opencode-go-session`)을 함께 확장했고 `--model deepseek-v4.1-flash` 별칭으로도 선택됩니다. OpenCode Go는 `x-opencode-session` 헤더가 필요해 `~/.gjc/agent/models.yml`에 세션 헤더를 가진 로컬 프로바이더 항목으로 선언합니다.

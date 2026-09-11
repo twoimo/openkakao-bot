@@ -7496,32 +7496,47 @@ def sample_response_delay(
     raise RetrievalError("response_time_sampling_exhausted")
 
 
+def _elapsed_since_inbound(event: dict, *, now: float | None = None) -> float:
+    sent_at = _fence_int(event.get("sent_at"))
+    if sent_at is None:
+        return 0.0
+    current = time.time() if now is None else float(now)
+    if not math.isfinite(current) or current <= 0:
+        return 0.0
+    return max(0.0, current - float(sent_at))
+
+
 def sample_response_delay_for_analysis(
     stats: dict | None,
     analysis: dict,
     *,
     rng: object | None = None,
+    elapsed_seconds: float | None = None,
 ) -> dict:
-    """Sample human pacing while keeping ordinary replies from waiting too long.
+    """Sample the learned pacing mixture and charge only the remaining wait.
 
-    Direct questions and advice stay on the learned immediate component.
-    Other ordinary replies use the short component and are hard-capped so a
-    delayed social sample cannot sit for minutes and then die as stale_backlog.
+    The operator asked for 최연우's ordinary register, and the response-time
+    model already carries this room's three-component mixture. Forcing the
+    immediate component for questions, the short one otherwise, and then
+    clamping to ``SCHEDULED_REPLY_DELAY_CAP_SECONDS`` meant the mixture never
+    applied: every reply left as soon as generation finished. Generation has
+    already consumed part of the delay by the time this runs, so subtract that
+    elapsed time instead of adding a fresh full delay on top of it.
     """
-    category = str(analysis.get("category") or "").strip()
-    reason = str(analysis.get("reason") or "").strip()
-    if category in {"question", "advice"} or reason == "direct_question":
-        component_name = "immediate"
-    else:
-        component_name = "short"
-    sampled = sample_response_delay(
-        stats,
-        rng=rng,
-        component_name=component_name,
-    )
-    delay = min(float(sampled["delay_seconds"]), SCHEDULED_REPLY_DELAY_CAP_SECONDS)
-    sampled["delay_seconds"] = round(delay, 1)
-    sampled["scheduled_delay_cap_seconds"] = SCHEDULED_REPLY_DELAY_CAP_SECONDS
+    del analysis  # kept in the signature for callers that pass it
+    sampled = sample_response_delay(stats, rng=rng)
+    sampled_seconds = float(sampled["delay_seconds"])
+    elapsed = 0.0
+    if elapsed_seconds is not None:
+        try:
+            elapsed = max(0.0, float(elapsed_seconds))
+        except (TypeError, ValueError, OverflowError):
+            elapsed = 0.0
+        if not math.isfinite(elapsed):
+            elapsed = 0.0
+    sampled["sampled_delay_seconds"] = round(sampled_seconds, 1)
+    sampled["elapsed_seconds"] = round(elapsed, 1)
+    sampled["delay_seconds"] = round(max(0.0, sampled_seconds - elapsed), 1)
     return sampled
 
 
@@ -12911,6 +12926,7 @@ def process_job(
             timing_sample = sample_response_delay_for_analysis(
                 analysis.get("response_time"),
                 analysis,
+                elapsed_seconds=_elapsed_since_inbound(event),
             )
         delay_seconds = float(timing_sample["delay_seconds"])
         response_upper = float(timing_sample["response_window_upper_seconds"])
