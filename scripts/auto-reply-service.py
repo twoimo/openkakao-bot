@@ -475,6 +475,86 @@ def _verify_receipt(
         raise SystemExit("launchd preflight receipt is stale")
 
 
+def _catalog_selectors(state_root: Path) -> list[str]:
+    """auto_reply catalog rooms as explicit `id:<chat_id>` selectors."""
+    path = state_root / "menubar-room-catalog.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    rooms = payload.get("rooms") if isinstance(payload, dict) else None
+    out: list[str] = []
+    for room in rooms or []:
+        if not isinstance(room, dict) or room.get("auto_reply") is not True:
+            continue
+        chat_id = room.get("chat_id")
+        if isinstance(chat_id, int) and not isinstance(chat_id, bool) and chat_id > 0:
+            selector = f"id:{chat_id}"
+            if selector not in out:
+                out.append(selector)
+    return out
+
+
+def _preflight_cli(
+    binary: Path,
+    config: Path,
+    chat_selectors: list[str],
+) -> tuple[bool, dict[str, Any], str]:
+    """Run one auto-reply --check call; return (ok, payload, diagnostics)."""
+    result = subprocess.run(
+        [
+            str(binary),
+            "auto-reply",
+            *_chat_argv(chat_selectors),
+            "--check",
+            "--json",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_runtime_env(config),
+        timeout=90,
+        check=False,
+    )
+    if len(result.stderr) > MAX_OUTPUT_BYTES:
+        raise SystemExit("auto-reply preflight diagnostics exceeded the bound")
+    combined = "\n".join(
+        (
+            result.stdout[-MAX_OUTPUT_BYTES:].decode("utf-8", "replace"),
+            result.stderr[-MAX_OUTPUT_BYTES:].decode("utf-8", "replace"),
+        )
+    )
+    if result.returncode != 0:
+        return False, {}, combined.strip()
+    try:
+        return True, _check_payload(result.stdout), ""
+    except SystemExit as exc:  # malformed payload
+        return False, {}, str(exc)
+
+
+def _filter_catalog_selectors(
+    binary: Path,
+    config: Path,
+    candidates: list[str],
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Keep catalog rooms that pass their own preflight, report the rest.
+
+    One catalog room outside safety.allowed_send_chats used to fail the whole
+    host preflight and stop every room (2026-09-12 outage). A room that cannot
+    attest itself is dropped instead, and the reason is recorded so the menu can
+    show it.
+    """
+    accepted: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for selector in candidates:
+        ok, _payload, diagnostics = _preflight_cli(binary, config, [selector])
+        if ok:
+            accepted.append(selector)
+        else:
+            skipped.append({"selector": selector, "reason": diagnostics[-300:]})
+    return accepted, skipped
+
+
 def _perform_preflight(
     python: Path,
     entry: Path,
@@ -486,6 +566,17 @@ def _perform_preflight(
     invalidate: bool,
 ) -> dict[str, Any]:
     chat_selectors = _normalize_chat_selectors(chat)
+    skipped_rooms: list[dict[str, str]] = []
+    if not chat_selectors:
+        candidates = _catalog_selectors(state_root)
+        if candidates:
+            chat_selectors, skipped_rooms = _filter_catalog_selectors(
+                binary, config, candidates
+            )
+            if not chat_selectors:
+                raise SystemExit(
+                    "auto-reply preflight failed for every catalog room"
+                )
     if invalidate:
         _invalidate_receipt(state_root)
     identity_before = _identity(
@@ -541,6 +632,7 @@ def _perform_preflight(
         **identity_after,
         "completed_at_unix_ns": time.time_ns(),
         "preflight": payload,
+        "skipped_rooms": skipped_rooms,
     }
     _write_receipt(_receipt_path(state_root), receipt)
     return receipt
