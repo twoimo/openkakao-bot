@@ -10682,21 +10682,34 @@ def _model_endpoint_reachable(host: str = "127.0.0.1", port: int = 1337,
         return False
 
 
-def _log_pre_send_block(stage: str, returncode: object, candidate: object) -> None:
+def _log_pre_send_block(
+    stage: str,
+    returncode: object,
+    candidate: object,
+    stderr: object = None,
+) -> None:
     """Bounded trace of why the AX send never started.
 
-    Without this, a blocked pre-AX stage (KakaoTalk closed, missing AX
-    permission, a foreign draft in the composer) escalated to
-    ``delivery_unknown`` and then to a stale_backlog skip with nothing on disk
-    naming the cause. Only the CLI status/reason is printed, never chat text.
+    Without this, a blocked pre-AX stage (KakaoTalk closed, no accessibility
+    permission, no already-open chat window, weak transcript attestation, a
+    foreign draft in the composer) escalated to ``delivery_unknown`` and then
+    to a stale_backlog skip with nothing on disk naming the cause. Only the CLI
+    status/reason and a bounded stderr excerpt are printed; the CLI's AX
+    diagnostics carry chat titles and row counts, never message text.
     """
     status = ""
     reason = ""
     if isinstance(candidate, dict):
         status = str(candidate.get("status") or "")[:40]
         reason = str(candidate.get("reason") or "")[:60]
+    detail = ""
+    if isinstance(stderr, (bytes, bytearray)):
+        detail = bytes(stderr).decode("utf-8", "replace")
+    elif isinstance(stderr, str):
+        detail = stderr
+    detail = " ".join(detail.split())[:200]
     print(
-        f"[reply-send] {stage} rc={returncode} status={status} reason={reason}",
+        f"[reply-send] {stage} rc={returncode} status={status} reason={reason} detail={detail}",
         file=sys.stderr,
         flush=True,
     )
@@ -10843,9 +10856,11 @@ def send_reply(
     preflight = None
     preflight_returncode: object = None
     preflight_candidate: object = None
+    preflight_stderr: object = None
     for attempt in range(PRE_SEND_PREFLIGHT_ATTEMPTS):
+        stderr_bytes: object = b""
         try:
-            returncode, stdout_bytes, _ = _run_bounded_process(
+            returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
                 preflight_command,
                 cwd=ROOT,
                 env=worker_environment,
@@ -10898,14 +10913,22 @@ def send_reply(
                 break
             if event is not None:
                 event["_composer_occupied"] = True
-            _log_pre_send_block("composer_occupied", returncode, candidate)
+            _log_pre_send_block(
+                "composer_occupied", returncode, candidate, stderr_bytes
+            )
             return False
         preflight_returncode = returncode
         preflight_candidate = candidate
+        preflight_stderr = stderr_bytes
         if attempt + 1 < PRE_SEND_PREFLIGHT_ATTEMPTS:
             time.sleep(PRE_SEND_PREFLIGHT_RETRY_SECONDS)
     if preflight is None:
-        _log_pre_send_block("preflight_unavailable", preflight_returncode, preflight_candidate)
+        _log_pre_send_block(
+            "preflight_unavailable",
+            preflight_returncode,
+            preflight_candidate,
+            preflight_stderr,
+        )
         return False
     ready, _ = send_readiness_fence(
         expected_target_chat_id=expected_target_chat_id,
