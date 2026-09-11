@@ -1715,37 +1715,7 @@ fn refresh_live_context_summaries(
         params![chat, source, STYLE_USER],
     )?;
     if let Some(stats) = summarize_response_delays(chat, source, STYLE_USER, response_delays) {
-        conn.execute(
-            "INSERT INTO response_time_stats(
-                chat, source, user_name, sample_count, average_seconds, median_seconds,
-                p90_seconds, min_seconds, max_seconds, max_window_seconds, stddev_seconds,
-                distribution_schema_version, distribution_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                stats.chat,
-                stats.source,
-                stats.user,
-                stats.sample_count as i64,
-                stats.average_seconds,
-                stats.median_seconds,
-                stats.p90_seconds,
-                stats.min_seconds,
-                stats.max_seconds,
-                stats.max_window_seconds,
-                stats.stddev_seconds,
-                stats
-                    .distribution
-                    .as_ref()
-                    .map(|distribution| distribution.schema_version as i64)
-                    .unwrap_or(0),
-                stats
-                    .distribution
-                    .as_ref()
-                    .map(serde_json::to_string)
-                    .transpose()?
-                    .unwrap_or_else(|| "{}".to_string()),
-            ],
-        )?;
+        insert_response_time_stats(conn, &stats)?;
     }
 
     let recipient_rows = {
@@ -1954,6 +1924,106 @@ fn mark_bot_sent_features(features_json: &str, event_id: &str, offset_seconds: i
     features.to_string()
 }
 
+fn insert_response_time_stats(conn: &Connection, stats: &ResponseTimeStats) -> Result<()> {
+    conn.execute(
+        "INSERT INTO response_time_stats(
+            chat, source, user_name, sample_count, average_seconds, median_seconds,
+            p90_seconds, min_seconds, max_seconds, max_window_seconds, stddev_seconds,
+            distribution_schema_version, distribution_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            stats.chat,
+            stats.source,
+            stats.user,
+            stats.sample_count as i64,
+            stats.average_seconds,
+            stats.median_seconds,
+            stats.p90_seconds,
+            stats.min_seconds,
+            stats.max_seconds,
+            stats.max_window_seconds,
+            stats.stddev_seconds,
+            stats
+                .distribution
+                .as_ref()
+                .map(|distribution| distribution.schema_version as i64)
+                .unwrap_or(0),
+            stats
+                .distribution
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?
+                .unwrap_or_else(|| "{}".to_string()),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Recompute the pacing aggregate of an imported (CSV / legacy) source.
+///
+/// An imported source stores `response_time_stats` directly and keeps no
+/// per-reply `response_time_samples` rows, so a bot reply that was measured
+/// before the guard existed cannot be removed by deleting samples. The only way
+/// to retire its contribution is to rebuild the aggregate from the source's own
+/// messages with the same ordering rules the importer uses, skipping every row
+/// that a confirmed send identifies as the assistant.
+fn recompute_imported_response_time_stats(
+    conn: &Connection,
+    source: &str,
+    chat: &str,
+    confirmed_sends: &[ConfirmedSelfSend],
+) -> Result<usize> {
+    let rows = {
+        let mut stmt = conn.prepare(
+            "SELECT date, user_name, message FROM context_messages
+             WHERE source = ?1 AND chat = ?2 ORDER BY date ASC, id ASC",
+        )?;
+        let mapped = stmt.query_map(params![source, chat], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut delays = Vec::new();
+    let mut previous_human_at: Option<NaiveDateTime> = None;
+    for (date, user, message) in rows {
+        let Some(current_at) = parse_chat_date(&date) else {
+            continue;
+        };
+        if user == STYLE_USER {
+            let sent_at = current_at.and_utc().timestamp();
+            let (matched, ambiguous) =
+                match_confirmed_send(confirmed_sends, message.trim(), sent_at);
+            if matched.is_some() && !ambiguous {
+                // A confirmed assistant reply is not a human response, and the
+                // pending prompt it consumed is gone with it.
+                previous_human_at = None;
+                continue;
+            }
+            if let Some(previous_at) = previous_human_at.take() {
+                let delay = (current_at - previous_at).num_seconds();
+                if (0..=MAX_RESPONSE_DELAY_SECONDS).contains(&delay) {
+                    delays.push(delay as f64);
+                }
+            }
+        } else if is_response_participant(&user) {
+            previous_human_at = Some(current_at);
+        }
+    }
+    conn.execute(
+        "DELETE FROM response_time_stats WHERE chat = ?1 AND source = ?2 AND user_name = ?3",
+        params![chat, source, STYLE_USER],
+    )?;
+    let sample_count = delays.len();
+    if let Some(stats) = summarize_response_delays(chat, source, STYLE_USER, delays) {
+        insert_response_time_stats(conn, &stats)?;
+    }
+    Ok(sample_count)
+}
+
 fn owner_style_timestamp(value: &str) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S")
         .ok()
@@ -2085,7 +2155,18 @@ pub fn repair_bot_sent_style_samples(
         // A source is stale whenever anything actually changed, including a row
         // that was already style-ineligible: its response-time samples were just
         // deleted, so the aggregates derived from them must be regenerated too.
-        if eligible != 0 || deleted_samples > 0 || deleted_recipients > 0 {
+        // An imported source is always re-derived: it keeps no sample rows, so a
+        // bot reply that was measured before the guard existed lives only inside
+        // its aggregate and nothing else can remove it.
+        let is_live_source = tx
+            .query_row(
+                "SELECT 1 FROM context_sources WHERE source = ?1 AND chat_id = ?2",
+                params![source, chat_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if !is_live_source || eligible != 0 || deleted_samples > 0 || deleted_recipients > 0 {
             affected_sources.insert(source.clone(), true);
         }
     }
@@ -2107,7 +2188,11 @@ pub fn repair_bot_sent_style_samples(
                     )
                     .optional()?)
                 .unwrap_or(0);
-            refresh_live_context_summaries(&tx, source, source_chat_id, chat)?;
+            if source_chat_id > 0 {
+                refresh_live_context_summaries(&tx, source, source_chat_id, chat)?;
+            } else {
+                recompute_imported_response_time_stats(&tx, source, chat, confirmed_sends)?;
+            }
             report.rebuilt_sources.push(source.clone());
         }
     }
@@ -8807,6 +8892,89 @@ mod tests {
             conn.query_row(
                 "SELECT COUNT(*) FROM response_time_samples WHERE chat_id=?1",
                 params![chat_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn repair_recomputes_an_imported_source_pacing_aggregate() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("repair-imported.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let source = "/tmp/legacy-chat.csv";
+        let chat = "부자멘토멘티";
+        let link = "https://example.test/hot";
+        let link_sent_at =
+            chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
+                .unwrap()
+                .and_utc()
+                .timestamp();
+        {
+            let conn = open_db(&db).unwrap();
+            conn.execute(
+                "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
+                 VALUES (?1, ?2, '2026-01-01 09:59:30', '문승현', '그건 좀 세네', ?3)",
+                params![
+                    source,
+                    chat,
+                    vector_to_bytes(&encode_vector("그건 좀 세네"))
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
+                 VALUES (?1, ?2, '2026-01-01 10:00:04', '최연우', ?3, ?4)",
+                params![
+                    source,
+                    chat,
+                    link,
+                    vector_to_bytes(&encode_vector(link))
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO owner_style(source, chat, date, user_name, message, vector,
+                    source_row, content_kind, style_eligible, policy_version, features_json)
+                 VALUES (?1, ?2, '2026-01-01 10:00:04', '최연우', ?3, ?4, 1, 'url', 0, ?5, '{}')",
+                params![
+                    source,
+                    chat,
+                    link,
+                    vector_to_bytes(&encode_vector(link)),
+                    STYLE_POLICY_VERSION
+                ],
+            )
+            .unwrap();
+            // The legacy importer wrote the pacing aggregate itself and kept no
+            // per-reply samples: a 34s "human" reply that was really the bot.
+            conn.execute(
+                "INSERT INTO response_time_stats(
+                    chat, source, user_name, sample_count, average_seconds, median_seconds,
+                    p90_seconds, min_seconds, max_seconds, max_window_seconds, stddev_seconds,
+                    distribution_schema_version, distribution_json
+                 ) VALUES (?1, ?2, ?3, 1, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 0.0, 0, '{}')",
+                params![chat, source, STYLE_USER],
+            )
+            .unwrap();
+        }
+        let sends = vec![ConfirmedSelfSend {
+            event_id: "legacy".into(),
+            text: link.into(),
+            sent_at: link_sent_at,
+        }];
+        let report = repair_bot_sent_style_samples(&db, chat, 7, &sends, false).unwrap();
+        assert_eq!(report.matched_rows, 1);
+        assert_eq!(report.already_ineligible, 1);
+        assert_eq!(report.deleted_response_samples, 0);
+        assert_eq!(report.rebuilt_sources, vec![source.to_string()]);
+        let conn = open_db_readonly(&db).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM response_time_stats WHERE source = ?1",
+                params![source],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),

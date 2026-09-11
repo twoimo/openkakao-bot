@@ -6666,9 +6666,15 @@ def _parse_style_profile(raw: object, reason: str) -> dict:
 
 def _ending_stem(text: str) -> str:
     compact = "".join(str(text or "").split())
-    compact = re.sub(r"[ㅋㅎㄷㅠㅜzZ]+$", "", compact)
-    compact = re.sub(r"[.!?？～~;…,，。！]+$", "", compact)
-    return compact
+    # Reaction tokens and trailing punctuation alternate in real messages
+    # (…네 ㅋㅋㅋ!). A single pass left that classified as `unmarked`, which let
+    # a 반말 ending past the honourific check, so strip until the stem settles.
+    while True:
+        stripped = re.sub(r"[ㅋㅎㄷㅠㅜzZ]+$", "", compact)
+        stripped = re.sub(r"[.!?？～~;…,，。！]+$", "", stripped)
+        if stripped == compact:
+            return compact
+        compact = stripped
 
 
 _HONORIFIC_ENDINGS = (
@@ -6999,14 +7005,32 @@ def _retrieval_receipt(analysis: dict) -> dict:
         "error": str(provenance.get("retrieval_error") or "")[:80] or None,
         "evidence_ids": len(evidence_ids) if isinstance(evidence_ids, list) else 0,
         "retrieved_evidence_ids": int(
-            analysis.get("retrieved_evidence_ids") or 0
+            _receipt_value(analysis, "retrieved_evidence_ids") or 0
         ),
-        "prompt_evidence_ids": int(analysis.get("prompt_evidence_ids") or 0),
+        "prompt_evidence_ids": int(_receipt_value(analysis, "prompt_evidence_ids") or 0),
         "context_matches": int(analysis.get("context_match_count") or 0),
         "style_matches": int(analysis.get("style_match_count") or 0),
         "links_requested": int(provenance.get("links_requested") or 0),
         "links_retrieved": int(provenance.get("links_retrieved") or 0),
     }
+
+
+def _receipt_value(analysis: dict, key: str) -> object:
+    """Read one generation receipt field from the analysis or its provenance.
+
+    A deferred or unparsed attempt returns from the model layer before the
+    top-level analysis keys are filled in, while the generation receipt already
+    exists under provenance["generation"]. Reading only the top level made such
+    a receipt look like an attempt with no prompt and no evidence.
+    """
+    value = analysis.get(key)
+    if value is not None:
+        return value
+    provenance = analysis.get("provenance")
+    generation = provenance.get("generation") if isinstance(provenance, dict) else None
+    if isinstance(generation, dict):
+        return generation.get(key)
+    return None
 
 
 def persist_reply_evidence_ledger(
@@ -7036,8 +7060,11 @@ def persist_reply_evidence_ledger(
             "reason": analysis.get("reason"),
             "category": analysis.get("category"),
             "reply": str(analysis.get("reply") or "").strip()[:500],
-            "prompt_bytes": analysis.get("prompt_bytes"),
-            "prompt_sha256": analysis.get("prompt_sha256"),
+            "prompt_bytes": _receipt_value(analysis, "prompt_bytes"),
+            "prompt_sha256": _receipt_value(analysis, "prompt_sha256"),
+            "generation_seconds": _receipt_value(analysis, "generation_seconds"),
+            "retrieved_evidence_ids": _receipt_value(analysis, "retrieved_evidence_ids"),
+            "prompt_evidence_ids": _receipt_value(analysis, "prompt_evidence_ids"),
             "model_endpoint_reachable": analysis.get("model_endpoint_reachable"),
             "retrieval": _retrieval_receipt(analysis),
             "evidence_ids": _decision_evidence_ids(event, analysis),
@@ -8925,14 +8952,19 @@ def _outbound_reaction_allows(
 ) -> bool:
     if not _reply_laughter_policy_allows(reply):
         return False
-    if re.search(r"ㅋ{3,}", reply) and not (
-        _inbound_invites_laughter(inbound) or laughter_allowed is True
-    ):
-        return False
-    if re.search(r"ㄷ{2,}", reply) and not (
-        _inbound_invites_awe(inbound) or awe_allowed is True
-    ):
-        return False
+    # The value computed and stored at scheduling time is authoritative: a
+    # recorded false must not be bypassed by an inbound token, and a recorded
+    # true must not be re-litigated here.
+    if re.search(r"ㅋ{3,}", reply):
+        if laughter_allowed is False:
+            return False
+        if laughter_allowed is not True and not _inbound_invites_laughter(inbound):
+            return False
+    if re.search(r"ㄷ{2,}", reply):
+        if awe_allowed is False:
+            return False
+        if awe_allowed is not True and not _inbound_invites_awe(inbound):
+            return False
     compact = re.sub(r"\s+", "", reply)
     if compact.startswith("응") and not compact.startswith("응답"):
         return False
@@ -9469,11 +9501,16 @@ def _pre_mutation_send_hold(
     """
     if event.get("proactive") is True:
         return None
-    # Only a scheduled draft carries its own persisted response window. Without
-    # one this layer has no deadline to trust; the earlier stale-backlog gate in
-    # process_job owns that case.
+    # Use the same effective deadline the earlier stale-backlog gate uses: the
+    # draft's own window when it has one, otherwise the default window. The two
+    # gates must not disagree, or a draft can expire between them.
     persisted_upper = event.get("response_window_upper_seconds")
-    if persisted_upper is not None and _past_send_grace(event, persisted_upper):
+    effective_upper = (
+        persisted_upper
+        if persisted_upper is not None
+        else PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS
+    )
+    if _past_send_grace(event, effective_upper):
         return "stale_backlog"
     if conversation_advanced_past_event(event) is True:
         return "conversation_advanced"
@@ -13580,6 +13617,13 @@ def process_job(
                     Path(provided_marker) if provided_marker else None,
                 )
         if analysis["decision"] != "reply":
+            # A terminal skip still consumed retrieval and (usually) a prompt,
+            # so it gets the same receipt as a scheduled or deferred attempt.
+            persist_reply_evidence_ledger(
+                analysis_event,
+                analysis,
+                status="skipped",
+            )
             record = decision_record(analysis_event, analysis, "skipped", 0.0)
             if not record_or_confirm_context_skip(record):
                 finish_delivery_unknown(

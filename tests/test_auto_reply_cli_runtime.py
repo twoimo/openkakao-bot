@@ -1055,6 +1055,43 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(
             module._policy_valid_draft("남는 휴가 부럽다", "머하고 놀지", [])
         )
+    def test_recorded_reaction_false_is_authoritative(self):
+        module = self._load_auto_reply_module("auto_reply_reaction_false_test")
+        inbound = "몇 시에 만나ㅋㅋㅋ?"
+        self.assertTrue(module._outbound_reaction_allows("세 시야 ㅋㅋㅋ", inbound))
+        # A value computed and stored at scheduling time must not be bypassed by
+        # an inbound reaction token.
+        self.assertFalse(
+            module._outbound_reaction_allows(
+                "세 시야 ㅋㅋㅋ", inbound, laughter_allowed=False
+            )
+        )
+        self.assertTrue(
+            module._outbound_reaction_allows(
+                "세 시야 ㅋㅋㅋ", inbound, laughter_allowed=True
+            )
+        )
+        self.assertFalse(
+            module._outbound_reaction_allows("세 시야 ㅋㅋㅋ", "몇 시에 만나?")
+        )
+        awe_inbound = "ㄷㄷ 이거 얼마야"
+        self.assertTrue(module._outbound_reaction_allows("삼만 원이야 ㄷㄷ", awe_inbound))
+        self.assertFalse(
+            module._outbound_reaction_allows(
+                "삼만 원이야 ㄷㄷ", awe_inbound, awe_allowed=False
+            )
+        )
+
+    def test_honorific_check_normalizes_reaction_tokens_before_punctuation(self):
+        module = self._load_auto_reply_module("auto_reply_ending_stem_test")
+        self.assertEqual(module._reply_register("그럼 딱 맞겠네 ㅋㅋㅋ!"), "informal")
+        self.assertFalse(
+            module._outbound_register_allows("그럼 딱 맞겠네 ㅋㅋㅋ!", recipient="현준")
+        )
+        self.assertTrue(
+            module._outbound_register_allows("그럼 딱 맞겠네요 ㅋㅋㅋ", recipient="현준")
+        )
+
     def test_pre_mutation_gate_holds_an_expired_scheduled_draft(self):
         module = self._load_auto_reply_module("auto_reply_pre_mutation_gate_test")
         now = time.time()
@@ -1080,11 +1117,13 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertIsNone(
             module._pre_mutation_send_hold("오 좋네요", event=fresh, connection=None)
         )
-        # Without a persisted window this layer has no deadline to trust.
-        self.assertIsNone(
+        # Without a persisted window the default window must be used, exactly
+        # like the earlier stale-backlog gate: the two gates may not disagree.
+        self.assertEqual(
             module._pre_mutation_send_hold(
                 "오 좋네요", event={"sent_at": 1, "message": "x"}, connection=None
-            )
+            ),
+            "stale_backlog",
         )
         # A proactive announcement is not on the reply clock.
         self.assertIsNone(
@@ -10390,7 +10429,7 @@ print(json.dumps({
 
         enrollment_path = "/tmp/openkakao-enrollment.json"
         enrollment_digest = "a" * 64
-        event = self._burst_event(module, 511, "question", 5_100)
+        event = self._burst_event(module, 511, "question", int(time.time()) - 5)
         with (
             mock.patch.dict(
                 os.environ,
@@ -10475,7 +10514,7 @@ print(json.dumps({
                 }
             return 0, json.dumps(payload).encode(), b""
 
-        event = self._burst_event(module, 515, "question", 5_150)
+        event = self._burst_event(module, 515, "question", int(time.time()) - 5)
         with (
             mock.patch.object(module, "BIN", Path("/usr/bin/true")),
             mock.patch.object(
@@ -10536,7 +10575,7 @@ print(json.dumps({
                 }
             return 0, json.dumps(payload).encode(), b""
 
-        event = self._burst_event(module, 516, "왠지 ㅋ", 5_160)
+        event = self._burst_event(module, 516, "왠지 ㅋ", int(time.time()) - 5)
         previous = os.environ.get("OPENKAKAO_TARGET_CHAT_ID")
         os.environ["OPENKAKAO_TARGET_CHAT_ID"] = "42"
         with tempfile.TemporaryDirectory() as temporary:
@@ -10642,7 +10681,7 @@ print(json.dumps({
                 }
             return 0, json.dumps(payload).encode(), b""
 
-        event = self._burst_event(module, 517, "왠지 ㅋ", 5_170)
+        event = self._burst_event(module, 517, "왠지 ㅋ", int(time.time()) - 5)
         previous = os.environ.get("OPENKAKAO_TARGET_CHAT_ID")
         os.environ["OPENKAKAO_TARGET_CHAT_ID"] = "42"
         with tempfile.TemporaryDirectory() as temporary:
@@ -11002,7 +11041,7 @@ print(json.dumps({
 
     def test_send_reply_requires_local_database_confirmation(self):
         module = self._load_auto_reply_module("auto_reply_send_confirmation_test")
-        event = self._burst_event(module, 513, "question", 5_130)
+        event = self._burst_event(module, 513, "question", int(time.time()) - 5)
         calls = []
 
         def fake_run(command, **_kwargs):
