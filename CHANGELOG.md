@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
+
+### Changed
+- 폴링 크기 가드가 매 폴링마다 페이로드 전체를 버퍼로 만들던 것을 바이트 카운터로 바꿨습니다. 판정 기준(1MiB)과 short-circuit 순서는 그대로입니다.
+- PBKDF2가 반복마다 HMAC 키 스케줄을 다시 만들고 32바이트를 새로 할당하던 것을 키드 상태 재사용으로 바꿨습니다. 키 유도 결과는 참조 파생값 테스트로 동일함을 유지합니다.
+- `poll_after`가 폴링마다 SQL 3종을 재파싱하던 것을 prepared-statement 캐시로 돌렸습니다. CSV 컨텍스트 인덱싱의 INSERT 2종도 같습니다.
+- `list_group_chats`가 이름이 있는 방에서도 표시 멤버마다 `NTUser`를 조회하던 것을, 멤버 이름이 최후 fallback일 때만 조회하도록 바꿨습니다.
+- 토픽 분류·assistant-tell 검사가 needle/tell마다 소문자 문자열을 새로 만들던 할당을 제거했습니다. 어휘가 이미 소문자라는 불변식은 테스트로 고정했습니다.
+- `doctor`의 로컬 DB 신원 확인이 `ioreg` 프로세스와 plist 파싱을 네 번 하던 것을 두 번으로 줄였습니다(결과 동일).
+- `auto-reply` 실패 메시지에 러너 경로와 관찰된 버전/표준출력을 함께 넣었습니다. Codex 모델을 골라도 `reply_runner`는 gjc로 남는 조합에서 원인이 드러나지 않던 문제를 진단 가능하게 만든 것입니다.
+- `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
+
+### Fixed
+- 훅 프로세스의 `stdin` 쓰기가 타임아웃 밖에 있어, 표준입력을 읽지 않는 훅에서 파이프가 차면 watch 루프가 무한 대기할 수 있었습니다. 쓰기와 종료 대기를 같은 deadline에 묶었습니다.
+- `stop_auto_reply_children`이 SIGKILL 직후 반환해, TERM을 무시한 손자 프로세스가 남은 상태로 "정지 완료"를 보고할 수 있었습니다. 자식 reap 후 프로세스 그룹이 빌 때까지 한도 내에서 기다립니다.
+- `reconnect_delay`의 `2u64.pow()`가 지수 65 이상에서 debug panic, release wrap을 냈습니다. 포화 연산으로 바꿨습니다.
+- `find_memo_chat_id`가 조회 실패와 "메모방 없음"을 구분하지 못하던 것을, 반환은 유지하고 실패만 로그로 남기게 했습니다.
+- `observe_health`의 fingerprint-only `.expect`, `atomic_write`의 `file_name().unwrap()`, `auth_flow`의 `password.unwrap()`, `ax_send`의 `unreachable!`, room catalog·model config의 lock poison `.expect`를 안전한 실패 경로로 바꿨습니다.
+- `improve::tests::threshold_code_carries_no_raw_content`의 `|| true`로 항상 참이던 단언을 실제 검증으로 되돌렸습니다.
+
+### Removed
+- `room_catalog`의 미사용 `binding_selector`, `ax_send`의 테스트 전용 헬퍼 1종을 테스트 빌드로 한정했습니다.
+
+### Build
+- `main.rs`가 `lib.rs`와 같은 모듈 8개(`ax_send`, `error`, `local_db`, `loco`, `media`, `message_db`, `model`, `room_catalog`)를 `mod`로 다시 선언해 두 번 컴파일하던 구조를 없앴습니다. 12,322줄이 한 번만 컴파일되고, 중복 실행되던 테스트 171건과 컴파일러 dead-code 경고가 사라졌습니다.
+
 ## [1.8.0] - 2026-09-01
 
 First GitHub release of the private `openkakao-bot` agent snapshot. Tag `v1.8.0` matches `Cargo.toml`. Release assets are produced by `.github/workflows/release.yml` (tag SHA + checksum evidence, same shape as Gajae Code / tzudong: no draft, verify assets after publish). Homebrew tap publish from the public CLI workflow is not used here.

@@ -95,14 +95,16 @@ proptest! {
         prop_assert_eq!(&pinned_at_start.reply, &initial.reply);
         prop_assert_eq!(&pinned_at_start.image, &initial.image);
 
-        let mut expected_version = 1u64;
-        for swap in &swaps {
+        for (offset, swap) in swaps.iter().enumerate() {
             // A processing that starts just before this swap.
             let before = store.current();
             let before_version = before.version;
 
             store.apply(swap.clone()).expect("valid swap applies");
-            expected_version += 1;
+
+            // The store starts at version 1 and publishes one new version per
+            // applied swap, so the loop offset determines the expected version.
+            let expected_version = offset as u64 + 2;
 
             // A processing that starts just after this swap sees the new version
             // and the new selection (R5.5).

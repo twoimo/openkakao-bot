@@ -1859,7 +1859,7 @@ mod tests {
         assert_eq!(stripped, encoded.as_slice());
 
         let mut at_cap = encoded.clone();
-        at_cap.extend(std::iter::repeat(0u8).take(MAX_JPEG_TRAILING_BYTES));
+        at_cap.extend(std::iter::repeat_n(0u8, MAX_JPEG_TRAILING_BYTES));
         let at_cap_stripped = attested_image_bytes_for_decode(
             &at_cap,
             Some(at_cap.len() as u64),
@@ -1869,7 +1869,7 @@ mod tests {
         assert_eq!(at_cap_stripped, encoded.as_slice());
 
         let mut over_cap = encoded.clone();
-        over_cap.extend(std::iter::repeat(0u8).take(MAX_JPEG_TRAILING_BYTES + 1));
+        over_cap.extend(std::iter::repeat_n(0u8, MAX_JPEG_TRAILING_BYTES + 1));
         assert!(attested_image_bytes_for_decode(
             &over_cap,
             Some(over_cap.len() as u64),

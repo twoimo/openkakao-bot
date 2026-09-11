@@ -22,7 +22,7 @@ pub mod memory;
     dead_code,
     reason = "the library ax_send module reuses the binary media validator for strict transcript binding"
 )]
-pub(crate) mod media;
+pub mod media;
 pub mod message_db;
 pub mod model;
 pub mod model_config;

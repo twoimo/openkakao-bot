@@ -680,18 +680,22 @@ pub fn observe_health<N: Notifier>(
     let mut notification_outcome = NotificationOutcome::None;
     let mut attempt_key = None;
 
+    let reason = classification.reason;
     if let Some(fp) = classification.fingerprint.as_deref() {
-        if alerts.last_attempt_key.as_deref() != Some(fp) {
-            let reason = classification
-                .reason
-                .expect("fingerprinted classifications require a reason");
-            notification_outcome = notifier.notify(classification.class.as_str(), reason.as_str());
-            attempt_key = Some(fp.to_owned());
-            alerts.open_fingerprint = Some(fp.to_owned());
-            alerts.last_attempt_key = Some(fp.to_owned());
-            alerts.last_outcome = Some(notification_outcome);
-            alerts.updated_at = Some(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-            write_alerts(alerts_path, &alerts)?;
+        // `reason` is required by construction when a fingerprint is present;
+        // it is checked instead of asserted so a malformed classification
+        // degrades to "no notification" rather than aborting the worker.
+        if let Some(reason) = reason {
+            if alerts.last_attempt_key.as_deref() != Some(fp) {
+                notification_outcome =
+                    notifier.notify(classification.class.as_str(), reason.as_str());
+                attempt_key = Some(fp.to_owned());
+                alerts.open_fingerprint = Some(fp.to_owned());
+                alerts.last_attempt_key = Some(fp.to_owned());
+                alerts.last_outcome = Some(notification_outcome);
+                alerts.updated_at = Some(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+                write_alerts(alerts_path, &alerts)?;
+            }
         }
     } else if classification.class == HealthClass::Healthy {
         if let Some(open_fingerprint) = alerts.open_fingerprint.clone() {
@@ -1036,10 +1040,11 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let temp_path = parent.join(format!(
-        ".{}.tmp",
-        path.file_name().unwrap().to_string_lossy()
-    ));
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .ok_or_else(|| anyhow!("{} has no file name", path.display()))?;
+    let temp_path = parent.join(format!(".{file_name}.tmp"));
     {
         let mut file = OpenOptions::new()
             .create(true)

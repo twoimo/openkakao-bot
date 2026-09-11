@@ -191,7 +191,7 @@ impl FakeSendPort {
     fn should_fail(&self) -> bool {
         match self.fail_every {
             // Count the current (not-yet-recorded) attempt.
-            Some(n) => (self.calls.borrow().len() + 1) % n == 0,
+            Some(n) => (self.calls.borrow().len() + 1).is_multiple_of(n),
             None => false,
         }
     }

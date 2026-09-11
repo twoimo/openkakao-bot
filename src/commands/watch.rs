@@ -243,13 +243,20 @@ pub async fn run_watch_command_hook_async(
         .stderr(std::process::Stdio::inherit())
         .spawn()?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        let _ = stdin.write_all(&payload).await;
-    }
-
     let timeout = Duration::from_secs(config.hook_timeout_secs.max(1));
-    match tokio::time::timeout(timeout, child.wait()).await {
+    // Write stdin and wait for exit under one deadline. Previously the write sat
+    // outside the timeout, so a hook that never reads stdin could block the
+    // watch loop forever once the pipe buffer filled. Write errors stay ignored
+    // and the exit-status judgement below is unchanged.
+    let outcome = tokio::time::timeout(timeout, async {
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&payload).await;
+        }
+        child.wait().await
+    })
+    .await;
+    match outcome {
         Ok(Ok(status)) if status.success() => Ok(()),
         Ok(Ok(status)) => Err(anyhow::anyhow!(
             "hook command exited with status {}",
@@ -371,9 +378,111 @@ pub fn run_watch_webhook(config: &WatchHookConfig, event: &WatchMessageEvent) ->
     }
 }
 
+/// True when `--chat-id` was given and this packet belongs to another room.
+fn chat_id_is_filtered(options: &WatchOptions, chat_id: i64) -> bool {
+    options
+        .filter_chat_id
+        .is_some_and(|filter| chat_id != filter)
+}
+
+/// Display label for a room: its known name, else the numeric id (as before).
+fn resolved_chat_label(chat_names: &HashMap<i64, String>, chat_id: i64) -> String {
+    chat_names
+        .get(&chat_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{}", chat_id))
+}
+
+/// Persist one inbound message to the local cache. A cache fault must never
+/// stop the watch loop, so the error is logged and dropped (unchanged).
+fn cache_watch_message(
+    db: &crate::message_db::MessageDb,
+    cached: &crate::message_db::CachedMessage,
+) {
+    if let Err(e) = db.upsert_messages(std::slice::from_ref(cached)) {
+        eprintln!("[watch] Cache write failed: {}", e);
+    }
+}
+
+/// Emit one watch event: machine-readable JSON under `--json`, otherwise a
+/// human line. Both payload builders stay lazy, so the JSON value (and its
+/// timestamps) is only constructed on the JSON path, and `human` receives the
+/// color decision because each event type keeps its own colored and plain
+/// spellings.
+fn emit_watch_event(
+    options: &WatchOptions,
+    json: impl FnOnce() -> serde_json::Value,
+    human: impl FnOnce(bool) -> String,
+) {
+    if options.json {
+        println!("{}", serde_json::to_string(&json()).unwrap_or_default());
+    } else {
+        println!("{}", human(color_enabled()));
+    }
+}
+
+/// Advance the per-room cursor used by `--resume`.
+fn record_watch_log_id(ctx: &mut WatchContext<'_>, chat_id: i64, log_id: i64) {
+    if log_id > 0 {
+        ctx.last_log_ids.insert(chat_id, log_id);
+    }
+}
+
+/// Run the configured local hook and webhook for one event.
+///
+/// `handle_msg_packet` and `handle_syncdlmsg_packet` used to carry two
+/// byte-identical copies of this block. The order (match filter, then local
+/// hook, then webhook), the log wording, the awaited order and the `fail_fast`
+/// propagation are unchanged: only `fail_fast` turns a sink failure into an
+/// `Err`, and every other failure is logged and swallowed.
+async fn dispatch_watch_sinks(config: &WatchHookConfig, event: &WatchMessageEvent) -> Result<()> {
+    if !watch_hook_matches(config, event) {
+        return Ok(());
+    }
+    if config.command.is_some() {
+        match run_watch_command_hook_async(config, event).await {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("[watch] Hook failed: {}", e);
+                if config.fail_fast {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    if config.webhook_url.is_some() {
+        match tokio::task::spawn_blocking({
+            let config = config.clone();
+            // `event` is a shared reference here (it is an owned value at the
+            // original two call sites), so clone the pointee explicitly for the
+            // blocking task.
+            let event = (*event).clone();
+            move || run_watch_webhook(&config, &event)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("[watch] Webhook failed: {}", e);
+                if config.fail_fast {
+                    return Err(e);
+                }
+            }
+            Err(e) => {
+                let err = anyhow::anyhow!("webhook task join error: {}", e);
+                eprintln!("[watch] Webhook failed: {}", err);
+                if config.fail_fast {
+                    return Err(err);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn reconnect_delay(attempt: u32, initial_secs: u64, max_secs: u64) -> Duration {
     let base_secs = std::cmp::min(
-        initial_secs.saturating_mul(2u64.pow(attempt.saturating_sub(1))),
+        initial_secs.saturating_mul(2u64.saturating_pow(attempt.saturating_sub(1))),
         max_secs,
     );
     let jitter = if base_secs > 0 {
@@ -381,7 +490,7 @@ fn reconnect_delay(attempt: u32, initial_secs: u64, max_secs: u64) -> Duration {
     } else {
         0
     };
-    Duration::from_secs(base_secs + jitter)
+    Duration::from_secs(base_secs.saturating_add(jitter))
 }
 
 fn watch_state_path() -> Result<PathBuf> {
@@ -431,17 +540,11 @@ async fn handle_msg_packet(
         .or_else(|_| packet.body.get_i32("chatId").map(|v| v as i64))
         .unwrap_or(0);
 
-    if let Some(filter) = ctx.options.filter_chat_id {
-        if chat_id != filter {
-            return Ok(());
-        }
+    if chat_id_is_filtered(ctx.options, chat_id) {
+        return Ok(());
     }
 
-    let chat_label = ctx
-        .chat_names
-        .get(&chat_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}", chat_id));
+    let chat_label = resolved_chat_label(ctx.chat_names, chat_id);
 
     let nick = packet
         .body
@@ -485,29 +588,26 @@ async fn handle_msg_packet(
         unread: 0,
     };
 
-    if ctx.options.json {
-        println!(
-            "{}",
-            serde_json::to_string(&event.as_json()).unwrap_or_default()
-        );
-    } else {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        if color_enabled() {
-            println!(
-                "{} {} {}: {}",
-                format!("[{}]", now).dimmed(),
-                format!("[{}]", chat_label).cyan(),
-                nick.bold(),
-                content
-            );
-        } else {
-            println!("[{}] [{}] {}: {}", now, chat_label, nick, content);
-        }
-    }
+    emit_watch_event(
+        ctx.options,
+        || event.as_json(),
+        |color| {
+            let now = chrono::Local::now().format("%H:%M:%S");
+            if color {
+                format!(
+                    "{} {} {}: {}",
+                    format!("[{}]", now).dimmed(),
+                    format!("[{}]", chat_label).cyan(),
+                    nick.bold(),
+                    content
+                )
+            } else {
+                format!("[{}] [{}] {}: {}", now, chat_label, nick, content)
+            }
+        },
+    );
 
-    if log_id > 0 {
-        ctx.last_log_ids.insert(chat_id, log_id);
-    }
+    record_watch_log_id(ctx, chat_id, log_id);
 
     // Cache message to local SQLite DB
     if let Some(db) = &ctx.message_db {
@@ -527,50 +627,12 @@ async fn handle_msg_packet(
                 attachment: attachment.clone(),
                 send_at,
             };
-            if let Err(e) = db.upsert_messages(std::slice::from_ref(&cached)) {
-                eprintln!("[watch] Cache write failed: {}", e);
-            }
+            cache_watch_message(db, &cached);
         }
     }
 
     if let Some(config) = ctx.hook_config {
-        if watch_hook_matches(config, &event) {
-            if config.command.is_some() {
-                match run_watch_command_hook_async(config, &event).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        eprintln!("[watch] Hook failed: {}", e);
-                        if config.fail_fast {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            if config.webhook_url.is_some() {
-                match tokio::task::spawn_blocking({
-                    let config = config.clone();
-                    let event = event.clone();
-                    move || run_watch_webhook(&config, &event)
-                })
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        eprintln!("[watch] Webhook failed: {}", e);
-                        if config.fail_fast {
-                            return Err(e);
-                        }
-                    }
-                    Err(e) => {
-                        let err = anyhow::anyhow!("webhook task join error: {}", e);
-                        eprintln!("[watch] Webhook failed: {}", err);
-                        if config.fail_fast {
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-        }
+        dispatch_watch_sinks(config, &event).await?;
     }
 
     if ctx.options.read_receipt && log_id > 0 {
@@ -620,16 +682,10 @@ async fn handle_syncmsg_packet(
     ctx: &mut WatchContext<'_>,
 ) -> Result<()> {
     let chat_id = get_bson_i64(&packet.body, &["chatId"]);
-    if let Some(filter) = ctx.options.filter_chat_id {
-        if chat_id != filter {
-            return Ok(());
-        }
+    if chat_id_is_filtered(ctx.options, chat_id) {
+        return Ok(());
     }
-    let chat_label = ctx
-        .chat_names
-        .get(&chat_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}", chat_id));
+    let chat_label = resolved_chat_label(ctx.chat_names, chat_id);
     let log_id = get_bson_i64(&packet.body, &["logId"]);
     let msg_type = packet.body.get_i32("type").unwrap_or(0);
     let content = render_message_content(&packet.body, msg_type);
@@ -639,38 +695,39 @@ async fn handle_syncmsg_packet(
         .map(String::from)
         .unwrap_or_else(|_| "???".to_string());
 
-    if ctx.options.json {
-        let sync_event = serde_json::json!({
-            "event_type": "sync",
-            "received_at": chrono::Utc::now().to_rfc3339(),
-            "method": "SYNCMSG",
-            "chat_id": chat_id,
-            "chat_name": chat_label,
-            "log_id": log_id,
-            "author_nickname": nick,
-            "message_type": msg_type,
-            "message": content,
-        });
-        println!("{}", serde_json::to_string(&sync_event).unwrap_or_default());
-    } else {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        if color_enabled() {
-            println!(
-                "{} {} {} {}: {}",
-                format!("[{}]", now).dimmed(),
-                "[sync]".dimmed(),
-                format!("[{}]", chat_label).cyan(),
-                nick.bold(),
-                content
-            );
-        } else {
-            println!("[{}] [sync] [{}] {}: {}", now, chat_label, nick, content);
-        }
-    }
+    emit_watch_event(
+        ctx.options,
+        || {
+            serde_json::json!({
+                "event_type": "sync",
+                "received_at": chrono::Utc::now().to_rfc3339(),
+                "method": "SYNCMSG",
+                "chat_id": chat_id,
+                "chat_name": chat_label,
+                "log_id": log_id,
+                "author_nickname": nick,
+                "message_type": msg_type,
+                "message": content,
+            })
+        },
+        |color| {
+            let now = chrono::Local::now().format("%H:%M:%S");
+            if color {
+                format!(
+                    "{} {} {} {}: {}",
+                    format!("[{}]", now).dimmed(),
+                    "[sync]".dimmed(),
+                    format!("[{}]", chat_label).cyan(),
+                    nick.bold(),
+                    content
+                )
+            } else {
+                format!("[{}] [sync] [{}] {}: {}", now, chat_label, nick, content)
+            }
+        },
+    );
 
-    if log_id > 0 {
-        ctx.last_log_ids.insert(chat_id, log_id);
-    }
+    record_watch_log_id(ctx, chat_id, log_id);
 
     // Cache SYNCMSG to local SQLite DB
     if let Some(db) = &ctx.message_db {
@@ -688,9 +745,7 @@ async fn handle_syncmsg_packet(
                 attachment,
                 send_at,
             };
-            if let Err(e) = db.upsert_messages(std::slice::from_ref(&cached)) {
-                eprintln!("[watch] Cache write failed: {}", e);
-            }
+            cache_watch_message(db, &cached);
         }
     }
 
@@ -702,16 +757,10 @@ async fn handle_syncdlmsg_packet(
     ctx: &mut WatchContext<'_>,
 ) -> Result<()> {
     let chat_id = get_bson_i64(&packet.body, &["chatId"]);
-    if let Some(filter) = ctx.options.filter_chat_id {
-        if chat_id != filter {
-            return Ok(());
-        }
+    if chat_id_is_filtered(ctx.options, chat_id) {
+        return Ok(());
     }
-    let chat_label = ctx
-        .chat_names
-        .get(&chat_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}", chat_id));
+    let chat_label = resolved_chat_label(ctx.chat_names, chat_id);
     let log_id = get_bson_i64(&packet.body, &["logId"]);
 
     let event = WatchMessageEvent {
@@ -729,74 +778,38 @@ async fn handle_syncdlmsg_packet(
         unread: 0,
     };
 
-    if ctx.options.json {
-        let delete_event = serde_json::json!({
-            "event": "delete",
-            "chat_id": chat_id,
-            "log_id": log_id,
-            "chat_name": chat_label,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        println!(
-            "{}",
-            serde_json::to_string(&delete_event).unwrap_or_default()
-        );
-    } else {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        if color_enabled() {
-            println!(
-                "{} {} Chat {}: message {} deleted",
-                format!("[{}]", now).dimmed(),
-                "[deleted]".dimmed(),
-                chat_label.cyan(),
-                log_id
-            );
-        } else {
-            println!(
-                "[{}] [deleted] Chat {}: message {} deleted",
-                now, chat_label, log_id
-            );
-        }
-    }
+    emit_watch_event(
+        ctx.options,
+        || {
+            serde_json::json!({
+                "event": "delete",
+                "chat_id": chat_id,
+                "log_id": log_id,
+                "chat_name": chat_label,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            })
+        },
+        |color| {
+            let now = chrono::Local::now().format("%H:%M:%S");
+            if color {
+                format!(
+                    "{} {} Chat {}: message {} deleted",
+                    format!("[{}]", now).dimmed(),
+                    "[deleted]".dimmed(),
+                    chat_label.cyan(),
+                    log_id
+                )
+            } else {
+                format!(
+                    "[{}] [deleted] Chat {}: message {} deleted",
+                    now, chat_label, log_id
+                )
+            }
+        },
+    );
 
     if let Some(config) = ctx.hook_config {
-        if watch_hook_matches(config, &event) {
-            if config.command.is_some() {
-                match run_watch_command_hook_async(config, &event).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        eprintln!("[watch] Hook failed: {}", e);
-                        if config.fail_fast {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            if config.webhook_url.is_some() {
-                match tokio::task::spawn_blocking({
-                    let config = config.clone();
-                    let event = event.clone();
-                    move || run_watch_webhook(&config, &event)
-                })
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        eprintln!("[watch] Webhook failed: {}", e);
-                        if config.fail_fast {
-                            return Err(e);
-                        }
-                    }
-                    Err(e) => {
-                        let err = anyhow::anyhow!("webhook task join error: {}", e);
-                        eprintln!("[watch] Webhook failed: {}", err);
-                        if config.fail_fast {
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-        }
+        dispatch_watch_sinks(config, &event).await?;
     }
 
     Ok(())
@@ -807,53 +820,47 @@ async fn handle_syncaction_packet(
     ctx: &mut WatchContext<'_>,
 ) -> Result<()> {
     let chat_id = get_bson_i64(&packet.body, &["chatId"]);
-    if let Some(filter) = ctx.options.filter_chat_id {
-        if chat_id != filter {
-            return Ok(());
-        }
+    if chat_id_is_filtered(ctx.options, chat_id) {
+        return Ok(());
     }
-    let chat_label = ctx
-        .chat_names
-        .get(&chat_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}", chat_id));
+    let chat_label = resolved_chat_label(ctx.chat_names, chat_id);
     let user_id = get_bson_i64(&packet.body, &["userId"]);
     let log_id = get_bson_i64(&packet.body, &["logId"]);
     let action_type = get_bson_i64(&packet.body, &["type"]) as i32;
 
-    if ctx.options.json {
-        let react_event = serde_json::json!({
-            "event": "reaction",
-            "chat_id": chat_id,
-            "log_id": log_id,
-            "user_id": user_id,
-            "reaction_type": action_type,
-            "chat_name": chat_label,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        println!(
-            "{}",
-            serde_json::to_string(&react_event).unwrap_or_default()
-        );
-    } else {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        if color_enabled() {
-            println!(
-                "{} {} Chat {}: user {} reacted (type={}) to message {}",
-                format!("[{}]", now).dimmed(),
-                "[reaction]".dimmed(),
-                chat_label.cyan(),
-                user_id,
-                action_type,
-                log_id
-            );
-        } else {
-            println!(
-                "[{}] [reaction] Chat {}: user {} reacted (type={}) to message {}",
-                now, chat_label, user_id, action_type, log_id
-            );
-        }
-    }
+    emit_watch_event(
+        ctx.options,
+        || {
+            serde_json::json!({
+                "event": "reaction",
+                "chat_id": chat_id,
+                "log_id": log_id,
+                "user_id": user_id,
+                "reaction_type": action_type,
+                "chat_name": chat_label,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            })
+        },
+        |color| {
+            let now = chrono::Local::now().format("%H:%M:%S");
+            if color {
+                format!(
+                    "{} {} Chat {}: user {} reacted (type={}) to message {}",
+                    format!("[{}]", now).dimmed(),
+                    "[reaction]".dimmed(),
+                    chat_label.cyan(),
+                    user_id,
+                    action_type,
+                    log_id
+                )
+            } else {
+                format!(
+                    "[{}] [reaction] Chat {}: user {} reacted (type={}) to message {}",
+                    now, chat_label, user_id, action_type, log_id
+                )
+            }
+        },
+    );
 
     Ok(())
 }
@@ -863,44 +870,41 @@ async fn handle_syncrewr_packet(
     ctx: &mut WatchContext<'_>,
 ) -> Result<()> {
     let chat_id = get_bson_i64(&packet.body, &["chatId"]);
-    if let Some(filter) = ctx.options.filter_chat_id {
-        if chat_id != filter {
-            return Ok(());
-        }
+    if chat_id_is_filtered(ctx.options, chat_id) {
+        return Ok(());
     }
-    let chat_label = ctx
-        .chat_names
-        .get(&chat_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}", chat_id));
+    let chat_label = resolved_chat_label(ctx.chat_names, chat_id);
     let log_id = get_bson_i64(&packet.body, &["logId"]);
 
-    if ctx.options.json {
-        let edit_event = serde_json::json!({
-            "event": "edit",
-            "chat_id": chat_id,
-            "log_id": log_id,
-            "chat_name": chat_label,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        println!("{}", serde_json::to_string(&edit_event).unwrap_or_default());
-    } else {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        if color_enabled() {
-            println!(
-                "{} {} Chat {}: message {} edited",
-                format!("[{}]", now).dimmed(),
-                "[edited]".dimmed(),
-                chat_label.cyan(),
-                log_id
-            );
-        } else {
-            println!(
-                "[{}] [edited] Chat {}: message {} edited",
-                now, chat_label, log_id
-            );
-        }
-    }
+    emit_watch_event(
+        ctx.options,
+        || {
+            serde_json::json!({
+                "event": "edit",
+                "chat_id": chat_id,
+                "log_id": log_id,
+                "chat_name": chat_label,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            })
+        },
+        |color| {
+            let now = chrono::Local::now().format("%H:%M:%S");
+            if color {
+                format!(
+                    "{} {} Chat {}: message {} edited",
+                    format!("[{}]", now).dimmed(),
+                    "[edited]".dimmed(),
+                    chat_label.cyan(),
+                    log_id
+                )
+            } else {
+                format!(
+                    "[{}] [edited] Chat {}: message {} edited",
+                    now, chat_label, log_id
+                )
+            }
+        },
+    );
 
     Ok(())
 }
@@ -1325,5 +1329,30 @@ mod tests {
         let mut event = default_test_event();
         event.chat_name = "아무개".to_string();
         assert!(watch_hook_matches(&config, &event));
+    }
+
+    // The two tests below pin `dispatch_watch_sinks` guard behaviour without
+    // running a real sink. The command path is deliberately not exercised: it
+    // writes watch state through `mark_hook_attempt` and would touch the live
+    // per-user state file from a unit test.
+    #[tokio::test]
+    async fn dispatch_is_inert_without_configured_sinks() {
+        let config = default_test_hook_config(); // command: None, webhook: None
+        let mut event = default_test_event();
+        event.chat_name = "아무개".to_string();
+        // No filters configured, so this event does match the hook config.
+        assert!(watch_hook_matches(&config, &event));
+        assert!(dispatch_watch_sinks(&config, &event).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatch_is_inert_when_the_event_is_filtered_out() {
+        let mut config = default_test_hook_config();
+        config.chat_names = vec!["정훈".to_string()];
+        let mut event = default_test_event();
+        event.chat_name = "누군가".to_string();
+        // The dispatcher must short-circuit before considering any sink.
+        assert!(!watch_hook_matches(&config, &event));
+        assert!(dispatch_watch_sinks(&config, &event).await.is_ok());
     }
 }

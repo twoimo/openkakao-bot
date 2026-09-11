@@ -370,16 +370,16 @@ fn resolve_login_params(
     let cache_params = match cache_db_result {
         Some(p) => p,
         None => {
-            if password.is_none() {
+            let Some(password) = password else {
                 return Ok(None); // no password anywhere
-            }
+            };
             if email.is_empty() {
                 return Ok(None); // no email anywhere
             }
             // Have password + email but no Cache.db — use what we have
             return Ok(Some(ResolvedLoginParams {
                 email,
-                password: password.unwrap(),
+                password,
                 device_uuid,
                 device_name: creds.device_name.clone(),
             }));

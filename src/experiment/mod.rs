@@ -363,7 +363,7 @@ fn reply_signals(reply: &str) -> StyleSignals {
     let mut signals = StyleSignals::default();
 
     let segments: Vec<&str> = reply
-        .split(|c: char| matches!(c, '.' | '!' | '?' | '\n' | '。' | '！' | '？' | '…'))
+        .split(['.', '!', '?', '\n', '。', '！', '？', '…'])
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
         .collect();

@@ -136,6 +136,10 @@ struct ScopedMessage {
 }
 
 /// How a generated message's sender relates to the owner.
+#[allow(
+    clippy::enum_variant_names,
+    reason = "each variant names how the sender is (or is not) the owner"
+)]
 #[derive(Debug, Clone, Copy)]
 enum SenderKind {
     /// Owner via the database-authoritative flag (display name irrelevant).

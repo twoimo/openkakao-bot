@@ -154,7 +154,7 @@ fn parse_display_member_ids(blob: &[u8]) -> Vec<i64> {
             }
         }
     }
-    if blob.len() % 8 == 0 && blob.len() <= 8 * 64 {
+    if blob.len().is_multiple_of(8) && blob.len() <= 8 * 64 {
         let mut ids = Vec::new();
         for chunk in blob.chunks_exact(8) {
             let id = i64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
@@ -191,9 +191,7 @@ fn preferred_group_title(candidates: &[String]) -> Option<String> {
             uniq.push(title);
         }
     }
-    let Some(mut best) = uniq.first().cloned() else {
-        return None;
-    };
+    let mut best = uniq.first().cloned()?;
     for candidate in &uniq {
         let best_compact: String = best.chars().filter(|ch| !ch.is_whitespace()).collect();
         let cand_compact: String = candidate.chars().filter(|ch| !ch.is_whitespace()).collect();
@@ -1081,19 +1079,25 @@ fn pbkdf2_sha256(password: &[u8], salt: &[u8], iterations: u32, key_len: usize) 
     let blocks_needed = key_len.div_ceil(hash_len);
     let mut output = Vec::with_capacity(blocks_needed * hash_len);
 
+    // The key schedule is identical for every PRF call, so key the HMAC once
+    // and clone the prepared state. Re-deriving it inside the 100k-iteration
+    // loop cost roughly 400k small allocations per derived key.
+    let keyed = HmacSha256::new_from_slice(password).expect("HMAC accepts any key length");
+
     for block_num in 1..=blocks_needed as u32 {
         // U1 = PRF(password, salt || INT_32_BE(block_num))
-        let mut mac = HmacSha256::new_from_slice(password).expect("HMAC accepts any key length");
+        let mut mac = keyed.clone();
         mac.update(salt);
         mac.update(&block_num.to_be_bytes());
-        let mut u = mac.finalize().into_bytes().to_vec();
-        let mut result = u.clone();
+        let mut u = mac.finalize().into_bytes();
+        // `into_bytes()` yields a fixed-size array that is `Copy`, so the running
+        // XOR accumulator is a plain copy rather than a heap clone.
+        let mut result = u;
 
         for _ in 1..iterations {
-            let mut mac =
-                HmacSha256::new_from_slice(password).expect("HMAC accepts any key length");
+            let mut mac = keyed.clone();
             mac.update(&u);
-            u = mac.finalize().into_bytes().to_vec();
+            u = mac.finalize().into_bytes();
             for (r, ui) in result.iter_mut().zip(u.iter()) {
                 *r ^= ui;
             }
@@ -1242,6 +1246,22 @@ fn local_account_fingerprint(user_id: i64, uuid: &str) -> String {
     ))
 }
 
+/// Counts encoded bytes without retaining them, so bounded-size checks do not
+/// need to materialize the serialized payload in memory.
+#[derive(Default)]
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 impl LocalDbReader {
     pub fn open() -> Result<Self> {
         Self::open_with_cache_mode(IdentityCacheMode::Normal)
@@ -1328,21 +1348,22 @@ impl LocalDbReader {
             "Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Application Support/com.kakao.KakaoTalkMac",
         );
 
-        let uuid_ok = get_platform_uuid().is_ok();
-        let user_id_ok = get_user_id_from_plist().is_ok();
+        // Resolve both identities exactly once. Each lookup spawns
+        // `/usr/sbin/ioreg` and parses the KakaoTalk preferences plist, so the
+        // previous "check then re-read" pattern paid for two extra process
+        // spawns and two extra plist parses per doctor run.
+        let uuid = get_platform_uuid().ok();
+        let user_id = get_user_id_from_plist().ok();
+        let uuid_ok = uuid.is_some();
+        let user_id_ok = user_id.is_some();
         let container_exists = container_dir.exists();
 
-        let db_file = if uuid_ok && user_id_ok {
-            let uuid = get_platform_uuid().ok();
-            let uid = get_user_id_from_plist().ok();
-            if let (Some(u), Some(id)) = (uuid, uid) {
-                let name = derive_database_name(id, &u);
+        let db_file = match (uuid, user_id) {
+            (Some(uuid), Some(user_id)) => {
+                let name = derive_database_name(user_id, &uuid);
                 find_database_path(&name).ok()
-            } else {
-                None
             }
-        } else {
-            None
+            _ => None,
         };
 
         let decryptable = if db_file.is_some() {
@@ -1458,16 +1479,6 @@ impl LocalDbReader {
                 continue;
             }
             let mut member_names = Vec::new();
-            if let Some(blob_bytes) = blob.as_ref() {
-                for user_id in parse_display_member_ids(blob_bytes) {
-                    let name: String = user_stmt
-                        .query_row([user_id], |user_row| user_row.get(0))
-                        .unwrap_or_default();
-                    if !name.is_empty() {
-                        member_names.push(name);
-                    }
-                }
-            }
             let kakao_title = if kakao_group_name.trim().is_empty() {
                 group_nickname
             } else {
@@ -1480,13 +1491,37 @@ impl LocalDbReader {
             } else {
                 format!("{{\"extra\":{extra},\"meta\":{meta_content}}}")
             };
-            let Some(title) = resolve_group_title(
+            // Member display names are only the last-resort title source, so
+            // resolve the title first and run the per-member `NTUser` lookups
+            // only when the room has no usable name of its own. Rooms that do
+            // have a name previously paid one query per displayed member.
+            let mut title = resolve_group_title(
                 &chat_name,
                 &kakao_title,
                 &link_name,
                 &extra_title_source,
                 &member_names,
-            ) else {
+            );
+            if title.is_none() {
+                if let Some(blob_bytes) = blob.as_ref() {
+                    for user_id in parse_display_member_ids(blob_bytes) {
+                        let name: String = user_stmt
+                            .query_row([user_id], |user_row| user_row.get(0))
+                            .unwrap_or_default();
+                        if !name.is_empty() {
+                            member_names.push(name);
+                        }
+                    }
+                }
+                title = resolve_group_title(
+                    &chat_name,
+                    &kakao_title,
+                    &link_name,
+                    &extra_title_source,
+                    &member_names,
+                );
+            }
+            let Some(title) = title else {
                 continue;
             };
             chats.push(LocalGroupChat {
@@ -1767,7 +1802,16 @@ impl LocalDbReader {
         let mut stmt = self.conn.prepare(
             "SELECT chatId FROM NTChatRoom WHERE type = 0 AND activeMembersCount = 1 LIMIT 1",
         )?;
-        let result = stmt.query_row([], |row| row.get::<_, i64>(0)).ok();
+        let result = match stmt.query_row([], |row| row.get::<_, i64>(0)) {
+            Ok(id) => Some(id),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(error) => {
+                // A real query failure used to be indistinguishable from "no
+                // memo room". Keep returning `None` but make it diagnosable.
+                eprintln!("[local_db.rs::find_memo_chat_id] query failed: {error}");
+                None
+            }
+        };
         self.ensure_database_identity()?;
         Ok(result)
     }
@@ -1807,7 +1851,10 @@ impl LocalDbReader {
             anyhow::bail!("reconcile_required");
         }
         let tx = self.conn.unchecked_transaction()?;
-        let mut stmt = tx.prepare(
+        // The chat row, the aggregate stats and the row page reuse SQL that is
+        // identical on every poll, so take them from the prepared-statement
+        // cache instead of re-parsing per poll per room.
+        let mut stmt = tx.prepare_cached(
             "SELECT r.chatId, r.type, r.chatName, r.activeMembersCount,
                     r.lastLogId, r.lastUpdatedAt, r.countOfNewMessage,
                     COALESCE(u.displayName, u.friendNickName, u.nickName, '') as displayName
@@ -1845,16 +1892,16 @@ impl LocalDbReader {
         }
 
         let limit = limit.min(LOCAL_POLL_MAX_ROWS);
-        let (total_rows, available_max): (i64, Option<i64>) = tx.query_row(
-            LOCAL_POLL_ROW_STATS_SQL,
-            rusqlite::params![chat_id, after_log_id, LOCAL_CONVERSATION_MESSAGE_TYPE_MIN],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        let (total_rows, available_max): (i64, Option<i64>) =
+            tx.prepare_cached(LOCAL_POLL_ROW_STATS_SQL)?.query_row(
+                rusqlite::params![chat_id, after_log_id, LOCAL_CONVERSATION_MESSAGE_TYPE_MIN],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
         if available_max == Some(LOCAL_POLL_MAX_INT64) {
             anyhow::bail!("reconcile_required");
         }
 
-        let mut stmt = tx.prepare(LOCAL_POLL_ROWS_SQL)?;
+        let mut stmt = tx.prepare_cached(LOCAL_POLL_ROWS_SQL)?;
         let account_user_id = self.account_user_id;
         let rows = stmt.query_map(
             rusqlite::params![
@@ -1938,8 +1985,15 @@ impl LocalDbReader {
             message.message.len() > LOCAL_POLL_MAX_FIELD_BYTES
                 || message.attachment.len() > LOCAL_POLL_MAX_FIELD_BYTES
                 || message.sender_name.len() > LOCAL_POLL_MAX_FIELD_BYTES
-        }) || serde_json::to_vec(&envelope)?.len() > LOCAL_POLL_MAX_BYTES
-        {
+        }) {
+            anyhow::bail!("local poll payload exceeds bounded size");
+        }
+        // Encode into a counting sink rather than a buffer: the guard only needs
+        // the encoded length, and `to_vec` allocated the whole envelope on every
+        // poll for every watched room. Short-circuit order is unchanged.
+        let mut payload_bytes = ByteCounter::default();
+        serde_json::to_writer(&mut payload_bytes, &envelope)?;
+        if payload_bytes.0 > LOCAL_POLL_MAX_BYTES {
             anyhow::bail!("local poll payload exceeds bounded size");
         }
         tx.commit()?;

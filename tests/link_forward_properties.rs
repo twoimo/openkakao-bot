@@ -437,7 +437,7 @@ fn phone_strategy() -> impl Strategy<Value = PiiItem> {
 /// An account number: a twelve-digit run that never starts with `0`, so it is
 /// classified as an account rather than a phone number.
 fn account_strategy() -> impl Strategy<Value = PiiItem> {
-    (0u64..1_000_000_000_00u64).prop_map(|n| PiiItem::Account(format!("2{n:011}")))
+    (0u64..100_000_000_000u64).prop_map(|n| PiiItem::Account(format!("2{n:011}")))
 }
 
 /// A Korean address whose building number is small (1..=999), so the digit scan

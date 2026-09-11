@@ -98,8 +98,8 @@ impl OrderedCounter {
             .iter()
             .map(|key| (key.clone(), self.counts[key]))
             .collect();
-        // `sort_by` is stable, so equal counts stay in first-seen order.
-        items.sort_by(|a, b| b.1.cmp(&a.1));
+        // `sort_by_key` is stable, so equal counts stay in first-seen order.
+        items.sort_by_key(|item| std::cmp::Reverse(item.1));
         items
     }
 }

@@ -307,7 +307,7 @@ proptest! {
 
         // The oracle source order and its confirmed subsequence.
         let mut sorted: Vec<&Built> = built.iter().collect();
-        sorted.sort_by(|a, b| (a.at, a.order).cmp(&(b.at, b.order)));
+        sorted.sort_by_key(|a| (a.at, a.order));
         let expected_sent: Vec<String> =
             sorted.iter().filter(|b| b.send).map(|b| b.body.clone()).collect();
         let last = sorted.last().expect("at least one message");

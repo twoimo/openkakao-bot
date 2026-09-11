@@ -1,22 +1,22 @@
 mod auth;
 mod auth_flow;
-mod ax_send;
+use openkakao_cli::ax_send;
 mod auto_reply_runtime;
 mod commands;
 mod config;
 mod credentials;
-mod error;
+use openkakao_cli::error;
 mod export;
-mod local_db;
-mod loco;
+use openkakao_cli::local_db;
+use openkakao_cli::loco;
 mod loco_helpers;
-mod media;
-mod message_db;
-mod model;
+use openkakao_cli::media;
+use openkakao_cli::message_db;
+use openkakao_cli::model;
 mod rest;
 mod state;
 mod util;
-mod room_catalog;
+use openkakao_cli::room_catalog;
 
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
@@ -1661,8 +1661,9 @@ fn probe_auto_reply_llm(
                 // session: the worker text path can still use the omlx override.
             } else {
                 anyhow::bail!(
-                    "selected LLM {} did not respond; stdout={} stderr={}",
+                    "selected LLM {} did not respond; runner={} stdout={} stderr={}",
                     choice.label(),
+                    runner.path,
                     stdout.trim(),
                     stderr.trim()
                 );
@@ -1829,7 +1830,17 @@ fn validate_auto_reply_runner(config: &config::OpenKakaoConfig) -> Result<AutoRe
             || !version.trim().starts_with("codex-cli ")
             || !output.stderr.is_empty()
         {
-            anyhow::bail!("AutoReply Codex reply runner version probe failed");
+            // Name the runner and its observed version: selecting the Codex
+            // model switches `reply_runner_kind` but keeps the configured
+            // `reply_runner`, so a gjc binary left in place is the most likely
+            // cause and a bare "probe failed" would hide it.
+            anyhow::bail!(
+                "AutoReply Codex reply runner version probe failed: runner={} status={} stdout={:?} stderr={:?}",
+                resolved_path.display(),
+                output.status,
+                version.trim(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
     }
     let codex_home = if kind == "codex" {
@@ -3204,10 +3215,10 @@ fn leftover_in_flight_is_absent_or_orphaned(state: &serde_json::Value) -> bool {
             let in_flight_owner = candidate
                 .get("owner_id")
                 .and_then(serde_json::Value::as_str);
-            match (persisted_owner, in_flight_owner) {
-                (Some(owner), Some(in_flight)) if !owner.is_empty() && owner == in_flight => true,
-                _ => false,
-            }
+            matches!(
+                (persisted_owner, in_flight_owner),
+                (Some(owner), Some(in_flight)) if !owner.is_empty() && owner == in_flight
+            )
         }
     }
 }
@@ -3841,6 +3852,22 @@ fn stop_auto_reply_children(children: &mut [Child]) {
         }
         let _ = child.wait();
     }
+
+    // `SIGKILL` is asynchronous, and a grandchild that ignored `SIGTERM` is not
+    // our direct child: reaping the leader can therefore complete while the rest
+    // of the group is still exiting. Drain the groups so `stop` returns with the
+    // guarantee callers and tests rely on, that no descendant is left behind.
+    #[cfg(unix)]
+    {
+        let drain_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < drain_deadline
+            && process_group_ids
+                .iter()
+                .any(|pid| process_group_alive(*pid))
+        {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 fn install_auto_reply_signal_handlers() {
@@ -4080,7 +4107,7 @@ fn resolve_auto_reply_author_bindings(
             "AutoReply reply author allowlist for room {room_name:?} has no bindable members"
         );
     }
-    return Ok(bindings);
+    Ok(bindings)
 }
 
 fn auto_reply_attest_explicit_bindings(
@@ -4246,6 +4273,13 @@ fn validate_auto_reply_context(
     Ok(())
 }
 
+// Each parameter maps one-to-one onto a `Commands::AutoReply` CLI flag and the
+// command has a single call site, so bundling them would only add a translation
+// layer between clap and the run.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "AutoReply CLI flags map one-to-one onto the run parameters"
+)]
 fn run_auto_reply(
     config: &config::OpenKakaoConfig,
     selector_values: Vec<String>,

@@ -165,10 +165,6 @@ pub fn merge_configured_and_catalog_selectors_named(
     Ok(selectors)
 }
 
-fn binding_selector(chat: &crate::local_db::LocalChat) -> String {
-    binding_selector_named(chat, None)
-}
-
 fn binding_selector_named(chat: &crate::local_db::LocalChat, group_title: Option<&String>) -> String {
     let name = if !chat.chat_name.trim().is_empty() {
         chat.chat_name.trim()
@@ -464,7 +460,14 @@ impl InMemoryRoomCatalog {
     }
 
     fn read(&self) -> Arc<CatalogState> {
-        Arc::clone(&self.inner.read().expect("room catalog lock poisoned on read"))
+        // A poisoned lock only means some earlier writer panicked; the stored
+        // snapshot is still a valid `Arc`, so recovering it keeps the catalog
+        // serving rooms instead of taking the process down.
+        let guard = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(&guard)
     }
 
     /// Apply `mutate` to a fresh copy of the state under the write lock, then
@@ -477,7 +480,7 @@ impl InMemoryRoomCatalog {
         let mut guard = self
             .inner
             .write()
-            .expect("room catalog lock poisoned on write");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut next = (**guard).clone();
         mutate(&mut next)?;
         next.version = guard.version.saturating_add(1);
