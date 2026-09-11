@@ -853,9 +853,30 @@ enum Commands {
         chat: String,
         #[arg(long)]
         db: Option<String>,
+        /// Room delivery queue whose terminal `sent` jobs prove which outgoing
+        /// self rows the assistant wrote. Omitted, only the decision ledger is
+        /// consulted.
+        #[arg(long)]
+        queue: Option<String>,
         /// Index only 최연우 interest topics (stocks/coins/investing/real estate/auction/business/AI).
         #[arg(long = "interest-only")]
         interest_only: bool,
+    },
+    #[command(name = "context-repair-self-sends", hide = true)]
+    /// Mark owner style samples that the assistant itself sent as ineligible.
+    ContextRepairSelfSends {
+        #[arg(long = "chat-id", value_parser = parse_local_poll_chat_id)]
+        chat_id: i64,
+        #[arg(long)]
+        chat: String,
+        #[arg(long)]
+        db: Option<String>,
+        /// Room delivery queue holding terminal `sent` jobs (delivery authority).
+        #[arg(long)]
+        queue: Option<String>,
+        /// Report matches without writing anything.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
     /// Search the local per-chat context index without network access
     ContextSearch {
@@ -4417,27 +4438,22 @@ fn run_auto_reply(
         .into_iter()
         .map(|chat| (chat.chat_id, chat.title))
         .collect::<Vec<_>>();
-    let selector_values = match auto_reply_selector_values(
-        config,
-        selector_values,
-        &chats,
-        &root,
-        &group_titles,
-    ) {
-        Ok(values) => values,
-        Err(error) => {
-            emit_auto_reply_preflight(
-                json_output,
-                check,
-                &[],
-                &root,
-                false,
-                Some(&error.to_string()),
-                false,
-            );
-            return Err(error);
-        }
-    };
+    let selector_values =
+        match auto_reply_selector_values(config, selector_values, &chats, &root, &group_titles) {
+            Ok(values) => values,
+            Err(error) => {
+                emit_auto_reply_preflight(
+                    json_output,
+                    check,
+                    &[],
+                    &root,
+                    false,
+                    Some(&error.to_string()),
+                    false,
+                );
+                return Err(error);
+            }
+        };
     let selectors = match local_db::parse_chat_selectors(&selector_values) {
         Ok(selectors) => selectors,
         Err(error) => {
@@ -6293,6 +6309,7 @@ fn main() -> Result<()> {
             chat_id,
             chat,
             db,
+            queue,
             interest_only,
         } => {
             if chat.trim().is_empty() || chat.len() > 512 || chat.chars().any(char::is_control) {
@@ -6302,6 +6319,12 @@ fn main() -> Result<()> {
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(openkakao_cli::context::default_db_path);
             openkakao_cli::context::ensure_live_context_schema(&db_path)?;
+            let confirmed_sends = match queue.as_deref() {
+                Some(path) => openkakao_cli::context::confirmed_self_sends_from_queue(
+                    std::path::Path::new(path),
+                )?,
+                None => Vec::new(),
+            };
             let reader = local_db::LocalDbReader::open()?;
             let account_fingerprint = reader.account_fingerprint().to_owned();
             let account_user_id = reader.account_user_id();
@@ -6360,7 +6383,10 @@ fn main() -> Result<()> {
                     })
                     .collect::<Vec<_>>();
                 let classifications = openkakao_cli::context::classify_auto_generated_self_events(
-                    &db_path, &chat, &outgoing,
+                    &db_path,
+                    &chat,
+                    &outgoing,
+                    &confirmed_sends,
                 )?;
                 let classifications = classifications
                     .into_iter()
@@ -6476,6 +6502,59 @@ fn main() -> Result<()> {
                     "Synchronized {} local pages for '{}' through log {} (authoritative={}).",
                     pages, chat, checkpoint, authoritative
                 );
+            }
+        }
+        Commands::ContextRepairSelfSends {
+            chat_id,
+            chat,
+            db,
+            queue,
+            dry_run,
+        } => {
+            if chat.trim().is_empty() || chat.len() > 512 || chat.chars().any(char::is_control) {
+                anyhow::bail!("style repair chat name is invalid");
+            }
+            let db_path = db
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(openkakao_cli::context::default_db_path);
+            openkakao_cli::context::ensure_live_context_schema(&db_path)?;
+            let confirmed_sends = match queue.as_deref() {
+                Some(path) => openkakao_cli::context::confirmed_self_sends_from_queue(
+                    std::path::Path::new(path),
+                )?,
+                None => Vec::new(),
+            };
+            let report = openkakao_cli::context::repair_bot_sent_style_samples(
+                &db_path,
+                &chat,
+                chat_id,
+                &confirmed_sends,
+                dry_run,
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{}: {} matched of {} scanned rows ({} already ineligible, {} ambiguous), {} response samples and {} recipient samples dropped, {} sources rebuilt (dry_run={}).",
+                    chat,
+                    report.matched_rows,
+                    report.scanned_rows,
+                    report.already_ineligible,
+                    report.ambiguous_rows,
+                    report.deleted_response_samples,
+                    report.deleted_recipient_samples,
+                    report.rebuilt_sources.len(),
+                    report.dry_run,
+                );
+                for matched in &report.matches {
+                    println!(
+                        "  [{}|{}s] {} <- {}",
+                        matched.log_id,
+                        matched.offset_seconds,
+                        matched.message.chars().take(60).collect::<String>(),
+                        matched.matched_event_id,
+                    );
+                }
             }
         }
         Commands::ContextSearch {

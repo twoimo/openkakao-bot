@@ -1824,6 +1824,217 @@ fn refresh_live_context_summaries(
     Ok(())
 }
 
+/// Window used to attribute an owner style row to one confirmed send.
+pub const SELF_SEND_REPAIR_WINDOW_SECONDS: i64 = 180;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SelfSendRepairMatch {
+    pub source: String,
+    pub log_id: i64,
+    pub date: String,
+    pub message: String,
+    pub content_kind: String,
+    pub style_eligible_before: bool,
+    pub matched_event_id: String,
+    pub offset_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SelfSendRepairReport {
+    pub schema_version: u32,
+    pub chat: String,
+    pub chat_id: i64,
+    pub confirmed_sends: usize,
+    pub scanned_rows: usize,
+    pub matched_rows: usize,
+    pub ambiguous_rows: usize,
+    pub already_ineligible: usize,
+    pub deleted_response_samples: usize,
+    pub deleted_recipient_samples: usize,
+    pub rebuilt_sources: Vec<String>,
+    pub dry_run: bool,
+    pub matches: Vec<SelfSendRepairMatch>,
+}
+
+fn owner_style_timestamp(value: &str) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|naive| naive.and_utc().timestamp())
+        .or_else(|| {
+            chrono::DateTime::parse_from_rfc3339(value.trim())
+                .ok()
+                .map(|value| value.timestamp())
+        })
+}
+
+/// Mark owner style samples that the assistant itself sent as ineligible and
+/// rebuild the aggregates they used to feed.
+///
+/// The assistant writes into the room through the owner's own account, so each
+/// confirmed outgoing reply also appears in the local database as a
+/// self-authored row. Ingest blocks new ones, but rows recorded before that
+/// guard are already mixed into `owner_style`, its profile, the response-time
+/// samples and the recipient profile. A row is repaired only for a unique,
+/// exact-text confirmed send inside [`SELF_SEND_REPAIR_WINDOW_SECONDS`]; a
+/// many-to-one match stays untouched (fail closed).
+pub fn repair_bot_sent_style_samples(
+    db_path: &Path,
+    chat: &str,
+    chat_id: i64,
+    confirmed_sends: &[ConfirmedSelfSend],
+    dry_run: bool,
+) -> Result<SelfSendRepairReport> {
+    if chat.trim().is_empty() || chat.len() > LIVE_CONTEXT_MAX_FIELD_BYTES {
+        anyhow::bail!("style repair chat is invalid");
+    }
+    if chat_id <= 0 {
+        anyhow::bail!("style repair chat id is invalid");
+    }
+    let mut conn = open_db(db_path)?;
+    let rows = {
+        let mut stmt = conn.prepare(
+            "SELECT id, source, date, message, content_kind, style_eligible, source_row,
+                    features_json
+             FROM owner_style WHERE chat = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![chat], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let mut report = SelfSendRepairReport {
+        schema_version: 1,
+        chat: chat.to_string(),
+        chat_id,
+        confirmed_sends: confirmed_sends.len(),
+        scanned_rows: rows.len(),
+        matched_rows: 0,
+        ambiguous_rows: 0,
+        already_ineligible: 0,
+        deleted_response_samples: 0,
+        deleted_recipient_samples: 0,
+        rebuilt_sources: Vec::new(),
+        dry_run,
+        matches: Vec::new(),
+    };
+    let mut affected_sources: BTreeMap<String, bool> = BTreeMap::new();
+    let tx = conn.transaction()?;
+    for (style_id, source, date, message, content_kind, eligible, source_row, features_json) in rows
+    {
+        let Some(sent_at) = owner_style_timestamp(&date) else {
+            continue;
+        };
+        let mut unique: BTreeMap<&str, &ConfirmedSelfSend> = BTreeMap::new();
+        for send in confirmed_sends {
+            if send.text != message {
+                continue;
+            }
+            if sent_at.abs_diff(send.sent_at) <= SELF_SEND_REPAIR_WINDOW_SECONDS as u64 {
+                unique.entry(send.event_id.as_str()).or_insert(send);
+            }
+        }
+        match unique.len() {
+            1 => {}
+            0 => continue,
+            _ => {
+                report.ambiguous_rows += 1;
+                continue;
+            }
+        }
+        let Some(send) = unique.values().next().copied() else {
+            continue;
+        };
+        let offset = sent_at - send.sent_at;
+        report.matched_rows += 1;
+        if eligible == 0 {
+            report.already_ineligible += 1;
+        } else {
+            affected_sources.insert(source.clone(), true);
+        }
+        report.matches.push(SelfSendRepairMatch {
+            source: source.clone(),
+            log_id: source_row,
+            date: date.clone(),
+            message: message.clone(),
+            content_kind: content_kind.clone(),
+            style_eligible_before: eligible != 0,
+            matched_event_id: send.event_id.clone(),
+            offset_seconds: offset,
+        });
+        if dry_run {
+            continue;
+        }
+        let mut features: serde_json::Value =
+            serde_json::from_str(&features_json).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = features.as_object_mut() {
+            object.insert("style_eligible".to_string(), serde_json::json!(false));
+            object.insert(
+                "content_kind".to_string(),
+                serde_json::json!("bot_sent_reply"),
+            );
+            object.insert(
+                "bot_sent_event_id".to_string(),
+                serde_json::json!(send.event_id),
+            );
+            object.insert(
+                "bot_sent_offset_seconds".to_string(),
+                serde_json::json!(offset),
+            );
+        }
+        tx.execute(
+            "UPDATE owner_style
+             SET style_eligible = 0, content_kind = 'bot_sent_reply', features_json = ?2
+             WHERE id = ?1",
+            params![style_id, features.to_string()],
+        )?;
+        report.deleted_recipient_samples += tx.execute(
+            "DELETE FROM owner_recipient_style_samples WHERE style_message_id = ?1",
+            params![style_id],
+        )?;
+        if source_row > 0 {
+            report.deleted_response_samples += tx.execute(
+                "DELETE FROM response_time_samples
+                 WHERE source = ?1 AND chat_id = ?2 AND reply_log_id = ?3",
+                params![source, chat_id, source_row],
+            )?;
+        }
+    }
+
+    if !dry_run {
+        for source in affected_sources.keys() {
+            let source_chat_id = tx
+                .query_row(
+                    "SELECT chat_id FROM context_sources WHERE source = ?1 AND chat_id = ?2",
+                    params![source, chat_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .or(tx
+                    .query_row(
+                        "SELECT chat_id FROM context_sources WHERE source = ?1 LIMIT 1",
+                        params![source],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?)
+                .unwrap_or(0);
+            refresh_live_context_summaries(&tx, source, source_chat_id, chat)?;
+            report.rebuilt_sources.push(source.clone());
+        }
+    }
+    tx.commit()?;
+    Ok(report)
+}
+
 fn live_source_has_required_summaries(conn: &Connection, source: &str, chat: &str) -> Result<bool> {
     let style_samples = conn
         .query_row(
@@ -3150,6 +3361,75 @@ struct AutoGeneratedReplyCandidate {
     confirmed_sent: bool,
 }
 
+/// A confirmed outgoing reply taken from the room delivery authority
+/// (`reply-queue.sqlite3`).
+///
+/// The queue stays the delivery authority, so a terminal `sent` job is direct
+/// evidence that the assistant, not the owner, wrote that text into the room.
+/// Style learning must not treat such a row as an owner sample: the worker's
+/// own wording would otherwise be re-learned as the owner's voice (AHP:
+/// style).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfirmedSelfSend {
+    pub event_id: String,
+    pub text: String,
+    pub sent_at: i64,
+}
+
+/// Load the durable confirmed-send records of one room queue.
+///
+/// Only terminal `sent` jobs with a non-empty reply are returned. `skipped`
+/// jobs never reached the composer, so they must not be able to hide a genuine
+/// owner message from style learning. A missing or unreadable queue is not an
+/// error: it simply contributes no evidence.
+pub fn confirmed_self_sends_from_queue(queue_path: &Path) -> Result<Vec<ConfirmedSelfSend>> {
+    if queue_path.is_symlink() || !queue_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let conn = Connection::open_with_flags(queue_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open reply queue read-only: {}", queue_path.display()))?;
+    conn.busy_timeout(Duration::from_secs(CONTEXT_DB_BUSY_TIMEOUT_SECS))?;
+    let has_jobs: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reply_jobs'",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !has_jobs {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT event_id, reply, updated_at FROM reply_jobs
+         WHERE status = 'sent' AND reply IS NOT NULL AND length(trim(reply)) > 0",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+        ))
+    })?;
+    let mut sends = Vec::new();
+    for row in rows {
+        let (event_id, text, updated_at) = row?;
+        let text = text.trim().to_string();
+        let Some(sent_at) = updated_at.filter(|value| value.is_finite()) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        sends.push(ConfirmedSelfSend {
+            event_id,
+            text,
+            sent_at: sent_at.round() as i64,
+        });
+    }
+    Ok(sends)
+}
+
 fn ambiguous_auto_candidate_status(status: &str) -> bool {
     matches!(
         status,
@@ -3167,10 +3447,16 @@ fn ambiguous_auto_candidate_status(status: &str) -> bool {
 /// uncertain delivery state remain non-automatic but are explicitly excluded
 /// from learning. Any many-to-one, one-to-many, or unparseable-time match is
 /// likewise fail-closed and remains non-automatic.
+///
+/// `confirmed_sends` carries the delivery authority's own record (the room
+/// queue's terminal `sent` jobs). The reply-decision ledger alone cannot prove a
+/// send when the decision row was rewritten as `skip`, so both authorities are
+/// unioned and the same uniqueness rule is applied across the union.
 pub fn classify_auto_generated_self_events(
     db_path: &Path,
     chat: &str,
     events: &[OutgoingSelfEvent],
+    confirmed_sends: &[ConfirmedSelfSend],
 ) -> Result<Vec<AutoGeneratedSelfEventClassification>> {
     if chat.trim().is_empty() || chat.len() > LIVE_CONTEXT_MAX_FIELD_BYTES {
         anyhow::bail!("automatic self-event classification chat is invalid");
@@ -3214,6 +3500,7 @@ pub fn classify_auto_generated_self_events(
     ensure_retrieval_index_current(&conn)?;
     let mut candidates_by_event = vec![Vec::<AutoGeneratedReplyCandidate>::new(); events.len()];
     let mut has_unparseable_candidate = vec![false; events.len()];
+    let mut has_overflow_candidate = vec![false; events.len()];
     for (message, indexes) in grouped {
         if message.is_empty() {
             continue;
@@ -3330,6 +3617,46 @@ pub fn classify_auto_generated_self_events(
         }
     }
 
+    // Union in the delivery authority's confirmed sends. A queue `sent` job has
+    // no incoming row to attach to, so it is matched by exact text inside the
+    // same window and identified by its own job id.
+    let mut grouped_by_text: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, event) in events.iter().enumerate() {
+        if event.message.is_empty() {
+            continue;
+        }
+        grouped_by_text
+            .entry(event.message.as_str())
+            .or_default()
+            .push(index);
+    }
+    for send in confirmed_sends {
+        let Some(indexes) = grouped_by_text.get(send.text.as_str()) else {
+            continue;
+        };
+        for index in indexes {
+            if events[*index].sent_at.abs_diff(send.sent_at)
+                > AUTO_GENERATED_MATCH_WINDOW_SECONDS as u64
+            {
+                continue;
+            }
+            if candidates_by_event[*index]
+                .iter()
+                .any(|candidate| candidate.event_id == send.event_id)
+            {
+                continue;
+            }
+            if candidates_by_event[*index].len() > AUTO_GENERATED_MATCH_MAX_CANDIDATES_PER_TEXT {
+                has_overflow_candidate[*index] = true;
+                continue;
+            }
+            candidates_by_event[*index].push(AutoGeneratedReplyCandidate {
+                event_id: send.event_id.clone(),
+                confirmed_sent: true,
+            });
+        }
+    }
+
     let mut candidate_use_counts = BTreeMap::new();
     for candidates in &candidates_by_event {
         for candidate in candidates {
@@ -3343,7 +3670,9 @@ pub fn classify_auto_generated_self_events(
         .enumerate()
         .map(|(index, event)| {
             let candidates = &candidates_by_event[index];
-            let (auto_generated, matched_event_id, reason) = if has_unparseable_candidate[index] {
+            let (auto_generated, matched_event_id, reason) = if has_overflow_candidate[index] {
+                (false, None, "match_candidate_overflow")
+            } else if has_unparseable_candidate[index] {
                 (false, None, "unparseable_candidate_time")
             } else if candidates.is_empty() {
                 (false, None, "no_exact_sent_match")
@@ -7674,7 +8003,7 @@ mod tests {
                 sent_at: 5_000,
             },
         ];
-        let classified = classify_auto_generated_self_events(&db, "방", &outgoing).unwrap();
+        let classified = classify_auto_generated_self_events(&db, "방", &outgoing, &[]).unwrap();
         assert_eq!(classified.len(), outgoing.len());
         assert!(classified[0].auto_generated);
         assert_eq!(classified[0].matched_event_id.as_deref(), Some("unique"));
@@ -7697,7 +8026,7 @@ mod tests {
             sent_at: 1_121,
         }];
         assert!(
-            !classify_auto_generated_self_events(&db, "방", &outside_window).unwrap()[0]
+            !classify_auto_generated_self_events(&db, "방", &outside_window, &[]).unwrap()[0]
                 .auto_generated
         );
     }
@@ -7729,7 +8058,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let before_projection = classify_auto_generated_self_events(&db, chat, &outgoing).unwrap();
+        let before_projection =
+            classify_auto_generated_self_events(&db, chat, &outgoing, &[]).unwrap();
         assert!(before_projection.iter().all(|item| {
             !item.auto_generated
                 && item.matched_event_id.is_none()
@@ -7766,7 +8096,7 @@ mod tests {
             update_reply_decision(&db, "ambiguous-0", "delivery_unknown", None, None,).unwrap()
         );
 
-        let classified = classify_auto_generated_self_events(&db, chat, &outgoing).unwrap();
+        let classified = classify_auto_generated_self_events(&db, chat, &outgoing, &[]).unwrap();
         assert_eq!(classified.len(), statuses.len());
         for (index, item) in classified.iter().enumerate() {
             assert!(!item.auto_generated);
@@ -7779,7 +8109,8 @@ mod tests {
         let mut outside_window = outgoing[1].clone();
         outside_window.log_id = 100;
         outside_window.sent_at = now + AUTO_GENERATED_MATCH_WINDOW_SECONDS + 10;
-        let outside = classify_auto_generated_self_events(&db, chat, &[outside_window]).unwrap();
+        let outside =
+            classify_auto_generated_self_events(&db, chat, &[outside_window], &[]).unwrap();
         assert!(!outside[0].auto_generated);
         assert_eq!(outside[0].reason, "no_exact_sent_match");
 
@@ -7835,5 +8166,296 @@ mod tests {
             .unwrap(),
             0
         );
+    }
+    #[test]
+    fn queue_confirmed_send_excludes_a_loopback_self_row() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("queue-send.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let chat_id = 7;
+        let chat = "방";
+        let text = "제목은 폭탄인데 내용은 지원이네요";
+        assert!(classify_style_message(text).style_eligible);
+        let sent = ConfirmedSelfSend {
+            event_id: "queue:417780809780519:1".into(),
+            text: text.into(),
+            sent_at: 1_000,
+        };
+        let outgoing = vec![OutgoingSelfEvent {
+            chat_id,
+            log_id: 11,
+            message: text.into(),
+            sent_at: 1_004,
+        }];
+        let classified =
+            classify_auto_generated_self_events(&db, chat, &outgoing, std::slice::from_ref(&sent))
+                .unwrap();
+        assert!(classified[0].auto_generated);
+        assert_eq!(classified[0].reason, "unique_exact_sent_match");
+        assert_eq!(
+            classified[0].matched_event_id.as_deref(),
+            Some(sent.event_id.as_str())
+        );
+
+        let mut events = vec![live_event(
+            chat_id,
+            10,
+            "민수",
+            "지원은 어디까지 해봤어",
+            990,
+        )];
+        let mut loopback = live_event(chat_id, 11, STYLE_USER, text, 1_004);
+        loopback.auto_generated = classified[0].auto_generated;
+        events.push(loopback);
+        let result = ingest_live_context_events(
+            &db,
+            TEST_ACCOUNT_FINGERPRINT,
+            chat_id,
+            chat,
+            0,
+            &events,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(result.style_messages, 0);
+        assert_eq!(result.response_samples, 0);
+        let conn = open_db_readonly(&db).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM owner_style WHERE chat=?1 AND message=?2",
+                params![chat, text],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM context_live_events WHERE disposition='auto_generated'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        drop(conn);
+
+        // The same text without a delivered send stays an owner sample.
+        let unmatched = classify_auto_generated_self_events(&db, chat, &outgoing, &[]).unwrap();
+        assert!(!unmatched[0].auto_generated);
+        assert_eq!(unmatched[0].reason, "no_exact_sent_match");
+    }
+
+    #[test]
+    fn queue_and_decision_sends_must_agree_on_one_identity() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("self-classification-conflict.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let timestamp = |seconds| {
+            chrono::DateTime::<Utc>::from_timestamp(seconds, 0)
+                .unwrap()
+                .to_rfc3339()
+        };
+        record_sent_reply(&db, "decided", "방", "같은 문장", &timestamp(1_000));
+        let outgoing = vec![OutgoingSelfEvent {
+            chat_id: 7,
+            log_id: 21,
+            message: "같은 문장".into(),
+            sent_at: 1_001,
+        }];
+        let queue = ConfirmedSelfSend {
+            event_id: "queue:9".into(),
+            text: "같은 문장".into(),
+            sent_at: 1_002,
+        };
+        let classified =
+            classify_auto_generated_self_events(&db, "방", &outgoing, std::slice::from_ref(&queue))
+                .unwrap();
+        assert!(!classified[0].auto_generated);
+        assert_eq!(classified[0].reason, "multiple_sent_matches");
+        assert!(classified[0].matched_event_id.is_none());
+    }
+
+    #[test]
+    fn queue_loader_reads_only_terminal_sent_jobs() {
+        let dir = tempdir().unwrap();
+        let queue = dir.path().join("reply-queue.sqlite3");
+        {
+            let conn = Connection::open(&queue).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE reply_jobs(event_id TEXT, status TEXT, reply TEXT, updated_at REAL);",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reply_jobs VALUES('a','sent','보낸 문장',1000.4)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reply_jobs VALUES('b','skipped','버려진 문장',1001.0)",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO reply_jobs VALUES('c','sent','   ',1002.0)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO reply_jobs VALUES('d','sent','시간 없음',NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO reply_jobs VALUES('e','delivery_unknown','불확실',1003.0)",
+                [],
+            )
+            .unwrap();
+        }
+        let sends = confirmed_self_sends_from_queue(&queue).unwrap();
+        assert_eq!(sends.len(), 1);
+        assert_eq!(sends[0].event_id, "a");
+        assert_eq!(sends[0].text, "보낸 문장");
+        assert_eq!(sends[0].sent_at, 1_000);
+
+        let without_jobs = dir.path().join("other-queue.sqlite3");
+        Connection::open(&without_jobs)
+            .unwrap()
+            .execute_batch("CREATE TABLE unrelated(x)")
+            .unwrap();
+        assert!(confirmed_self_sends_from_queue(&without_jobs)
+            .unwrap()
+            .is_empty());
+        assert!(
+            confirmed_self_sends_from_queue(&dir.path().join("absent.sqlite3"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn repair_reclassifies_bot_sent_style_rows_and_rebuilds_aggregates() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("repair.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let chat_id = 7;
+        let chat = "방";
+        let bot_text = "제목은 폭탄인데 내용은 지원이네요";
+        let events = vec![
+            live_event(chat_id, 1, "민수", "오늘 뭐 해", 1_000),
+            live_event(chat_id, 2, STYLE_USER, "그냥 집에 있었어", 1_030),
+            live_event(chat_id, 3, "민수", "지원은 어디까지 해봤어", 2_000),
+            live_event(chat_id, 4, STYLE_USER, bot_text, 2_050),
+        ];
+        let ingested = ingest_live_context_events(
+            &db,
+            TEST_ACCOUNT_FINGERPRINT,
+            chat_id,
+            chat,
+            0,
+            &events,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(ingested.style_messages, 2);
+        assert_eq!(ingested.response_samples, 2);
+        let eligible_before = {
+            let conn = open_db_readonly(&db).unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM owner_style WHERE style_eligible=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(eligible_before, 2);
+
+        let bot_style_id: i64 = {
+            let conn = open_db_readonly(&db).unwrap();
+            conn.query_row(
+                "SELECT id FROM owner_style WHERE message=?1",
+                params![bot_text],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        let sends = vec![ConfirmedSelfSend {
+            event_id: "queue:2".into(),
+            text: bot_text.into(),
+            sent_at: 2_051,
+        }];
+
+        let dry = repair_bot_sent_style_samples(&db, chat, chat_id, &sends, true).unwrap();
+        assert_eq!(dry.matched_rows, 1);
+        assert_eq!(dry.already_ineligible, 0);
+        assert!(dry.dry_run);
+        {
+            let conn = open_db_readonly(&db).unwrap();
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM owner_style WHERE content_kind='bot_sent_reply'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0
+            );
+            assert_eq!(
+                conn.query_row("SELECT sample_count FROM owner_style_profile", [], |row| {
+                    row.get::<_, i64>(0)
+                },)
+                    .unwrap(),
+                eligible_before
+            );
+        }
+
+        let report = repair_bot_sent_style_samples(&db, chat, chat_id, &sends, false).unwrap();
+        assert_eq!(report.matched_rows, 1);
+        assert_eq!(report.already_ineligible, 0);
+        assert_eq!(report.ambiguous_rows, 0);
+        assert_eq!(report.deleted_response_samples, 1);
+        assert_eq!(report.rebuilt_sources.len(), 1);
+        assert_eq!(report.matches[0].offset_seconds, -1);
+        {
+            let conn = open_db_readonly(&db).unwrap();
+            let (kind, eligible) = conn
+                .query_row(
+                    "SELECT content_kind, style_eligible FROM owner_style WHERE message=?1",
+                    params![bot_text],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap();
+            assert_eq!(kind, "bot_sent_reply");
+            assert_eq!(eligible, 0);
+            assert_eq!(
+                conn.query_row("SELECT sample_count FROM owner_style_profile", [], |row| {
+                    row.get::<_, i64>(0)
+                },)
+                    .unwrap(),
+                eligible_before - 1
+            );
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM response_time_samples", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ),)
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM owner_recipient_style_samples WHERE style_message_id = ?1",
+                    params![bot_style_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0
+            );
+        }
+
+        // Idempotent: the second pass only sees an already ineligible row.
+        let again = repair_bot_sent_style_samples(&db, chat, chat_id, &sends, false).unwrap();
+        assert_eq!(again.matched_rows, 1);
+        assert_eq!(again.already_ineligible, 1);
+        assert!(again.rebuilt_sources.is_empty());
     }
 }

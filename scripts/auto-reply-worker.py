@@ -6912,7 +6912,12 @@ def _behavioral_prior_decision(item: dict) -> bool:
 
 
 def sync_live_context_index(chat_id: int) -> dict:
-    """Refresh the local vector DB from KakaoTalk before retrieval."""
+    """Refresh the local vector DB from KakaoTalk before retrieval.
+
+    The room queue is passed along as the delivery authority: a terminal `sent`
+    job is the only durable proof that an outgoing self row was written by the
+    assistant, so style learning can exclude its own wording.
+    """
     if not BIN.exists():
         raise RetrievalError("retrieval_binary_missing")
     if chat_id is None or chat_id <= 0:
@@ -6928,6 +6933,8 @@ def sync_live_context_index(chat_id: int) -> dict:
             "--json",
             "--db",
             str(CONTEXT_DB),
+            "--queue",
+            str(QUEUE),
         ],
         timeout=CONTEXT_SYNC_TIMEOUT_SECONDS,
     )
