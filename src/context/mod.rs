@@ -1856,6 +1856,104 @@ pub struct SelfSendRepairReport {
     pub matches: Vec<SelfSendRepairMatch>,
 }
 
+/// Load the durable confirmed-send records of one chat from the decision
+/// ledger. Used where no room queue is addressable (CSV import), so a bot reply
+/// that was already confirmed in the context database cannot be learned as an
+/// owner style sample.
+pub fn confirmed_self_sends_from_decisions(
+    db_path: &Path,
+    chat: &str,
+) -> Result<Vec<ConfirmedSelfSend>> {
+    let conn = open_db_readonly(db_path)?;
+    confirmed_self_sends_with_connection(&conn, chat)
+}
+
+fn confirmed_self_sends_with_connection(
+    conn: &Connection,
+    chat: &str,
+) -> Result<Vec<ConfirmedSelfSend>> {
+    if chat.trim().is_empty() {
+        anyhow::bail!("confirmed send chat is invalid");
+    }
+    let mut stmt = conn.prepare(
+        "SELECT event_id, reply, sent_at, updated_at FROM reply_decisions
+         WHERE chat = ?1 AND decision = 'reply' AND status = 'sent'
+           AND reply IS NOT NULL AND length(trim(reply)) > 0",
+    )?;
+    let rows = stmt.query_map(params![chat], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    let mut sends = Vec::new();
+    for row in rows {
+        let (event_id, text, sent_at, updated_at) = row?;
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let Some(sent_at) = sent_at
+            .as_deref()
+            .and_then(owner_style_timestamp)
+            .or_else(|| updated_at.as_deref().and_then(owner_style_timestamp))
+        else {
+            continue;
+        };
+        sends.push(ConfirmedSelfSend {
+            event_id,
+            text,
+            sent_at,
+        });
+    }
+    Ok(sends)
+}
+
+/// Match one owner style row against confirmed sends.
+///
+/// Returns the single matching send plus whether the match was ambiguous. A
+/// many-to-one match must stay unclassified (fail closed), so callers have to
+/// check the ambiguity flag before trusting the match.
+fn match_confirmed_send<'a>(
+    sends: &'a [ConfirmedSelfSend],
+    text: &str,
+    sent_at: i64,
+) -> (Option<&'a ConfirmedSelfSend>, bool) {
+    let mut unique: BTreeMap<&str, &ConfirmedSelfSend> = BTreeMap::new();
+    for send in sends {
+        if send.text != text {
+            continue;
+        }
+        if sent_at.abs_diff(send.sent_at) <= SELF_SEND_REPAIR_WINDOW_SECONDS as u64 {
+            unique.entry(send.event_id.as_str()).or_insert(send);
+        }
+    }
+    (unique.values().next().copied(), unique.len() > 1)
+}
+
+fn mark_bot_sent_features(features_json: &str, event_id: &str, offset_seconds: i64) -> String {
+    let mut features: serde_json::Value =
+        serde_json::from_str(features_json).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = features.as_object_mut() {
+        object.insert("style_eligible".to_string(), serde_json::json!(false));
+        object.insert(
+            "content_kind".to_string(),
+            serde_json::json!("bot_sent_reply"),
+        );
+        object.insert(
+            "bot_sent_event_id".to_string(),
+            serde_json::json!(event_id),
+        );
+        object.insert(
+            "bot_sent_offset_seconds".to_string(),
+            serde_json::json!(offset_seconds),
+        );
+    }
+    features.to_string()
+}
+
 fn owner_style_timestamp(value: &str) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S")
         .ok()
@@ -1934,24 +2032,12 @@ pub fn repair_bot_sent_style_samples(
         let Some(sent_at) = owner_style_timestamp(&date) else {
             continue;
         };
-        let mut unique: BTreeMap<&str, &ConfirmedSelfSend> = BTreeMap::new();
-        for send in confirmed_sends {
-            if send.text != message {
-                continue;
-            }
-            if sent_at.abs_diff(send.sent_at) <= SELF_SEND_REPAIR_WINDOW_SECONDS as u64 {
-                unique.entry(send.event_id.as_str()).or_insert(send);
-            }
+        let (matched, ambiguous) = match_confirmed_send(confirmed_sends, &message, sent_at);
+        if ambiguous {
+            report.ambiguous_rows += 1;
+            continue;
         }
-        match unique.len() {
-            1 => {}
-            0 => continue,
-            _ => {
-                report.ambiguous_rows += 1;
-                continue;
-            }
-        }
-        let Some(send) = unique.values().next().copied() else {
+        let Some(send) = matched else {
             continue;
         };
         let offset = sent_at - send.sent_at;
@@ -1974,28 +2060,14 @@ pub fn repair_bot_sent_style_samples(
         if dry_run {
             continue;
         }
-        let mut features: serde_json::Value =
-            serde_json::from_str(&features_json).unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(object) = features.as_object_mut() {
-            object.insert("style_eligible".to_string(), serde_json::json!(false));
-            object.insert(
-                "content_kind".to_string(),
-                serde_json::json!("bot_sent_reply"),
-            );
-            object.insert(
-                "bot_sent_event_id".to_string(),
-                serde_json::json!(send.event_id),
-            );
-            object.insert(
-                "bot_sent_offset_seconds".to_string(),
-                serde_json::json!(offset),
-            );
-        }
         tx.execute(
             "UPDATE owner_style
              SET style_eligible = 0, content_kind = 'bot_sent_reply', features_json = ?2
              WHERE id = ?1",
-            params![style_id, features.to_string()],
+            params![
+                style_id,
+                mark_bot_sent_features(&features_json, &send.event_id, offset)
+            ],
         )?;
         report.deleted_recipient_samples += tx.execute(
             "DELETE FROM owner_recipient_style_samples WHERE style_message_id = ?1",
@@ -2461,6 +2533,11 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
         anyhow::bail!("CSV must contain Date, User, and Message columns");
     };
     let required = date_idx.max(user_idx).max(message_idx);
+    // A bot reply that was already confirmed in this context database must not
+    // be re-learned as an owner style sample when the chat history is imported
+    // from CSV. The CSV row carries no room log id, so the decision ledger is
+    // the only addressable authority here.
+    let confirmed_sends = confirmed_self_sends_with_connection(&conn, chat).unwrap_or_default();
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM context_messages WHERE source = ?1", [&source])?;
     tx.execute(
@@ -2507,7 +2584,21 @@ pub fn index_csv(db_path: &Path, chat: &str, input: &Path) -> Result<usize> {
             })?;
         insert_message_topics(&tx, tx.last_insert_rowid(), chat, &source, &date, &message)?;
         if user == STYLE_USER {
-            let features = classify_style_message(&message);
+            let mut features = classify_style_message(&message);
+            if let Some(current_at) = parse_chat_date(&date) {
+                let row_sent_at = current_at.and_utc().timestamp();
+                let (matched, ambiguous) =
+                    match_confirmed_send(&confirmed_sends, &message, row_sent_at);
+                if let Some(send) = matched.filter(|_| !ambiguous) {
+                    features.style_eligible = false;
+                    features.content_kind = "bot_sent_reply";
+                    features.features_json = mark_bot_sent_features(
+                        &features.features_json,
+                        &send.event_id,
+                        row_sent_at - send.sent_at,
+                    );
+                }
+            }
             tx.prepare_cached(
                 "INSERT INTO owner_style(source, chat, date, user_name, message, vector, source_row, content_kind, style_eligible, policy_version, features_json)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -8458,4 +8549,65 @@ mod tests {
         assert_eq!(again.already_ineligible, 1);
         assert!(again.rebuilt_sources.is_empty());
     }
+    #[test]
+    fn csv_import_does_not_learn_a_confirmed_bot_reply() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("csv-bot-send.sqlite3");
+        ensure_live_context_schema(&db).unwrap();
+        let timestamp = |seconds: i64| {
+            chrono::DateTime::<Utc>::from_timestamp(seconds, 0)
+                .unwrap()
+                .to_rfc3339()
+        };
+        let sent_at = chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        record_sent_reply(
+            &db,
+            "bot-1",
+            "부자멘토멘티",
+            "제목은 폭탄인데 내용은 지원이네요",
+            &timestamp(sent_at),
+        );
+        let path = dir.path().join("chat.csv");
+        fs::write(
+            &path,
+            "Date,User,Message\n\
+2026-01-01 09:59:30,문승현,기사 봤어\n\
+2026-01-01 10:00:04,최연우,제목은 폭탄인데 내용은 지원이네요\n\
+2026-01-01 11:00:00,최연우,그건 좀 세긴 하네\n",
+        )
+        .unwrap();
+        assert_eq!(index_csv(&db, "부자멘토멘티", &path).unwrap(), 3);
+
+        let conn = open_db_readonly(&db).unwrap();
+        let (kind, eligible): (String, i64) = conn
+            .query_row(
+                "SELECT content_kind, style_eligible FROM owner_style WHERE message=?1",
+                params!["제목은 폭탄인데 내용은 지원이네요"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "bot_sent_reply");
+        assert_eq!(eligible, 0);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM owner_style WHERE style_eligible=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        let sample_count: i64 = conn
+            .query_row(
+                "SELECT sample_count FROM owner_style_profile WHERE chat=?1",
+                params!["부자멘토멘티"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sample_count, 1);
+    }
+
 }

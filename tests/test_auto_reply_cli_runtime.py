@@ -1055,6 +1055,73 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(
             module._policy_valid_draft("남는 휴가 부럽다", "머하고 놀지", [])
         )
+    def test_laughter_allowance_follows_clean_profile_frequency(self):
+        module = self._load_auto_reply_module("auto_reply_laughter_profile_test")
+        laughers = {"sample_count": 1000, "common_tokens": {"ㅋㅋㅋ": 40, "그냥": 5}}
+        quiet = {"sample_count": 1000, "common_tokens": {"ㅋㅋㅋ": 3}}
+        plain_inbound = "그건 좀 세네"
+        laughing_recent = [{"is_self": False, "message": "아 진짜 웃기네ㅋㅋㅋ"}]
+        silent_recent = [{"is_self": False, "message": "그건 좀 세네"}]
+
+        self.assertAlmostEqual(module._profile_laughter_rate(laughers), 0.04)
+        self.assertIsNone(module._profile_laughter_rate(None))
+        self.assertIsNone(module._profile_laughter_rate({"sample_count": 0}))
+        self.assertTrue(module._room_laughter_allows(plain_inbound, laughing_recent, laughers))
+        # Below the floor: the room does not laugh, so the reply must not either.
+        self.assertFalse(module._room_laughter_allows(plain_inbound, laughing_recent, quiet))
+        # A question turn is never a laughter turn, even in a laughing room.
+        self.assertFalse(module._room_laughter_allows("이거 왜 이래?", laughing_recent, laughers))
+        # Nobody laughed and the inbound carries no laughter token.
+        self.assertFalse(module._room_laughter_allows(plain_inbound, silent_recent, laughers))
+        # The inbound's own laughter still works without any profile.
+        self.assertTrue(module._room_laughter_allows("아 웃기네ㅋㅋㅋ", silent_recent))
+
+        self.assertTrue(
+            module._outbound_reaction_allows(
+                "ㅋㅋㅋㅋ 그건 좀", plain_inbound, laughter_allowed=True
+            )
+        )
+        self.assertFalse(
+            module._outbound_reaction_allows("ㅋㅋㅋㅋ 그건 좀", plain_inbound)
+        )
+        # Syntax bans survive the allowance.
+        self.assertFalse(
+            module._outbound_reaction_allows("ㅋㅋ 그건 좀", plain_inbound, laughter_allowed=True)
+        )
+        self.assertFalse(
+            module._outbound_reaction_allows("ㅎㅎ 그건 좀", plain_inbound, laughter_allowed=True)
+        )
+        self.assertEqual(
+            module._sanitize_outbound_reaction(
+                "ㅋㅋㅋㅋ 그건 좀", plain_inbound, laughter_allowed=True
+            ),
+            "ㅋㅋㅋㅋ 그건 좀",
+        )
+        reasons: list[str] = []
+        # The draft must not echo the inbound, otherwise the echo rule rejects
+        # it first and the laughter assertion would prove nothing.
+        self.assertFalse(
+            module._policy_valid_draft(
+                "ㅋㅋㅋㅋ 그건 좀",
+                "오늘 좀 춥네",
+                [],
+                recipient="문승현",
+                register="informal",
+                reasons_out=reasons,
+            )
+        )
+        self.assertIn("reaction_mismatch", reasons)
+        self.assertTrue(
+            module._policy_valid_draft(
+                "ㅋㅋㅋㅋ 그건 좀",
+                "오늘 좀 춥네",
+                [],
+                recipient="문승현",
+                register="informal",
+                laughter_allowed=True,
+            )
+        )
+
     def test_reply_evidence_ledger_links_retrieval_and_prompt(self):
         module = self._load_auto_reply_module("auto_reply_evidence_ledger_test")
         with tempfile.TemporaryDirectory() as tmp:
@@ -1108,6 +1175,49 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "links_retrieved": 1,
             },
         )
+
+    def test_delivery_ledger_splits_the_wait_into_stage_legs(self):
+        module = self._load_auto_reply_module("auto_reply_delivery_ledger_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "reply-evidence.jsonl"
+            module.EVIDENCE_LEDGER = ledger
+            module._confirmed_self_reply_log_id = lambda reply, after: 77
+            event = {
+                "event_id": "db:417780809780519:1",
+                "log_id": 1,
+                "sent_at": 1_000,
+                "author_nickname": "현준",
+            }
+            job = {
+                "created_at": 1_010.0,
+                "event_json": json.dumps({"generation_seconds": 4.5}),
+            }
+            self.assertIsNotNone(module.record_delivery_ledger(event, "오 좋네요", job=job))
+            record = json.loads(ledger.read_text(encoding="utf-8").strip())
+            stages = record["stages_seconds"]
+        self.assertEqual(record["outgoing_log_id"], 77)
+        self.assertEqual(record["generation_seconds"], 4.5)
+        self.assertEqual(stages["until_queued"], 10.0)
+        self.assertEqual(stages["generation"], 4.5)
+        self.assertEqual(
+            stages["after_generation"], round(stages["total"] - 14.5, 1)
+        )
+        self.assertEqual(record["detect_delay_seconds"], 10.0)
+        self.assertEqual(record["send_delay_seconds"], stages["total"])
+        self.assertIn("clock_source", record)
+
+    def test_delivery_ledger_without_generation_time_stays_explicit(self):
+        module = self._load_auto_reply_module("auto_reply_delivery_ledger_null_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "reply-evidence.jsonl"
+            module.EVIDENCE_LEDGER = ledger
+            module._confirmed_self_reply_log_id = lambda reply, after: None
+            event = {"event_id": "db:417780809780519:2", "log_id": 2, "sent_at": 2_000}
+            self.assertIsNotNone(module.record_delivery_ledger(event, "오 좋네요"))
+            record = json.loads(ledger.read_text(encoding="utf-8").strip())
+        self.assertIsNone(record["generation_seconds"])
+        self.assertIsNone(record["stages_seconds"]["after_generation"])
+        self.assertEqual(record["stages_seconds"]["until_queued"], None)
 
     def test_retrieval_receipt_reports_failure_without_evidence(self):
         module = self._load_auto_reply_module("auto_reply_retrieval_receipt_test")

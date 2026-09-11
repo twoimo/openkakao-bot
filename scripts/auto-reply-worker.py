@@ -5781,6 +5781,7 @@ def _policy_valid_draft(
     *,
     recipient: str | None = None,
     register: str | None = None,
+    laughter_allowed: bool | None = None,
     reasons_out: list[str] | None = None,
 ) -> bool:
 
@@ -5794,7 +5795,7 @@ def _policy_valid_draft(
         return reject("empty")
     if len(text) > 220:
         return reject("too_long")
-    if not _outbound_reaction_allows(text, inbound):
+    if not _outbound_reaction_allows(text, inbound, laughter_allowed=laughter_allowed):
         return reject("reaction_mismatch")
     if not _outbound_question_allows(text, inbound):
         return reject("question_unanswered")
@@ -6132,6 +6133,7 @@ def select_ranked_reply(
     client: _RerankClient | None = None,
     link_previews: list[dict] | None = None,
     register: str | None = None,
+    laughter_allowed: bool | None = None,
 ) -> dict:
     recipient = _event_author_nickname(event)
     candidates: list[str] = []
@@ -6150,6 +6152,7 @@ def select_ranked_reply(
             link_previews,
             recipient=recipient,
             register=register,
+            laughter_allowed=laughter_allowed,
         ):
             candidates.append(text)
         if len(candidates) >= 8:
@@ -6240,6 +6243,7 @@ def select_ranked_reply(
             recent_conversation,
             recipient=recipient,
             register=register,
+            laughter_allowed=laughter_allowed,
             reasons_out=reasons,
         )
         if ok_now:
@@ -7076,7 +7080,38 @@ def record_delivery_ledger(
             enqueued_at = float(job.get("created_at"))
         except (TypeError, ValueError, OverflowError):
             enqueued_at = None
+    generation_seconds = None
+    if isinstance(job, dict):
+        raw_event = job.get("event_json")
+        if isinstance(raw_event, str):
+            try:
+                recorded = json.loads(raw_event)
+                value = recorded.get("generation_seconds")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    generation_seconds = round(float(value), 2)
+            except (TypeError, ValueError):
+                generation_seconds = None
     now = time.time()
+    detect_seconds = (
+        round(enqueued_at - float(inbound_sent_at), 1)
+        if enqueued_at is not None and inbound_sent_at is not None
+        else None
+    )
+    total_seconds = (
+        round(now - float(inbound_sent_at), 1) if inbound_sent_at is not None else None
+    )
+    # Split the wait into the legs this process can actually prove: the gap
+    # until the inbound row reached the queue, the model generation, and the
+    # remaining wait before the confirmed send. An outside observer is still
+    # needed to separate "the row was late" from "we read it late"
+    # (AHP: observability, intervention_timing).
+    after_generation_seconds = (
+        round(total_seconds - detect_seconds - generation_seconds, 1)
+        if total_seconds is not None
+        and detect_seconds is not None
+        and generation_seconds is not None
+        else None
+    )
     payload = {
         "recorded_at": utc_now(),
         "event_id": event_id,
@@ -7089,16 +7124,16 @@ def record_delivery_ledger(
         "outgoing_log_id": outgoing_log_id,
         "inbound_sent_at": inbound_sent_at,
         "enqueued_at": enqueued_at,
-        "detect_delay_seconds": (
-            round(enqueued_at - float(inbound_sent_at), 1)
-            if enqueued_at is not None and inbound_sent_at is not None
-            else None
-        ),
-        "send_delay_seconds": (
-            round(now - float(inbound_sent_at), 1)
-            if inbound_sent_at is not None
-            else None
-        ),
+        "generation_seconds": generation_seconds,
+        "stages_seconds": {
+            "until_queued": detect_seconds,
+            "generation": generation_seconds,
+            "after_generation": after_generation_seconds,
+            "total": total_seconds,
+        },
+        "clock_source": "kakaotalk_sent_at (remote wall) vs local wall unix",
+        "detect_delay_seconds": detect_seconds,
+        "send_delay_seconds": total_seconds,
         "model": _active_reply_model(),
         "reasoning_effort": REPLY_REASONING_EFFORT,
     }
@@ -8711,6 +8746,78 @@ def _inbound_invites_awe(text: str) -> bool:
     return bool(re.search(r"ㄷ{2,}", text or ""))
 
 
+LAUGHTER_RATE_FLOOR = 0.02
+
+
+def _profile_laughter_rate(profile: dict | None) -> float | None:
+    """Share of clean owner samples in this room that carry a ㅋ run.
+
+    Read from the regenerated, bot-send-free profile so the output laughter
+    budget follows the operator's own observed frequency instead of requiring
+    the current inbound to contain a laughter token.
+    """
+    if not isinstance(profile, dict):
+        return None
+    tokens = profile.get("common_tokens")
+    if tokens is None:
+        tokens = profile.get("common_tokens_json")
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except (TypeError, ValueError):
+            return None
+    sample_count = profile.get("sample_count")
+    if not isinstance(tokens, dict) or not isinstance(sample_count, int) or sample_count <= 0:
+        return None
+    runs = 0
+    for token, count in tokens.items():
+        if not isinstance(token, str) or not re.fullmatch(r"ㅋ{3,}", token):
+            continue
+        try:
+            runs += int(count)
+        except (TypeError, ValueError):
+            continue
+    return runs / sample_count
+
+
+def _recent_laughter_context(recent_conversation: list[dict] | None) -> bool:
+    """True when the other person laughed or reacted in the last few turns."""
+    rows = [row for row in (recent_conversation or []) if isinstance(row, dict)]
+    for row in rows[-4:]:
+        if _is_self_chat_row(row):
+            continue
+        message = str(row.get("message") or "")
+        if _inbound_invites_laughter(message) or _inbound_invites_awe(message):
+            return True
+    return False
+
+
+def _room_laughter_allows(
+    inbound: str,
+    recent_conversation: list[dict] | None,
+    *profiles: dict | None,
+) -> bool:
+    """Allow a ㅋ run in the reply when the clean profile and the turn support it.
+
+    The old rule allowed laughter only when the current inbound already carried
+    a ㅋ/ㄷ run, which cannot implement "follow the profile's laughter
+    frequency". Now the room's regenerated laughter rate must clear the floor
+    and the turn must still be laughable: either someone laughed in the last few
+    turns, or this inbound does. Syntax bans (ㅎ, 1-2 character runs) stay.
+    """
+    # Unchanged: when the other person laughed, the reply may laugh too.
+    if _inbound_invites_laughter(inbound):
+        return True
+    # A question or a task is never a laughter turn.
+    if _inbound_asks_question(inbound) or _reply_asks_question(inbound):
+        return False
+    rates = [rate for rate in (_profile_laughter_rate(item) for item in profiles) if rate is not None]
+    if not rates or max(rates) < LAUGHTER_RATE_FLOOR:
+        return False
+    # Only a room that laughs often enough, on a turn where someone just did.
+    return _recent_laughter_context(recent_conversation)
+
+
 def _reply_laughter_policy_allows(reply: str, inbound: str | None = None) -> bool:
     """Syntax only: forbid ㅎ and 1–2 ㅋ runs. Register matching is separate."""
     if "ㅎ" in reply:
@@ -8719,10 +8826,17 @@ def _reply_laughter_policy_allows(reply: str, inbound: str | None = None) -> boo
     return all(len(run) >= 3 for run in runs)
 
 
-def _outbound_reaction_allows(reply: str, inbound: str = "") -> bool:
+def _outbound_reaction_allows(
+    reply: str,
+    inbound: str = "",
+    *,
+    laughter_allowed: bool | None = None,
+) -> bool:
     if not _reply_laughter_policy_allows(reply):
         return False
-    if re.search(r"ㅋ{3,}", reply) and not _inbound_invites_laughter(inbound):
+    if re.search(r"ㅋ{3,}", reply) and not (
+        _inbound_invites_laughter(inbound) or laughter_allowed is True
+    ):
         return False
     if re.search(r"ㄷ{2,}", reply) and not _inbound_invites_awe(inbound):
         return False
@@ -8734,15 +8848,22 @@ def _outbound_reaction_allows(reply: str, inbound: str = "") -> bool:
     return True
 
 
-def _sanitize_outbound_reaction(reply: str, inbound: str = "") -> str:
+def _sanitize_outbound_reaction(
+    reply: str,
+    inbound: str = "",
+    *,
+    laughter_allowed: bool | None = None,
+) -> str:
     """Drop disallowed laughter/awe/ack tokens. Empty means the draft cannot be sent."""
     text = " ".join(str(reply or "").split())
     if not text:
         return ""
-    if _outbound_reaction_allows(text, inbound) and _outbound_question_allows(text, inbound):
+    if _outbound_reaction_allows(
+        text, inbound, laughter_allowed=laughter_allowed
+    ) and _outbound_question_allows(text, inbound):
         return text
     text = text.replace("ㅎ", "")
-    if _inbound_invites_laughter(inbound):
+    if _inbound_invites_laughter(inbound) or laughter_allowed is True:
         text = re.sub(r"ㅋ{1,2}(?!ㅋ)", "", text)
     else:
         text = re.sub(r"ㅋ+", "", text)
@@ -8756,7 +8877,7 @@ def _sanitize_outbound_reaction(reply: str, inbound: str = "") -> str:
     if (
         text
         and len(text) <= 220
-        and _outbound_reaction_allows(text, inbound)
+        and _outbound_reaction_allows(text, inbound, laughter_allowed=laughter_allowed)
         and _outbound_question_allows(text, inbound)
     ):
         return text
@@ -10199,6 +10320,7 @@ def generate_reply(
     prompt = _fit_prompt_to_budget(prompt, prompt_budget)
     prompt_bytes = _encode_json_bounded(prompt, prompt_budget)
     generation_started = time.monotonic()
+    gen_elapsed = None
     if prompt_bytes is None:
         approx = len(json.dumps(prompt, ensure_ascii=False).encode("utf-8", "replace"))
         return {**empty, "reason": "model_prompt_overflow", "prompt_bytes": approx}
@@ -10209,12 +10331,26 @@ def generate_reply(
     # (AHP: observability, evidence_delivery).
     prompt_digest = hashlib.sha256(prompt_bytes).hexdigest()[:16]
 
+    laughter_allowed = _room_laughter_allows(
+        message,
+        recent_conversation,
+        recipient_style_profile,
+        style_profile,
+    )
+
     def with_prompt_receipt(payload: dict) -> dict:
         return {
             **payload,
             "prompt_bytes": len(prompt_bytes),
             "prompt_sha256": prompt_digest,
             "model": active_model,
+            "laughter_allowed": bool(laughter_allowed),
+            "generation_seconds": (
+                round(float(gen_elapsed), 2)
+                if isinstance(gen_elapsed, (int, float))
+                and not isinstance(gen_elapsed, bool)
+                else None
+            ),
         }
 
     print(
@@ -10449,6 +10585,7 @@ def generate_reply(
                 normalized_image_paths
                 or _reply_model_sees_images(active_model)
             ),
+            laughter_allowed=laughter_allowed,
         )
         if parsed is not None:
             if _capacity_probe and parsed != {
@@ -10680,6 +10817,7 @@ def _parse_model_decision(
     required_evidence_ids: set[str] | None = None,
     inbound: str = "",
     bind_image_evidence: bool = False,
+    laughter_allowed: bool | None = None,
 ) -> dict | None:
     required_evidence_ids = set(required_evidence_ids or ())
     media_supplied = {
@@ -10786,7 +10924,11 @@ def _parse_model_decision(
         re.IGNORECASE,
     )
     if should_reply:
-        sanitized = _sanitize_outbound_reaction(reply, inbound)
+        sanitized = _sanitize_outbound_reaction(
+            reply,
+            inbound,
+            laughter_allowed=laughter_allowed,
+        )
         folded = (sanitized or reply).casefold()
         identity_blocked = any(
             marker in folded
@@ -11185,7 +11327,12 @@ def send_reply(
     # pre-policy or externally corrupted scheduled row can never bypass the
     # model-output parser and reach local-send.
     inbound = str((event or {}).get("message") or "")
-    if not _outbound_reaction_allows(reply, inbound) or not _outbound_question_allows(reply, inbound):
+    recorded_laughter = (event or {}).get("laughter_allowed")
+    if not _outbound_reaction_allows(
+        reply,
+        inbound,
+        laughter_allowed=recorded_laughter if isinstance(recorded_laughter, bool) else None,
+    ) or not _outbound_question_allows(reply, inbound):
         return False
     if (event or {}).get("proactive") is not True and not _outbound_register_allows(
         reply, recipient=_event_author_nickname(event or {})
@@ -12209,6 +12356,12 @@ def analyze_event(event: dict) -> dict:
                 "drafts": list(model.get("drafts") or []),
             }
 
+        laughter_allowed = _room_laughter_allows(
+            message,
+            recent_conversation,
+            recipient_style_profile,
+            style_profile,
+        )
         ranked = select_ranked_reply(
             message,
             str(model.get("reply") or "").strip(),
@@ -12217,6 +12370,7 @@ def analyze_event(event: dict) -> dict:
             recent_conversation,
             link_previews=previews,
             register=str((recipient_style_profile or {}).get("register") or "") or None,
+            laughter_allowed=laughter_allowed,
         )
         result.update(
             {
@@ -12228,6 +12382,8 @@ def analyze_event(event: dict) -> dict:
                 "prompt_bytes": model.get("prompt_bytes"),
                 "prompt_sha256": model.get("prompt_sha256"),
                 "model_endpoint_reachable": model.get("model_endpoint_reachable"),
+                "laughter_allowed": bool(laughter_allowed),
+                "generation_seconds": model.get("generation_seconds"),
                 "drafts": list(ranked.get("drafts") or []),
                 "rerank_scores": list(ranked.get("scores") or []),
                 "rerank_winner_index": ranked.get("winner_index"),
@@ -12856,6 +13012,11 @@ def process_job(
             inbound_text,
             _event_recent_conversation(event),
             recipient=_event_author_nickname(event),
+            laughter_allowed=(
+                event.get("laughter_allowed")
+                if isinstance(event.get("laughter_allowed"), bool)
+                else None
+            ),
         ):
             if not durable_policy_skip(
                 event,
@@ -13259,6 +13420,8 @@ def process_job(
     scheduled_event = dict(event)
     scheduled_event["response_window_upper_seconds"] = response_upper
     scheduled_event["response_timing"] = timing_sample
+    scheduled_event["laughter_allowed"] = bool(analysis.get("laughter_allowed"))
+    scheduled_event["generation_seconds"] = analysis.get("generation_seconds")
     scheduled_event = scrub_media_event(scheduled_event)
     if not settle_processing_transition(
         event,
