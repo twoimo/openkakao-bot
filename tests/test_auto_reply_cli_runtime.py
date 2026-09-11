@@ -1897,6 +1897,20 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             round(remaining["delay_seconds"], 1),
         )
 
+    def test_question_and_ending_rules_ignore_trailing_noise(self):
+        module = self._load_auto_reply_module("auto_reply_tail_noise_test")
+        # A bare reaction no longer buys a second reply, a real question keeps it.
+        self.assertFalse(module._inbound_asks_question("흠?"))
+        self.assertFalse(module._inbound_asks_question("?"))
+        self.assertTrue(module._inbound_asks_question("오늘 시간 돼?"))
+        self.assertTrue(module._inbound_asks_question("이거 뭐예요 ㅋㅋㅋ"))
+        self.assertFalse(module._inbound_asks_question("이거때문에 개발자채용이늘엇나"))
+        # Trailing laughter and punctuation do not hide a question or an ending.
+        self.assertTrue(module._reply_asks_question("보내시고 어우는 뭐예요 ㅋㅋㅋ"))
+        self.assertEqual(module._reply_ending("지원이네요!!"), "네요")
+        self.assertEqual(module._reply_ending("선착순이네요 ㅋㅋ"), "네요")
+        self.assertFalse(module._reply_asks_question("그럼 딱 맞겠네요"))
+
     def test_behavior_memory_excludes_delivery_and_operational_outcomes(self):
         module = self._load_auto_reply_module(
             "auto_reply_behavior_memory_filter_test"

@@ -250,6 +250,10 @@ MEDIA_UNAVAILABLE_CLARIFICATION = "사진이 안 열리네 다시 보내봐"
 MEDIA_UNAVAILABLE_CLARIFICATION_REASON = "media_unavailable_clarification"
 REPLY_LAUGHTER_POLICY_REASON = "reply_laughter_policy_violation"
 AI_TELL_PROBE = "그래? 어떤 부분이 AI처럼 느껴졌는데"
+# Trailing laughter, jamo runs and punctuation are ignored when a rule checks the
+# final particle or asks whether a message is a question: "뭐예요 ㅋㅋㅋ" is a
+# question and "…지원이네요!" ends with 네요.
+_TAIL_NOISE_RE = re.compile(r"(?:[ㅋㅎㅠㅜㄷㅁㅇ]+|[.!?~…！？、。]+|\s)+$")
 # Interrogative tails treated as a question even without "?".
 _INTERROGATIVE_TAILS = (
     "뭐예요",
@@ -6089,11 +6093,21 @@ def _photo_fallback_reply(
 
 def _reply_ending(text: str) -> str:
     """Final particle of a reply, for the ending-variation instruction."""
-    compact = "".join(str(text or "").split()).rstrip(".!~…")
+    compact = "".join(_analyzed_tail(text).split())
     for ending in _REPLY_ENDINGS:
         if compact.endswith(ending):
             return ending
     return compact[-1:] if compact else ""
+
+
+def _analyzed_tail(text: str) -> str:
+    """Strip trailing laughter, jamo runs and punctuation before rule checks."""
+    body = " ".join(str(text or "").split())
+    while True:
+        stripped = _TAIL_NOISE_RE.sub("", body)
+        if stripped == body:
+            return body
+        body = stripped
 
 
 def _last_self_reply_ending(recent_conversation: list[dict] | None) -> str:
@@ -8983,7 +8997,7 @@ def _partner_streak_hold_reason(
 
 def _recent_sent_self_rows(
     connection: sqlite3.Connection | None, event: dict
-) -> list[dict]:
+) -> list[dict] | None:
     """Self rows for replies this worker already sent, straight from the queue.
 
     The analysis-time recent_conversation is a snapshot that can predate a
@@ -9011,7 +9025,9 @@ def _recent_sent_self_rows(
             (chat_id,),
         ).fetchall()
     except sqlite3.Error:
-        return []
+        # A failed lookup is not proof that nothing was sent: the caller holds
+        # instead of treating a broken query as empty history.
+        return None
     out: list[dict] = []
     for row in reversed(rows):
         text = " ".join(str(row["reply"] or "").split())
@@ -9043,6 +9059,8 @@ def _send_time_repeat_hold(
     if str(event.get("attachment") or "") == "image" or event.get("image_paths"):
         return None
     fresh = _recent_sent_self_rows(connection, event)
+    if fresh is None:
+        return "sent_history_unavailable"
     if not fresh:
         return None
     combined = [
@@ -9180,19 +9198,27 @@ def _outbound_restatement_allows(reply: str, inbound: str = "") -> bool:
         return False
     return True
 def _inbound_asks_question(text: str) -> bool:
-    body = str(text or "").strip()
-    if bool(
-        "?" in body
-        or "？" in body
-        or re.search(r"(나요|까요|인가요|거야|거예요|임\?)\s*$", body)
-        or re.search(r"(답변|설명|대답|알려|말해)\s*해\s*(줘|봐|줄래)?\s*$", body)
-        or re.search(r"(알려줘|설명해|답변해|말해줘|대답해|요약해)\s*(줘)?\s*[.!?]*$", body)
-        or re.search(r"(벌써|휴가가|끗이네|끝나|아쉽)", body)
-    ):
+    raw = str(text or "").strip()
+    body = _analyzed_tail(raw)
+    if "?" in raw or "？" in raw:
+        # A bare reaction such as "흠?" is not a request for an answer; a real
+        # question keeps its reply rights.
+        if len(body) <= 2 and not re.search(
+            r"(뭐|왜|어떻게|어디|누구|언제|얼마|몇)", body
+        ):
+            return False
+        return True
+    if re.search(r"(나요|까요|인가요|거야|거예요|임)\s*$", body):
+        return True
+    if re.search(r"(답변|설명|대답|알려|말해)\s*해\s*(줘|봐|줄래)?\s*$", body):
+        return True
+    if re.search(r"(알려줘|설명해|답변해|말해줘|대답해|요약해)\s*(줘)?\s*$", body):
+        return True
+    if re.search(r"(벌써|휴가가|끗이네|끝나|아쉽)", body):
         return True
     # Same interrogative tails the outbound gate treats as a question, so a
     # genuine "뭐예요" inbound keeps its reply rights and the suppress-exception.
-    compact = " ".join(body.split()).rstrip(".!~…")
+    compact = " ".join(body.split())
     return any(compact.endswith(tail) for tail in _INTERROGATIVE_TAILS)
 
 
@@ -9200,6 +9226,7 @@ def _reply_asks_question(text: str) -> bool:
     body = str(text or "").strip()
     if "?" in body or "？" in body:
         return True
+    body = _analyzed_tail(body)
     if re.search(r"(나요|까요|인가요|거예요|거야)\s*$", body):
         return True
     if re.search(r"(?:어떻게|어케).{0,24}(?:거임|거야|냐|니|나요|찾는|찾아|알려)", body):
@@ -9856,6 +9883,16 @@ def generate_reply(
         if _capacity_probe
         else _reply_decision_instructions()
     )
+    if not _capacity_probe:
+        # Operator instruction #11 forbids two replies in a row that end with the
+        # same final particle. Ordering drafts only helps when a different
+        # ending exists, so tell the model which particle to avoid up front.
+        previous_ending = _last_self_reply_ending(bounded_recent_conversation)
+        if previous_ending:
+            instructions = list(instructions) + [
+                "The previous 최연우 reply ended with "
+                f"{previous_ending}. End this reply with a different final particle."
+            ]
 
     prompt = (
         {
