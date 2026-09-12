@@ -481,8 +481,8 @@ enum Chrome {
         return field
     }
 
-    static func hint(_ text: String) -> NSTextField {
-        label(text, size: 11, color: .secondaryLabelColor)
+    static func hint(_ text: String, size: CGFloat = 11) -> NSTextField {
+        label(text, size: size, color: .secondaryLabelColor)
     }
 
     static func summary(_ text: String) -> NSTextField {
@@ -2187,10 +2187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let content = NSView()
         window.contentView = content
 
-        let hint = Chrome.hint("선택한 모델은 자동 저장되며, 다음 답변부터 적용됩니다.")
+        let hint = Chrome.hint("선택한 모델은 자동 저장되며, 다음 답변부터 적용됩니다.", size: 12)
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
-        let replySummary = Chrome.hint("현재 모델을 불러오는 중…")
+        let replySummary = Chrome.hint("현재 모델을 불러오는 중…", size: 12)
         modelReplySummary = replySummary
         let replyPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         replyPopup.translatesAutoresizingMaskIntoConstraints = false
@@ -2199,7 +2199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         modelReplyPopup = replyPopup
 
         let imageTitle = Chrome.label("이미지 답변 모델", size: 13, weight: .semibold, lines: 1)
-        let imageSummary = Chrome.hint("현재 이미지 모델을 불러오는 중…")
+        let imageSummary = Chrome.hint("현재 이미지 모델을 불러오는 중…", size: 12)
         modelImageSummary = imageSummary
         let imagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         imagePopup.translatesAutoresizingMaskIntoConstraints = false
