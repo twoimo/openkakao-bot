@@ -222,6 +222,48 @@ def _clear_quarantine(path: Path) -> None:
         return
 
 
+def _stage_stable_binary(runtime: Path, state_root: Path) -> Path:
+    """Keep one signed CLI at a fixed path and return it.
+
+    TCC keys Full Disk Access on a file path, so a copy per bake forces the
+    operator to approve the same binary again and again. The packaged copy inside
+    the runtime is still written (it is the digest-pinned asset), while the
+    launcher and the LaunchAgent run this stable path.
+    """
+    stable_dir = state_root.parent / "bin"
+    if not stable_dir.is_absolute() or stable_dir.is_symlink():
+        raise PackagingError("stable binary directory path is unsafe")
+    try:
+        stable_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(stable_dir, 0o700)
+    except OSError as exc:
+        raise PackagingError("cannot create the stable binary directory") from exc
+    stable = stable_dir / "openkakao-cli"
+    source = runtime / "openkakao-cli"
+    if not source.is_file():
+        raise PackagingError("packaged CLI copy is missing before staging")
+    try:
+        current = stable.read_bytes() if stable.is_file() else b""
+        wanted = source.read_bytes()
+    except OSError as exc:
+        raise PackagingError("cannot compare the stable CLI") from exc
+    if current != wanted:
+        temporary = stable.with_name("openkakao-cli.new")
+        try:
+            with source.open("rb") as reader, temporary.open("wb") as writer:
+                while chunk := reader.read(1024 * 1024):
+                    writer.write(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+            os.chmod(temporary, 0o500)
+            _clear_quarantine(temporary)
+            _sign_binary(temporary)
+            os.replace(temporary, stable)
+        except OSError as exc:
+            raise PackagingError("cannot stage the stable CLI") from exc
+    return stable
+
+
 def _copy_exclusive(source: Path, destination: Path, mode: int) -> dict[str, Any]:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
@@ -460,7 +502,11 @@ def stage_runtime(
 
         staged_python = str(python)
         staged_entry = str(scripts_runtime / "auto-reply-service.py")
-        staged_binary = str(runtime / "openkakao-cli")
+        # The operator grants Full Disk Access once, to one path. A per-bake copy
+        # under runtime/<stamp>/ would need a new grant every time, so the host
+        # runs the signed binary from a fixed location and the runtime keeps its
+        # own copy only as the digest-pinned asset.
+        staged_binary = str(_stage_stable_binary(runtime, state_root))
         staged_config = str(runtime / "config.toml")
         watchdog_argv = [
             staged_python,

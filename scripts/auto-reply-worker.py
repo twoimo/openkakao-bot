@@ -11598,6 +11598,13 @@ def send_reply(
     worker_environment = {
         "HOME": str(Path.home()),
         "PATH": "/usr/bin:/bin:/opt/homebrew/bin",
+        # The operator's attestation exception must reach the CLI this worker
+        # spawns, otherwise its pre-send preflight fails on a quiet room.
+        **(
+            {"OPENKAKAO_ATTEST_MANUAL": os.environ["OPENKAKAO_ATTEST_MANUAL"]}
+            if os.environ.get("OPENKAKAO_ATTEST_MANUAL")
+            else {}
+        ),
         "OPENKAKAO_AUTO_REPLY_WORKER": "1",
         "OPENKAKAO_AUTO_REPLY_CLI": os.environ.get(
             "OPENKAKAO_AUTO_REPLY_CLI", ""

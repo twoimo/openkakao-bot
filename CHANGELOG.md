@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 운영자 인증 예외가 **reply worker가 실행하는 CLI에도 전달**되도록 했습니다. 워커는 자식 프로세스 환경변수를 화이트리스트로 만들기 때문에 `OPENKAKAO_ATTEST_MANUAL`이 빠져 있었고, 그래서 전송 직전 preflight가 계속 실패했습니다(`bound preflight transcript attestation failed`).
+- 패키저가 **고정 경로의 서명 바이너리**(`~/Library/Application Support/openkakao/bin/openkakao-cli`)를 스테이징하고, 런처와 LaunchAgent가 그 고정 경로를 실행합니다. 전체 디스크 접근이 경로 단위로 기억되는데 베이크마다 경로가 바뀌어 매번 다시 승인해야 하던 문제를 없앱니다. 런타임 안의 사본은 다이제스트 자산으로만 남습니다.
 - 조용한 방 때문에 **호스트 전체가 기동하지 못하던 문제**를 운영자 명시 예외로 풀었습니다. 창 인증은 "최근 텍스트 2건 이상 일치"를 요구하는데, 사진·이모티콘·인용 답장만 있던 방은 이 조건을 채울 수 없어 preflight가 실패했습니다(실측: matched=1, distinct=1, 4바이트). `OPENKAKAO_ATTEST_MANUAL=1`을 설정한 실행(운영자가 직접 판단한 경우)에서만 정확히 일치하는 1행을 인정하고, 그 사실을 stderr에 남깁니다. 기본값은 기존과 동일하게 엄격합니다.
 - 자가 개선 tick이 Terminal 창을 열어 감시 프로세스를 띄우던 방식을 없앴습니다. 이제 launchd가 런처를 직접 실행하고(`AbandonProcessGroup`으로 tick 종료 후에도 유지) 감시 로그는 세션 로그 파일로만 남습니다. 창이 없으니 macOS의 "인터넷에서 다운로드된 스크립트 앱" 확인 창도, Terminal 제어 허용 창도 뜨지 않습니다. 참고: 런타임 파일에 찍히는 `com.apple.quarantine` 속성은 macOS provenance 보호 때문에 사용자·launchd 모두 제거가 거부(EPERM)되므로, 그 문서를 여는 경로 자체를 없애는 것이 유일한 해결입니다.
 - 재시작마다 뜨던 macOS 확인 창 두 개를 없앴습니다. (1) 패키저가 만든 런타임 파일에 `com.apple.quarantine`이 찍혀 `start-auto-reply-session.command`가 매번 "인터넷에서 다운로드된 스크립트 앱" 확인을 요구했습니다. 이제 생성·복사하는 런타임 파일에서 그 속성을 제거합니다. (2) 자가 개선 tick과 `.command`가 Apple Events로 Terminal을 제어해 새로 패키징된 바이너리마다 "터미널.app 제어 허용"을 요구했습니다. 두 곳 모두 제거했고, 감시 창은 셸이 끝날 때 Terminal이 스스로 닫습니다.
