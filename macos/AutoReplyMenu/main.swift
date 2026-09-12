@@ -1248,6 +1248,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelReplySummary: NSTextField?
     var modelImageSummary: NSTextField?
     var modelStatusField: NSTextField?
+    var modelReplyStatus: NSTextField?
+    var modelImageStatus: NSTextField?
+    var modelRevertButton: NSButton?
+    /// 같은 값이 두 곳에 남지 않도록, 되돌리기에 필요한 직전 선택만 보관한다.
+    var lastReplySelection: ReplyModelSelection?
+    var lastImageSelection: ReplyModelSelection?
     // 라이브옵스 창 (task 11) — 판단은 전부 코어(ui_shell::*_view)가 만든 문자열을
     // 그리기만 합니다. Swift에는 조건 분기가 없습니다.
     var durabilityWindow: NSWindow?
@@ -1850,6 +1856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let previous = currentReplyModel
         applyReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
         modelStatusField?.stringValue = "답변 모델을 바꾸는 중이에요…"
+        modelReplyStatus?.stringValue = "적용 중…"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = self?.runPython(["--action", "model-set", "--model", id], timeout: 8)
             DispatchQueue.main.async {
@@ -1866,12 +1873,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         )
                     )
                     self.modelStatusField?.stringValue = "답변 모델을 바꿨어요. 다음 답변부터 적용됩니다."
+                    self.modelReplyStatus?.stringValue = "적용됨 · 다음 답변부터 사용"
+                    self.lastReplySelection = previous
+                    self.modelRevertButton?.isEnabled = previous != nil
                     self.refreshModelSettingsWindowIfOpen()
                     return
                 }
                 // 실패하면 값을 저장하지 않고 이전 설정을 그대로 둡니다 (R5.7).
                 if let previous { self.applyReplyModelSelection(previous) }
                 self.modelStatusField?.stringValue = "답변 모델을 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
+                self.modelReplyStatus?.stringValue = "적용하지 못했습니다. 이전 모델을 유지합니다. 모델을 다시 골라 주세요."
                 self.presentOperatorResult(action: "model-set", data: data)
                 self.refreshModelSettingsWindowIfOpen()
             }
@@ -1884,6 +1895,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let previous = currentImageReplyModel
         applyImageReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
         modelStatusField?.stringValue = "이미지 모델을 바꾸는 중이에요…"
+        modelImageStatus?.stringValue = "적용 중…"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = self?.runPython(["--action", "image-model-set", "--model", id], timeout: 8)
             DispatchQueue.main.async {
@@ -1900,11 +1912,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         )
                     )
                     self.modelStatusField?.stringValue = "이미지 모델을 바꿨어요. 다음 답변부터 적용됩니다."
+                    self.modelImageStatus?.stringValue = "적용됨 · 다음 답변부터 사용"
+                    self.lastImageSelection = previous
+                    self.modelRevertButton?.isEnabled = previous != nil
                     self.refreshModelSettingsWindowIfOpen()
                     return
                 }
                 if let previous { self.applyImageReplyModelSelection(previous) }
                 self.modelStatusField?.stringValue = "이미지 모델을 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
+                self.modelImageStatus?.stringValue = "적용하지 못했습니다. 이전 모델을 유지합니다. 모델을 다시 골라 주세요."
                 self.presentOperatorResult(action: "image-model-set", data: data)
                 self.refreshModelSettingsWindowIfOpen()
             }
@@ -1981,9 +1997,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let reply = currentReplyModel ?? lastModel?.reply_model
         let replyId = reply?.id ?? ""
         let replyLabel = (reply?.label ?? replyId).trimmingCharacters(in: .whitespacesAndNewlines)
-        modelReplySummary?.stringValue = replyLabel.isEmpty
-            ? (catalogLoading ? "현재 모델을 불러오는 중…" : "아직 고른 모델이 없어요.")
-            : "지금 쓰는 모델: \(replyLabel)"
+        // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
+        modelReplySummary?.stringValue = "메시지에 답할 때 사용합니다."
+        modelReplyStatus?.stringValue = replyLabel.isEmpty
+            ? (catalogLoading ? "모델 목록 불러오는 중…" : "모델을 선택하세요.")
+            : "적용됨 · 다음 답변부터 사용"
+        modelReplyPopup?.toolTip = replyId.isEmpty ? nil : "현재 모델 ID: \(replyId)"
         if let popup = modelReplyPopup {
             populateModelPopup(popup, providers: providers, currentId: replyId, enabled: true)
         }
@@ -1992,13 +2011,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageEnabled = image?.enabled ?? true
         let imageId = image?.id ?? ""
         let imageLabel = (image?.label ?? imageId).trimmingCharacters(in: .whitespacesAndNewlines)
+        modelImageSummary?.stringValue = "이미지가 포함된 메시지에 답할 때 사용합니다."
+        let autoSelected = imageEnabled && imageId.lowercased().hasSuffix("/auto")
         if !imageEnabled {
-            modelImageSummary?.stringValue = "답변 모델이 사진도 함께 봐요. 이미지 모델을 따로 고르지 않아도 됩니다."
+            modelImageStatus?.stringValue = "답변 모델이 사진도 함께 봐요 — 이미지 모델을 따로 고르지 않아도 됩니다."
+        } else if autoSelected {
+            // '고른 모델 없음'과 '자동 선택'을 같은 문구로 보여 주지 않는다.
+            modelImageStatus?.stringValue = "자동 선택 · 이미지 메시지에 사용할 모델을 자동으로 선택합니다."
+        } else if imageLabel.isEmpty {
+            modelImageStatus?.stringValue = "이미지 모델 선택… — 이미지 메시지에 답하려면 모델을 선택하세요."
         } else {
-            modelImageSummary?.stringValue = imageLabel.isEmpty
-                ? "아직 고른 이미지 모델이 없어요."
-                : "지금 쓰는 이미지 모델: \(imageLabel)"
+            modelImageStatus?.stringValue = "적용됨 · 다음 답변부터 사용"
         }
+        modelImagePopup?.toolTip = imageId.isEmpty ? nil : "현재 모델 ID: \(imageId)"
         if let popup = modelImagePopup {
             populateModelPopup(popup, providers: providers, currentId: imageId, enabled: imageEnabled)
         }
@@ -2016,13 +2041,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         let window = Chrome.operatorWindow(
             title: "모델 설정",
-            size: NSSize(width: 620, height: 380),
+            size: NSSize(width: 620, height: 400),
             autosave: "AutoReplyModelSettings"
         )
         let content = NSView()
         window.contentView = content
 
-        let hint = Chrome.hint("답변 모델과 이미지 모델을 여기서 함께 고릅니다. 고르면 다음 답변부터 자동으로 적용돼요.")
+        let hint = Chrome.hint("선택한 모델은 자동 저장되며, 다음 답변부터 적용됩니다.")
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
         let replySummary = Chrome.hint("현재 모델을 불러오는 중…")
@@ -2033,7 +2058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         replyPopup.action = #selector(modelReplyPopupChanged(_:))
         modelReplyPopup = replyPopup
 
-        let imageTitle = Chrome.label("이미지 모델", size: 13, weight: .semibold, lines: 1)
+        let imageTitle = Chrome.label("이미지 답변 모델", size: 13, weight: .semibold, lines: 1)
         let imageSummary = Chrome.hint("현재 이미지 모델을 불러오는 중…")
         modelImageSummary = imageSummary
         let imagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -2044,15 +2069,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let status = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
         modelStatusField = status
+        // 모델별 상태 줄: 바꾼 행에서 바로 결과를 볼 수 있게 한다.
+        let replyStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
+        modelReplyStatus = replyStatus
+        let imageStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
+        modelImageStatus = imageStatus
 
-        let registerButton = Chrome.roundedButton("프로바이더 등록…", target: self, action: #selector(modelProviderRegisterClicked(_:)))
-        let reloadButton = Chrome.roundedButton("목록 다시 불러오기", target: self, action: #selector(reloadModelsClicked))
-        let actions = Chrome.hstack([registerButton, reloadButton, Chrome.spacer()])
+        let registerButton = Chrome.roundedButton("모델 제공자 추가…", target: self, action: #selector(modelProviderRegisterClicked(_:)))
+        let reloadButton = Chrome.roundedButton("모델 목록 새로고침", target: self, action: #selector(reloadModelsClicked))
+        let revertButton = Chrome.roundedButton("이전 모델로 되돌리기", target: self, action: #selector(modelRevertClicked(_:)))
+        revertButton.isEnabled = false
+        modelRevertButton = revertButton
+        let actions = Chrome.hstack([registerButton, reloadButton, revertButton, Chrome.spacer()])
 
         let stack = Chrome.vstack(
-            [hint, replyTitle, replySummary, replyPopup, imageTitle, imageSummary, imagePopup, status, actions],
+            [hint, replyTitle, replySummary, replyPopup, replyStatus,
+             imageTitle, imageSummary, imagePopup, imageStatus, status, actions],
             spacing: 8
         )
+        stack.setCustomSpacing(16, after: replyStatus)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -2061,7 +2096,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             status.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        // 키보드 순서: 답변 모델 → 이미지 모델 → 제공자 추가 → 목록 새로고침.
+        window.initialFirstResponder = replyPopup
+        replyPopup.nextKeyView = imagePopup
+        imagePopup.nextKeyView = registerButton
+        registerButton.nextKeyView = reloadButton
+        reloadButton.nextKeyView = revertButton
         modelWindow = window
+    }
+
+    /// 직전에 적용했던 모델로 되돌린다. 상태 줄에서 결과를 바로 확인할 수 있게 한다.
+    @objc func modelRevertClicked(_ sender: Any?) {
+        if let previous = lastReplySelection, let popup = modelReplyPopup, popup.isEnabled {
+            lastReplySelection = nil
+            modelRevertButton?.isEnabled = false
+            setReplyModel(id: previous.id, label: previous.label)
+        }
     }
 
     @objc func showModelSettingsWindow() {
