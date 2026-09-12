@@ -1568,11 +1568,14 @@ def main():
         or args.action in PROVIDER_ACTIONS
         or args.action in IMAGE_MODEL_ACTIONS
     ):
-        no_wait = str(_argv_flag_value("--no-wait") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        # 값 없는 단독 플래그(--no-wait)도 참으로 본다. _argv_flag_value()는
+        # 마지막 단독 플래그에 빈 문자열을 돌려주어 저장 전용 분기가 영영
+        # 실행되지 않던 문제가 있었다(2026-09-12).
+        raw_no_wait = _argv_flag_value("--no-wait")
+        no_wait = (
+            raw_no_wait is None
+            or str(raw_no_wait).strip().lower() in {"", "1", "true", "yes"}
+        ) and ("--no-wait" in sys.argv)
         if args.action == "model-set" and no_wait:
             # 저장만 하고 준비(oMLX 상주)는 호출자가 별도 단계로 확인한다.
             state_raw = _argv_flag_value("--state-root")
