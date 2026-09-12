@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 모델 적용을 **저장과 준비 대기로 분리**했습니다. `model-set --no-wait`는 override 파일만 쓰고 `stored`/`prepared`/`needs_prepare`를 함께 알려 줍니다. 준비(oMLX 상주)가 오래 걸려도 "저장은 됐는데 준비를 확인하지 못한" 상태를 성공으로 표시하지 않기 위한 1단계입니다.
 - AHP 증거 팩의 `conversation-review.csv`가 답장·주변 대화를 80자에서 자르던 것을 **원문 전체**로 바꿨습니다. 답하지 않았거나 건너뛴 건도 같은 형식으로 행을 남겨 "무엇을 놓쳤는지"가 사라지지 않습니다.
 - 빈 verdict 열은 검토자가 채우는 양식임을 열 이름(`(reviewer_to_fill)`)으로 밝히고, 창 시작 이전에 측정한 개수는 `measurement_notes`에 **unverified**로 표기했습니다.
 - 모델 설정 창의 실패 안내가 새로고침에 덮이던 문제를 고쳤습니다. 행별 안내 문구를 따로 보관해 **적용 중·실패 문구가 유지**됩니다.

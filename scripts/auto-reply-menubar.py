@@ -1276,6 +1276,7 @@ def set_reply_model(
     model: str,
     now: float | None = None,
     fetcher=None,
+    prepare: bool = True,
 ):
     del fetcher
     _ignored = dict(allow_fetch=False)
@@ -1310,8 +1311,12 @@ def set_reply_model(
                 "reason": "model_override_write_failed",
                 "warnings": ["모델 선택을 저장하지 못했습니다."],
             }
+        prepared = True
         if wanted.startswith("omlx/"):
-            _ensure_omlx_model_resident(wanted)
+            if prepare:
+                _ensure_omlx_model_resident(wanted)
+            else:
+                prepared = False
         parts = wanted.split("/", 1)
         provider = parts[0]
         label = parts[1] if len(parts) > 1 else wanted
@@ -1323,6 +1328,11 @@ def set_reply_model(
             "label": label,
             "provider": provider,
             "source": "override",
+            # 저장(stored)과 준비(prepared)를 분리해 알려 준다. 준비를 미뤘으면
+            # 화면은 "적용됨"이 아니라 "결과 확인 중"으로 두어야 한다.
+            "stored": True,
+            "prepared": prepared,
+            "needs_prepare": wanted.startswith("omlx/"),
             "warnings": [],
         }
     return _orig_set_reply_model(state_root, model, now=now, fetcher=None)
@@ -1558,6 +1568,26 @@ def main():
         or args.action in PROVIDER_ACTIONS
         or args.action in IMAGE_MODEL_ACTIONS
     ):
+        no_wait = str(_argv_flag_value("--no-wait") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if args.action == "model-set" and no_wait:
+            # 저장만 하고 준비(oMLX 상주)는 호출자가 별도 단계로 확인한다.
+            state_raw = _argv_flag_value("--state-root")
+            state_root = (
+                Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+            )
+            _print_json(
+                set_reply_model(
+                    state_root,
+                    _argv_flag_value("--model"),
+                    now=time.time(),
+                    prepare=False,
+                )
+            )
+            return 0
         if args.action == "image-model-set":
             state_raw = _argv_flag_value("--state-root")
             state_root = (
