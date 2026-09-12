@@ -1480,9 +1480,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ].joined(separator: "|")
     }
 
-    func apply(_ model: MenubarModel, modelToken: Int? = nil) {
+    func apply(_ model: MenubarModel, modelToken: Int) {
         // 조회가 시작된 뒤 변경 세대가 달라졌다면 선택값 반영을 버린다.
-        let generationCurrent = modelToken == nil || modelToken == modelChangeToken
+        let generationCurrent = modelToken == modelChangeToken
         lastModel = model
         if let current = model.reply_model, !current.id.isEmpty {
             let live = currentReplyModel
@@ -5234,9 +5234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         restoreRoomsSelection()
     }
 
-    func applyCatalogSnapshot(_ data: Data?) {
+    func applyCatalogSnapshot(_ data: Data?, modelToken: Int) {
         if let data, let model = try? JSONDecoder().decode(MenubarModel.self, from: data) {
-            apply(model)
+            apply(model, modelToken: modelToken)
             return
         }
         refresh()
@@ -5245,9 +5245,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func removeRoomFromCatalog(_ chat: AvailableChat) {
         rememberRoomsSelection()
         applyOptimisticChat(chat.updating(catalog: false, autoReply: false, geeknews: false))
+        // 채팅방 설정 작업도 시작 시점의 변경 세대를 캡처해, 늦게 도착한 스냅샷이
+        // 이미 완료된 모델 선택을 덮지 않게 한다.
+        let fetchToken = modelChangeToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = self?.runPython(["--catalog-delete", String(chat.chat_id)], timeout: 12)
-            DispatchQueue.main.async { self?.applyCatalogSnapshot(data) }
+            DispatchQueue.main.async { self?.applyCatalogSnapshot(data, modelToken: fetchToken) }
         }
     }
 
@@ -5285,9 +5288,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let json = String(data: data, encoding: .utf8) else { return }
         rememberRoomsSelection()
         applyOptimisticChat(chat.updating(catalog: true, autoReply: autoReply, geeknews: geeknews))
+        // 설정 변경 응답도 시작 시점의 세대를 캡처해 전달한다.
+        let fetchToken = modelChangeToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = self?.runPython(["--catalog-upsert", json], timeout: 12)
-            DispatchQueue.main.async { self?.applyCatalogSnapshot(data) }
+            DispatchQueue.main.async { self?.applyCatalogSnapshot(data, modelToken: fetchToken) }
         }
     }
 
