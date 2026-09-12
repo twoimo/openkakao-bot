@@ -71,7 +71,7 @@ if os.path.isfile(context_db):
         rows = list(
             conn.execute(
                 "SELECT sender_name, sent_at FROM context_live_events"
-                " WHERE chat_id=? AND sent_at>=? AND auto_generated=0"
+                " WHERE chat_id=? AND sent_at>=? AND disposition='context'"
                 " ORDER BY sent_at, log_id",
                 (chat_id, int(start)),
             )

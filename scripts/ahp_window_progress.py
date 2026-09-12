@@ -97,8 +97,12 @@ def inbound_units(start: float) -> list[dict[str, Any]]:
     connection.row_factory = sqlite3.Row
     try:
         rows = connection.execute(
+            # Only the other people's incoming speech counts as an inbound
+            # unit: disposition 'context' is a participant message that was
+            # indexed, while 'style' is the operator's own row and the
+            # auto_generated ones are the assistant's replies.
             "SELECT chat_id, log_id, sent_at, sender_name FROM context_live_events "
-            "WHERE chat_id = ? AND sent_at >= ? AND auto_generated = 0 "
+            "WHERE chat_id = ? AND sent_at >= ? AND disposition = 'context' "
             "ORDER BY sent_at, log_id",
             (CHAT_ID, int(start)),
         ).fetchall()
