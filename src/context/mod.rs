@@ -2320,8 +2320,11 @@ pub fn ingest_live_context_events(
             }
         }
     };
-    if source.account_fingerprint != fingerprint || source.chat_id != chat_id || source.chat != chat
-    {
+    // 이름 없는 그룹방은 '그룹:<id>' 자리표시자로 저장된다. 화면 이름으로 동기화해도
+    // 같은 방이므로 통과시킨다.
+    let placeholder = format!("그룹:{chat_id}");
+    let name_matches = source.chat == chat || source.chat == placeholder;
+    if source.account_fingerprint != fingerprint || source.chat_id != chat_id || !name_matches {
         anyhow::bail!("live context source identity changed");
     }
     if source.checkpoint_log_id < expected_checkpoint {
