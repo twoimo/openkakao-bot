@@ -1445,7 +1445,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func loadModel() -> MenubarModel? {
-        guard let data = runPython() else { return nil }
+        // 스냅샷은 커다란 컨텍스트 DB를 읽는다. 기본 8초는 호스트가 DB를 쓸 때
+        // 자주 넘겨 메뉴가 붉게 깜빡였다(2026-09-13). 여유를 준다.
+        guard let data = runPython([], timeout: 25) else { return nil }
         return try? JSONDecoder().decode(MenubarModel.self, from: data)
     }
 
