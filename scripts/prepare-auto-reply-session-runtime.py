@@ -519,6 +519,9 @@ def stage_runtime(
                 str(state_root),
             ],
             "RunAtLoad": True,
+            # The tick starts the watchdog service as a child process. Without
+            # this, launchd would kill the service as soon as the tick exits.
+            "AbandonProcessGroup": True,
             "StartInterval": start_interval,
             "ThrottleInterval": start_interval,
             "ProcessType": "Background",

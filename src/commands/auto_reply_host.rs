@@ -25,14 +25,6 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 const WINDOW_NS: i128 = 15 * 60 * 1_000_000_000;
 const MAX_LAUNCHES_PER_WINDOW: usize = 3;
 const LAUNCH_COOLDOWN_NS: i128 = 60 * 1_000_000_000;
-const BACKGROUND_OPEN_ARGV: [&str; 6] = [
-    "/usr/bin/open",
-    "-g",
-    "-j",
-    "--hide",
-    "-b",
-    "com.apple.Terminal",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoReplyHostAction {
@@ -352,10 +344,6 @@ impl MonitorManifest {
     }
 }
 
-fn bounded_output(bytes: &[u8]) -> bool {
-    bytes.len() as u64 <= MAX_FILE_BYTES
-}
-
 fn run_tick(manifest: &Path, state_root: &Path) -> Result<i32> {
     let state_root = require_private_root(state_root)?;
     let (command_path, digest) = load_tick_command(manifest, &state_root)?;
@@ -483,28 +471,24 @@ fn run_tick(manifest: &Path, state_root: &Path) -> Result<i32> {
         ),
     )?;
 
-    let mut open = Command::new(BACKGROUND_OPEN_ARGV[0]);
-    open.args(&BACKGROUND_OPEN_ARGV[1..])
-        .arg(&command_path)
+    // Start the watchdog service directly instead of asking LaunchServices to
+    // open the launcher document in Terminal. Two operator prompts came from the
+    // document path: Gatekeeper asks to allow a freshly packaged launcher as an
+    // "app downloaded from the internet", and Terminal ownership made macOS ask
+    // for Automation permission. The launcher already redirects its own output to
+    // the session logs, and the LaunchAgent abandons this process group so the
+    // service keeps running after the tick exits.
+    let mut open = Command::new("/bin/sh");
+    open.arg(&command_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .env_clear()
         .env("HOME", dirs::home_dir().context("home")?)
         .env("PATH", "/usr/bin:/bin")
         .env("TMPDIR", "/tmp");
-    let (returncode, reason) = match open.output() {
-        Ok(output) if !bounded_output(&output.stdout) || !bounded_output(&output.stderr) => {
-            (None, "open_output_exceeded_bound")
-        }
-        Ok(output) if output.status.success() => {
-            // The tick deliberately drives no Apple Events. Asking Terminal to
-            // tidy its own window made macOS prompt for Automation permission
-            // against every freshly packaged binary, and the window closes by
-            // itself when the watchdog shell exits.
-            (Some(0), "")
-        }
-        Ok(_) => (Some(1), "open_failed"),
+    let (returncode, reason) = match open.spawn() {
+        Ok(_child) => (Some(0), ""),
         Err(_) => (None, "OSError"),
     };
     let state = if returncode == Some(0) {
