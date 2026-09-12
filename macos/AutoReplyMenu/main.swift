@@ -1950,6 +1950,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return catalogProviders.isEmpty ? live : catalogProviders
     }
 
+    /// "opencode-go-session/deepseek-v4.1-flash" → "DeepSeek V4.1 Flash · OpenCode Go".
+    static func friendlyModelName(_ id: String) -> String {
+        let parts = id.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return id }
+        let provider = parts[0].replacingOccurrences(of: "-", with: " ")
+        let model = parts[1].replacingOccurrences(of: "-", with: " ")
+        let prettyProvider = provider.split(separator: " ").map { $0.capitalized }.joined(separator: " ")
+        let prettyModel = model.split(separator: " ").map { $0.capitalized }.joined(separator: " ")
+        return "\(prettyModel) · \(prettyProvider)"
+    }
+
     func populateModelPopup(
         _ popup: NSPopUpButton,
         providers: [ReplyModelProvider],
@@ -1970,7 +1981,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         if matched == nil, !currentId.isEmpty {
-            let entry = NSMenuItem(title: "현재: \(currentId)", action: nil, keyEquivalent: "")
+            // 목록에 없는 모델은 긴 내부 ID 대신 읽을 수 있는 이름으로 보여 준다.
+            let entry = NSMenuItem(title: Self.friendlyModelName(currentId), action: nil, keyEquivalent: "")
             entry.representedObject = currentId
             menu.addItem(entry)
             matched = entry
@@ -2012,7 +2024,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageId = image?.id ?? ""
         let imageLabel = (image?.label ?? imageId).trimmingCharacters(in: .whitespacesAndNewlines)
         modelImageSummary?.stringValue = "이미지가 포함된 메시지에 답할 때 사용합니다."
-        let autoSelected = imageEnabled && imageId.lowercased().hasSuffix("/auto")
+        let autoSelected = imageEnabled && (imageId.lowercased().contains("auto") || imageLabel.lowercased() == "auto")
         if !imageEnabled {
             modelImageStatus?.stringValue = "답변 모델이 사진도 함께 봐요 — 이미지 모델을 따로 고르지 않아도 됩니다."
         } else if autoSelected {
