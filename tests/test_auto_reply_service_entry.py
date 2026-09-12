@@ -75,6 +75,37 @@ class CatalogSelectorTests(unittest.TestCase):
             self.assertEqual(module._catalog_selectors(Path(raw)), [])
 
 
+    def test_geeknews_only_room_needs_an_explicit_opt_in(self):
+        module = load_entry("auto_reply_catalog_selector_geeknews_test")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "menubar-room-catalog.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "rooms": [
+                            {"chat_id": 7, "auto_reply": True, "title": "답변방"},
+                            {
+                                "chat_id": 8,
+                                "auto_reply": False,
+                                "geeknews": True,
+                                "title": "긱뉴스만",
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            # 기본은 자동답변 방만: 긱뉴스 전용 방에는 워커를 띄우지 않는다.
+            self.assertEqual(module._catalog_selectors(root), ["bind:7:답변방"])
+            # 운영자가 명시적으로 켜면 긱뉴스 전용 방도 후보에 들어간다.
+            with mock.patch.dict(os.environ, {"OPENKAKAO_GEEKNEWS_ONLY_ROOMS": "1"}):
+                self.assertEqual(
+                    module._catalog_selectors(root),
+                    ["bind:7:답변방", "bind:8:긱뉴스만"],
+                )
+
 class AutoReplyServiceEntryTests(unittest.TestCase):
     maxDiff = None
 

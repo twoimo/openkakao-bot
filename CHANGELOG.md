@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
 
 ### Added
+- 서비스가 `OPENKAKAO_GEEKNEWS_ONLY_ROOMS=1`일 때 **긱뉴스 전용 방도 방 후보에 포함**합니다(기본값은 꺼짐 → 기존 동작 변화 없음). 긱뉴스는 방 워커 안에서 실행되므로 전용 방에도 워커가 필요하고, 그 방들은 DB 감시자 없이 돌아야 합니다. 테스트 추가(`CatalogSelectorTests`).
 - `context-repair-self-sends`(숨김)를 추가했습니다. 확정 전송과 정확히 일치(±180초, 유일)하는 기존 `owner_style` 행을 `bot_sent_reply`로 표시하고, 그 행이 만든 응답시간 표본·수신자 표본을 지운 뒤 말투 프로필을 재생성합니다. `--dry-run`은 아무것도 바꾸지 않습니다. 운영 DB 적용: 대상 17행(6행이 학습 대상), 응답 표본 7건·수신자 표본 5건 삭제, 현준 수신자 프로필 재생성, 질문 집계 2383→2382, `요` 종결 358→354.
 - 실패·미파싱(deferred) 시도에도 같은 결정 영수증을 남기고, `retrieval` 블록에 검색된 근거 ID 수(`retrieved_evidence_ids`)와 최종 프롬프트에 남은 ID 수(`prompt_evidence_ids`)를 구분해 기록합니다. 이전에는 예약된 답장만 영수증이 있었고 실패 시도는 사후에 증명할 수 없었습니다.
 - 페이싱 대기 시간을 **단계별로** 기록합니다. 전송 확정 원장에 `generation_seconds`(모델 생성), `stages_seconds`(대기열 도달까지·생성·생성 이후·합계), `clock_source`(카카오톡 `sent_at` 원격 시계 vs 로컬 wall)를 남깁니다. 기존에는 감지·전송 지연 두 숫자만 있어 146초가 "DB에 늦게 나타난 것"인지 "읽고도 생성이 오래 걸린 것"인지 구분할 수 없었습니다. 외부 읽기 전용 관측기는 아직 없어 남은 항목으로 표시합니다.

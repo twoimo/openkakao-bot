@@ -517,8 +517,18 @@ def _catalog_selectors(state_root: Path) -> list[str]:
         return []
     rooms = payload.get("rooms") if isinstance(payload, dict) else None
     out: list[str] = []
+    # 기본은 자동답변 방만. 긱뉴스 전용 방까지 함께 띄우려면 운영자가 명시적으로
+    # 켠다(그 방들은 DB 감시자 없이 워커만 돌아야 하므로 기본값을 바꾸지 않는다).
+    include_geeknews_only = (
+        str(os.environ.get("OPENKAKAO_GEEKNEWS_ONLY_ROOMS") or "").strip().lower()
+        in {"1", "true", "yes"}
+    )
     for room in rooms or []:
-        if not isinstance(room, dict) or room.get("auto_reply") is not True:
+        if not isinstance(room, dict):
+            continue
+        if room.get("auto_reply") is not True and not (
+            include_geeknews_only and room.get("geeknews") is True
+        ):
             continue
         chat_id = room.get("chat_id")
         if not (
@@ -610,6 +620,15 @@ def _perform_preflight(
             chat_selectors, skipped_rooms = _filter_catalog_selectors(
                 binary, config, candidates
             )
+            if skipped_rooms:
+                # 일부만 빠진 경우에도 사유를 남긴다. 조용히 빠지면 원인을 찾을 수 없다.
+                try:
+                    (state_root / "preflight-skipped.json").write_text(
+                        json.dumps(skipped_rooms, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass
             if not chat_selectors:
                 # 왜 모든 방이 떨어졌는지 남긴다. 사유가 사라지면 원인을 찾을 수 없다.
                 try:
