@@ -172,6 +172,18 @@ def ledger_rows(start: float, end: float) -> list[dict]:
 CHAT_NAME = os.environ.get("OPENKAKAO_TARGET_CHAT_NAME", "부자멘토멘티").strip() or "부자멘토멘티"
 
 
+def newest_runtime() -> str:
+    """The runtime actually installed now, which may be newer than the window record."""
+    try:
+        dirs = sorted(
+            (p for p in (STATE_ROOT / "runtime").iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except Exception:
+        return ""
+    return dirs[-1].name if dirs else ""
+
+
 def context_around(when: float) -> str:
     """A few room messages before the send, so a reviewer can judge the reply."""
     conn = connect(CONTEXT_DB)
@@ -210,8 +222,12 @@ def allowed_senders() -> list[str]:
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("allowed_send_chats"):
-                raw = line.split("=", 1)[1]
-                return [item.strip().strip('"') for item in raw.strip("[]").split(",") if item.strip()]
+                raw = line.split("=", 1)[1].strip()
+                try:
+                    parsed = json.loads(raw.replace("'", '"'))
+                except Exception:
+                    parsed = [item.strip().strip('"') for item in raw.strip("[]").split(",")]
+                return [str(item) for item in parsed if str(item).strip()]
     except Exception:
         pass
     return []
@@ -266,7 +282,7 @@ def main(argv: list[str]) -> int:
             (STATE_ROOT / "runtime" / str(window.get("runtime") or "") / "config.toml").read_bytes()
             if (STATE_ROOT / "runtime" / str(window.get("runtime") or "") / "config.toml").is_file()
             else b"",
-            window.get("runtime"),
+            newest_runtime(),
         ),
         "operator_policy": {
             "config_path": "~/.config/openkakao/config.toml",
