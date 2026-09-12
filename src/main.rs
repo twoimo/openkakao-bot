@@ -4225,7 +4225,9 @@ fn auto_reply_attest_explicit_bindings(
             .iter()
             .map(|(_, token)| token.text.clone())
             .collect::<Vec<_>>();
-        if !suffix_match.is_strong() {
+        // Operator-confirmed rooms with a short transcript may pass with one
+        // exact row; the flag is off unless the operator sets it deliberately.
+        if !suffix_match.is_acceptable(openkakao_cli::ax_send::manual_attestation_enabled()) {
             anyhow::bail!(
                 "explicit chat binding {id}:{name} failed read-only AX/local transcript attestation \
                  (matched={}, distinct={}, utf8_bytes={}, ax_rows={}, local_rows={}, ax_tail={}, local_tail={})",
