@@ -1445,10 +1445,40 @@ def collect_reply_models(
     payload["providers"] = _ensure_current_model_listed(
         list(payload.get("providers") or []), Path(state_root)
     )
+    # 답변 모델 목록과 함께 저장된 이미지 모델도 돌려준다. 화면이 이미지 변경을
+    # "저장됨"이라고 말하려면 답변 목록이 아니라 이 필드를 확인해야 한다.
+    image_id, image_source = _read_image_reply_model(Path(state_root))
+    image_parts = image_id.split("/", 1)
+    payload["image_model"] = image_id
+    payload["image_label"] = image_parts[1] if len(image_parts) > 1 else image_id
+    payload["image_provider"] = image_parts[0] if len(image_parts) > 1 else ""
+    payload["image_source"] = image_source
     payload.setdefault("ok", True)
     payload.setdefault("action", "models")
     payload.setdefault("privacy", "content_redacted")
     return payload
+
+
+def prepare_reply_model(state_root: Path, model: str):
+    """Resident-load the model without touching the saved selection.
+
+    The recheck path used to call ``model-set`` to prepare, which first saves
+    the model. A stale recheck could then overwrite a newer selection. This
+    action only prepares, so verification never writes (2026-09-12).
+    """
+
+    wanted = str(model or "").strip()
+    needs_prepare = wanted.startswith("omlx/")
+    prepared = _ensure_omlx_model_resident(wanted) if needs_prepare else True
+    return {
+        "ok": True,
+        "action": "model-prepare",
+        "privacy": "content_redacted",
+        "model": wanted,
+        "needs_prepare": needs_prepare,
+        "prepared": prepared,
+        "warnings": [] if prepared else ["모델 준비를 확인하지 못했습니다."],
+    }
 
 
 def add_api_provider(
@@ -1732,6 +1762,11 @@ def main():
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
         _print_json(_improve_launch(state_root))
+        return 0
+    if args.action == "model-prepare":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(prepare_reply_model(state_root, _argv_flag_value("--model")))
         return 0
     return _orig_main()
 

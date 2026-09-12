@@ -14,11 +14,14 @@ if [ ! -d "$APP" ]; then
   exit 1
 fi
 pkill -f "AutoReplyMenu.app/Contents/MacOS" 2>/dev/null || true
-# The build output is a bare binary, but the running app also needs
-# Contents/Resources (helper scripts + bundled CLI). Replacing the installed
-# app without them left the helper missing and the menu showed
-# snapshot_unavailable (2026-09-12). Carry them over first.
-if [ -d "$TARGET/Contents/Resources" ] && [ ! -d "$APP/Contents/Resources" ]; then
+# The build output has an empty Contents/Resources, but the running app also
+# needs the helper scripts and bundled CLI. Replacing the installed app
+# without them left the helper missing and the menu showed
+# snapshot_unavailable (2026-09-12). Carry the installed Resources over when
+# the build output has none.
+if [ -d "$TARGET/Contents/Resources" ] &&
+  [ -z "$(ls -A "$APP/Contents/Resources" 2>/dev/null || true)" ]; then
+  rm -rf "$APP/Contents/Resources"
   cp -R "$TARGET/Contents/Resources" "$APP/Contents/Resources" || true
 fi
 rm -rf "$TARGET"
