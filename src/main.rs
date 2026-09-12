@@ -4289,9 +4289,30 @@ fn validate_auto_reply_context(
                 target.chat_name
             );
         }
+        // 이름 없는 그룹방은 '그룹:<id>' 이름으로 프로파일이 쌓인다. 화면 이름으로
+        // 조회가 비면 자리표시자 이름으로 한 번 더 시도한다.
+        let mut profile_chat = target.chat_name.clone();
+        let placeholder = format!("그룹:{}", target.chat_id);
+        if openkakao_cli::context::style_profile(
+            &db_path,
+            &profile_chat,
+            "최연우",
+            Some(&state.source),
+        )?
+        .is_none()
+            && openkakao_cli::context::style_profile(
+                &db_path,
+                &placeholder,
+                "최연우",
+                Some(&state.source),
+            )?
+            .is_some()
+        {
+            profile_chat = placeholder;
+        }
         let profile = openkakao_cli::context::style_profile(
             &db_path,
-            &target.chat_name,
+            &profile_chat,
             "최연우",
             Some(&state.source),
         )?
@@ -4304,7 +4325,7 @@ fn validate_auto_reply_context(
         }
         let timing = openkakao_cli::context::response_time_stats(
             &db_path,
-            &target.chat_name,
+            &profile_chat,
             "최연우",
             Some(&state.source),
         )?
