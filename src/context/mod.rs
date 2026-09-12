@@ -106,8 +106,13 @@ impl LiveContextSyncState {
     /// blocking the whole worker on that flag leaves authorized inbound stuck
     /// behind a fence the worker itself is supposed to clear.
     pub fn allows_auto_reply_startup(&self, chat_id: i64, chat_name: &str) -> bool {
+        // 로컬 DB에 이름이 없는 그룹방은 '그룹:<id>' 자리표시자로 저장된다. 화면
+        // 이름으로 시작을 요청해도 같은 방으로 보고 통과시킨다.
+        let placeholder = format!("그룹:{chat_id}");
+        let name_matches =
+            self.chat == chat_name || self.chat == placeholder || chat_name.trim() == placeholder;
         self.chat_id == chat_id
-            && self.chat == chat_name
+            && name_matches
             && self.authoritative
             && matches!(self.sync_status.as_str(), "ready" | "partial")
     }

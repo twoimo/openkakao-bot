@@ -611,6 +611,14 @@ def _perform_preflight(
                 binary, config, candidates
             )
             if not chat_selectors:
+                # 왜 모든 방이 떨어졌는지 남긴다. 사유가 사라지면 원인을 찾을 수 없다.
+                try:
+                    (state_root / "preflight-skipped.json").write_text(
+                        json.dumps(skipped_rooms, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass
                 raise SystemExit(
                     "auto-reply preflight failed for every catalog room"
                 )

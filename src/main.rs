@@ -1317,10 +1317,12 @@ fn auto_reply_selector_values(
             group_titles,
         )?
     } else {
+        // 명시한 방만 검사한다. 카탈로그의 다른 방까지 합치면 인증이 되지 않는
+        // 방 하나가 모든 방의 검사를 실패시킨다.
         let expanded = expand_plain_chat_names_with_configured_bindings(cli_values, &configured);
         room_catalog::merge_configured_and_catalog_selectors_named(
             &expanded,
-            &catalog_ids,
+            &[],
             chats,
             group_titles,
         )?
@@ -6351,7 +6353,10 @@ fn main() -> Result<()> {
                 chat_id,
             )?;
             if let Some(state) = state.as_ref() {
-                if state.chat != chat || state.chat_id != chat_id {
+                let placeholder = format!("그룹:{chat_id}");
+                // 자리표시자로 저장된 이름 없는 그룹방은 화면 이름으로 동기화해도
+                // 같은 방이다. 다른 방이면 그대로 거부한다.
+                if (state.chat != chat && state.chat != placeholder) || state.chat_id != chat_id {
                     anyhow::bail!("context sync source identity changed");
                 }
             }
