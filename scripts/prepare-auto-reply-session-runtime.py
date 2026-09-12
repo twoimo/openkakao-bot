@@ -159,6 +159,44 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+SIGN_IDENTITY = os.environ.get(
+    "OPENKAKAO_SIGN_IDENTITY",
+    "Apple Development: twoimo@dgu.ac.kr (2AAG4522X6)",
+)
+
+
+def _sign_binary(path: Path) -> None:
+    """Give a generated binary a stable code identity.
+
+    The linker ad-hoc signs cargo output, and an ad-hoc signature derives its
+    identifier from the code hash, so every rebuild looked like a brand new app
+    to macOS and the operator had to approve Files, Photos, Music, Documents,
+    Desktop, iCloud, network volumes and other-app access again on every bake.
+    Signing with a fixed identity keeps one designated requirement, so a single
+    approval covers later builds. Missing identity or a signing failure is not
+    fatal: the binary still runs, it just asks again.
+    """
+    try:
+        subprocess.run(
+            [
+                "/usr/bin/codesign",
+                "--force",
+                "--sign",
+                SIGN_IDENTITY,
+                "--identifier",
+                "com.openkakao.cli",
+                str(path),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
 def _clear_quarantine(path: Path) -> None:
     """Best-effort removal of the Gatekeeper quarantine flag.
 
@@ -199,6 +237,8 @@ def _copy_exclusive(source: Path, destination: Path, mode: int) -> dict[str, Any
             os.fsync(output_stream.fileno())
         os.chmod(destination, mode)
         _clear_quarantine(destination)
+        if destination.name == "openkakao-cli":
+            _sign_binary(destination)
     finally:
         os.close(descriptor)
     metadata = destination.lstat()

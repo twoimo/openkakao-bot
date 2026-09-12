@@ -24,5 +24,12 @@ SDK=$(/usr/bin/xcrun --show-sdk-path)
   -o "$BIN" \
   "$SWIFT"
 /bin/chmod 755 "$BIN"
+# Stable code identity: an ad-hoc signature changes with every build, so macOS
+# treated each build as a new app and re-asked for folder permissions.
+SIGN_IDENTITY=${OPENKAKAO_SIGN_IDENTITY:-"Apple Development: twoimo@dgu.ac.kr (2AAG4522X6)"}
+if [ -x /usr/bin/codesign ]; then
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier com.openkakao.menubar "$BIN" >/dev/null 2>&1 || true
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier com.openkakao.menubar "$APP" >/dev/null 2>&1 || true
+fi
 printf '%s
 ' "$APP"

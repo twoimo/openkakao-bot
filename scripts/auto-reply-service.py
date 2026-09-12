@@ -379,12 +379,18 @@ def _identity(
 
 def _runtime_env(config: Path) -> dict[str, str]:
     """Return the complete environment shared by check and production."""
-    return {
+    env = {
         "HOME": str(Path.home()),
         "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
         "TMPDIR": "/tmp",
         "OPENKAKAO_CONFIG": str(config),
     }
+    # The operator's explicit attestation exception reaches the CLI only if the
+    # host passes it through; it is absent by default.
+    manual = os.environ.get("OPENKAKAO_ATTEST_MANUAL")
+    if manual:
+        env["OPENKAKAO_ATTEST_MANUAL"] = manual
+    return env
 
 
 def _check_payload(stdout: bytes) -> dict[str, Any]:

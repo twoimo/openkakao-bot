@@ -426,7 +426,24 @@ pub struct TranscriptSuffixMatch {
     pub ax_visible_count: usize,
 }
 
+/// Operator-confirmed attestation for a room with a short transcript.
+///
+/// A quiet room whose recent bubbles are mostly photos, stickers or quoted
+/// replies can never satisfy the suffix rule, and the reply host then refuses to
+/// start at all. A deliberate operator run may accept a single exact matching
+/// row instead, controlled by `OPENKAKAO_ATTEST_MANUAL=1` so the LaunchAgent can
+/// pass it through. The caller records that the relaxed rule was used, and the
+/// default stays strict.
+pub fn manual_attestation_enabled() -> bool {
+    matches!(std::env::var("OPENKAKAO_ATTEST_MANUAL"), Ok(value) if value.trim() == "1")
+}
+
 impl TranscriptSuffixMatch {
+    /// Strict rule, or the operator-confirmed single-row rule when allowed.
+    pub fn is_acceptable(self, manual: bool) -> bool {
+        self.is_strong() || (manual && self.matched_count >= 1 && self.matched_distinct >= 1)
+    }
+
     pub fn is_strong(self) -> bool {
         if self.matched_count == 0 {
             return false;
@@ -3877,7 +3894,7 @@ mod imp {
                 .map(|token| (0_i64, token))
                 .collect::<Vec<_>>();
             let matched = super::match_local_binding_suffix(&ax_texts, &local_pairs);
-            if !matched.is_strong() {
+            if !matched.is_acceptable(super::manual_attestation_enabled()) {
                 anyhow::bail!(
                     "bound send transcript attestation failed for numeric chat ID {chat_id}: matched {} rows, {} distinct values, {} UTF-8 bytes",
                     matched.matched_count,
@@ -3934,12 +3951,18 @@ mod imp {
             .map(|token| (0_i64, token))
             .collect::<Vec<_>>();
         let matched = super::match_local_binding_suffix(&ax_texts, &local_pairs);
-        if !matched.is_strong() {
+        if !matched.is_acceptable(super::manual_attestation_enabled()) {
             anyhow::bail!(
                 "bound preflight transcript attestation failed for numeric chat ID {chat_id}: matched {} rows, {} distinct values, {} UTF-8 bytes",
                 matched.matched_count,
                 matched.matched_distinct,
                 matched.matched_utf8_bytes
+            );
+        }
+        if !matched.is_strong() {
+            eprintln!(
+                "preflight transcript attestation accepted by operator rule: matched {} rows, {} distinct values",
+                matched.matched_count, matched.matched_distinct
             );
         }
 
