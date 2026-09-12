@@ -261,6 +261,29 @@ try:
 except (OSError, ValueError) as exc:
     raise SystemExit(f"status proof unavailable: {exc}")
 
+def _auto_reply_room_ids() -> set:
+    """서비스가 실제로 돌리는 방(자동답변 방)만 상태 판정 대상으로 삼는다.
+
+    긱뉴스 전용 방은 방 워커를 상주시키지 않으므로 상태 파일이 오래되어도
+    호스트 장애가 아니다(2026-09-12 오탐).
+    """
+    try:
+        payload = json.loads(
+            (root / "menubar-room-catalog.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return set()
+    rooms_payload = payload.get("rooms") if isinstance(payload, dict) else None
+    keep = set()
+    for room in rooms_payload or []:
+        if not isinstance(room, dict) or room.get("auto_reply") is not True:
+            continue
+        chat_id = room.get("chat_id")
+        if isinstance(chat_id, int) and 0 < chat_id < 2**63 - 1:
+            keep.add(chat_id)
+    return keep
+
+
 if raw_targets:
     values = raw_targets.split(",")
     targets = []
@@ -272,6 +295,7 @@ if raw_targets:
             raise SystemExit("--chat-id values must be unique")
         targets.append(target)
 else:
+    keep = _auto_reply_room_ids()
     targets = sorted(
         int(child.name)
         for child in rooms.iterdir()
@@ -280,6 +304,7 @@ else:
         and 0 < int(child.name) < 2**63 - 1
         and child.is_dir()
         and not child.is_symlink()
+        and (not keep or int(child.name) in keep)
     )
 if not targets or len(targets) > MAX_ROOMS:
     raise SystemExit(f"status requires one to {MAX_ROOMS} room IDs")
@@ -346,11 +371,17 @@ for target in targets:
     owner = supervisor.get("owner")
     epoch = supervisor.get("source_epoch")
     problems = []
-    if supervisor.get("readiness") != "ready":
+    # 준비 리스가 짧아 갱신 사이 순간적으로 readiness가 내려가거나 fence가 찍힌다.
+    # 감독관이 running이고 상태 파일이 신선하면 진행 중 전환으로 보고 실패로 세지
+    # 않는다(멈춘 방은 supervisor_state/supervisor_stale 에서 그대로 잡힌다).
+    transient_ok = supervisor.get("state") == "running" and fresh_seconds(
+        supervisor.get("updated_at")
+    )
+    if supervisor.get("readiness") != "ready" and not transient_ok:
         problems.append("supervisor_readiness")
     if supervisor.get("state") != "running":
         problems.append("supervisor_state")
-    if supervisor.get("fence_reason") not in ("", None):
+    if supervisor.get("fence_reason") not in ("", None) and not transient_ok:
         problems.append("supervisor_fenced")
     if supervisor.get("target_chat_id") != target:
         problems.append("supervisor_target")
