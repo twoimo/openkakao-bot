@@ -27,5 +27,20 @@ fi
 rm -rf "$TARGET"
 cp -R "$APP" "$TARGET"
 xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
-open -a "$TARGET"
+# The menu extra must run as the LaunchAgent job so it gets its
+# --python/--script/--state-root/--bin arguments. `open -a` would start a
+# second, argument-less LaunchServices instance that shows
+# snapshot_unavailable, so restart the job and never use open(1) (2026-09-13).
+LABEL="com.openkakao.auto-reply.menu"
+UID_NOW="$(id -u)"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+if ! launchctl kickstart -k "gui/$UID_NOW/$LABEL" 2>/dev/null; then
+  if [ -f "$PLIST" ]; then
+    launchctl bootstrap "gui/$UID_NOW" "$PLIST" 2>/dev/null || true
+    launchctl kickstart -k "gui/$UID_NOW/$LABEL" 2>/dev/null || \
+      echo "could not start $LABEL; check: launchctl print gui/$UID_NOW/$LABEL" >&2
+  else
+    echo "menu LaunchAgent missing; install it first (e.g. scripts/install-auto-reply-launchd.sh)" >&2
+  fi
+fi
 echo "installed: $TARGET"
