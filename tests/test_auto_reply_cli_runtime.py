@@ -1014,9 +1014,25 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         module = self._load_auto_reply_module("auto_reply_reaction_register_test")
         self.assertFalse(module._outbound_reaction_allows("밑져야 본전인데 지원해보시죠 ㅋㅋㅋ", "한번 지원해볼까"))
         self.assertTrue(module._outbound_reaction_allows("밑져야 본전인데 지원해보시죠", "한번 지원해볼까"))
-        self.assertTrue(module._outbound_reaction_allows("그건 좀 ㅋㅋㅋ", "ㅋㅋㅋ 진짜?"))
+        # A recorded allowance is what authorises a reaction token; the inbound
+        # token alone no longer does (review requirement), and an explicit false
+        # wins over it.
+        self.assertTrue(
+            module._outbound_reaction_allows(
+                "그건 좀 ㅋㅋㅋ", "ㅋㅋㅋ 진짜?", laughter_allowed=True
+            )
+        )
+        self.assertFalse(module._outbound_reaction_allows("그건 좀 ㅋㅋㅋ", "ㅋㅋㅋ 진짜?"))
+        self.assertFalse(
+            module._outbound_reaction_allows(
+                "그건 좀 ㅋㅋㅋ", "ㅋㅋㅋ 진짜?", laughter_allowed=False
+            )
+        )
         self.assertFalse(module._outbound_reaction_allows("오 ㄷㄷ", "자소서 귀찮네"))
-        self.assertTrue(module._outbound_reaction_allows("오 ㄷㄷ", "규모 ㄷㄷ"))
+        self.assertTrue(
+            module._outbound_reaction_allows("오 ㄷㄷ", "규모 ㄷㄷ", awe_allowed=True)
+        )
+        self.assertFalse(module._outbound_reaction_allows("오 ㄷㄷ", "규모 ㄷㄷ"))
         self.assertFalse(module._outbound_reaction_allows("응 좀 손봤어", "반응속도 빨라진듯?"))
         self.assertTrue(module._outbound_reaction_allows("좀 손봤어 이제 덜 끊길듯", "반응속도 빨라진듯?"))
         self.assertEqual(module.reaction_register()["evidence_id"], "style:reaction_register:v1")
@@ -1058,7 +1074,8 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
     def test_recorded_reaction_false_is_authoritative(self):
         module = self._load_auto_reply_module("auto_reply_reaction_false_test")
         inbound = "몇 시에 만나ㅋㅋㅋ?"
-        self.assertTrue(module._outbound_reaction_allows("세 시야 ㅋㅋㅋ", inbound))
+        # No recorded value (legacy job) means the draft is held.
+        self.assertFalse(module._outbound_reaction_allows("세 시야 ㅋㅋㅋ", inbound))
         # A value computed and stored at scheduling time must not be bypassed by
         # an inbound reaction token.
         self.assertFalse(
@@ -1075,7 +1092,10 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             module._outbound_reaction_allows("세 시야 ㅋㅋㅋ", "몇 시에 만나?")
         )
         awe_inbound = "ㄷㄷ 이거 얼마야"
-        self.assertTrue(module._outbound_reaction_allows("삼만 원이야 ㄷㄷ", awe_inbound))
+        self.assertTrue(
+            module._outbound_reaction_allows("삼만 원이야 ㄷㄷ", awe_inbound, awe_allowed=True)
+        )
+        self.assertFalse(module._outbound_reaction_allows("삼만 원이야 ㄷㄷ", awe_inbound))
         self.assertFalse(
             module._outbound_reaction_allows(
                 "삼만 원이야 ㄷㄷ", awe_inbound, awe_allowed=False
@@ -1644,6 +1664,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "ㅋㅋㅋㅋㅋㅋ 개웃기넼ㅋㅋㅋ 재미는 있을듯 ㅋㅋ",
                 recipient="현준",
                 register="formal",
+                laughter_allowed=True,
             )
         )
 
@@ -2590,6 +2611,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "ㅋㅋㅋㅋㅋㅋㅋㅋ",
                 "그런의미갘ㅋㅋㅋ",
                 recipient="현준",
+                laughter_allowed=True,
             )
         )
 
@@ -10402,6 +10424,10 @@ print(json.dumps({
             self.assertFalse(module.send_reply("좋네ㅎㅎㅎ", event=event))
             self.assertFalse(module.send_reply("좋네ㅋㅋㅋ", event=event))
             event["message"] = "ㅋㅋㅋ 진짜?"
+            # A legacy job without the recorded allowance is held instead of
+            # being justified by the inbound token.
+            self.assertFalse(module.send_reply("좋네ㅋㅋㅋ", event=event))
+            event["laughter_allowed"] = True
             self.assertTrue(module.send_reply("좋네ㅋㅋㅋ", event=event))
         runner.assert_not_called()
 

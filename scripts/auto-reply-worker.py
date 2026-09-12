@@ -8952,19 +8952,15 @@ def _outbound_reaction_allows(
 ) -> bool:
     if not _reply_laughter_policy_allows(reply):
         return False
-    # The value computed and stored at scheduling time is authoritative: a
-    # recorded false must not be bypassed by an inbound token, and a recorded
-    # true must not be re-litigated here.
-    if re.search(r"ㅋ{3,}", reply):
-        if laughter_allowed is False:
-            return False
-        if laughter_allowed is not True and not _inbound_invites_laughter(inbound):
-            return False
-    if re.search(r"ㄷ{2,}", reply):
-        if awe_allowed is False:
-            return False
-        if awe_allowed is not True and not _inbound_invites_awe(inbound):
-            return False
+    # The allowance computed at scheduling time is authoritative. A job
+    # scheduled before it existed carries no value, and the inbound token alone
+    # may not justify it (that path skipped the question/task exclusion and the
+    # clean-profile floor), so such a draft is held until it is rescheduled with
+    # a recorded allowance.
+    if re.search(r"ㅋ{3,}", reply) and laughter_allowed is not True:
+        return False
+    if re.search(r"ㄷ{2,}", reply) and awe_allowed is not True:
+        return False
     compact = re.sub(r"\s+", "", reply)
     if compact.startswith("응") and not compact.startswith("응답"):
         return False

@@ -8935,95 +8935,93 @@ mod tests {
         ensure_live_context_schema(&db).unwrap();
         let source = "/tmp/legacy-chat.csv";
         let chat = "부자멘토멘티";
-        let link = "https://example.test/hot";
-        let link_sent_at =
+        let bot_reply = "역시 세긴 하네요";
+        let human_reply = "그건 좀 웃기네";
+        let bot_sent_at =
             chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
                 .unwrap()
                 .and_utc()
                 .timestamp();
         {
             let conn = open_db(&db).unwrap();
+            for (date, user, message) in [
+                ("2026-01-01 09:59:30", "문승현", "그건 좀 세네"),
+                ("2026-01-01 10:00:04", STYLE_USER, bot_reply),
+                ("2026-01-01 10:01:00", "문승현", "다음 얘기 하자"),
+                ("2026-01-01 10:01:30", STYLE_USER, human_reply),
+            ] {
+                conn.execute(
+                    "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        source,
+                        chat,
+                        date,
+                        user,
+                        message,
+                        vector_to_bytes(&encode_vector(message))
+                    ],
+                )
+                .unwrap();
+            }
+            // Both owner rows were eligible when the legacy importer ran, so the
+            // style profile starts at two samples even though one is the bot.
+            for (index, (date, message)) in [
+                ("2026-01-01 10:00:04", bot_reply),
+                ("2026-01-01 10:01:30", human_reply),
+            ]
+            .iter()
+            .enumerate()
+            {
+                conn.execute(
+                    "INSERT INTO owner_style(source, chat, date, user_name, message, vector,
+                        source_row, content_kind, style_eligible, policy_version, features_json)
+                     VALUES (?1, ?2, ?3, '최연우', ?4, ?5, ?6, 'ordinary_conversation', 1, ?7, '{}')",
+                    params![
+                        source,
+                        chat,
+                        date,
+                        message,
+                        vector_to_bytes(&encode_vector(message)),
+                        index as i64 + 1,
+                        STYLE_POLICY_VERSION
+                    ],
+                )
+                .unwrap();
+            }
             conn.execute(
-                "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
-                 VALUES (?1, ?2, '2026-01-01 09:59:30', '문승현', '그건 좀 세네', ?3)",
-                params![
-                    source,
-                    chat,
-                    vector_to_bytes(&encode_vector("그건 좀 세네"))
-                ],
+                "INSERT INTO owner_style_profile(
+                    chat, source, user_name, sample_count, average_character_length,
+                    median_character_length, p90_character_length, casual_ending_count,
+                    casual_ending_counts_json, question_count, emoji_count, punctuation_count,
+                    common_endings_json, common_tokens_json, policy_version, created_at
+                 ) VALUES (?1, ?2, '최연우', 2, 8.0, 8.0, 8.0, 0, '{}', 0, 0, 0, '{}', '{}', ?3, '2026-01-01')",
+                params![chat, source, STYLE_POLICY_VERSION],
             )
             .unwrap();
-            conn.execute(
-                "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
-                 VALUES (?1, ?2, '2026-01-01 10:00:04', '최연우', ?3, ?4)",
-                params![
-                    source,
-                    chat,
-                    link,
-                    vector_to_bytes(&encode_vector(link))
-                ],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO owner_style(source, chat, date, user_name, message, vector,
-                    source_row, content_kind, style_eligible, policy_version, features_json)
-                 VALUES (?1, ?2, '2026-01-01 10:00:04', '최연우', ?3, ?4, 1, 'url', 0, ?5, '{}')",
-                params![
-                    source,
-                    chat,
-                    link,
-                    vector_to_bytes(&encode_vector(link)),
-                    STYLE_POLICY_VERSION
-                ],
-            )
-            .unwrap();
-            // A genuine owner row so the rebuilt style profile has a sample.
-            conn.execute(
-                "INSERT INTO owner_style(source, chat, date, user_name, message, vector,
-                    source_row, content_kind, style_eligible, policy_version, features_json)
-                 VALUES (?1, ?2, '2026-01-01 09:58:00', '최연우', '그건 좀 세긴 하네', ?3, 2,
-                    'ordinary_conversation', 1, ?4, '{}')",
-                params![
-                    source,
-                    chat,
-                    vector_to_bytes(&encode_vector("그건 좀 세긴 하네")),
-                    STYLE_POLICY_VERSION
-                ],
-            )
-            .unwrap();
-            // The legacy importer wrote the pacing aggregate itself and kept no
-            // per-reply samples: a 34s "human" reply that was really the bot.
+            // The importer wrote the pacing aggregate itself and kept no sample
+            // rows: the 34s entry is really the bot, the 30s entry is human.
             conn.execute(
                 "INSERT INTO response_time_stats(
                     chat, source, user_name, sample_count, average_seconds, median_seconds,
                     p90_seconds, min_seconds, max_seconds, max_window_seconds, stddev_seconds,
                     distribution_schema_version, distribution_json
-                 ) VALUES (?1, ?2, ?3, 1, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 0.0, 0, '{}')",
-                params![chat, source, STYLE_USER],
+                 ) VALUES (?1, ?2, '최연우', 2, 32.0, 32.0, 34.0, 30.0, 34.0, 34.0, 2.0, 0, '{}')",
+                params![chat, source],
             )
             .unwrap();
         }
         let sends = vec![ConfirmedSelfSend {
             event_id: "legacy".into(),
-            text: link.into(),
-            sent_at: link_sent_at,
+            text: bot_reply.into(),
+            sent_at: bot_sent_at,
         }];
         let report = repair_bot_sent_style_samples(&db, chat, 7, &sends, false).unwrap();
         assert_eq!(report.matched_rows, 1);
-        assert_eq!(report.already_ineligible, 1);
         assert_eq!(report.deleted_response_samples, 0);
         assert_eq!(report.rebuilt_sources, vec![source.to_string()]);
         let conn = open_db_readonly(&db).unwrap();
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM response_time_stats WHERE source = ?1",
-                params![source],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-            0
-        );
-        // The rebuilt profile must describe the rows the repair left behind.
+        // The bot sentence leaves the style profile: two samples become one.
         assert_eq!(
             conn.query_row(
                 "SELECT sample_count FROM owner_style_profile WHERE source = ?1",
@@ -9033,6 +9031,25 @@ mod tests {
             .unwrap(),
             1
         );
+        // The pacing aggregate keeps only the human pair (30s).
+        let (samples, average): (i64, f64) = conn
+            .query_row(
+                "SELECT sample_count, average_seconds FROM response_time_stats WHERE source = ?1",
+                params![source],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(samples, 1);
+        assert_eq!(average, 30.0);
+        let (kind, eligible): (String, i64) = conn
+            .query_row(
+                "SELECT content_kind, style_eligible FROM owner_style WHERE message = ?1",
+                params![bot_reply],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "bot_sent_reply");
+        assert_eq!(eligible, 0);
     }
 
 }
