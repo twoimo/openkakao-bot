@@ -1880,6 +1880,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelImageState = ModelRowState()
     /// 적용이 끝나기 전에 다른 변경이 끼어들지 않게 한다.
     var modelChangeInFlight = false
+    /// 변경마다 증가하는 토큰. 오래된 재확인·완료 처리가 새 변경을 덮지 않게 한다.
+    var modelChangeToken = 0
     var lastModelChange: ModelRevertRecord?
 
     /// 답변 모델을 바꾼다. 진행 중 답변은 옛 설정으로 끝까지 완료되고, 다음
@@ -1932,6 +1934,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 저장값을 확인하기 전에는 성공도 "이전 모델 유지"도 단정하지 않는다.
     func applyModelChange(_ target: ReplyModelTarget, id: String, label: String) {
         guard !id.isEmpty, !modelChangeInFlight else { return }
+        modelChangeToken += 1
+        let token = modelChangeToken
         let previous = target == .reply ? currentReplyModel : currentImageReplyModel
         modelChangeInFlight = true
         if target == .reply {
@@ -1974,7 +1978,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     } else {
                         let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
                         self.finishModelChange(target, phase: .verifying, previous: nil, rowMessage: message, status: message)
-                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: 1)
+                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: 1, token: token)
                     }
                 }
                 return
@@ -2093,14 +2097,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// 확인하지 못한 변경을 실제로 다시 확인한다. 문구만 남기고 끝내지 않는다.
-    func scheduleVerificationRetry(_ target: ReplyModelTarget, id: String, previous: ReplyModelSelection?, attempt: Int) {
+    func scheduleVerificationRetry(_ target: ReplyModelTarget, id: String, previous: ReplyModelSelection?, attempt: Int, token: Int) {
         guard attempt <= 3 else { return }
         let delay = Double(attempt) * 20.0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.modelChangeInFlight else { return }
+            guard self.modelChangeToken == token else { return }
             DispatchQueue.global(qos: .userInitiated).async {
                 let readBack = self.storedModelId(self.runPython(["--action", "models"], timeout: 45))
                 DispatchQueue.main.async {
+                    // 오래된 재확인은 새 변경을 건드리지 않는다.
+                    guard self.modelChangeToken == token else { return }
                     if readBack == id {
                         self.finishModelChange(
                             target,
@@ -2111,7 +2118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             status: target == .reply ? "적용됨 · 다음 답변부터 사용" : "저장됨 · 다음 답변부터 사용"
                         )
                     } else if attempt < 3 {
-                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: attempt + 1)
+                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: attempt + 1, token: token)
                     } else {
                         self.finishModelChange(
                             target,
