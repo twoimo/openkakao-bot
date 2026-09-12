@@ -33,20 +33,6 @@ const BACKGROUND_OPEN_ARGV: [&str; 6] = [
     "-b",
     "com.apple.Terminal",
 ];
-const WATCHDOG_WINDOW_SCRIPT: &str = r#"tell application "Terminal"
-repeat with w in (get windows)
-try
-set wn to name of w as text
-if wn contains "start-auto-reply-session.command" then
-if (busy of w) is false then
-close w saving no
-else
-set miniaturized of w to true
-end if
-end if
-end try
-end repeat
-end tell"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoReplyHostAction {
@@ -496,16 +482,10 @@ fn run_tick(manifest: &Path, state_root: &Path) -> Result<i32> {
             (None, "open_output_exceeded_bound")
         }
         Ok(output) if output.status.success() => {
-            let _ = Command::new("/usr/bin/osascript")
-                .args(["-e", WATCHDOG_WINDOW_SCRIPT])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .env_clear()
-                .env("HOME", dirs::home_dir().context("home")?)
-                .env("PATH", "/usr/bin:/bin")
-                .env("TMPDIR", "/tmp")
-                .status();
+            // The tick deliberately drives no Apple Events. Asking Terminal to
+            // tidy its own window made macOS prompt for Automation permission
+            // against every freshly packaged binary, and the window closes by
+            // itself when the watchdog shell exits.
             (Some(0), "")
         }
         Ok(_) => (Some(1), "open_failed"),

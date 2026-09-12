@@ -158,6 +158,20 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _clear_quarantine(path: Path) -> None:
+    """Drop the Gatekeeper quarantine flag from a generated runtime file.
+
+    The packager can run from a sandboxed or quarantined parent process, which
+    stamps `com.apple.quarantine` onto everything it writes. That flag then makes
+    macOS ask the operator to allow `start-auto-reply-session.command` on every
+    restart even though this machine produced the file itself.
+    """
+    try:
+        os.removexattr(path, "com.apple.quarantine")
+    except (AttributeError, OSError):
+        pass
+
+
 def _copy_exclusive(source: Path, destination: Path, mode: int) -> dict[str, Any]:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
@@ -172,6 +186,7 @@ def _copy_exclusive(source: Path, destination: Path, mode: int) -> dict[str, Any
             output_stream.flush()
             os.fsync(output_stream.fileno())
         os.chmod(destination, mode)
+        _clear_quarantine(destination)
     finally:
         os.close(descriptor)
     metadata = destination.lstat()
@@ -201,6 +216,7 @@ def _write_exclusive(path: Path, payload: bytes, mode: int) -> dict[str, Any]:
             stream.flush()
             os.fsync(stream.fileno())
         os.chmod(path, mode)
+        _clear_quarantine(path)
     finally:
         os.close(descriptor)
     metadata = path.lstat()
@@ -425,18 +441,7 @@ def stage_runtime(
             f">>{shlex.quote(str(state_root / 'session-service/watchdog.out.log'))} "
             f"2>>{shlex.quote(str(state_root / 'session-service/watchdog.err.log'))}\n"
             "status=$?\n"
-            "/usr/bin/osascript -e "
-            "'tell application \"Terminal\"\n"
-            "repeat with w in (get windows)\n"
-            "try\n"
-            "set wn to name of w as text\n"
-            "if wn contains \"start-auto-reply-session.command\" then\n"
-            "if (busy of w) is false then close w saving no\n"
-            "end if\n"
-            "end try\n"
-            "end repeat\n"
-            "end tell' >/dev/null 2>&1 || true\n"
-            "exit \"$status\"\n"
+            # No Apple Events here on purpose: asking Terminal to close its own\n            # window triggered a per-binary Automation prompt on every restart.\n            # Terminal closes the window itself when this shell exits.\n"exit \"$status\"\n"
         ).encode("utf-8")
         watchdog_path = runtime / "start-auto-reply-session.command"
         created.append(watchdog_path)
