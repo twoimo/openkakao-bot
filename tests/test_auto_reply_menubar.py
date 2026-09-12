@@ -191,6 +191,52 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertIn(int(room.name), chat_ids)
 
 
+    def test_leftover_non_enrolled_room_does_not_paint_menubar_red(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            helper, module, state, room, _queue, now, before = self._model(
+                Path(temporary)
+            )
+            helper._private_json(
+                state / "enrollment.json",
+                {
+                    "schema_version": 4,
+                    "selectors": [f"bind:{room.name}:fixture"],
+                    "targets": [{"chat_id": int(room.name)}],
+                },
+            )
+            leftover = state / "rooms" / "325472527151234"
+            leftover.mkdir(mode=0o700)
+            helper._private_json(
+                leftover / "supervisor-status.json",
+                {
+                    "schema_version": 1,
+                    "state": "stopped",
+                    "readiness": "fenced",
+                    "fence_reason": "shutdown",
+                    "target_chat_id": 325472527151234,
+                    "target_chat_name": "leftover",
+                },
+            )
+            helper._private_json(
+                leftover / "reply-worker-status.json",
+                {
+                    "schema_version": 1,
+                    "state": "exited",
+                    "readiness": "ready",
+                    "phase": "idle",
+                    "target_chat_id": 325472527151234,
+                },
+            )
+            module._scope_menubar_rooms_to_enrollment()
+            after = module.collect_menubar_model(state.resolve(), now=now)
+            self.assertEqual(after["level"], before["level"])
+            self.assertNotIn("supervisor_unhealthy", after["codes"])
+            self.assertNotIn("fenced", after["codes"])
+            self.assertNotIn("identity_mismatch", after["codes"])
+            chat_ids = [item["chat_id"] for item in after["rooms"]]
+            self.assertNotIn(325472527151234, chat_ids)
+            self.assertIn(int(room.name), chat_ids)
+
     def test_delivery_unknown_is_red(self):
         with tempfile.TemporaryDirectory() as temporary:
             helper, module, state, room, queue, now, _model = self._model(

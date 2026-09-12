@@ -1559,6 +1559,10 @@ def _improve_launch(
 
 def main():
     try:
+        _scope_menubar_rooms_to_enrollment()
+    except Exception:
+        pass
+    try:
         _apply_catalog_mutates()
     except (MenubarError, ValueError, json.JSONDecodeError) as exc:
         _print_json(
@@ -1781,6 +1785,109 @@ if callable(orig_snapshot):
         return snap
 
     globals()["collect_snapshot"] = _snapshot_with_models
+
+
+def _enrollment_room_ids(state_root: Path) -> set[int] | None:
+    """Room ids this host is actually serving, from its enrollment file."""
+
+    try:
+        raw = json.loads(
+            (Path(state_root) / "enrollment.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    ids: set[int] = set()
+    for target in raw.get("targets") or []:
+        if not isinstance(target, dict):
+            continue
+        try:
+            ids.add(int(target.get("chat_id")))
+        except (TypeError, ValueError):
+            continue
+    if ids:
+        return ids
+    for selector in raw.get("selectors") or []:
+        for part in str(selector).split(":"):
+            if part.isdigit():
+                ids.add(int(part))
+                break
+    return ids or None
+
+
+def _scope_menubar_rooms_to_enrollment() -> None:
+    """Keep leftover rooms from a stopped session out of the menu health.
+
+    The extra reports the health of the rooms the host is serving. A stale
+    room directory (for example a GeekNews-only room left after its session
+    stopped) used to paint the whole menu red with supervisor_unhealthy,
+    fenced, and identity_mismatch. Restrict classification to the enrollment
+    targets, the same scope the running host uses (2026-09-12).
+    """
+
+    try:
+        model = getattr(sys.modules[__name__], "collect_menubar_model", None)
+    except Exception:
+        model = None
+    if not callable(model):
+        return
+
+    def _scoped_snapshot(original):
+        def wrapper(*args, **kwargs):
+            snap = original(*args, **kwargs)
+            state_root = args[0] if args else kwargs.get("state_root")
+            if state_root is None or not isinstance(snap, dict):
+                return snap
+            allowed = _enrollment_room_ids(Path(state_root))
+            rooms = snap.get("rooms")
+            if not allowed or not isinstance(rooms, list):
+                return snap
+            snap = dict(snap)
+            snap["rooms"] = [
+                room
+                for room in rooms
+                if isinstance(room, dict)
+                and int(room.get("chat_id") or 0) in allowed
+            ]
+            return snap
+
+        return wrapper
+
+    try:
+        loader = globals().get("_load_tui")
+        tui = loader() if callable(loader) else None
+        if tui is not None and hasattr(tui, "collect_snapshot"):
+            current = tui.collect_snapshot
+            if not getattr(current, "_openkakao_scoped", False):
+                scoped = _scoped_snapshot(current)
+                scoped._openkakao_scoped = True
+                tui.collect_snapshot = scoped
+    except Exception:
+        pass
+
+    try:
+        impl_globals = model.__globals__["_read_catalog"].__globals__
+    except Exception:
+        return
+    catalog = impl_globals.get("_read_catalog")
+    if not callable(catalog) or getattr(catalog, "_openkakao_scoped", False):
+        return
+
+    def scoped_catalog(state_root):
+        entries = catalog(state_root)
+        allowed = _enrollment_room_ids(Path(state_root))
+        if not allowed or not isinstance(entries, list):
+            return entries
+        return [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and int(entry.get("chat_id") or 0) in allowed
+        ]
+
+    scoped_catalog._openkakao_scoped = True
+    impl_globals["_read_catalog"] = scoped_catalog
+
 
 if __name__ == "__main__":
     raise SystemExit(main() or 0)
