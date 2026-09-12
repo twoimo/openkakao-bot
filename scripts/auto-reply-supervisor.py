@@ -1432,6 +1432,12 @@ def main() -> int:
     acquire_owner()
     database_started = db_ready()
     database_reason = "ready" if database_started else "local_db_unavailable"
+    # 긱뉴스 전용 방은 DB 감시자 없이 워커만 돌린다. DB 감시자는 계정당 하나라
+    # 두 방이 동시에 요구하면 서로를 밀어낸다(2026-09-12 실측). 답장 전송도
+    # 함께 꺼지고, 워커는 계속 살아 긱뉴스 슬롯을 처리한다.
+    if str(os.environ.get("OPENKAKAO_GEEKNEWS_ONLY") or "").strip() == "1":
+        database_started = False
+        database_reason = "geeknews_only"
     auto_reply_enabled, auto_reply_reason = auto_reply_config(parsed_config)
     auto_reply_section = _toml_section(parsed_config, "auto_reply", "auto-reply", "bujamentor")
     allow_link_fetch = (
