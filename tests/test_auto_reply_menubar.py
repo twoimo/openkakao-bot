@@ -260,40 +260,122 @@ class AutoReplyMenubarTests(unittest.TestCase):
             "statuses": {"supervisor": {"value": value}},
         }
 
+    def _transient_room_root(self, module, **state_overrides):
+        temporary = tempfile.TemporaryDirectory()
+        room_dir = Path(temporary.name) / "rooms" / "1"
+        room_dir.mkdir(parents=True)
+        state = {
+            "capability_state": "starting",
+            "fence": "starting",
+            "fence_reason": "",
+            "pending_gaps": [],
+            "heartbeat_at": module.time.time(),
+        }
+        state.update(state_overrides)
+        (room_dir / "db-watch-state.json").write_text(
+            json.dumps(state), encoding="utf-8"
+        )
+        module._ACTIVE_STATE_ROOT = Path(temporary.name)
+        return temporary
+
     def test_transient_poll_fence_is_softened_to_ready(self):
         module = load(f"auto_reply_menubar_soften_{id(self)}")
-        softened = module._soften_candidate_fence(self._fenced_room())
-        value = softened["statuses"]["supervisor"]["value"]
-        self.assertEqual(value["readiness"], "ready")
-        self.assertEqual(value["fence_reason"], "")
-        self.assertEqual(value["readiness_reasons"], [])
+        temporary = self._transient_room_root(module)
+        try:
+            softened = module._soften_candidate_fence(self._fenced_room())
+            value = softened["statuses"]["supervisor"]["value"]
+            self.assertEqual(value["readiness"], "ready")
+            self.assertEqual(value["fence_reason"], "")
+            self.assertEqual(value["readiness_reasons"], [])
+        finally:
+            temporary.cleanup()
+            module._ACTIVE_STATE_ROOT = None
 
     def test_real_fence_is_not_softened(self):
         module = load(f"auto_reply_menubar_soften_neg_{id(self)}")
-        owner = module._soften_candidate_fence(
-            self._fenced_room(fence_reason="owner_fence", readiness_reasons=["owner_fence"])
-        )
-        self.assertEqual(
-            owner["statuses"]["supervisor"]["value"]["readiness"], "fenced"
-        )
-        stopped = module._soften_candidate_fence(self._fenced_room(state="stopped"))
-        self.assertEqual(
-            stopped["statuses"]["supervisor"]["value"]["readiness"], "fenced"
-        )
-        child = module._soften_candidate_fence(
-            self._fenced_room(
-                child_states={
-                    "ax_watch": "running",
-                    "db_watch": "exited",
-                    "reply_worker": "running",
-                }
+        temporary = self._transient_room_root(module)
+        try:
+            owner = module._soften_candidate_fence(
+                self._fenced_room(
+                    fence_reason="owner_fence", readiness_reasons=["owner_fence"]
+                )
             )
-        )
-        self.assertEqual(
-            child["statuses"]["supervisor"]["value"]["readiness"], "fenced"
-        )
+            self.assertEqual(
+                owner["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+            stopped = module._soften_candidate_fence(
+                self._fenced_room(state="stopped")
+            )
+            self.assertEqual(
+                stopped["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+            child = module._soften_candidate_fence(
+                self._fenced_room(
+                    child_states={
+                        "ax_watch": "running",
+                        "db_watch": "exited",
+                        "reply_worker": "running",
+                    }
+                )
+            )
+            self.assertEqual(
+                child["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+            empty = module._soften_candidate_fence(
+                self._fenced_room(child_states={})
+            )
+            self.assertEqual(
+                empty["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+        finally:
+            temporary.cleanup()
+            module._ACTIVE_STATE_ROOT = None
 
-    def test_catalog_upsert_preserves_room_title(self):
+    def test_delivery_fence_is_not_softened(self):
+        module = load(f"auto_reply_menubar_soften_db_{id(self)}")
+        temporary = self._transient_room_root(
+            module,
+            capability_state="fenced",
+            fence="db_unavailable",
+            fence_reason="poll_fence",
+        )
+        try:
+            out = module._soften_candidate_fence(self._fenced_room())
+            self.assertEqual(
+                out["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+        finally:
+            temporary.cleanup()
+            module._ACTIVE_STATE_ROOT = None
+
+    def test_stale_db_watch_is_not_softened(self):
+        module = load(f"auto_reply_menubar_soften_stale_{id(self)}")
+        temporary = self._transient_room_root(
+            module, heartbeat_at=module.time.time() - 60
+        )
+        try:
+            out = module._soften_candidate_fence(self._fenced_room())
+            self.assertEqual(
+                out["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+        finally:
+            temporary.cleanup()
+            module._ACTIVE_STATE_ROOT = None
+
+    def test_missing_db_watch_state_is_not_softened(self):
+        module = load(f"auto_reply_menubar_soften_missing_{id(self)}")
+        temporary = tempfile.TemporaryDirectory()
+        try:
+            module._ACTIVE_STATE_ROOT = Path(temporary.name)
+            out = module._soften_candidate_fence(self._fenced_room())
+            self.assertEqual(
+                out["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+            )
+        finally:
+            temporary.cleanup()
+            module._ACTIVE_STATE_ROOT = None
+
+    def test_catalog_upsert_writes_room_title(self):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             catalog = state / "menubar-room-catalog.json"
@@ -309,11 +391,40 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 encoding="utf-8",
             )
             module = load(f"auto_reply_menubar_catalog_title_{id(self)}")
-            module._restore_catalog_title(state, 111, "Room A")
+            module._scope_menubar_rooms_to_enrollment()
+            argv = sys.argv
+            try:
+                sys.argv = [
+                    "auto-reply-menubar.py",
+                    "--state-root",
+                    str(state),
+                    "--catalog-upsert",
+                    json.dumps(
+                        {
+                            "chat_id": 111,
+                            "auto_reply": True,
+                            "geeknews": True,
+                            "title": "Room A",
+                        }
+                    ),
+                ]
+                module._apply_catalog_mutates()
+            finally:
+                sys.argv = argv
             written = json.loads(catalog.read_text(encoding="utf-8"))
             self.assertEqual(written["rooms"][0]["title"], "Room A")
             # A caller that omits the title must not drop the existing one.
-            module._restore_catalog_title(state, 111, "")
+            try:
+                sys.argv = [
+                    "auto-reply-menubar.py",
+                    "--state-root",
+                    str(state),
+                    "--catalog-upsert",
+                    json.dumps({"chat_id": 111, "auto_reply": True, "geeknews": True}),
+                ]
+                module._apply_catalog_mutates()
+            finally:
+                sys.argv = argv
             written = json.loads(catalog.read_text(encoding="utf-8"))
             self.assertEqual(written["rooms"][0]["title"], "Room A")
 

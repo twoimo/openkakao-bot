@@ -32,6 +32,24 @@ class TransitionJournalTests(unittest.TestCase):
         connection.execute(journal.CREATE_MODEL_CIRCUIT_SQL)
         connection.commit()
 
+    def test_validate_queue_contents_uses_one_read_transaction(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.private_root(temporary)
+            path = root / "queue.sqlite3"
+            connection = journal.open_queue(path, create=True)
+            try:
+                self.assertFalse(connection.in_transaction)
+                journal.validate_queue_contents(connection)
+                # It closes the transaction it opened.
+                self.assertFalse(connection.in_transaction)
+                # A caller transaction is preserved, not replaced.
+                connection.execute("BEGIN")
+                journal.validate_queue_contents(connection)
+                self.assertTrue(connection.in_transaction)
+                connection.rollback()
+            finally:
+                connection.close()
+
     def test_empty_and_exact_legacy_migrate_atomically_to_exact_v2(self):
         for legacy in (False, True):
             with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as temporary:

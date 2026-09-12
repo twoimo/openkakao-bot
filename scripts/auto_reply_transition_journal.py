@@ -540,6 +540,26 @@ def validate_queue_room_binding(
 def validate_queue_contents(
     connection: sqlite3.Connection, *, expected_chat_id: int | None = None
 ) -> None:
+    """Validate in one read transaction.
+
+    Counts and rows must come from the same snapshot: a concurrent append
+    between them used to raise "transition journal count changed" even though
+    the database was fine. Preserve a caller's transaction if one is open.
+    """
+
+    started = not connection.in_transaction
+    if started:
+        connection.execute("BEGIN")
+    try:
+        _validate_queue_contents_body(connection, expected_chat_id=expected_chat_id)
+    finally:
+        if started:
+            connection.rollback()
+
+
+def _validate_queue_contents_body(
+    connection: sqlite3.Connection, *, expected_chat_id: int | None = None
+) -> None:
     """Bound and validate every metadata row at an open/preflight boundary."""
     _validate_quick_check(connection)
     count_row = connection.execute(

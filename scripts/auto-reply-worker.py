@@ -2740,7 +2740,8 @@ def leftover_pre_send_unknown_skip_fields(
             "error_class": None,
             "due_at": time.time(),
         }
-    if leftover_unknown_has_ax_mutation(connection, str(row["event_id"])):
+    ax_mutated = leftover_unknown_has_ax_mutation(connection, str(row["event_id"]))
+    if ax_mutated:
         confirmed = leftover_ax_confirmed_sent_fields(connection, row)
         if confirmed is not None:
             return confirmed
@@ -2748,9 +2749,6 @@ def leftover_pre_send_unknown_skip_fields(
             # Local DB already proved a send. Never retransmit; occupy until
             # heal-to-sent can attach the matching self row.
             return None
-        # Composer was mutated (text staged) but never locally confirmed.
-        # KakaoTalk may still be showing the draft because 전송 was not
-        # pressed. Fall through so the same formed text can rebound once.
     reply = row["reply"]
     if reply not in {None, ""}:
         if _proactive_unix_leftover_job(row):
@@ -2798,6 +2796,13 @@ def leftover_pre_send_unknown_skip_fields(
                     "scheduled_delay_seconds": None,
                     "error_class": None,
                 }
+        if ax_mutated:
+            # `ax_mutation_authorized` is only journalled when the job moves to
+            # `sending`, so the send may already have happened and the exact
+            # match just scrolled past the bounded local-read window. A missing
+            # match is not proof of non-delivery: keep delivery_unknown instead
+            # of rescheduling and risking a duplicate send (2026-09-13).
+            return None
         if _row_event_is_proactive(row) and not _proactive_unix_leftover_job(row):
             delay = row["scheduled_delay_seconds"] or MIN_REPLY_DELAY_SECONDS
             try:

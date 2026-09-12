@@ -4058,7 +4058,10 @@ def main() -> int:
         raise SystemExit("OPENKAKAO_SELF_NICKNAME must be configured")
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
-    state = load_state()
+    # Normalize before main() annotates the in-memory state (context-sync
+    # timestamps). A raw {} with annotations looks like an existing state to
+    # _state(), which then rejects it as reconcile_required on first start.
+    state = _state(load_state())
     interval = max(LOCAL_POLL_MIN_INTERVAL, min(float(args.interval), LOCAL_POLL_MAX_INTERVAL))
     try:
         target_chat_id = 0

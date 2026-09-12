@@ -773,11 +773,18 @@ fn get_user_id_from_plist_with_mode(mode: IdentityCacheMode) -> Result<i64> {
     // this machine's platform UUID and the derived database actually exists.
     // A freshly rebooted KakaoTalk may not have written its friends-revision
     // key yet, which leaves the account hash unresolvable from plists.
-    if let Some(uuid) = current_uuid.as_deref() {
-        if let Some(user_id) = read_cached_user_id_for_uuid(uuid) {
-            let db_name = derive_database_name(user_id, uuid);
-            if find_database_path(&db_name).is_ok() {
-                return Ok(user_id);
+    //
+    // This UUID-only lookup ignores the account hash, so it is allowed only
+    // when the current account hash could not be read. If the hash is known
+    // and a different account is signed in, a stale cache for another account
+    // on the same machine must be rejected instead of selecting its database.
+    if active_account_hash.is_none() {
+        if let Some(uuid) = current_uuid.as_deref() {
+            if let Some(user_id) = read_cached_user_id_for_uuid(uuid) {
+                let db_name = derive_database_name(user_id, uuid);
+                if find_database_path(&db_name).is_ok() {
+                    return Ok(user_id);
+                }
             }
         }
     }

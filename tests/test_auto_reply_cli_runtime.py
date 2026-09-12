@@ -15728,8 +15728,8 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
                 else:
                     os.environ["OPENKAKAO_TARGET_CHAT_ID"] = previous
 
-    def test_ax_authorized_unknown_without_confirm_reschedules_same_text(self):
-        module = self._load_auto_reply_module("auto_reply_ax_authorized_unknown_reschedule")
+    def test_ax_authorized_unknown_without_confirm_stays_delivery_unknown(self):
+        module = self._load_auto_reply_module("auto_reply_ax_authorized_unknown_hold")
         previous = os.environ.get("OPENKAKAO_TARGET_CHAT_ID")
         previous_owner = os.environ.get("OPENKAKAO_SUPERVISOR_OWNER")
         previous_epoch = os.environ.get("OPENKAKAO_DB_SOURCE_EPOCH")
@@ -15790,11 +15790,13 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
                 row = queue.execute(
                     "SELECT status,decision,reason,reply,error_class FROM reply_jobs WHERE event_id='db:42:11'"
                 ).fetchone()
-                self.assertEqual(row[0], "scheduled")
+                # AX mutation may already have sent; a missing exact match is
+                # not proof of non-delivery, so the job must not resend.
+                self.assertEqual(row[0], "delivery_unknown")
                 self.assertEqual(row[1], "reply")
                 self.assertEqual(row[2], "useful_information")
                 self.assertEqual(row[3], digest)
-                self.assertEqual(row[4], "pre_send_unavailable")
+                self.assertEqual(row[4], "reconcile_required")
                 complete.assert_not_called()
             finally:
                 queue.close()

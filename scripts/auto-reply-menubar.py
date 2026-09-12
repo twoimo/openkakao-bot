@@ -8,6 +8,7 @@ catalog mutate and browser OAuth onto that surface.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import marshal
 import os
@@ -830,7 +831,7 @@ def login_oauth_provider(
     combined = f"{stdout}\n{stderr}"
     if re.search(r"sk-[A-Za-z0-9]+|api[_-]?key|redactedApiKey", combined, re.I):
         combined = OAUTH_KNOWN_RE.sub("Known: [redacted]", combined)
-    ok = int(getattr(completed, "returncode", 1) or 1) == 0
+    ok = int(getattr(completed, "returncode", 1)) == 0
     warning = ""
     lowered = combined.casefold()
     if not ok:
@@ -971,43 +972,47 @@ def _run_ui_view(window: str, state_root: Path) -> int:
     return 0
 
 
-def _restore_catalog_title(state_root: Path, chat_id: int, title: str) -> None:
-    """Keep the room title on the catalog entry.
+def _catalog_lock(state_root: Path):
+    """Serialize catalog mutations across processes."""
 
-    The frozen catalog writer drops the ``title`` key, but the host needs it to
-    build a ``bind:<id>:<title>`` selector for an unnamed group room. Without it
-    the room cannot be attested and a host restart fails (2026-09-13 outage).
-    Preserve the existing title, or write the one the caller supplied.
-    """
+    try:
+        handle = open(Path(state_root) / "menubar-room-catalog.lock", "a+")
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    except OSError:
+        return None
+    return handle
 
+
+def _unlock_catalog(handle) -> None:
+    if handle is None:
+        return
+    try:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
+
+
+def _existing_catalog_title(state_root: Path, chat_id) -> str:
+    try:
+        wanted = int(chat_id)
+    except (TypeError, ValueError):
+        return ""
     path = Path(state_root) / "menubar-room-catalog.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return
+        return ""
     rooms = payload.get("rooms") if isinstance(payload, dict) else None
     if not isinstance(rooms, list):
-        return
-    wanted = str(title or "").strip()
-    changed = False
+        return ""
     for room in rooms:
-        if not isinstance(room, dict) or int(room.get("chat_id") or 0) != chat_id:
-            continue
-        current = str(room.get("title") or "").strip()
-        resolved = wanted or current
-        if resolved and room.get("title") != resolved:
-            room["title"] = resolved
-            changed = True
-        break
-    if not changed:
-        return
-    try:
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True),
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
+        if isinstance(room, dict) and int(room.get("chat_id") or 0) == wanted:
+            return str(room.get("title") or "").strip()
+    return ""
 
 
 def _apply_catalog_mutates() -> None:
@@ -1018,21 +1023,25 @@ def _apply_catalog_mutates() -> None:
     state_raw = _argv_flag_value("--state-root")
     state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
     overlay = _ensure_overlay()
-    if upsert_raw:
-        payload = json.loads(upsert_raw)
-        if not isinstance(payload, dict):
-            raise MenubarError("catalog_entry_invalid")
-        try:
-            chat_id = int(payload.get("chat_id"))
-        except (TypeError, ValueError):
-            chat_id = None
-        overlay["upsert_catalog_room"](state_root, payload)
-        if chat_id is not None:
-            _restore_catalog_title(
-                state_root, chat_id, str(payload.get("title") or "")
-            )
-    if delete_raw:
-        overlay["delete_catalog_room"](state_root, int(delete_raw))
+    # The room title and flags must land in one catalog change, and it must not
+    # be lost to a concurrent mutation. Serialize across processes and let the
+    # impl's atomic writer persist the entry (2026-09-13).
+    lock = _catalog_lock(state_root)
+    try:
+        if upsert_raw:
+            payload = json.loads(upsert_raw)
+            if not isinstance(payload, dict):
+                raise MenubarError("catalog_entry_invalid")
+            if not str(payload.get("title") or "").strip():
+                # A caller that omits the title must not drop the existing one.
+                title = _existing_catalog_title(state_root, payload.get("chat_id"))
+                if title:
+                    payload["title"] = title
+            overlay["upsert_catalog_room"](state_root, payload)
+        if delete_raw:
+            overlay["delete_catalog_room"](state_root, int(delete_raw))
+    finally:
+        _unlock_catalog(lock)
     _strip_argv_flags(_CATALOG_MUTATE_FLAGS)
 
 
@@ -1898,20 +1907,59 @@ def _enrollment_room_ids(state_root: Path) -> set[int] | None:
     return ids or None
 
 
+_ACTIVE_STATE_ROOT: Path | None = None
 _TRANSIENT_DB_FENCE_REASONS = frozenset(
     {"db_capability_fenced", "db_delivery_not_ready", "db_watermark_invalid"}
 )
+# db-watch fence values that are the short context-sync transition, not a DB
+# delivery failure ("db_unavailable" and friends must stay red).
+_TRANSIENT_DB_WATCH_FENCES = frozenset({"", "context_sync_deferred"})
+_DB_WATCH_FRESH_SECONDS = 10.0
+
+
+def _transient_poll_transition(chat_id: int) -> bool:
+    """True only when the db-watch itself is in a short poll/context transition.
+
+    Process liveness is not delivery evidence, so read the authoritative
+    db-watch state and require the starting fence with empty pending gaps, no
+    transient sync failures, and a fresh heartbeat. A missing/empty state, a
+    stale heartbeat, or a delivery/reconcile fence is not softened.
+    """
+
+    root = _ACTIVE_STATE_ROOT
+    if root is None or chat_id <= 0:
+        return False
+    path = Path(root) / "rooms" / str(chat_id) / "db-watch-state.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    if state.get("capability_state") != "starting" or state.get("fence") != "starting":
+        return False
+    if state.get("fence_reason") not in _TRANSIENT_DB_WATCH_FENCES:
+        return False
+    if state.get("pending_gaps") not in ([], None):
+        return False
+    if state.get("context_sync_transient_failures") not in (None, 0):
+        return False
+    try:
+        heartbeat = float(state.get("heartbeat_at"))
+    except (TypeError, ValueError):
+        return False
+    return time.time() - heartbeat <= _DB_WATCH_FRESH_SECONDS
 
 
 def _soften_candidate_fence(room: dict) -> dict:
-    """Read a running host's poll-cycle DB fence as ready, not an error.
+    """Read a running host's verified short poll/context fence as ready.
 
-    The database watcher briefly flips its capability to "starting" while it
-    polls the local transcript, so the supervisor reports
-    ``readiness=fenced`` with the transient DB reasons for about a second.
-    Every child is still running, so this is normal work, not a failure; it
-    made the menu flash red on every poll. Only that exact transient set is
-    softened, and only while all children run (2026-09-13).
+    The database watcher briefly fences delivery while its context index sync
+    catches up, so the supervisor reports ``readiness=fenced`` with the
+    transient DB reasons. This is normal work, not a failure, and it made the
+    menu flash red. Soften only when the authoritative db-watch state confirms
+    that short transition and every child is running; real delivery, reconcile,
+    or stale states stay red (2026-09-13).
     """
 
     if not isinstance(room, dict):
@@ -1942,9 +1990,15 @@ def _soften_candidate_fence(room: dict) -> dict:
     ):
         return room
     children = value.get("child_states")
-    if isinstance(children, dict) and any(
-        state != "running" for state in children.values()
-    ):
+    if not isinstance(children, dict) or not children:
+        return room
+    if any(state != "running" for state in children.values()):
+        return room
+    try:
+        chat_id = int(room.get("chat_id") or 0)
+    except (TypeError, ValueError):
+        return room
+    if not _transient_poll_transition(chat_id):
         return room
     softened = dict(value)
     softened["readiness"] = "ready"
@@ -1977,10 +2031,12 @@ def _scope_menubar_rooms_to_enrollment() -> None:
 
     def _scoped_snapshot(original):
         def wrapper(*args, **kwargs):
+            global _ACTIVE_STATE_ROOT
             snap = original(*args, **kwargs)
             state_root = args[0] if args else kwargs.get("state_root")
             if state_root is None or not isinstance(snap, dict):
                 return snap
+            _ACTIVE_STATE_ROOT = Path(state_root)
             allowed = _enrollment_room_ids(Path(state_root))
             rooms = snap.get("rooms")
             if not allowed or not isinstance(rooms, list):
@@ -2020,6 +2076,19 @@ def _scope_menubar_rooms_to_enrollment() -> None:
 
         scoped_classify._openkakao_scoped = True
         impl_globals["_classify_room"] = scoped_classify
+
+    validate = impl_globals.get("_validated_catalog_entry")
+    if callable(validate) and not getattr(validate, "_openkakao_titled", False):
+        def titled_entry(raw):
+            entry = validate(raw)
+            if isinstance(entry, dict) and isinstance(raw, dict):
+                title = " ".join(str(raw.get("title") or "").split())[:128]
+                if title:
+                    entry["title"] = title
+            return entry
+
+        titled_entry._openkakao_titled = True
+        impl_globals["_validated_catalog_entry"] = titled_entry
 
     catalog = impl_globals.get("_read_catalog")
     if not callable(catalog) or getattr(catalog, "_openkakao_scoped", False):
