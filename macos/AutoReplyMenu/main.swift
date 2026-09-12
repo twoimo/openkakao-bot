@@ -1942,7 +1942,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             var saveArgs = ["--action", action, "--model", id]
             if target == .reply { saveArgs.append("--no-wait") }
             let saveData = self.runPython(saveArgs, timeout: 45)
-            guard let savedId = self.storedModelId(saveData), savedId == id else {
+            let savedId = self.storedModelId(saveData)
+            if savedId == nil {
+                // 응답을 받지 못한 것만으로 저장되지 않았다고 단정할 수 없다.
+                // 저장값을 다시 읽어 확인하고, 확인 전에는 성공/유지 어느 쪽도 말하지 않는다.
+                DispatchQueue.main.async {
+                    self.setRowState(target, ModelRowState(phase: .verifying, message: "결과 확인 중…", targetId: id))
+                    self.modelStatusField?.stringValue = "적용 결과를 확인하는 중이에요…"
+                    self.refreshModelSettingsWindowIfOpen()
+                }
+                let readBack = self.storedModelId(self.runPython(["--action", "models"], timeout: 45))
+                DispatchQueue.main.async {
+                    if readBack == id {
+                        self.finishModelChange(
+                            target,
+                            phase: .applied,
+                            previous: previous,
+                            applied: self.replyModelSelection(id: id, label: label, source: "override"),
+                            rowMessage: nil,
+                            status: "적용됨 · 다음 답변부터 사용"
+                        )
+                    } else {
+                        let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
+                        self.finishModelChange(target, phase: .verifying, previous: nil, rowMessage: message, status: message)
+                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: 1)
+                    }
+                }
+                return
+            }
+            guard savedId == id else {
                 DispatchQueue.main.async {
                     self.finishModelChange(
                         target,
@@ -2048,6 +2076,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             $0.target == .reply ? "답변 모델 되돌리기" : "이미지 모델 되돌리기"
         } ?? "되돌리기"
         refreshModelSettingsWindowIfOpen()
+    }
+
+    /// 확인하지 못한 변경을 실제로 다시 확인한다. 문구만 남기고 끝내지 않는다.
+    func scheduleVerificationRetry(_ target: ReplyModelTarget, id: String, previous: ReplyModelSelection?, attempt: Int) {
+        guard attempt <= 3 else { return }
+        let delay = Double(attempt) * 20.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.modelChangeInFlight else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let readBack = self.storedModelId(self.runPython(["--action", "models"], timeout: 45))
+                DispatchQueue.main.async {
+                    if readBack == id {
+                        self.finishModelChange(
+                            target,
+                            phase: .applied,
+                            previous: previous,
+                            applied: self.replyModelSelection(id: id, label: id, source: "override"),
+                            rowMessage: nil,
+                            status: "적용됨 · 다음 답변부터 사용"
+                        )
+                    } else if attempt < 3 {
+                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: attempt + 1)
+                    } else {
+                        self.finishModelChange(
+                            target,
+                            phase: .failed,
+                            previous: nil,
+                            rowMessage: "적용 결과를 확인하지 못했습니다. 모델을 다시 골라 주세요.",
+                            status: "적용 결과를 확인하지 못했어요. 모델을 다시 골라 주세요."
+                        )
+                    }
+                }
+            }
+        }
     }
 
     func setTargetSelection(_ target: ReplyModelTarget, _ selection: ReplyModelSelection) {
