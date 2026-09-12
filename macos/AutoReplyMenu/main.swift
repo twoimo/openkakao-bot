@@ -235,6 +235,8 @@ struct ReplyModelSelection: Decodable {
     let provider: String?
     let source: String?
     let enabled: Bool?
+    // 자동 선택은 문자열 추정이 아니라 이 필드로 판단한다.
+    let auto_selected: Bool?
 }
 
 struct ModelsReport: Decodable {
@@ -2145,7 +2147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageId = image?.id ?? ""
         let imageLabel = (image?.label ?? imageId).trimmingCharacters(in: .whitespacesAndNewlines)
         modelImageSummary?.stringValue = "이미지가 포함된 메시지에 답할 때 사용합니다."
-        let autoSelected = imageEnabled && (imageId.lowercased().contains("auto") || imageLabel.lowercased() == "auto")
+        // 코어가 알려 준 명시적 상태를 먼저 쓰고, 없을 때만 예전 추정을 쓴다.
+        let autoSelected = imageEnabled
+            && (image?.auto_selected
+                ?? (imageId.lowercased().contains("auto") || imageLabel.lowercased() == "auto"))
         if let note = modelImageState.message {
             modelImageStatus?.stringValue = note
         } else if !imageEnabled {

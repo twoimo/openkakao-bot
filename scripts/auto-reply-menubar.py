@@ -1747,6 +1747,15 @@ if callable(orig_snapshot):
             "provider": chosen.split("/", 1)[0] if "/" in chosen else "",
             "source": image_source if image_enabled else "unused",
             "enabled": image_enabled,
+            # 화면이 문자열을 추정하지 않도록 자동 선택 여부를 명시적으로 알려 준다.
+            "auto_selected": bool(
+                image_enabled
+                and (
+                    str(image_source).strip().lower() == "auto"
+                    or image_id.lower().endswith("/auto")
+                    or image_id.lower() == "auto"
+                )
+            ),
         }
         model_id = str(models.get("model") or "").strip()
         if model_id:
