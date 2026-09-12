@@ -1965,8 +1965,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.refreshModelSettingsWindowIfOpen()
                 }
                 let readBack = self.storedModelId(self.runPython(["--action", "models"], timeout: 45))
+                // 복구 경로도 준비 완료 조건을 똑같이 적용한다. ID만 같다고 완료가 아니다.
+                var recoveredPrepared = false
+                if readBack == id && target == .reply {
+                    let prepData = self.runPython(["--action", action, "--model", id], timeout: 200)
+                    recoveredPrepared = self.storedModelId(prepData) == id && self.isPrepared(prepData)
+                }
                 DispatchQueue.main.async {
-                    if readBack == id {
+                    guard self.modelChangeToken == token else { return }
+                    if readBack == id && target == .image {
+                        let message = "저장됨 · 준비 상태는 확인하지 못했습니다."
+                        self.finishModelChange(target, phase: .verifying, previous: nil, rowMessage: message, status: message)
+                    } else if readBack == id && recoveredPrepared {
                         self.finishModelChange(
                             target,
                             phase: .applied,
@@ -2009,6 +2019,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         ? "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
                         : "저장된 설정이 바뀌었을 수 있어요. 모델을 다시 골라 주세요."
                     DispatchQueue.main.async {
+                        guard self.modelChangeToken == token else { return }
                         self.finishModelChange(
                             target,
                             phase: .verifying,
@@ -2016,6 +2027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             rowMessage: message,
                             status: message
                         )
+                        self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: 1, token: token)
                     }
                     return
                 }
@@ -2101,14 +2113,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard attempt <= 3 else { return }
         let delay = Double(attempt) * 20.0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.modelChangeInFlight else { return }
+            guard let self else { return }
             guard self.modelChangeToken == token else { return }
+            if self.modelChangeInFlight {
+                self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: attempt + 1, token: token)
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async {
+                let action = target == .reply ? "model-set" : "image-model-set"
                 let readBack = self.storedModelId(self.runPython(["--action", "models"], timeout: 45))
+                var retryPrepared = false
+                if readBack == id && target == .reply {
+                    let prepData = self.runPython(["--action", action, "--model", id], timeout: 200)
+                    retryPrepared = self.storedModelId(prepData) == id && self.isPrepared(prepData)
+                }
                 DispatchQueue.main.async {
                     // 오래된 재확인은 새 변경을 건드리지 않는다.
                     guard self.modelChangeToken == token else { return }
-                    if readBack == id {
+                    if readBack == id && target == .image {
+                        let message = "저장됨 · 준비 상태는 확인하지 못했습니다."
+                        self.finishModelChange(target, phase: .verifying, previous: nil, rowMessage: message, status: message)
+                    } else if readBack == id && retryPrepared {
                         self.finishModelChange(
                             target,
                             phase: .applied,
