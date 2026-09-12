@@ -293,6 +293,30 @@ class AutoReplyMenubarTests(unittest.TestCase):
             child["statuses"]["supervisor"]["value"]["readiness"], "fenced"
         )
 
+    def test_catalog_upsert_preserves_room_title(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            catalog = state / "menubar-room-catalog.json"
+            catalog.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "rooms": [
+                            {"auto_reply": True, "chat_id": 111, "geeknews": True}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            module = load(f"auto_reply_menubar_catalog_title_{id(self)}")
+            module._restore_catalog_title(state, 111, "Room A")
+            written = json.loads(catalog.read_text(encoding="utf-8"))
+            self.assertEqual(written["rooms"][0]["title"], "Room A")
+            # A caller that omits the title must not drop the existing one.
+            module._restore_catalog_title(state, 111, "")
+            written = json.loads(catalog.read_text(encoding="utf-8"))
+            self.assertEqual(written["rooms"][0]["title"], "Room A")
+
     def test_delivery_unknown_is_red(self):
         with tempfile.TemporaryDirectory() as temporary:
             helper, module, state, room, queue, now, _model = self._model(

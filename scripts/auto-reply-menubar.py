@@ -971,6 +971,45 @@ def _run_ui_view(window: str, state_root: Path) -> int:
     return 0
 
 
+def _restore_catalog_title(state_root: Path, chat_id: int, title: str) -> None:
+    """Keep the room title on the catalog entry.
+
+    The frozen catalog writer drops the ``title`` key, but the host needs it to
+    build a ``bind:<id>:<title>`` selector for an unnamed group room. Without it
+    the room cannot be attested and a host restart fails (2026-09-13 outage).
+    Preserve the existing title, or write the one the caller supplied.
+    """
+
+    path = Path(state_root) / "menubar-room-catalog.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return
+    rooms = payload.get("rooms") if isinstance(payload, dict) else None
+    if not isinstance(rooms, list):
+        return
+    wanted = str(title or "").strip()
+    changed = False
+    for room in rooms:
+        if not isinstance(room, dict) or int(room.get("chat_id") or 0) != chat_id:
+            continue
+        current = str(room.get("title") or "").strip()
+        resolved = wanted or current
+        if resolved and room.get("title") != resolved:
+            room["title"] = resolved
+            changed = True
+        break
+    if not changed:
+        return
+    try:
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def _apply_catalog_mutates() -> None:
     upsert_raw = _argv_flag_value("--catalog-upsert")
     delete_raw = _argv_flag_value("--catalog-delete")
@@ -983,7 +1022,15 @@ def _apply_catalog_mutates() -> None:
         payload = json.loads(upsert_raw)
         if not isinstance(payload, dict):
             raise MenubarError("catalog_entry_invalid")
+        try:
+            chat_id = int(payload.get("chat_id"))
+        except (TypeError, ValueError):
+            chat_id = None
         overlay["upsert_catalog_room"](state_root, payload)
+        if chat_id is not None:
+            _restore_catalog_title(
+                state_root, chat_id, str(payload.get("title") or "")
+            )
     if delete_raw:
         overlay["delete_catalog_room"](state_root, int(delete_raw))
     _strip_argv_flags(_CATALOG_MUTATE_FLAGS)

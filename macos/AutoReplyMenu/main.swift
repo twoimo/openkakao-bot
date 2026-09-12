@@ -5278,10 +5278,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func upsertRoomFlags(_ chat: AvailableChat, autoReply: Bool, geeknews: Bool) {
+        // The host needs the room title to attest an unnamed group room with a
+        // bind: selector; without it a host restart drops the room.
         let payload: [String: Any] = [
             "chat_id": chat.chat_id,
             "auto_reply": autoReply,
             "geeknews": geeknews,
+            "title": chat.title,
         ]
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload),
