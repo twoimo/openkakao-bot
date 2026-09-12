@@ -110,7 +110,10 @@ class SessionRuntimePackagerTests(unittest.TestCase):
             self.assertNotIn("--chat", watchdog_text)
             self.assertNotIn("Room One", watchdog_text)
             self.assertIn("/usr/bin/env -i", watchdog_text)
-            self.assertIn("close w saving no", watchdog_text)
+            # The launcher must not drive Terminal through Apple Events: that made
+        # macOS ask to allow each freshly packaged binary to control Terminal.
+        self.assertNotIn("osascript", watchdog_text)
+        self.assertNotIn("close w saving no", watchdog_text)
             self.assertIn("busy of w", watchdog_text)
             self.assertNotIn("exec /usr/bin/env -i", watchdog_text)
             tui_text = tui.read_text(encoding="utf-8")
