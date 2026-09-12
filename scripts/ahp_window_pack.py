@@ -202,7 +202,10 @@ def context_around(when: float) -> str:
     finally:
         conn.close()
     ordered = list(reversed(rows))
-    return " | ".join(f"{row[1]}: {str(row[2])[:80]}" for row in ordered)
+    # 검토자에게는 잘린 문장이 아니라 원문이 필요하다. 줄바꿈만 한 줄로 접는다.
+    return " | ".join(
+        f"{row[1]}: {' '.join(str(row[2]).split())}" for row in ordered
+    )
 
 
 def reply_model_from_config() -> str:
@@ -254,6 +257,11 @@ def main(argv: list[str]) -> int:
     out.mkdir(parents=True, exist_ok=True)
     runtimes = sorted(p.name for p in (STATE_ROOT / "runtime").glob("*") if p.is_dir())[-3:]
     manifest = {
+        # 이 값들은 창 시작 이전에 측정한 것이라 개별 행 단위로 재검증되지 않았다.
+        "measurement_notes": {
+            "pre_budget_evidence_counts": "unverified: measured before the window start, not re-checked row by row",
+            "review_columns": "content_verdict/register_verdict/timing_verdict/natural_without_edit are blank forms for the reviewer, not evidence",
+        },
         "window": {
             "start_unix": start,
             "start_local": window.get("start_local"),
@@ -367,12 +375,13 @@ def main(argv: list[str]) -> int:
                 "send_delay_seconds",
                 "generation_seconds",
                 "prompt_sha256",
-                "content_verdict",
-                "register_verdict",
-                "timing_verdict",
-                "natural_without_edit",
-                "missed_question",
-                "note",
+                # verdict 열은 검토자가 채우는 빈칸이며 증거가 아니다.
+                "content_verdict(reviewer_to_fill)",
+                "register_verdict(reviewer_to_fill)",
+                "timing_verdict(reviewer_to_fill)",
+                "natural_without_edit(reviewer_to_fill)",
+                "missed_question(reviewer_to_fill_or_status)",
+                "note(reviewer_to_fill)",
             ]
         )
         for send in sends:
@@ -393,6 +402,33 @@ def main(argv: list[str]) -> int:
                     "",
                     "",
                     "",
+                ]
+            )
+        # 답하지 않았거나 건너뛴 건도 같은 형식으로 남긴다. 보낸 답장만 있으면
+        # "무엇을 놓쳤는지"가 증거에서 사라진다.
+        sent_events = {send["event_id"] for send in sends}
+        for event_id in sorted(jobs):
+            if event_id in sent_events:
+                continue
+            job = jobs[event_id]
+            status = str(job.get("status") or "")
+            if not status or status in {"sent", "delivered"}:
+                continue
+            writer.writerow(
+                [
+                    event_id,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    f"{status}:{job.get('decision') or ''}".strip(":"),
+                    job.get("reason") or "",
                 ]
             )
 
