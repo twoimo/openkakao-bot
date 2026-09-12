@@ -1347,12 +1347,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         refreshInFlight = true
+        // 조회를 시작한 시점의 변경 세대를 기억한다. 도착했을 때 세대가 바뀌었으면
+        // 모델 선택값은 반영하지 않는다(오래된 조회가 완료된 선택을 덮지 않게).
+        let fetchToken = modelChangeToken
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let model = self.loadModel() ?? Self.unavailableModel()
             DispatchQueue.main.async {
                 self.refreshInFlight = false
-                self.apply(model)
+                self.apply(model, modelToken: fetchToken)
                 if self.refreshQueued {
                     self.refreshQueued = false
                     self.refresh()
@@ -1477,7 +1480,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ].joined(separator: "|")
     }
 
-    func apply(_ model: MenubarModel) {
+    func apply(_ model: MenubarModel, modelToken: Int? = nil) {
+        // 조회가 시작된 뒤 변경 세대가 달라졌다면 선택값 반영을 버린다.
+        let generationCurrent = modelToken == nil || modelToken == modelChangeToken
         lastModel = model
         if let current = model.reply_model, !current.id.isEmpty {
             let live = currentReplyModel
@@ -1486,8 +1491,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 && live?.source == "override"
                 && current.source != "override"
                 && current.id != live?.id
-            // 변경이 진행 중이면 늦게 도착한 조회 응답이 현재 선택값을 덮지 않게 한다.
-            if !snapshotLag && !modelChangeInFlight {
+            // 변경이 진행 중이거나 조회 후 세대가 바뀌었으면 선택값을 덮지 않는다.
+            if !snapshotLag && !modelChangeInFlight && generationCurrent {
                 currentReplyModel = current
             }
         }
@@ -1498,7 +1503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 && live?.source == "override"
                 && current.source != "override"
                 && current.id != live?.id
-            if !snapshotLag && !modelChangeInFlight {
+            if !snapshotLag && !modelChangeInFlight && generationCurrent {
                 currentImageReplyModel = current
             }
         }
@@ -1907,6 +1912,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// 새 변경이 무효화한 이전 확인 작업의 행을 종료 상태로 남긴다. 토큰이 바뀌면
+    /// 예약된 재확인은 조용히 반환하므로, 그 행의 "확인 중" 문구가 영영 남지 않게
+    /// 여기서 명시적으로 끝낸다. 공통 잠금(finishModelChange)은 건드리지 않는다.
+    func cancelStaleVerification(_ target: ReplyModelTarget) {
+        let state = target == .reply ? modelReplyState : modelImageState
+        guard state.phase == .verifying else { return }
+        let label = target == .reply ? "답변 모델" : "이미지 모델"
+        setRowState(
+            target,
+            ModelRowState(
+                phase: .failed,
+                message: "\(label)의 적용 결과를 확인하지 못했습니다. 모델을 다시 선택해 주세요.",
+                targetId: nil
+            )
+        )
+    }
+
     /// 저장 응답에서 실제로 저장된 모델 ID를 읽는다.
     func storedModelId(_ data: Data?) -> String? {
         guard let data,
@@ -1951,6 +1973,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard !id.isEmpty, !modelChangeInFlight else { return }
         modelChangeToken += 1
         let token = modelChangeToken
+        // 다른 행에 남은 예약 확인은 이 토큰 변경으로 무효가 되므로, 그 행을 끝낸다.
+        cancelStaleVerification(target == .reply ? .image : .reply)
         let previous = target == .reply ? currentReplyModel : currentImageReplyModel
         modelChangeInFlight = true
         if target == .reply {
@@ -2445,6 +2469,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let action = target == .reply ? "model-set" : "image-model-set"
         // 되돌리기도 새 변경이다. 이전 변경의 재확인이 되돌리기 결과를 덮지 않게 토큰을 올린다.
         modelChangeToken += 1
+        // 다른 행에 남은 예약 확인도 무효가 되므로 그 행을 끝낸다.
+        cancelStaleVerification(target == .reply ? .image : .reply)
         modelChangeInFlight = true
         setRowState(target, ModelRowState(phase: .verifying, message: "되돌리는 중…", targetId: record.selection.id))
         modelStatusField?.stringValue = "이전 모델로 되돌리는 중이에요…"
@@ -2788,6 +2814,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !menuTracking {
             statusItem.menu = buildMenu(lastModel ?? Self.unavailableModel())
         }
+        // 목록 조회도 시작 시점의 세대를 기억해, 완료 시 선택값 덮어쓰기를 막는다.
+        let fetchToken = modelChangeToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let data = self?.runPython(["--action", "models"], timeout: 45)
             DispatchQueue.main.async {
@@ -2803,7 +2831,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     if (self.modelStatusField?.stringValue ?? "").hasPrefix("모델 목록") {
                         self.modelStatusField?.stringValue = ""
                     }
-                    if let id = report.model, !id.isEmpty, !self.modelChangeInFlight {
+                    if let id = report.model, !id.isEmpty, !self.modelChangeInFlight,
+                       fetchToken == self.modelChangeToken {
                         self.currentReplyModel = ReplyModelSelection(
                             id: id,
                             label: report.label ?? id,
