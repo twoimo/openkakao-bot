@@ -1482,7 +1482,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 && live?.source == "override"
                 && current.source != "override"
                 && current.id != live?.id
-            if !snapshotLag {
+            // 변경이 진행 중이면 늦게 도착한 조회 응답이 현재 선택값을 덮지 않게 한다.
+            if !snapshotLag && !modelChangeInFlight {
                 currentReplyModel = current
             }
         }
@@ -1493,7 +1494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 && live?.source == "override"
                 && current.source != "override"
                 && current.id != live?.id
-            if !snapshotLag {
+            if !snapshotLag && !modelChangeInFlight {
                 currentImageReplyModel = current
             }
         }
@@ -2000,6 +2001,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     target,
                     phase: .applied,
                     previous: previous,
+                    applied: self.replyModelSelection(id: id, label: label, source: "override"),
                     rowMessage: nil,
                     status: "적용됨 · 다음 답변부터 사용"
                 )
@@ -2012,6 +2014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ target: ReplyModelTarget,
         phase: ModelRowPhase,
         previous: ReplyModelSelection?,
+        applied: ReplyModelSelection? = nil,
         rowMessage: String?,
         status: String
     ) {
@@ -2020,6 +2023,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         setRowState(target, ModelRowState(phase: phase, message: rowMessage, targetId: nil))
         switch phase {
         case .applied:
+            // 확인된 새 선택값을 다시 세팅한다. 늦게 도착한 조회가 이전 값으로
+            // 되돌려 놓았어도 화면과 저장값이 어긋나지 않는다.
+            if let applied, !applied.id.isEmpty {
+                setTargetSelection(target, applied)
+            }
             if let previous, !previous.id.isEmpty {
                 lastModelChange = ModelRevertRecord(target: target, selection: previous)
                 if target == .reply {
@@ -2630,7 +2638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     if (self.modelStatusField?.stringValue ?? "").hasPrefix("모델 목록") {
                         self.modelStatusField?.stringValue = ""
                     }
-                    if let id = report.model, !id.isEmpty {
+                    if let id = report.model, !id.isEmpty, !self.modelChangeInFlight {
                         self.currentReplyModel = ReplyModelSelection(
                             id: id,
                             label: report.label ?? id,
