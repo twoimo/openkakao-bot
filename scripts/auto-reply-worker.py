@@ -7076,7 +7076,7 @@ def persist_reply_evidence_ledger(
             "prior_similarity": float(analysis.get("prior_similarity") or 0.0),
             "scheduled_delay_seconds": delay_seconds,
             "context_sync": dict((analysis.get("provenance") or {}).get("context_sync") or {}),
-            "model": _active_reply_model(),
+            "model": _receipt_value(analysis, "model") or _active_reply_model(),
             "reasoning_effort": REPLY_REASONING_EFFORT,
             "drafts": [
                 str(item)[:500]
@@ -10504,8 +10504,11 @@ def generate_reply(
                     found.add(item["evidence_id"])
         return found
 
-    prompt_evidence_ids = _prompt_evidence_ids(prompt)
-    retrieved_evidence_ids = len(supplied_evidence_ids)
+    # Both sides of the receipt must count the same thing: the ids the prompt
+    # carried before and after the budget fit. Counting supplied evidence ids
+    # against a narrower prompt walk reported a 2 -> 1 drop even when nothing
+    # was trimmed.
+    retrieved_evidence_ids = len(_prompt_evidence_ids(prompt))
     laughter_allowed = _room_laughter_allows(
         message,
         recent_conversation,
@@ -10525,8 +10528,11 @@ def generate_reply(
             "prompt_bytes": len(prompt_bytes),
             "prompt_sha256": prompt_digest,
             "model": active_model,
+            # Retrieved = what the prompt carried before the budget fit;
+            # prompt = what it still carries now. Both use one extraction walk,
+            # so an untrimmed prompt reports the same number on both sides.
             "retrieved_evidence_ids": retrieved_evidence_ids,
-            "prompt_evidence_ids": len(prompt_evidence_ids),
+            "prompt_evidence_ids": len(_prompt_evidence_ids(prompt)),
             "laughter_allowed": bool(laughter_allowed),
             "awe_allowed": bool(awe_allowed),
             "generation_seconds": (

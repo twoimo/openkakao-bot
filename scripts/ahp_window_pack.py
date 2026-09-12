@@ -73,15 +73,15 @@ def connect(path: Path) -> sqlite3.Connection | None:
         return None
 
 
-def load_inbound(start: float) -> list[dict]:
+def load_inbound(start: float, end: float) -> list[dict]:
     conn = connect(CONTEXT_DB)
     if conn is None:
         return []
     try:
         rows = conn.execute(
             "SELECT log_id, sent_at, sender_name, disposition FROM context_live_events"
-            " WHERE chat_id=? AND sent_at>=? ORDER BY sent_at, log_id",
-            (CHAT_ID, int(start)),
+            " WHERE chat_id=? AND sent_at>=? AND sent_at<=? ORDER BY sent_at, log_id",
+            (CHAT_ID, int(start), int(end)),
         ).fetchall()
     finally:
         conn.close()
@@ -118,37 +118,38 @@ def label_units(rows: list[dict]) -> None:
         row["session_id"] = f"s{session}"
 
 
-def job_outcomes(start: float) -> dict[str, dict]:
+def job_outcomes(start: float, end: float) -> dict[str, dict]:
     conn = connect(STATE_ROOT / "rooms" / str(CHAT_ID) / "reply-queue.sqlite3")
     if conn is None:
         return {}
     try:
         rows = conn.execute(
             "SELECT event_id, status, decision, reason, category, reply, created_at, updated_at"
-            " FROM reply_jobs WHERE updated_at >= ? OR created_at >= ?",
-            (start, start),
+            " FROM reply_jobs WHERE (updated_at BETWEEN ? AND ?)"
+            " OR (created_at BETWEEN ? AND ?)",
+            (start, end, start, end),
         ).fetchall()
     finally:
         conn.close()
     return {str(row[0]): dict(zip(("status", "decision", "reason", "category", "reply", "created_at", "updated_at"), row)) for row in rows}
 
 
-def send_records(start: float) -> list[dict]:
+def send_records(start: float, end: float) -> list[dict]:
     conn = connect(STATE_ROOT / "rooms" / str(CHAT_ID) / "reply-queue.sqlite3")
     if conn is None:
         return []
     try:
         rows = conn.execute(
             "SELECT event_id, reply, updated_at FROM reply_jobs"
-            " WHERE status='sent' AND updated_at>=? ORDER BY updated_at",
-            (start,),
+            " WHERE status='sent' AND updated_at BETWEEN ? AND ? ORDER BY updated_at",
+            (start, end),
         ).fetchall()
     finally:
         conn.close()
     return [{"event_id": str(r[0]), "reply": str(r[1] or ""), "sent_at_unix": float(r[2])} for r in rows]
 
 
-def ledger_rows(start: float) -> list[dict]:
+def ledger_rows(start: float, end: float) -> list[dict]:
     path = STATE_ROOT / "rooms" / str(CHAT_ID) / "reply-evidence.jsonl"
     out: list[dict] = []
     if not path.is_file():
@@ -163,9 +164,57 @@ def ledger_rows(start: float) -> list[dict]:
             when = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
         except Exception:
             continue
-        if when >= start:
+        if start <= when <= end:
             out.append(record)
     return out
+
+
+CHAT_NAME = os.environ.get("OPENKAKAO_TARGET_CHAT_NAME", "부자멘토멘티").strip() or "부자멘토멘티"
+
+
+def context_around(when: float) -> str:
+    """A few room messages before the send, so a reviewer can judge the reply."""
+    conn = connect(CONTEXT_DB)
+    if conn is None:
+        return ""
+    try:
+        rows = conn.execute(
+            "SELECT date, user_name, message FROM context_messages"
+            " WHERE chat = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT ?",
+            (
+                CHAT_NAME,
+                dt.datetime.fromtimestamp(when, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                CONTEXT_WINDOW,
+            ),
+        ).fetchall()
+    finally:
+        conn.close()
+    ordered = list(reversed(rows))
+    return " | ".join(f"{row[1]}: {str(row[2])[:80]}" for row in ordered)
+
+
+def reply_model_from_config() -> str:
+    path = Path.home() / ".config" / "openkakao" / "config.toml"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("reply_model"):
+                return line.split("=", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+    return ""
+
+
+def allowed_senders() -> list[str]:
+    """Rooms/windows the operator authorised the assistant to write to."""
+    path = Path.home() / ".config" / "openkakao" / "config.toml"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("allowed_send_chats"):
+                raw = line.split("=", 1)[1]
+                return [item.strip().strip('"') for item in raw.strip("[]").split(",") if item.strip()]
+    except Exception:
+        pass
+    return []
 
 
 def main(argv: list[str]) -> int:
@@ -200,9 +249,32 @@ def main(argv: list[str]) -> int:
         "chat_id": CHAT_ID,
         "repo_head": git_rev(),
         "recent_runtimes": runtimes,
-        "models": read_json(STATE_ROOT / "runtime" / str(window.get("runtime") or "") / "config.toml")
-        if False
-        else "see runtime config.toml (text model opencode-go-session/deepseek-v4.1-flash)",
+        "running_identity": (
+            lambda cfg, rt: {
+                "runtime": rt,
+                "runtime_config_sha256": __import__("hashlib").sha256(cfg).hexdigest()
+                if cfg
+                else None,
+                "service_pid": read_json(STATE_ROOT / "session-watchdog-status.json").get(
+                    "service_pid"
+                ),
+                "child_pid": read_json(STATE_ROOT / "session-watchdog-status.json").get(
+                    "child_pid"
+                ),
+            }
+        )(
+            (STATE_ROOT / "runtime" / str(window.get("runtime") or "") / "config.toml").read_bytes()
+            if (STATE_ROOT / "runtime" / str(window.get("runtime") or "") / "config.toml").is_file()
+            else b"",
+            window.get("runtime"),
+        ),
+        "operator_policy": {
+            "config_path": "~/.config/openkakao/config.toml",
+            "allowed_send_chats": allowed_senders(),
+            "reply_model": reply_model_from_config(),
+        },
+
+
         "monitor_history": [
             json.loads(line)
             for line in (STATE_ROOT / "ahp-window-monitor.jsonl").read_text(encoding="utf-8").splitlines()[-20:]
@@ -215,16 +287,18 @@ def main(argv: list[str]) -> int:
         json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"
     )
 
-    inbound = load_inbound(start)
+    inbound = load_inbound(start, end)
     label_units(inbound)
-    jobs = job_outcomes(start)
+    jobs = job_outcomes(start, end)
     with (out / "window-events.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
             [
                 "log_id",
+                "sent_at_unix",
                 "sent_at_utc",
                 "author",
+                "author_allowed_room",
                 "disposition",
                 "session_id",
                 "unit_id",
@@ -235,14 +309,17 @@ def main(argv: list[str]) -> int:
                 "category",
             ]
         )
+        allowed_rooms = set(allowed_senders())
         for row in inbound:
             event_id = f"db:{CHAT_ID}:{row['log_id']}"
             job = jobs.get(event_id, {})
             writer.writerow(
                 [
                     row["log_id"],
+                    row["sent_at_unix"],
                     dt.datetime.fromtimestamp(row["sent_at_unix"], dt.timezone.utc).isoformat(),
                     row["author"],
+                    int(CHAT_NAME in allowed_rooms),
                     row["disposition"],
                     row.get("session_id", ""),
                     row.get("unit_id", ""),
@@ -254,19 +331,33 @@ def main(argv: list[str]) -> int:
                 ]
             )
 
-    receipts = ledger_rows(start)
+    receipts = ledger_rows(start, end)
     with (out / "reply-receipts.jsonl").open("w", encoding="utf-8") as handle:
         for record in receipts:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    sends = send_records(start)
+    sends = send_records(start, end)
     receipts_by_event: dict[str, list[dict]] = {}
     for record in receipts:
         receipts_by_event.setdefault(str(record.get("event_id")), []).append(record)
     with (out / "conversation-review.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["event_id", "sent_at_utc", "reply", "send_delay_seconds", "generation_seconds", "prompt_sha256"]
+            [
+                "event_id",
+                "sent_at_utc",
+                "reply",
+                "surrounding_conversation",
+                "send_delay_seconds",
+                "generation_seconds",
+                "prompt_sha256",
+                "content_verdict",
+                "register_verdict",
+                "timing_verdict",
+                "natural_without_edit",
+                "missed_question",
+                "note",
+            ]
         )
         for send in sends:
             linked = receipts_by_event.get(send["event_id"], [])
@@ -276,9 +367,16 @@ def main(argv: list[str]) -> int:
                     send["event_id"],
                     dt.datetime.fromtimestamp(send["sent_at_unix"], dt.timezone.utc).isoformat(),
                     send["reply"],
+                    context_around(send["sent_at_unix"]),
                     delivery.get("send_delay_seconds"),
                     delivery.get("generation_seconds"),
                     (delivery.get("prompt_sha256") or ""),
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                 ]
             )
 
@@ -292,13 +390,59 @@ def main(argv: list[str]) -> int:
                 " GROUP BY source, content_kind, style_eligible",
                 (CHAT_ID,),
             ):
-                audit_rows.append(list(row))
+                audit_rows.append(list(row) + ["", ""])
+            for row in conn.execute(
+                "SELECT p.source, p.sample_count, IFNULL(s.sample_count, 0)"
+                " FROM owner_style_profile p"
+                " LEFT JOIN response_time_stats s ON s.source = p.source AND s.chat = p.chat"
+                " WHERE p.chat=(SELECT chat FROM context_sources WHERE chat_id=? LIMIT 1)",
+                (CHAT_ID,),
+            ):
+                audit_rows.append(
+                    [row[0], "profile_vs_pacing", "", "", row[1], row[2]]
+                )
         finally:
             conn.close()
     with (out / "learning-audit.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["source", "content_kind", "style_eligible", "rows"])
+        writer.writerow(
+            [
+                "source",
+                "content_kind",
+                "style_eligible",
+                "rows",
+                "profile_sample_count",
+                "pacing_sample_count",
+            ]
+        )
         writer.writerows(audit_rows)
+    # Confirmed sends in the window must never appear as eligible owner style.
+    confirmed = {send["event_id"] for send in sends}
+    receipt_events = {str(r.get("event_id")) for r in receipts}
+    (out / "learning-audit-summary.json").write_text(
+        json.dumps(
+            {
+                "confirmed_sends": len(confirmed),
+                "receipt_events": len(receipt_events),
+                "sends_without_receipt": sorted(confirmed - receipt_events),
+                "evidence_ids_in_prompt_mismatch": [
+                    {
+                        "event_id": str(r.get("event_id")),
+                        "retrieved": (r.get("retrieval") or {}).get("retrieved_evidence_ids"),
+                        "prompt": (r.get("retrieval") or {}).get("prompt_evidence_ids"),
+                    }
+                    for r in receipts
+                    if (r.get("retrieval") or {}).get("retrieved_evidence_ids") is not None
+                    and (r.get("retrieval") or {}).get("prompt_evidence_ids") is not None
+                    and (r.get("retrieval") or {}).get("retrieved_evidence_ids")
+                    < (r.get("retrieval") or {}).get("prompt_evidence_ids")
+                ],
+            },
+            ensure_ascii=False,
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
 
     counts = {
         "sends": len(sends),
