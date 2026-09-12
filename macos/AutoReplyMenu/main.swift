@@ -1911,6 +1911,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return rid
     }
 
+    /// 준비 단계 응답이 실제로 준비 완료를 보고했는지 확인한다.
+    func isPrepared(_ data: Data?) -> Bool {
+        guard let data,
+              let report = try? JSONDecoder().decode(ModelsReport.self, from: data),
+              report.ok == true
+        else { return false }
+        return report.prepared == true
+    }
+
     /// 준비(oMLX 상주) 단계가 필요한 모델인지 저장 응답으로 판단한다.
     func needsPrepare(_ data: Data?) -> Bool {
         guard let data,
@@ -2010,8 +2019,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 3단계: 준비가 필요한 모델만 준비 단계를 따로 확인한다.
             if target == .reply && self.needsPrepare(saveData) {
                 let prepData = self.runPython(["--action", action, "--model", id], timeout: 200)
-                if self.storedModelId(prepData) != id {
-                    let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
+                let sameModel = self.storedModelId(prepData) == id
+                let prepared = self.isPrepared(prepData)
+                if !sameModel || !prepared {
+                    // 저장은 확인됐어도 준비가 확인되지 않으면 완료라고 말하지 않는다.
+                    let message = sameModel
+                        ? "모델 준비를 확인하지 못했습니다. 다음 답변에서 다시 시도합니다."
+                        : "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
                     DispatchQueue.main.async {
                         self.finishModelChange(
                             target,
