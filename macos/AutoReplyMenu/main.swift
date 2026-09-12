@@ -247,6 +247,10 @@ struct ModelsReport: Decodable {
     let source: String?
     let providers: [ReplyModelProvider]?
     let warnings: [String]?
+    // 저장(stored)과 준비(prepared)를 분리해 알려 준다.
+    let stored: Bool?
+    let prepared: Bool?
+    let needs_prepare: Bool?
 }
 
 struct ReplyProviderPreset: Decodable {
@@ -1853,106 +1857,194 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     // MARK: - 모델 설정 창 (답변 모델 + 이미지 모델 통합, R5)
 
-    /// 진행 중·실패 안내는 새로고침이 덮지 않는다. 비어 있으면 현재 값 기준 문구를 쓴다.
-    var modelReplyNote: String?
-    var modelImageNote: String?
+    enum ModelRowPhase { case idle, applying, verifying, applied, failed }
+
+    struct ModelRowState {
+        var phase: ModelRowPhase = .idle
+        var message: String?
+        var targetId: String?
+    }
+
+    enum ReplyModelTarget: String { case reply, image }
+
+    struct ModelRevertRecord {
+        let target: ReplyModelTarget
+        let selection: ReplyModelSelection
+    }
+
+    /// 행별 상태는 새로고침이 덮지 않는다. 화면은 이 상태만 렌더링한다.
+    var modelReplyState = ModelRowState()
+    var modelImageState = ModelRowState()
+    /// 적용이 끝나기 전에 다른 변경이 끼어들지 않게 한다.
+    var modelChangeInFlight = false
+    var lastModelChange: ModelRevertRecord?
 
     /// 답변 모델을 바꾼다. 진행 중 답변은 옛 설정으로 끝까지 완료되고, 다음
     /// 답변부터 새 모델을 씁니다 (R5.5, R5.6은 코어의 스냅샷 스왑이 보장).
     func setReplyModel(id: String, label: String) {
-        guard !id.isEmpty else { return }
-        let previous = currentReplyModel
-        modelReplyNote = "적용 중…"
-        applyReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
-        modelStatusField?.stringValue = "답변 모델을 바꾸는 중이에요… 준비에 최대 3분까지 걸릴 수 있어요."
-        modelReplyStatus?.stringValue = "적용 중…"
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            // 코어는 새 모델을 저장한 뒤 준비를 최대 180초 기다린다. 여기서 8초에
-            // 끊으면 저장은 됐는데 화면만 실패로 보이는 구간이 생긴다.
-            let data = self?.runPython(["--action", "model-set", "--model", id], timeout: 200)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let data,
-                   let report = try? JSONDecoder().decode(ModelsReport.self, from: data),
-                   report.ok == true,
-                   let rid = report.model, !rid.isEmpty {
-                    self.applyReplyModelSelection(
-                        self.replyModelSelection(
-                            id: rid,
-                            label: report.label ?? label,
-                            source: report.source ?? "override"
-                        )
-                    )
-                    self.modelStatusField?.stringValue = "답변 모델을 바꿨어요. 다음 답변부터 적용됩니다."
-                    self.modelReplyStatus?.stringValue = "적용됨 · 다음 답변부터 사용"
-                    self.modelReplyNote = nil
-                    self.lastReplySelection = previous
-                    self.modelRevertButton?.isEnabled = previous != nil
-                    self.refreshModelSettingsWindowIfOpen()
-                    return
-                }
-                // 실패하면 화면만 되돌리지 않고 저장된 값도 이전 모델로 되돌린다.
-                // 되돌리기까지 실패하면 "이전 모델을 유지합니다"라고 말하지 않는다.
-                let restored = self.restoreStoredReplyModel(previous)
-                if restored, let previous { self.applyReplyModelSelection(previous) }
-                self.modelStatusField?.stringValue = "답변 모델을 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
-                self.modelReplyNote = restored
-                    ? "적용하지 못했습니다. 이전 모델을 유지합니다. 모델을 다시 골라 주세요."
-                    : "적용하지 못했습니다. 저장된 설정이 바뀌었을 수 있어요. 모델을 다시 골라 주세요."
-                if !restored, let previous {
-                    self.lastReplySelection = previous
-                    self.modelRevertButton?.isEnabled = true
-                }
-                self.presentOperatorResult(action: "model-set", data: data)
-                self.refreshModelSettingsWindowIfOpen()
-            }
-        }
+        applyModelChange(.reply, id: id, label: label)
     }
 
     /// 이미지 모델을 바꾼다 (R5.1, R5.4). 실패 시 이전 설정 유지 (R5.7).
     func setImageModel(id: String, label: String) {
-        guard !id.isEmpty else { return }
-        let previous = currentImageReplyModel
-        modelImageNote = "적용 중…"
-        applyImageReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
-        modelStatusField?.stringValue = "이미지 모델을 바꾸는 중이에요… 준비에 최대 3분까지 걸릴 수 있어요."
-        modelImageStatus?.stringValue = "적용 중…"
+        applyModelChange(.image, id: id, label: label)
+    }
+
+    func setRowState(_ target: ReplyModelTarget, _ state: ModelRowState) {
+        if target == .reply {
+            modelReplyState = state
+        } else {
+            modelImageState = state
+        }
+    }
+
+    /// 저장 응답에서 실제로 저장된 모델 ID를 읽는다.
+    func storedModelId(_ data: Data?) -> String? {
+        guard let data,
+              let report = try? JSONDecoder().decode(ModelsReport.self, from: data),
+              report.ok == true,
+              let rid = report.model, !rid.isEmpty
+        else { return nil }
+        return rid
+    }
+
+    /// 준비(oMLX 상주) 단계가 필요한 모델인지 저장 응답으로 판단한다.
+    func needsPrepare(_ data: Data?) -> Bool {
+        guard let data,
+              let report = try? JSONDecoder().decode(ModelsReport.self, from: data)
+        else { return false }
+        return report.needs_prepare == true && report.prepared != true
+    }
+
+    /// 모델 변경을 한 곳에서 처리한다: 저장 → 저장값 확인 → (준비가 필요한 모델만) 준비.
+    /// 저장값을 확인하기 전에는 성공도 "이전 모델 유지"도 단정하지 않는다.
+    func applyModelChange(_ target: ReplyModelTarget, id: String, label: String) {
+        guard !id.isEmpty, !modelChangeInFlight else { return }
+        let previous = target == .reply ? currentReplyModel : currentImageReplyModel
+        modelChangeInFlight = true
+        if target == .reply {
+            applyReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
+            setRowState(target, ModelRowState(phase: .applying, message: "적용 중…", targetId: id))
+            modelStatusField?.stringValue = "답변 모델을 바꾸는 중이에요…"
+        } else {
+            applyImageReplyModelSelection(replyModelSelection(id: id, label: label, source: "override"))
+            setRowState(target, ModelRowState(phase: .applying, message: "적용 중…", targetId: id))
+            modelStatusField?.stringValue = "이미지 모델을 바꾸는 중이에요…"
+        }
+        refreshModelSettingsWindowIfOpen()
+        let action = target == .reply ? "model-set" : "image-model-set"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let data = self?.runPython(["--action", "image-model-set", "--model", id], timeout: 200)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let data,
-                   let report = try? JSONDecoder().decode(ModelsReport.self, from: data),
-                   report.ok == true,
-                   let rid = report.model, !rid.isEmpty {
-                    self.applyImageReplyModelSelection(
-                        self.replyModelSelection(
-                            id: rid,
-                            label: report.label ?? label,
-                            source: report.source ?? "override"
-                        )
+            guard let self else { return }
+            // 1단계: 저장만 한다(준비 대기 없음).
+            var saveArgs = ["--action", action, "--model", id]
+            if target == .reply { saveArgs.append("--no-wait") }
+            let saveData = self.runPython(saveArgs, timeout: 45)
+            guard let savedId = self.storedModelId(saveData), savedId == id else {
+                DispatchQueue.main.async {
+                    self.finishModelChange(
+                        target,
+                        phase: .failed,
+                        previous: previous,
+                        rowMessage: "변경하지 못했습니다. 이전 모델을 유지합니다.",
+                        status: "변경하지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
                     )
-                    self.modelStatusField?.stringValue = "이미지 모델을 바꿨어요. 다음 답변부터 적용됩니다."
-                    self.modelImageStatus?.stringValue = "적용됨 · 다음 답변부터 사용"
-                    self.modelImageNote = nil
-                    self.lastImageSelection = previous
-                    self.modelRevertButton?.isEnabled = previous != nil
+                }
+                return
+            }
+            // 2단계: 저장값을 다시 읽어 확인한다(성공 문구를 먼저 쓰지 않는다).
+            if target == .reply {
+                DispatchQueue.main.async {
+                    self.setRowState(target, ModelRowState(phase: .verifying, message: "결과 확인 중…", targetId: id))
+                    self.modelStatusField?.stringValue = "적용 결과를 확인하는 중이에요…"
                     self.refreshModelSettingsWindowIfOpen()
+                }
+                let readData = self.runPython(["--action", "models"], timeout: 45)
+                let readBack = self.storedModelId(readData)
+                if readBack != id {
+                    let message = readBack == nil
+                        ? "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
+                        : "저장된 설정이 바뀌었을 수 있어요. 모델을 다시 골라 주세요."
+                    DispatchQueue.main.async {
+                        self.finishModelChange(
+                            target,
+                            phase: .verifying,
+                            previous: nil,
+                            rowMessage: message,
+                            status: message
+                        )
+                    }
                     return
                 }
-                let restored = self.restoreStoredImageModel(previous)
-                if restored, let previous { self.applyImageReplyModelSelection(previous) }
-                self.modelStatusField?.stringValue = "이미지 모델을 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
-                self.modelImageNote = restored
-                    ? "적용하지 못했습니다. 이전 모델을 유지합니다. 모델을 다시 골라 주세요."
-                    : "적용하지 못했습니다. 저장된 설정이 바뀌었을 수 있어요. 모델을 다시 골라 주세요."
-                if !restored, let previous {
-                    self.lastImageSelection = previous
-                    self.modelRevertButton?.isEnabled = true
-                }
-                self.presentOperatorResult(action: "image-model-set", data: data)
-                self.refreshModelSettingsWindowIfOpen()
             }
+            // 3단계: 준비가 필요한 모델만 준비 단계를 따로 확인한다.
+            if target == .reply && self.needsPrepare(saveData) {
+                let prepData = self.runPython(["--action", action, "--model", id], timeout: 200)
+                if self.storedModelId(prepData) != id {
+                    let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
+                    DispatchQueue.main.async {
+                        self.finishModelChange(
+                            target,
+                            phase: .verifying,
+                            previous: nil,
+                            rowMessage: message,
+                            status: message
+                        )
+                    }
+                    return
+                }
+            }
+            DispatchQueue.main.async {
+                self.finishModelChange(
+                    target,
+                    phase: .applied,
+                    previous: previous,
+                    rowMessage: nil,
+                    status: "적용됨 · 다음 답변부터 사용"
+                )
+            }
+        }
+    }
+
+    /// 변경 시도의 끝을 한 곳에서 정리한다. 저장값이 확인된 경우에만 되돌리기 이력을 남긴다.
+    func finishModelChange(
+        _ target: ReplyModelTarget,
+        phase: ModelRowPhase,
+        previous: ReplyModelSelection?,
+        rowMessage: String?,
+        status: String
+    ) {
+        modelChangeInFlight = false
+        let label = target == .reply ? "답변 모델" : "이미지 모델"
+        setRowState(target, ModelRowState(phase: phase, message: rowMessage, targetId: nil))
+        switch phase {
+        case .applied:
+            if let previous, !previous.id.isEmpty {
+                lastModelChange = ModelRevertRecord(target: target, selection: previous)
+                if target == .reply {
+                    lastReplySelection = previous
+                } else {
+                    lastImageSelection = previous
+                }
+            }
+            modelStatusField?.stringValue = "\(label)을(를) 바꿨어요. 다음 답변부터 적용됩니다."
+        case .failed:
+            if let previous { setTargetSelection(target, previous) }
+            modelStatusField?.stringValue = "\(label)을(를) 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
+        default:
+            modelStatusField?.stringValue = status
+        }
+        modelRevertButton?.isEnabled = lastModelChange != nil
+        modelRevertButton?.title = lastModelChange.map {
+            $0.target == .reply ? "답변 모델 되돌리기" : "이미지 모델 되돌리기"
+        } ?? "되돌리기"
+        refreshModelSettingsWindowIfOpen()
+    }
+
+    func setTargetSelection(_ target: ReplyModelTarget, _ selection: ReplyModelSelection) {
+        if target == .reply {
+            applyReplyModelSelection(selection)
+        } else {
+            applyImageReplyModelSelection(selection)
         }
     }
 
@@ -2040,12 +2132,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let replyLabel = (reply?.label ?? replyId).trimmingCharacters(in: .whitespacesAndNewlines)
         // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
         modelReplySummary?.stringValue = "메시지에 답할 때 사용합니다."
-        modelReplyStatus?.stringValue = modelReplyNote ?? (replyLabel.isEmpty
+        modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty
             ? (catalogLoading ? "모델 목록 불러오는 중…" : "모델을 선택하세요.")
             : "적용됨 · 다음 답변부터 사용")
         modelReplyPopup?.toolTip = replyId.isEmpty ? nil : "현재 모델 ID: \(replyId)"
         if let popup = modelReplyPopup {
-            populateModelPopup(popup, providers: providers, currentId: replyId, enabled: true)
+            populateModelPopup(popup, providers: providers, currentId: replyId, enabled: !modelChangeInFlight)
         }
 
         let image = currentImageReplyModel ?? lastModel?.image_reply_model
@@ -2054,7 +2146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageLabel = (image?.label ?? imageId).trimmingCharacters(in: .whitespacesAndNewlines)
         modelImageSummary?.stringValue = "이미지가 포함된 메시지에 답할 때 사용합니다."
         let autoSelected = imageEnabled && (imageId.lowercased().contains("auto") || imageLabel.lowercased() == "auto")
-        if let note = modelImageNote {
+        if let note = modelImageState.message {
             modelImageStatus?.stringValue = note
         } else if !imageEnabled {
             modelImageStatus?.stringValue = "답변 모델이 사진도 함께 봐요 — 이미지 모델을 따로 고르지 않아도 됩니다."
@@ -2068,7 +2160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         modelImagePopup?.toolTip = imageId.isEmpty ? nil : "현재 모델 ID: \(imageId)"
         if let popup = modelImagePopup {
-            populateModelPopup(popup, providers: providers, currentId: imageId, enabled: imageEnabled)
+            populateModelPopup(popup, providers: providers, currentId: imageId, enabled: imageEnabled && !modelChangeInFlight)
         }
     }
 
@@ -2172,44 +2264,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 직전에 적용했던 모델로 되돌린다. 답변·이미지 어느 쪽을 바꿨든 그 항목을
     /// 되돌리고, 성공한 항목의 이력만 지워 재시도를 막지 않는다.
     @objc func modelRevertClicked(_ sender: Any?) {
-        let previousReply = lastReplySelection
-        let previousImage = lastImageSelection
-        guard previousReply != nil || previousImage != nil else { return }
+        guard let record = lastModelChange, !modelChangeInFlight else { return }
+        let target = record.target
+        let action = target == .reply ? "model-set" : "image-model-set"
+        modelChangeInFlight = true
+        setRowState(target, ModelRowState(phase: .verifying, message: "되돌리는 중…", targetId: record.selection.id))
         modelStatusField?.stringValue = "이전 모델로 되돌리는 중이에요…"
-        modelReplyNote = previousReply == nil ? modelReplyNote : "되돌리는 중…"
-        modelImageNote = previousImage == nil ? modelImageNote : "되돌리는 중…"
         modelRevertButton?.isEnabled = false
+        refreshModelSettingsWindowIfOpen()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            var restoredReply = previousReply == nil
-            var restoredImage = previousImage == nil
-            if let previousImage {
-                restoredImage = self.restoreStoredImageModel(previousImage)
-                if restoredImage {
-                    DispatchQueue.main.async { self.applyImageReplyModelSelection(previousImage) }
-                }
-            }
-            if let previousReply {
-                restoredReply = self.restoreStoredReplyModel(previousReply)
-                if restoredReply {
-                    DispatchQueue.main.async { self.applyReplyModelSelection(previousReply) }
-                }
-            }
+            let data = self.runPython(["--action", action, "--model", record.selection.id], timeout: 200)
+            let restored = self.storedModelId(data) == record.selection.id
             DispatchQueue.main.async {
-                if restoredReply { self.lastReplySelection = nil }
-                else if let previousReply { self.lastReplySelection = previousReply }
-                if restoredImage { self.lastImageSelection = nil }
-                else if let previousImage { self.lastImageSelection = previousImage }
-                self.modelReplyNote = restoredReply
-                    ? nil
-                    : "되돌리지 못했습니다. 다시 시도해 주세요."
-                self.modelImageNote = restoredImage
-                    ? nil
-                    : "되돌리지 못했습니다. 다시 시도해 주세요."
-                self.modelStatusField?.stringValue = (restoredReply && restoredImage)
-                    ? "이전 모델로 되돌렸어요. 다음 답변부터 적용됩니다."
-                    : "일부 모델을 되돌리지 못했어요. 모델 설정에서 다시 시도해 주세요."
-                self.modelRevertButton?.isEnabled = self.lastReplySelection != nil || self.lastImageSelection != nil
+                self.modelChangeInFlight = false
+                if restored {
+                    self.setTargetSelection(target, record.selection)
+                    // 복구가 확인된 뒤에만 이력을 지운다.
+                    self.lastModelChange = nil
+                    self.setRowState(target, ModelRowState(phase: .applied, message: nil, targetId: nil))
+                    self.modelStatusField?.stringValue = "이전 모델로 되돌렸어요. 다음 답변부터 적용됩니다."
+                    self.modelRevertButton?.isEnabled = false
+                    self.modelRevertButton?.title = "되돌리기"
+                } else {
+                    self.setRowState(target, ModelRowState(phase: .failed, message: "되돌리지 못했습니다. 다시 시도해 주세요.", targetId: nil))
+                    self.modelStatusField?.stringValue = "되돌리지 못했어요. 다시 시도해 주세요."
+                    self.modelRevertButton?.isEnabled = true
+                }
                 self.refreshModelSettingsWindowIfOpen()
             }
         }
@@ -2551,7 +2632,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     }
                 } else if !self.catalogProviders.isEmpty {
                     // 목록이 이미 있는데 새로 고침이 실패하면 조용히 넘어가지 않는다.
-                    self.modelStatusField?.stringValue = "모델 목록을 새로 고치지 못했어요. 이전 목록을 그대로 보여 드려요."
+                    self.modelStatusField?.stringValue = "모델 목록을 새로 불러오지 못했습니다. 이전 목록을 표시합니다."
+                } else {
+                    // 보여 줄 목록 자체가 없으면 다음 행동을 알려 준다.
+                    self.modelStatusField?.stringValue = "모델 목록을 불러오지 못했습니다. '모델 목록 새로고침'을 눌러 주세요."
                 }
                 if let model = self.lastModel {
                     if !self.menuTracking {
