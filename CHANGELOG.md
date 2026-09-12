@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 운영자 인증 예외를 **플리스트와 런처에 함께 구워** launchd가 시작하는 경로에서도 적용되게 했습니다. 셸에서만 넘기면 LaunchAgent가 띄운 preflight가 "every catalog room failed"로 떨어져 호스트가 뜨지 않았습니다.
 - 운영자 인증 예외가 **reply worker가 실행하는 CLI에도 전달**되도록 했습니다. 워커는 자식 프로세스 환경변수를 화이트리스트로 만들기 때문에 `OPENKAKAO_ATTEST_MANUAL`이 빠져 있었고, 그래서 전송 직전 preflight가 계속 실패했습니다(`bound preflight transcript attestation failed`).
 - 패키저가 **고정 경로의 서명 바이너리**(`~/Library/Application Support/openkakao/bin/openkakao-cli`)를 스테이징하고, 런처와 LaunchAgent가 그 고정 경로를 실행합니다. 전체 디스크 접근이 경로 단위로 기억되는데 베이크마다 경로가 바뀌어 매번 다시 승인해야 하던 문제를 없앱니다. 런타임 안의 사본은 다이제스트 자산으로만 남습니다.
 - 조용한 방 때문에 **호스트 전체가 기동하지 못하던 문제**를 운영자 명시 예외로 풀었습니다. 창 인증은 "최근 텍스트 2건 이상 일치"를 요구하는데, 사진·이모티콘·인용 답장만 있던 방은 이 조건을 채울 수 없어 preflight가 실패했습니다(실측: matched=1, distinct=1, 4바이트). `OPENKAKAO_ATTEST_MANUAL=1`을 설정한 실행(운영자가 직접 판단한 경우)에서만 정확히 일치하는 1행을 인정하고, 그 사실을 stderr에 남깁니다. 기본값은 기존과 동일하게 엄격합니다.

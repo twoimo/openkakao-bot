@@ -535,6 +535,7 @@ def stage_runtime(
             "/usr/bin/env -i "
             f"HOME={shlex.quote(str(Path.home().resolve()))} "
             "PATH=/opt/homebrew/bin:/usr/bin:/bin TMPDIR=/tmp "
+            f"{'OPENKAKAO_ATTEST_MANUAL=1 ' if os.environ.get('OPENKAKAO_ATTEST_MANUAL') == '1' else ''}"
             f"{_shell_command(watchdog_argv)} </dev/null "
             f">>{shlex.quote(str(state_root / 'session-service/watchdog.out.log'))} "
             f"2>>{shlex.quote(str(state_root / 'session-service/watchdog.err.log'))}\n"
@@ -620,6 +621,14 @@ def stage_runtime(
                 "HOME": str(Path.home().resolve()),
                 "PATH": "/usr/bin:/bin",
                 "TMPDIR": "/tmp",
+                # A launchd start has no interactive shell, so the operator's
+                # attestation exception has to travel with the job or the room
+                # preflight fails for every catalog room.
+                **(
+                    {"OPENKAKAO_ATTEST_MANUAL": "1"}
+                    if os.environ.get("OPENKAKAO_ATTEST_MANUAL") == "1"
+                    else {}
+                ),
             },
         }
         plist_path = runtime / f"{LABEL}.plist"
