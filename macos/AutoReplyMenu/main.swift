@@ -236,7 +236,7 @@ struct ReplyModelSelection: Decodable {
     let source: String?
     let enabled: Bool?
     // 자동 선택은 문자열 추정이 아니라 이 필드로 판단한다.
-    let auto_selected: Bool?
+    var auto_selected: Bool? = nil
 }
 
 struct ModelsReport: Decodable {
