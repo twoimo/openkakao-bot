@@ -1969,7 +1969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: label, source: "override"),
                             rowMessage: nil,
-                            status: "적용됨 · 다음 답변부터 사용"
+                            status: target == .reply ? "적용됨 · 다음 답변부터 사용" : "저장됨 · 다음 답변부터 사용"
                         )
                     } else {
                         let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
@@ -2045,7 +2045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     previous: previous,
                     applied: self.replyModelSelection(id: id, label: label, source: "override"),
                     rowMessage: nil,
-                    status: "적용됨 · 다음 답변부터 사용"
+                    status: target == .reply ? "적용됨 · 다음 답변부터 사용" : "저장됨 · 다음 답변부터 사용"
                 )
             }
         }
@@ -2108,7 +2108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: id, source: "override"),
                             rowMessage: nil,
-                            status: "적용됨 · 다음 답변부터 사용"
+                            status: target == .reply ? "적용됨 · 다음 답변부터 사용" : "저장됨 · 다음 답변부터 사용"
                         )
                     } else if attempt < 3 {
                         self.scheduleVerificationRetry(target, id: id, previous: previous, attempt: attempt + 1)
