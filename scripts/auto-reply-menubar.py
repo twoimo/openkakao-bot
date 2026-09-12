@@ -1249,11 +1249,15 @@ def _merge_reply_model_providers(
     return existing
 
 
-def _ensure_omlx_model_resident(model: str) -> None:
-    """Keep the selected oMLX weights loaded so the next reply is not a cold start."""
+def _ensure_omlx_model_resident(model: str) -> bool:
+    """Keep the selected oMLX weights loaded so the next reply is not a cold start.
+
+    True only when the load call returned. A connection error must not be
+    reported as a completed preparation.
+    """
     model_id = model.split("/", 1)[-1].strip()
     if not model_id:
-        return
+        return False
     try:
         import urllib.parse
         import urllib.request
@@ -1267,8 +1271,9 @@ def _ensure_omlx_model_resident(model: str) -> None:
         )
         with urllib.request.urlopen(req, timeout=180) as response:
             response.read()
+        return True
     except Exception:
-        return
+        return False
 
 
 def set_reply_model(
@@ -1312,9 +1317,13 @@ def set_reply_model(
                 "warnings": ["모델 선택을 저장하지 못했습니다."],
             }
         prepared = True
+        prepare_warning = None
         if wanted.startswith("omlx/"):
             if prepare:
-                _ensure_omlx_model_resident(wanted)
+                # 준비 호출이 실패하면 prepared를 참으로 주장하지 않는다.
+                prepared = _ensure_omlx_model_resident(wanted)
+                if not prepared:
+                    prepare_warning = "모델 준비를 확인하지 못했습니다."
             else:
                 prepared = False
         parts = wanted.split("/", 1)
@@ -1333,7 +1342,7 @@ def set_reply_model(
             "stored": True,
             "prepared": prepared,
             "needs_prepare": wanted.startswith("omlx/"),
-            "warnings": [],
+            "warnings": [prepare_warning] if prepare_warning else [],
         }
     return _orig_set_reply_model(state_root, model, now=now, fetcher=None)
 
