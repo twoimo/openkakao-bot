@@ -1851,6 +1851,66 @@ def _enrollment_room_ids(state_root: Path) -> set[int] | None:
     return ids or None
 
 
+_TRANSIENT_DB_FENCE_REASONS = frozenset(
+    {"db_capability_fenced", "db_delivery_not_ready", "db_watermark_invalid"}
+)
+
+
+def _soften_candidate_fence(room: dict) -> dict:
+    """Read a running host's poll-cycle DB fence as ready, not an error.
+
+    The database watcher briefly flips its capability to "starting" while it
+    polls the local transcript, so the supervisor reports
+    ``readiness=fenced`` with the transient DB reasons for about a second.
+    Every child is still running, so this is normal work, not a failure; it
+    made the menu flash red on every poll. Only that exact transient set is
+    softened, and only while all children run (2026-09-13).
+    """
+
+    if not isinstance(room, dict):
+        return room
+    statuses = room.get("statuses")
+    if not isinstance(statuses, dict):
+        return room
+    supervisor = statuses.get("supervisor")
+    value = supervisor.get("value") if isinstance(supervisor, dict) else None
+    if not isinstance(value, dict):
+        return room
+    if value.get("state") != "running" or value.get("readiness") != "fenced":
+        return room
+    if value.get("shutdown_state") not in (None, "", "not_stopped"):
+        return room
+    if value.get("fence_reason") not in (
+        "",
+        "db_capability_fenced",
+        "db_delivery_not_ready",
+        "db_watermark_invalid",
+    ):
+        return room
+    reasons = value.get("readiness_reasons")
+    if not (
+        isinstance(reasons, list)
+        and reasons
+        and set(reasons) <= _TRANSIENT_DB_FENCE_REASONS
+    ):
+        return room
+    children = value.get("child_states")
+    if isinstance(children, dict) and any(
+        state != "running" for state in children.values()
+    ):
+        return room
+    softened = dict(value)
+    softened["readiness"] = "ready"
+    softened["fence_reason"] = ""
+    softened["readiness_reasons"] = []
+    new_statuses = dict(statuses)
+    new_statuses["supervisor"] = dict(supervisor)
+    new_statuses["supervisor"]["value"] = softened
+    new_room = dict(room)
+    new_room["statuses"] = new_statuses
+    return new_room
+
+
 def _scope_menubar_rooms_to_enrollment() -> None:
     """Keep leftover rooms from a stopped session out of the menu health.
 
@@ -1905,6 +1965,15 @@ def _scope_menubar_rooms_to_enrollment() -> None:
         impl_globals = model.__globals__["_read_catalog"].__globals__
     except Exception:
         return
+
+    classify = impl_globals.get("_classify_room")
+    if callable(classify) and not getattr(classify, "_openkakao_scoped", False):
+        def scoped_classify(room, *args, **kwargs):
+            return classify(_soften_candidate_fence(room), *args, **kwargs)
+
+        scoped_classify._openkakao_scoped = True
+        impl_globals["_classify_room"] = scoped_classify
+
     catalog = impl_globals.get("_read_catalog")
     if not callable(catalog) or getattr(catalog, "_openkakao_scoped", False):
         return

@@ -237,6 +237,62 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertNotIn(325472527151234, chat_ids)
             self.assertIn(int(room.name), chat_ids)
 
+    def _fenced_room(self, **value_overrides):
+        value = {
+            "state": "running",
+            "readiness": "fenced",
+            "fence_reason": "db_capability_fenced",
+            "shutdown_state": "not_stopped",
+            "readiness_reasons": [
+                "db_capability_fenced",
+                "db_delivery_not_ready",
+                "db_watermark_invalid",
+            ],
+            "child_states": {
+                "ax_watch": "running",
+                "db_watch": "running",
+                "reply_worker": "running",
+            },
+        }
+        value.update(value_overrides)
+        return {
+            "chat_id": 1,
+            "statuses": {"supervisor": {"value": value}},
+        }
+
+    def test_transient_poll_fence_is_softened_to_ready(self):
+        module = load(f"auto_reply_menubar_soften_{id(self)}")
+        softened = module._soften_candidate_fence(self._fenced_room())
+        value = softened["statuses"]["supervisor"]["value"]
+        self.assertEqual(value["readiness"], "ready")
+        self.assertEqual(value["fence_reason"], "")
+        self.assertEqual(value["readiness_reasons"], [])
+
+    def test_real_fence_is_not_softened(self):
+        module = load(f"auto_reply_menubar_soften_neg_{id(self)}")
+        owner = module._soften_candidate_fence(
+            self._fenced_room(fence_reason="owner_fence", readiness_reasons=["owner_fence"])
+        )
+        self.assertEqual(
+            owner["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+        )
+        stopped = module._soften_candidate_fence(self._fenced_room(state="stopped"))
+        self.assertEqual(
+            stopped["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+        )
+        child = module._soften_candidate_fence(
+            self._fenced_room(
+                child_states={
+                    "ax_watch": "running",
+                    "db_watch": "exited",
+                    "reply_worker": "running",
+                }
+            )
+        )
+        self.assertEqual(
+            child["statuses"]["supervisor"]["value"]["readiness"], "fenced"
+        )
+
     def test_delivery_unknown_is_red(self):
         with tempfile.TemporaryDirectory() as temporary:
             helper, module, state, room, queue, now, _model = self._model(
