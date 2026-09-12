@@ -324,6 +324,10 @@ RERANK_HELPER = Path(__file__).with_name("auto-reply-rerank.py")
 RERANK_TIMEOUT_SECONDS = 0.4
 RERANK_SPAWN_GREETING_SECONDS = 90.0
 RERANK_POLL_GREETING_SECONDS = 2.0
+# The sidecar prints a warming line before it loads. If it never becomes ready
+# (for example FlagEmbedding is not installed and the load hangs), do not pay
+# the poll timeout on every reply: give up after a few polls.
+RERANK_MAX_WARM_POLLS = 3
 RERANK_DISABLED = os.environ.get("OPENKAKAO_RERANK_DISABLED", "").strip() == "1"
 RERANK_PYTHON = Path(
     os.environ.get(
@@ -5884,6 +5888,10 @@ class _RerankClient:
         self.process: subprocess.Popen[str] | None = None
         self.ready = False
         self.last_error = "missing_model"
+        # Once the ranker reports a terminal failure (missing model, crash) or
+        # stays in warming past the poll budget, stop retrying it per reply.
+        self.failed = False
+        self.warm_polls = 0
 
     def close(self) -> None:
         process = self.process
@@ -5905,13 +5913,18 @@ class _RerankClient:
         if RERANK_DISABLED:
             self.last_error = "disabled"
             return "disabled"
+        if self.failed:
+            return self.last_error
         if self.process is not None and self.process.poll() is None:
             if self.ready:
                 return "ready"
-            return self._consume_greeting(RERANK_POLL_GREETING_SECONDS)
+            status = self._consume_greeting(RERANK_POLL_GREETING_SECONDS)
+            self._note_status(status)
+            return status
         self.close()
         if not RERANK_HELPER.is_file() or not RERANK_PYTHON.is_file():
             self.last_error = "missing_model"
+            self.failed = True
             return "missing_model"
         try:
             RERANK_CACHE.mkdir(parents=True, exist_ok=True)
@@ -5945,6 +5958,7 @@ class _RerankClient:
             )
         except OSError:
             self.last_error = "missing_model"
+            self.failed = True
             return "missing_model"
         finally:
             if stderr_handle is not subprocess.DEVNULL:
@@ -5952,7 +5966,23 @@ class _RerankClient:
                     stderr_handle.close()
                 except OSError:
                     pass
-        return self._consume_greeting(RERANK_SPAWN_GREETING_SECONDS)
+        status = self._consume_greeting(RERANK_SPAWN_GREETING_SECONDS)
+        self._note_status(status)
+        return status
+
+    def _note_status(self, status: str) -> None:
+        """Track terminal ranker failures so a broken sidecar stops costing time."""
+
+        if status == "ready":
+            self.warm_polls = 0
+            return
+        if status == "warming":
+            self.warm_polls += 1
+            if self.warm_polls > RERANK_MAX_WARM_POLLS:
+                self.failed = True
+            return
+        if status in {"missing_model", "sidecar_crash", "disabled"}:
+            self.failed = True
 
     def _consume_greeting(self, timeout: float) -> str:
         greeting = self._readline(timeout)

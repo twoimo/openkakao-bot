@@ -16934,6 +16934,36 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
         self.assertTrue(client.ready)
         self.assertEqual(client.last_error, "none")
 
+    def test_rerank_client_stops_polling_after_warming_budget(self):
+        module = self._load_auto_reply_module("rerank_warm_budget")
+        client = module._RerankClient()
+        client.process = mock.Mock()
+        client.process.poll.return_value = None
+        client.ready = False
+        client._readline = mock.Mock(return_value=None)  # the sidecar never answers
+        for _ in range(module.RERANK_MAX_WARM_POLLS + 1):
+            self.assertEqual(client.ensure(), "warming")
+        self.assertTrue(client.failed)
+        calls = client._readline.call_count
+        # Once terminal, ensure() must answer without paying the poll timeout.
+        self.assertEqual(client.ensure(), "warming")
+        self.assertEqual(client._readline.call_count, calls)
+
+    def test_rerank_client_stops_polling_after_missing_model(self):
+        module = self._load_auto_reply_module("rerank_missing_model")
+        client = module._RerankClient()
+        client.process = mock.Mock()
+        client.process.poll.return_value = None
+        client.ready = False
+        client._readline = mock.Mock(
+            return_value='{"ok": false, "fallback": "missing_model"}'
+        )
+        self.assertEqual(client.ensure(), "missing_model")
+        self.assertTrue(client.failed)
+        calls = client._readline.call_count
+        self.assertEqual(client.ensure(), "missing_model")
+        self.assertEqual(client._readline.call_count, calls)
+
     def test_self_chat_row_requires_positive_author_id(self):
         module = self._load_auto_reply_module("self_chat_row")
         other = {
