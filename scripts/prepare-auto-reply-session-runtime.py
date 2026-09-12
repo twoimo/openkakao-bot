@@ -536,6 +536,7 @@ def stage_runtime(
             f"HOME={shlex.quote(str(Path.home().resolve()))} "
             "PATH=/opt/homebrew/bin:/usr/bin:/bin TMPDIR=/tmp "
             f"{'OPENKAKAO_ATTEST_MANUAL=1 ' if os.environ.get('OPENKAKAO_ATTEST_MANUAL') == '1' else ''}"
+            f"{'OPENKAKAO_GEEKNEWS_ONLY_ROOMS=1 ' if os.environ.get('OPENKAKAO_GEEKNEWS_ONLY_ROOMS') == '1' else ''}"
             f"{_shell_command(watchdog_argv)} </dev/null "
             f">>{shlex.quote(str(state_root / 'session-service/watchdog.out.log'))} "
             f"2>>{shlex.quote(str(state_root / 'session-service/watchdog.err.log'))}\n"
@@ -627,6 +628,11 @@ def stage_runtime(
                 **(
                     {"OPENKAKAO_ATTEST_MANUAL": "1"}
                     if os.environ.get("OPENKAKAO_ATTEST_MANUAL") == "1"
+                    else {}
+                ),
+                **(
+                    {"OPENKAKAO_GEEKNEWS_ONLY_ROOMS": "1"}
+                    if os.environ.get("OPENKAKAO_GEEKNEWS_ONLY_ROOMS") == "1"
                     else {}
                 ),
             },
