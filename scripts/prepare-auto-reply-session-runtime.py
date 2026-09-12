@@ -17,6 +17,7 @@ import plistlib
 import re
 import shlex
 import stat
+import subprocess
 import time
 import tomllib
 from pathlib import Path
@@ -159,17 +160,28 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _clear_quarantine(path: Path) -> None:
-    """Drop the Gatekeeper quarantine flag from a generated runtime file.
+    """Best-effort removal of the Gatekeeper quarantine flag.
 
-    The packager can run from a sandboxed or quarantined parent process, which
-    stamps `com.apple.quarantine` onto everything it writes. That flag then makes
-    macOS ask the operator to allow `start-auto-reply-session.command` on every
-    restart even though this machine produced the file itself.
+    The packager can run from a sandboxed parent, which stamps
+    `com.apple.quarantine` onto every file it writes; macOS then asks the
+    operator to allow `start-auto-reply-session.command` on every restart. Some
+    builds of this Python lack `os.removexattr` and a sandboxed parent may refuse
+    the write, so this shells out to `/usr/bin/xattr` and treats any failure as
+    "someone else will clear it". The reply host's launchd tick clears the whole
+    runtime directory from an unsandboxed context before it opens the launcher,
+    which is the path that actually removes the flag.
     """
     try:
-        os.removexattr(path, "com.apple.quarantine")
-    except (AttributeError, OSError):
-        pass
+        subprocess.run(
+            ["/usr/bin/xattr", "-d", "com.apple.quarantine", str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
 
 
 def _copy_exclusive(source: Path, destination: Path, mode: int) -> dict[str, Any]:
