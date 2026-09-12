@@ -2621,9 +2621,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 guard let self else { return }
                 self.catalogLoading = false
                 if let data,
-                   let report = try? JSONDecoder().decode(ModelsReport.self, from: data) {
+                   let report = try? JSONDecoder().decode(ModelsReport.self, from: data),
+                   report.ok == true {
                     if let providers = report.providers, !providers.isEmpty {
                         self.catalogProviders = providers
+                    }
+                    // 새로 고침이 성공하면 지난번 실패 안내를 지운다.
+                    if (self.modelStatusField?.stringValue ?? "").hasPrefix("모델 목록") {
+                        self.modelStatusField?.stringValue = ""
                     }
                     if let id = report.model, !id.isEmpty {
                         self.currentReplyModel = ReplyModelSelection(
