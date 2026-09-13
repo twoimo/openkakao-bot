@@ -128,6 +128,17 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         path.write_text(body, encoding="utf-8")
         path.chmod(0o700)
 
+    def test_supervisor_signal_handler_only_records_the_request(self):
+        module = self._load_supervisor_module("auto_reply_supervisor_signal_test")
+        module._signal_requested = None
+        # A handler that called stop() directly would re-enter write_status()
+        # and deadlock on the lock the main thread already holds.
+        with mock.patch.object(
+            module, "stop", side_effect=AssertionError("stop called in handler")
+        ):
+            module._handle_shutdown_signal(15, None)
+        self.assertEqual(module._signal_requested, 15)
+
     def _load_trusted_codex_module(self, name, root):
         root = Path(root)
         runner = root / "codex"

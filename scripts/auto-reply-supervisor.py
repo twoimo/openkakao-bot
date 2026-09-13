@@ -90,6 +90,16 @@ _last_status_signature: tuple[tuple[str, object], ...] | None = None
 _last_status_write_at = 0.0
 _status_context: dict[str, object] | None = None
 _stopping = False
+# Signals only record a request. A handler must not call stop() directly:
+# stop() publishes status under the lock the main thread may already hold,
+# so re-entering it deadlocks and the parent force-kills us before the clean
+# shutdown is written (2026-09-13).
+_signal_requested: int | None = None
+
+
+def _handle_shutdown_signal(signum: int, _frame: object) -> None:
+    global _signal_requested
+    _signal_requested = signum
 
 
 PRIVACY_ATTESTATION_ENV = "OPENKAKAO_PRIVACY_ATTESTATION"
@@ -1453,8 +1463,8 @@ def main() -> int:
     if not SELF:
         raise SystemExit("OPENKAKAO_SELF_NICKNAME must be configured")
     privacy_digest, parsed_config = read_attested_config()
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
 
     acquire_owner()
     database_started = db_ready()
@@ -1572,6 +1582,8 @@ def main() -> int:
     if args.once:
         stop()
     while True:
+        if _signal_requested is not None:
+            stop(reason="shutdown", exit_code=0)
         exit_reason = _child_exit_reason()
         if exit_reason:
             write_status(**_status_context, state_name="fenced", fence_reason=exit_reason, force=True)

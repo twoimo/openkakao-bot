@@ -2142,6 +2142,33 @@ def recover_stale_jobs(
             )
             for row in delivery_unknown_rows
         }
+        # Compute recovery decisions with the queue lock released: the AX/local
+        # confirmation path runs external local-read (up to ~8s per call) and
+        # holding the write lock that long starves the worker. The short
+        # transaction below re-verifies each row (status/updated_at CAS) before
+        # applying a precomputed decision.
+        recovery_fields: dict[str, dict | None] = {}
+        for row in delivery_unknown_rows:
+            event_id = str(row["event_id"])
+            terminal = delivery_unknown_context[event_id]
+            fields = (
+                _terminal_queue_fields(
+                    DELIVERY_UNKNOWN,
+                    row["reply"],
+                    terminal,
+                    event_id=event_id,
+                    queue_decision=row["decision"],
+                    queue_reason=row["reason"],
+                    queue_category=row["category"],
+                    queue_due_at=row["due_at"],
+                    queue_scheduled_delay=row["scheduled_delay_seconds"],
+                )
+                if terminal is not None
+                else None
+            )
+            if fields is None:
+                fields = leftover_pre_send_unknown_skip_fields(connection, row)
+            recovery_fields[event_id] = fields
         healed_unknown: list[tuple[str, str]] = []
         transaction_started = False
         try:
@@ -2167,24 +2194,7 @@ def recover_stale_jobs(
                     code="recovery_started",
                     source_epoch=_event_json_source_epoch(row["event_json"]),
                 )
-                terminal = delivery_unknown_context[event_id]
-                fields = (
-                    _terminal_queue_fields(
-                        DELIVERY_UNKNOWN,
-                        row["reply"],
-                        terminal,
-                        event_id=event_id,
-                        queue_decision=row["decision"],
-                        queue_reason=row["reason"],
-                        queue_category=row["category"],
-                        queue_due_at=row["due_at"],
-                        queue_scheduled_delay=row["scheduled_delay_seconds"],
-                    )
-                    if terminal is not None
-                    else None
-                )
-                if fields is None:
-                    fields = leftover_pre_send_unknown_skip_fields(connection, row)
+                fields = recovery_fields.get(event_id)
                 if fields is not None and _apply_recovered_terminal(
                     connection,
                     event_id,
