@@ -2598,6 +2598,7 @@ mod match_tests {
 mod imp {
 
     use std::collections::VecDeque;
+    use std::io::Read;
     use std::process::{Command, Stdio};
     use std::thread::sleep;
     use std::time::{Duration, Instant};
@@ -4123,6 +4124,7 @@ mod imp {
         super::classify_service_rows(scrape_chat_list_for_service_rows(&main_window))
     }
     const SERVICE_SCRAPE_WORKER_TIMEOUT: Duration = Duration::from_secs(12);
+    const SERVICE_SCRAPE_MAX_OUTPUT: usize = 2 * 1024 * 1024;
 
     pub fn scrape_chat_list_for_service_isolated() -> super::ServiceScrapeResult {
         let executable = match std::env::current_exe() {
@@ -4140,27 +4142,59 @@ mod imp {
             Ok(child) => child,
             Err(_) => return super::ServiceScrapeResult::AxUnavailable,
         };
+        // Drain stdout while the child runs. Waiting for exit before reading
+        // deadlocks once the child fills the pipe buffer, and the timeout then
+        // kills it before its result is read (2026-09-13).
+        let mut reader = child.stdout.take().map(|mut out| {
+            std::thread::spawn(move || {
+                let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match out.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let room = SERVICE_SCRAPE_MAX_OUTPUT.saturating_sub(buf.len());
+                            if room > 0 {
+                                buf.extend_from_slice(&chunk[..n.min(room)]);
+                            }
+                            // Keep draining past the cap so the child never blocks.
+                        }
+                        Err(_) => break,
+                    }
+                }
+                buf
+            })
+        });
         let deadline = Instant::now() + SERVICE_SCRAPE_WORKER_TIMEOUT;
+        let join_reader = |reader: &mut Option<std::thread::JoinHandle<Vec<u8>>>| {
+            reader
+                .take()
+                .and_then(|handle| handle.join().ok())
+                .unwrap_or_default()
+        };
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
+                    let stdout = join_reader(&mut reader);
                     if !status.success() {
                         return super::ServiceScrapeResult::AxUnavailable;
                     }
-                    let output = match child.wait_with_output() {
-                        Ok(output) => output,
-                        Err(_) => return super::ServiceScrapeResult::AxUnavailable,
-                    };
-                    return serde_json::from_slice(&output.stdout)
+                    return serde_json::from_slice(&stdout)
                         .unwrap_or(super::ServiceScrapeResult::AxUnavailable);
                 }
                 Ok(None) if Instant::now() < deadline => sleep(Duration::from_millis(25)),
                 Ok(None) => {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = join_reader(&mut reader);
                     return super::ServiceScrapeResult::AxUnavailable;
                 }
-                Err(_) => return super::ServiceScrapeResult::AxUnavailable,
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = join_reader(&mut reader);
+                    return super::ServiceScrapeResult::AxUnavailable;
+                }
             }
         }
     }
