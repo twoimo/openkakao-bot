@@ -1392,6 +1392,8 @@ struct ReplyDecisionInput {
     evidence_ids: Vec<String>,
     #[serde(default)]
     style_policy_version: String,
+    #[serde(default)]
+    provenance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3665,11 +3667,13 @@ pub fn record_reply_decision(db_path: &Path, record_json: &str) -> Result<bool> 
             return Ok(false);
         }
     }
-    let evidence_json = serde_json::json!({
-        "evidence_ids": input.evidence_ids,
-        "style_policy_version": input.style_policy_version,
-    })
-    .to_string();
+    let mut evidence_map = serde_json::Map::new();
+    evidence_map.insert("evidence_ids".into(), serde_json::to_value(&input.evidence_ids)?);
+    evidence_map.insert("style_policy_version".into(), serde_json::to_value(&input.style_policy_version)?);
+    if let Some(prov) = &input.provenance {
+        evidence_map.insert("provenance".into(), prov.clone());
+    }
+    let evidence_json = serde_json::Value::Object(evidence_map).to_string();
     if evidence_json.len() > 16 * 1024 {
         anyhow::bail!("reply evidence exceeds 16 KiB");
     }
@@ -7292,6 +7296,10 @@ mod tests {
                 "timing:2:empirical-log1p-three-means-p90-v1:immediate:w0.5:lo5:hi17"
             ],
             "style_policy_version": "ordinary-conversation-v3",
+            "provenance": {
+                "rerank": {"fallback": "none", "policy_rejections": []},
+                "response_timing": {"component": "immediate", "component_weight": 0.5}
+            }
         });
         record_reply_decision(&db, &record.to_string()).unwrap();
         let matches = reply_decision_search(&db, "부자멘토멘티", "세금 신고", 5).unwrap();
@@ -7314,6 +7322,8 @@ mod tests {
         assert!(updated[0]
             .evidence_json
             .contains("timing:2:empirical-log1p-three-means-p90-v1:immediate:w0.5:lo5:hi17"));
+        assert!(updated[0].evidence_json.contains("response_timing"));
+        assert!(updated[0].evidence_json.contains("immediate"));
     }
     #[test]
     fn reply_decision_boundary_validation_and_stale_noop() {

@@ -10045,7 +10045,7 @@ def _style_tell_field(value: object, allowed: tuple[str, ...], default: str) -> 
     return text if text in allowed else default
 
 
-def _style_tell_expired(row: dict) -> bool:
+def _style_tell_expired(row: dict, *, now: float | None = None) -> bool:
     """A tell with no expiry stays active; expired soft feedback is skipped."""
     raw = row.get("expires_at")
     if not isinstance(raw, str) or not raw.strip():
@@ -10056,7 +10056,8 @@ def _style_tell_expired(row: dict) -> bool:
         return False
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
-    return expires <= datetime.now(timezone.utc)
+    current_ts = time.time() if now is None else now
+    return expires.timestamp() <= current_ts
 
 
 def _style_tell_confidence_value(value: object, source: str) -> float:
@@ -10156,17 +10157,34 @@ def learned_style_tell_avoids() -> list[str]:
     path = STYLE_TELLS_LEDGER
     try:
         if path.is_symlink() or not path.is_file():
-            _LEARNED_TELLS_CACHE = (0.0, ())
+            _LEARNED_TELLS_CACHE = (0.0, 0.0, ())
             return []
         mtime = path.stat().st_mtime
     except OSError:
-        _LEARNED_TELLS_CACHE = (0.0, ())
+        _LEARNED_TELLS_CACHE = (0.0, 0.0, ())
         return []
-    cached_mtime, cached = _LEARNED_TELLS_CACHE
-    if cached_mtime == mtime:
+    cached_mtime = _LEARNED_TELLS_CACHE[0] if len(_LEARNED_TELLS_CACHE) >= 1 else 0.0
+    cached_expiry = _LEARNED_TELLS_CACHE[1] if len(_LEARNED_TELLS_CACHE) >= 3 else 0.0
+    cached = _LEARNED_TELLS_CACHE[-1] if len(_LEARNED_TELLS_CACHE) >= 2 else ()
+    now = time.time()
+    if cached_mtime == mtime and (cached_expiry == 0.0 or now < cached_expiry):
         return list(cached)
-    avoids = tuple(row["avoid"] for row in load_learned_style_tells())
-    _LEARNED_TELLS_CACHE = (mtime, avoids)
+    rows = load_learned_style_tells()
+    avoids = tuple(row["avoid"] for row in rows)
+    next_expiry = 0.0
+    for row in rows:
+        exp = row.get("expires_at")
+        if isinstance(exp, str) and exp.strip():
+            try:
+                dt = datetime.fromisoformat(exp)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts = dt.timestamp()
+                if ts > now and (next_expiry == 0.0 or ts < next_expiry):
+                    next_expiry = ts
+            except (ValueError, TypeError):
+                pass
+    _LEARNED_TELLS_CACHE = (mtime, next_expiry, avoids)
     return list(avoids)
 
 
@@ -10815,19 +10833,6 @@ def generate_reply(
         prompt_budget -= len(gjc_stdin_prefix)
     if prompt_budget <= 0:
         return {**empty, "reason": "model_prompt_overflow"}
-    prompt = _fit_prompt_to_budget(prompt, prompt_budget)
-    prompt_bytes = _encode_json_bounded(prompt, prompt_budget)
-    generation_started = time.monotonic()
-    gen_elapsed = None
-    if prompt_bytes is None:
-        approx = len(json.dumps(prompt, ensure_ascii=False).encode("utf-8", "replace"))
-        return {**empty, "reason": "model_prompt_overflow", "prompt_bytes": approx}
-    active_model = _generation_reply_model(bool(normalized_image_paths))
-    # The prompt text itself is never persisted. The digest plus the byte count
-    # are the receipt that links one decision to the exact prompt that produced
-    # it, including prompts that only reached a failed or unparsed attempt
-    # (AHP: observability, evidence_delivery).
-    prompt_digest = hashlib.sha256(prompt_bytes).hexdigest()[:16]
 
     def _prompt_evidence_ids(payload: object) -> set[str]:
         found: set[str] = set()
@@ -10844,11 +10849,22 @@ def generate_reply(
                     found.add(item["evidence_id"])
         return found
 
-    # Both sides of the receipt must count the same thing: the ids the prompt
-    # carried before and after the budget fit. Counting supplied evidence ids
-    # against a narrower prompt walk reported a 2 -> 1 drop even when nothing
-    # was trimmed.
+    # Count retrieved evidence ids BEFORE fitting to prompt budget so budget-induced
+    # reduction is measured honestly (AHP: evidence_delivery, observability).
     retrieved_evidence_ids = len(_prompt_evidence_ids(prompt))
+    prompt = _fit_prompt_to_budget(prompt, prompt_budget)
+    prompt_bytes = _encode_json_bounded(prompt, prompt_budget)
+    generation_started = time.monotonic()
+    gen_elapsed = None
+    if prompt_bytes is None:
+        approx = len(json.dumps(prompt, ensure_ascii=False).encode("utf-8", "replace"))
+        return {**empty, "reason": "model_prompt_overflow", "prompt_bytes": approx}
+    active_model = _generation_reply_model(bool(normalized_image_paths))
+    # The prompt text itself is never persisted. The digest plus the byte count
+    # are the receipt that links one decision to the exact prompt that produced
+    # it, including prompts that only reached a failed or unparsed attempt
+    # (AHP: observability, evidence_delivery).
+    prompt_digest = hashlib.sha256(prompt_bytes).hexdigest()[:16]
     laughter_allowed = _room_laughter_allows(
         message,
         recent_conversation,
@@ -13604,26 +13620,38 @@ def process_job(
             return
 
         inbound_text = str(event.get("message") or "")
-        if not _constructed_geeknews_outbound(
-            event, job
-        ) and not _policy_valid_draft(
-            reply,
-            inbound_text,
-            _event_recent_conversation(event),
-            recipient=_event_author_nickname(event),
-            laughter_allowed=(
-                event.get("laughter_allowed")
-                if isinstance(event.get("laughter_allowed"), bool)
-                else None
-            ),
-            awe_allowed=(
-                event.get("awe_allowed") if isinstance(event.get("awe_allowed"), bool) else None
-            ),
-        ):
+        skip_reason = REPLY_LAUGHTER_POLICY_REASON
+        if _constructed_geeknews_outbound(event, job):
+            valid = True
+        elif event.get("rerank_fallback") == "lenient_policy":
+            valid = bool(_lenient_policy_draft([reply], inbound_text))
+            if not valid:
+                skip_reason = "policy_lenient_violation"
+        else:
+            reasons_out = []
+            valid = _policy_valid_draft(
+                reply,
+                inbound_text,
+                _event_recent_conversation(event),
+                recipient=_event_author_nickname(event),
+                laughter_allowed=(
+                    event.get("laughter_allowed")
+                    if isinstance(event.get("laughter_allowed"), bool)
+                    else None
+                ),
+                awe_allowed=(
+                    event.get("awe_allowed") if isinstance(event.get("awe_allowed"), bool) else None
+                ),
+                reasons_out=reasons_out,
+            )
+            if not valid and reasons_out:
+                skip_reason = f"policy_{reasons_out[0]}"
+
+        if not valid:
             if not durable_policy_skip(
                 event,
                 event_id,
-                REPLY_LAUGHTER_POLICY_REASON,
+                skip_reason,
                 category="policy",
             ):
                 finish_delivery_unknown(
@@ -13631,7 +13659,7 @@ def process_job(
                     event_id,
                     connection,
                     decision="skip",
-                    reason=REPLY_LAUGHTER_POLICY_REASON,
+                    reason=skip_reason,
                     category="policy",
                 )
                 return
@@ -13642,11 +13670,11 @@ def process_job(
                 status="skipped",
                 due_at=None,
                 decision="skip",
-                reason=REPLY_LAUGHTER_POLICY_REASON,
+                reason=skip_reason,
                 category="policy",
                 reply=None,
                 scheduled_delay_seconds=None,
-                error_class=REPLY_LAUGHTER_POLICY_REASON,
+                error_class=skip_reason,
             ):
                 return
             complete_event(event_id, "")
@@ -14058,6 +14086,7 @@ def process_job(
     scheduled_event["laughter_allowed"] = bool(analysis.get("laughter_allowed"))
     scheduled_event["awe_allowed"] = bool(analysis.get("awe_allowed"))
     scheduled_event["generation_seconds"] = analysis.get("generation_seconds")
+    scheduled_event["rerank_fallback"] = analysis.get("rerank_fallback")
     scheduled_event = scrub_media_event(scheduled_event)
     if not settle_processing_transition(
         event,

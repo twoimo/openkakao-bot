@@ -17,7 +17,7 @@ import time
 import unittest
 import zlib
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1817,6 +1817,38 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             self.assertNotIn(
                 "그건 텍스트 안 뜸", module.learned_style_tell_avoids()
             )
+
+    def test_soft_style_tell_cache_invalidates_when_tell_expires_without_mtime_change(self):
+        module = self._load_auto_reply_module("auto_reply_style_tell_expiry_cache_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            module.STYLE_TELLS_LEDGER = Path(temporary) / "reply-style-tells.json"
+            module._LEARNED_TELLS_CACHE = (0.0, 0.0, ())
+            base_now = time.time()
+            expiry_str = datetime.fromtimestamp(base_now + 2.0, timezone.utc).isoformat()
+            module.STYLE_TELLS_LEDGER.write_text(
+                json.dumps(
+                    {
+                        "schema_version": module.STYLE_TELLS_SCHEMA_VERSION,
+                        "tells": [
+                            {
+                                "avoid": "너무 길게 쓰네요",
+                                "kind": "length",
+                                "source": "operator",
+                                "expires_at": expiry_str,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("time.time", return_value=base_now):
+                first = module.learned_style_tell_avoids()
+                self.assertIn("너무 길게 쓰네요", first)
+            # Advance time beyond expiry without touching the file (mtime identical)
+            with mock.patch("time.time", return_value=base_now + 5.0):
+                second = module.learned_style_tell_avoids()
+                self.assertNotIn("너무 길게 쓰네요", second)
 
     def test_style_tell_kind_scope_and_confidence(self):
         module = self._load_auto_reply_module("auto_reply_style_tell_kind_test")
@@ -16693,6 +16725,104 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
                     self.assertEqual(row["reply"], digest)
                     self.assertEqual(row["status"], "scheduled")
                     self.assertEqual(row["error_class"], "pre_send_unavailable")
+                finally:
+                    connection.close()
+        finally:
+            if previous is None:
+                os.environ.pop("OPENKAKAO_TARGET_CHAT_ID", None)
+            else:
+                os.environ["OPENKAKAO_TARGET_CHAT_ID"] = previous
+
+    def test_scheduled_lenient_policy_fallback_is_not_strict_policy_skipped(self):
+        module = self._load_auto_reply_module("auto_reply_lenient_scheduled_policy")
+        previous = os.environ.get("OPENKAKAO_TARGET_CHAT_ID")
+        os.environ["OPENKAKAO_TARGET_CHAT_ID"] = "42"
+        now = int(time.time())
+        # "현준" requires honorifics in strict policy. "잘 쉬어" is informal (banmal),
+        # which fails strict policy but passes lenient policy (non-empty, <=220 chars, not verbatim).
+        event = self._burst_event(module, 120, "오늘 휴가임", now, author="현준")
+        event["event_id"] = "db:42:1787182399"
+        event["canonical_event_id"] = "db:42:1787182399"
+        event["rerank_fallback"] = "lenient_policy"
+        event["response_window_upper_seconds"] = 600.0
+        reply_text = "잘 쉬어"
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                module.QUEUE = root / "42" / "reply-queue.sqlite3"
+                module.EVIDENCE_LEDGER = root / "evidence.jsonl"
+                connection = self._worker_queue_connection(module)
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO reply_jobs(
+                            event_id,event_json,status,due_at,decision,reason,category,
+                            reply,scheduled_delay_seconds,error_class,created_at,updated_at
+                        ) VALUES(
+                            ?, ?, 'scheduled', ?, 'reply', 'useful_reply', 'information',
+                            ?, 0.4, NULL, 1.0, 1.0
+                        )
+                        """,
+                        (
+                            event["event_id"],
+                            json.dumps(event, ensure_ascii=False),
+                            time.time() - 1.0,
+                            reply_text,
+                        ),
+                    )
+                    connection.commit()
+                    job, previous_status = module.claim_job(time.time(), connection)
+                    self.assertEqual(previous_status, "scheduled")
+                    with (
+                        mock.patch.object(
+                            module,
+                            "db_authoritative_event_allowed",
+                            return_value=True,
+                        ),
+                        mock.patch.object(
+                            module,
+                            "privacy_attestation_current",
+                            return_value=True,
+                        ),
+                        mock.patch.object(
+                            module,
+                            "numeric_author_identity_status",
+                            return_value="allowed",
+                        ),
+                        mock.patch.object(
+                            module,
+                            "conversation_advanced_past_event",
+                            return_value=False,
+                        ),
+                        mock.patch.object(
+                            module,
+                            "pre_ax_delivery_probe",
+                            return_value={"result": "ready"},
+                        ),
+                        mock.patch.object(
+                            module,
+                            "send_reply",
+                            return_value=True,
+                        ) as sender,
+                        mock.patch.object(
+                            module,
+                            "update_context_decision",
+                            return_value=True,
+                        ),
+                        mock.patch.object(module, "complete_event"),
+                    ):
+                        module.process_job(job, previous_status, connection)
+                    sender.assert_called_once()
+                    self.assertEqual(sender.call_args.args[0], reply_text)
+                    row = connection.execute(
+                        """
+                        SELECT status, decision, reason, reply
+                        FROM reply_jobs WHERE event_id = ?
+                        """,
+                        (event["event_id"],),
+                    ).fetchone()
+                    self.assertEqual(row["status"], "sent")
+                    self.assertEqual(row["reply"], reply_text)
                 finally:
                     connection.close()
         finally:
