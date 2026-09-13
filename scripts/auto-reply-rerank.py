@@ -17,7 +17,9 @@ from typing import Any
 
 MAX_DRAFTS = 8
 MAX_QUERY_CHARS = 2000
-MAX_DRAFT_CHARS = 80
+# Match the worker's 220-char reply cap so the reranker scores the same text it
+# will send (a shorter cut ranked a prefix, not the sent reply).
+MAX_DRAFT_CHARS = 220
 WARM_SENTINEL = {"type": "warmup"}
 
 

@@ -9852,7 +9852,11 @@ def _recent_self_tell_candidates(recent_conversation: list[dict]) -> list[str]:
         if len(values) >= 2:
             break
     values.reverse()
-    return [item for item in values if len(item) >= 4]
+    # Learn only multi-word phrases. A single token is usually a topic noun
+    # (for example 테일스케일), and banning it would block normal replies that
+    # reuse the topic. Tone feedback is about phrasing, not vocabulary
+    # (2026-09-13).
+    return [item for item in values if len(item) >= 4 and " " in item]
 
 
 def load_learned_style_tells() -> list[dict]:

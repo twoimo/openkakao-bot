@@ -1603,6 +1603,20 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             again = module.record_learned_style_tells(inbound, recent, author="문승현")
             self.assertEqual(again.count("그건 텍스트 안 뜸"), 1)
 
+    def test_self_tell_candidates_skip_single_topic_tokens(self):
+        module = self._load_auto_reply_module("auto_reply_self_tell_candidates")
+        recent = [
+            {"author_nickname": "최연우", "is_self": True, "message": "테일스케일"},
+            {
+                "author_nickname": "최연우",
+                "is_self": True,
+                "message": "그건 텍스트 안 뜸",
+            },
+        ]
+        self.assertEqual(
+            module._recent_self_tell_candidates(recent), ["그건 텍스트 안 뜸"]
+        )
+
     def test_outbound_restatement_and_interrogative_register(self):
         module = self._load_auto_reply_module("auto_reply_restatement_register_test")
         inbound = "일단 연장된채로 유지중인가보구나"
@@ -16983,6 +16997,19 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
         calls = client._readline.call_count
         self.assertEqual(client.ensure(), "missing_model")
         self.assertEqual(client._readline.call_count, calls)
+
+    def test_rerank_keeps_a_full_reply_draft(self):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "auto-reply-rerank.py"
+        spec = importlib.util.spec_from_file_location("auto_reply_rerank_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        draft = "가" * 150
+        parsed = module._normalize_request({"query": "q", "drafts": [draft]})
+        self.assertIsInstance(parsed, tuple)
+        _query, drafts = parsed
+        self.assertEqual(len(drafts[0]), 150)
 
     def test_self_chat_row_requires_positive_author_id(self):
         module = self._load_auto_reply_module("self_chat_row")
