@@ -790,6 +790,19 @@ fn get_user_id_from_plist_with_mode(mode: IdentityCacheMode) -> Result<i64> {
     }
 
     for path in plist_paths {
+        // When the current account hash is known, only trust the plist that
+        // produced it. Another account's plist on the same machine must not be
+        // selected, and must never be cached under this account's hash.
+        if let Some(active_hash) = active_account_hash.as_deref() {
+            let dictionary: Result<plist::Dictionary, _> = plist::from_file(&path);
+            let matches = dictionary
+                .ok()
+                .map(|dict| plist_matches_active_account(&dict, Some(active_hash)))
+                .unwrap_or(false);
+            if !matches {
+                continue;
+            }
+        }
         let Ok(user_id) = extract_user_id_from_plist(&path) else {
             continue;
         };
@@ -893,6 +906,15 @@ fn extract_active_account_hash(dict: &plist::Dictionary) -> Option<String> {
         }
     }
     None
+}
+
+/// True when the plist belongs to the active account. When the active hash is
+/// unknown, any plist may be considered.
+fn plist_matches_active_account(dict: &plist::Dictionary, active_hash: Option<&str>) -> bool {
+    match active_hash {
+        None => true,
+        Some(hash) => extract_active_account_hash(dict).as_deref() == Some(hash),
+    }
 }
 
 /// Wall-clock budget for the one-time parallel SHA-512 pre-image search.
@@ -2062,6 +2084,29 @@ pub struct LocalDbStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn revision_plist(hash: &str, revision: u64) -> plist::Dictionary {
+        let mut dict = plist::Dictionary::new();
+        dict.insert(
+            format!("DESIGNATEDFRIENDSREVISION:{hash}"),
+            plist::Value::Integer(plist::Integer::from(revision)),
+        );
+        dict
+    }
+
+    #[test]
+    fn plist_matches_only_the_active_account_hash() {
+        let active = revision_plist("aaaa", 7);
+        let other = revision_plist("bbbb", 9);
+        let empty = revision_plist("cccc", 0);
+        // Known active hash: only the plist that produced it is accepted, so a
+        // different account's plist cannot be selected or cached.
+        assert!(plist_matches_active_account(&active, Some("aaaa")));
+        assert!(!plist_matches_active_account(&other, Some("aaaa")));
+        assert!(!plist_matches_active_account(&empty, Some("aaaa")));
+        // Unknown active hash: any plist may be considered.
+        assert!(plist_matches_active_account(&other, None));
+    }
 
     fn local_media_test_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory database");
