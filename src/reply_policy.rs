@@ -24,6 +24,28 @@ pub fn validate_auto_reply_laughter(message: &str) -> Result<()> {
     Ok(())
 }
 
+/// Light safety rules for the never-skip fallback.
+///
+/// Operator rule: an authorized sender is never skipped, so a draft that the
+/// full policy refused may still go out when it clears the light rules:
+/// - not empty
+/// - not longer than 220 characters
+/// - not a verbatim copy of the inbound message
+pub fn validate_lenient_policy_draft(draft: &str, inbound: &str) -> Result<()> {
+    let normalized_draft = draft.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized_draft.is_empty() {
+        anyhow::bail!("draft is empty");
+    }
+    if normalized_draft.chars().count() > 220 {
+        anyhow::bail!("draft exceeds 220 characters");
+    }
+    let normalized_inbound = inbound.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !normalized_inbound.is_empty() && normalized_draft == normalized_inbound {
+        anyhow::bail!("draft verbatim echoes inbound message");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +71,19 @@ mod tests {
         ] {
             assert!(validate_auto_reply_laughter(valid).is_ok(), "{valid}");
         }
+    }
+
+    #[test]
+    fn validates_lenient_policy_drafts() {
+        assert!(validate_lenient_policy_draft("잘 쉬어", "오늘 휴가임").is_ok());
+        assert!(validate_lenient_policy_draft("  ㅋㅋㅋ  ", "오늘 휴가임").is_ok());
+        assert!(validate_lenient_policy_draft("", "오늘 휴가임").is_err());
+        assert!(validate_lenient_policy_draft("   ", "오늘 휴가임").is_err());
+        assert!(validate_lenient_policy_draft("오늘 휴가임", "오늘 휴가임").is_err());
+        assert!(validate_lenient_policy_draft("  오늘   휴가임  ", "오늘 휴가임").is_err());
+        let long_draft = "a".repeat(221);
+        assert!(validate_lenient_policy_draft(&long_draft, "오늘 휴가임").is_err());
+        let max_draft = "a".repeat(220);
+        assert!(validate_lenient_policy_draft(&max_draft, "오늘 휴가임").is_ok());
     }
 }
