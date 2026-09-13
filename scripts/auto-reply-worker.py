@@ -4043,7 +4043,12 @@ def _runner_trust_metadata() -> tuple[Path, tuple[object, ...]]:
         codex_prefix = Path(
             "/opt/homebrew/lib/node_modules/@openai/codex"
         ).resolve(strict=True)
-        if (
+        ocx_prefix = Path(
+            "/opt/homebrew/lib/node_modules/@bitkyc08/opencodex"
+        ).resolve(strict=True)
+        if REPLY_RUNNER_KIND == "opencodex" and (resolved.is_relative_to(ocx_prefix) or str(resolved).startswith("/opt/homebrew/")):
+            pass
+        elif (
             REPLY_RUNNER_KIND != "codex"
             or resolved.name != "codex"
             or not resolved.is_relative_to(codex_prefix)
