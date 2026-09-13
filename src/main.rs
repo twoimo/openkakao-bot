@@ -1557,10 +1557,14 @@ impl AutoReplyLlmChoice {
         match model.trim() {
             "google-antigravity/gemini-3.7-flash-high"
             | "google-antigravity/gemini-3.7-flash-tiered"
+            | "google-antigravity/gemini-3.8-flash-tiered"
+            | "google-antigravity/gemini-3.8-flash-high"
             | "google-antigravity/gemini-3.6-flash-tiered"
             | "gjc"
             | "gemini"
             | "gemini-3.7-flash"
+            | "gemini-3.8-flash"
+            | "gemini-3.8-flash-high"
             | "gemini-3.6-flash" => Some(Self::GjcGemini37Flash),
             "opencode-go-session/deepseek-v4.1-flash"
             | "opencode-go/deepseek-v4.1-flash"
@@ -1674,9 +1678,45 @@ fn probe_auto_reply_llm(
     choice: AutoReplyLlmChoice,
 ) -> Result<()> {
     let runner = validate_auto_reply_runner(config)?;
-    let output = match choice {
-        AutoReplyLlmChoice::GjcGemini37Flash | AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => {
-            Command::new(&runner.path)
+    match choice {
+        AutoReplyLlmChoice::GjcGemini37Flash => {
+            let output = Command::new(&runner.path)
+                .args([
+                    "-p",
+                    "--no-session",
+                    "--no-rules",
+                    "--no-lsp",
+                    "--no-title",
+                    "--no-tools",
+                    "--mode",
+                    "text",
+                    "--model",
+                    choice.model(),
+                    "--thinking",
+                    "high",
+                    "Reply with exactly OK",
+                ])
+                .stdin(Stdio::null())
+                .output()
+                .context("probe Gemini reply model")?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() && stdout.contains("OK") {
+                return Ok(());
+            }
+            if stderr.to_ascii_lowercase().contains("no api key") {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "selected LLM {} did not respond; runner={} stdout={} stderr={}",
+                choice.label(),
+                runner.path,
+                stdout.trim(),
+                stderr.trim()
+            );
+        }
+        AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => {
+            let mut child = Command::new(&runner.path)
                 .args([
                     "-p",
                     "--no-session",
@@ -1691,41 +1731,101 @@ fn probe_auto_reply_llm(
                     "Reply with exactly OK",
                 ])
                 .stdin(Stdio::null())
-                .output()
-                .context("probe Gajae-Code reply model")?
-        }
-        AutoReplyLlmChoice::CodexGpt56Luna => Command::new(&runner.path)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .output()
-            .context("probe Codex reply model")?,
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    match choice {
-        AutoReplyLlmChoice::GjcGemini37Flash | AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => {
-            if output.status.success() && stdout.contains("OK") {
-                // Authenticated Gemini vision path is live.
-            } else if stderr.to_ascii_lowercase().contains("no api key") {
-                // Image-provider auth is missing. Do not fence the AutoReply
-                // session: the worker text path can still use the omlx override.
-            } else {
-                anyhow::bail!(
-                    "selected LLM {} did not respond; runner={} stdout={} stderr={}",
-                    choice.label(),
-                    runner.path,
-                    stdout.trim(),
-                    stderr.trim()
-                );
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("probe Gajae-Code reply model")?;
+
+            let start = std::time::Instant::now();
+            let mut timed_out = false;
+            let status = loop {
+                match child.try_wait()? {
+                    Some(status) => break Some(status),
+                    None => {
+                        if start.elapsed() >= std::time::Duration::from_secs(15) {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            timed_out = true;
+                            break None;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                }
+            };
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(mut out) = child.stdout.take() {
+                use std::io::Read;
+                let _ = out.read_to_end(&mut stdout);
             }
+            if let Some(mut err) = child.stderr.take() {
+                use std::io::Read;
+                let _ = err.read_to_end(&mut stderr);
+            }
+            let stdout_str = String::from_utf8_lossy(&stdout);
+            let stderr_str = String::from_utf8_lossy(&stderr);
+            let stderr_lower = stderr_str.to_ascii_lowercase();
+
+            if let Some(status) = status {
+                if status.success() && stdout_str.contains("OK") {
+                    return Ok(());
+                }
+            }
+
+            if timed_out
+                || stderr_lower.contains("usage limit")
+                || stderr_lower.contains("rate limit")
+                || stderr_lower.contains("quota")
+                || stderr_lower.contains("429")
+                || stderr_lower.contains("no api key")
+            {
+                eprintln!("advisory: OpenCode Go usage limit/auth issue detected; probing Antigravity Gemini Flash high fallback");
+                let fallback_output = Command::new(&runner.path)
+                    .args([
+                        "-p",
+                        "--no-session",
+                        "--no-rules",
+                        "--no-lsp",
+                        "--no-title",
+                        "--no-tools",
+                        "--mode",
+                        "text",
+                        "--model",
+                        "google-antigravity/gemini-3.7-flash-tiered",
+                        "--thinking",
+                        "high",
+                        "Reply with exactly OK",
+                    ])
+                    .stdin(Stdio::null())
+                    .output()
+                    .context("probe Antigravity Gemini fallback model")?;
+                let fb_stdout = String::from_utf8_lossy(&fallback_output.stdout);
+                if fallback_output.status.success() && fb_stdout.contains("OK") {
+                    eprintln!("advisory: Antigravity Gemini Flash high fallback verified OK");
+                    return Ok(());
+                }
+            }
+            anyhow::bail!(
+                "selected LLM {} did not respond; runner={} stdout={} stderr={}",
+                choice.label(),
+                runner.path,
+                stdout_str.trim(),
+                stderr_str.trim()
+            );
         }
         AutoReplyLlmChoice::CodexGpt56Luna => {
+            let output = Command::new(&runner.path)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .output()
+                .context("probe Codex reply model")?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
             if !output.status.success() || !stdout.trim().starts_with("codex-cli ") {
                 anyhow::bail!("selected LLM {} is not working", choice.label());
             }
+            Ok(())
         }
     }
-    Ok(())
 }
 
 fn sha256_file(path: &Path) -> Result<String> {

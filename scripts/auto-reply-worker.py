@@ -11099,6 +11099,55 @@ def generate_reply(
     except OSError:
         return fail_model_call("runner_io_failure")
     if returncode != 0:
+        failure_class, retry_after = _classify_model_failure(
+            returncode,
+            stdout_bytes,
+            stderr_bytes,
+        )
+        # User objective: 오픈코드 Go 사용량 리밋 걸리면 안티그래비티 제미나이 3.8 플래시 high 폴백
+        err_msg = (stderr_bytes.decode("utf-8", "replace")[:800] + "
+" + stdout_bytes.decode("utf-8", "replace")[:800]).casefold()
+        is_opencode = "opencode" in str(active_model).casefold()
+        is_limit = failure_class in {"quota_exhausted", "rate_limited", "runner_timeout"} or any(
+            m in err_msg for m in ("usage limit", "weekly limit", "daily limit", "429", "timed out", "unauthorized", "missing api key")
+        )
+        if is_opencode and is_limit and active_model != DEFAULT_IMAGE_REPLY_MODEL:
+            print(
+                f"[reply-gen] opencode_go_quota_fallback: {active_model} -> {DEFAULT_IMAGE_REPLY_MODEL} high",
+                file=sys.stderr,
+                flush=True,
+            )
+            fallback_command = list(command)
+            try:
+                m_idx = fallback_command.index("--model")
+                fallback_command[m_idx + 1] = DEFAULT_IMAGE_REPLY_MODEL
+            except ValueError:
+                fallback_command.extend(["--model", DEFAULT_IMAGE_REPLY_MODEL])
+            try:
+                t_idx = fallback_command.index("--thinking")
+                fallback_command[t_idx + 1] = "high"
+            except ValueError:
+                fallback_command.extend(["--thinking", "high"])
+
+            try:
+                fb_rc, fb_stdout, fb_stderr = _run_bounded_process(
+                    fallback_command,
+                    cwd=Path("/tmp"),
+                    env=env,
+                    timeout=45,
+                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                    stderr_cap=MAX_MODEL_STDERR_BYTES,
+                    stdin_bytes=model_stdin_bytes,
+                    stdin_cap=MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None,
+                    isolate_group=True,
+                )
+                if fb_rc == 0:
+                    returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
+                    active_model = DEFAULT_IMAGE_REPLY_MODEL
+            except Exception as fb_exc:
+                print(f"[reply-gen] antigravity fallback error: {fb_exc}", file=sys.stderr, flush=True)
+
+    if returncode != 0:
         print(
             "[reply-gen] runner_failed rc=%s stderr=%r stdout=%r"
             % (

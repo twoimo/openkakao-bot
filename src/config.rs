@@ -446,6 +446,8 @@ pub fn validate_auto_reply_startup(
         if !matches!(
             config.auto_reply.reply_model.as_deref(),
             Some("google-antigravity/gemini-3.7-flash-tiered")
+                | Some("google-antigravity/gemini-3.8-flash-tiered")
+                | Some("google-antigravity/gemini-3.8-flash-high")
                 | Some("google-antigravity/gemini-3.6-flash-tiered")
                 | Some("opencode-go-session/deepseek-v4.1-flash"),
         ) {
