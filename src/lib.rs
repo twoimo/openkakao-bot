@@ -35,3 +35,4 @@ pub mod reply_policy;
 pub mod room_catalog;
 pub mod safety;
 pub mod ui_shell;
+pub mod metrics;
