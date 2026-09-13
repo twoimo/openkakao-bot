@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
 
 ### Added
+- 재랭커 후보 평가를 **자격(정책 통과)과 순위(랭크)** 두 단계로 분리했습니다. 자격 판정이 내는 거부를 기계 판독 가능한 안정 코드(`policy_rejections`의 `index`/`draft`/`reason`/`codes`/`decision`)로 모으고, 반환 dict에 `fallback`·`policy_rejections`를 **모든 경로에서** 싣습니다. 결정 기록(`rerank_policy_rejections`, `provenance.rerank`)과 영수증(최상위 `policy_rejections`, 최대 8건)에도 같은 목록이 실려 "어떤 초안이 왜 거부됐는지"가 순위 안에 묻히지 않습니다. 인가 발신자는 여전히 스킵하지 않으며(경량 폴백 `lenient_policy`: 빈 답·220자 초과·원문 복사만 금지) 사이드카의 `MAX_DRAFTS=8`/`MAX_DRAFT_CHARS=220` 정렬은 그대로입니다.
+- 응답시간 학습 스타일 tell에 구조 필드를 추가했습니다: `kind`(length/ending/question/caption/ai_detection), `target_phrase`, `scope`(room/recipient), `source`(operator/self-observed), `confidence`, `validity`·`expiry`. 원장 스키마는 v2가 되지만 v1 행은 기본값으로 하위호환 로드되고, 만료된 소프트 tell은 로드 시 건너뜁니다. phrase-only 정규화(단일 토큰 금지, 다어절·4자 이상)와 avoid-only 레지스터는 그대로입니다.
 - 감독관이 카탈로그를 보고 **긱뉴스 전용 방을 스스로 판별**합니다(`_geeknews_only_room`, `OPENKAKAO_GEEKNEWS_ONLY` 환경변수도 허용). 패키저는 `OPENKAKAO_GEEKNEWS_ONLY_ROOMS`를 플리스트·런처에 함께 굽습니다. 결과: 서비스가 긱뉴스 전용 방의 감독관을 띄우고, 그 방은 DB 감시자 없이 워커만 돕니다.
 - 감독관이 `OPENKAKAO_GEEKNEWS_ONLY=1`을 받으면 **DB 감시자를 시작하지 않고**(계정당 감시자 1개 제약 때문에 두 방이 서로를 밀어냄) 답장 전송도 끄되, 워커는 계속 돌려 긱뉴스 슬롯을 처리합니다. 기본값은 꺼짐이라 기존 동작 변화가 없습니다.
 - 서비스가 `OPENKAKAO_GEEKNEWS_ONLY_ROOMS=1`일 때 **긱뉴스 전용 방도 방 후보에 포함**합니다(기본값은 꺼짐 → 기존 동작 변화 없음). 긱뉴스는 방 워커 안에서 실행되므로 전용 방에도 워커가 필요하고, 그 방들은 DB 감시자 없이 돌아야 합니다. 테스트 추가(`CatalogSelectorTests`).
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 페이싱 대기 시간을 **단계별로** 기록합니다. 전송 확정 원장에 `generation_seconds`(모델 생성), `stages_seconds`(대기열 도달까지·생성·생성 이후·합계), `clock_source`(카카오톡 `sent_at` 원격 시계 vs 로컬 wall)를 남깁니다. 기존에는 감지·전송 지연 두 숫자만 있어 146초가 "DB에 늦게 나타난 것"인지 "읽고도 생성이 오래 걸린 것"인지 구분할 수 없었습니다. 외부 읽기 전용 관측기는 아직 없어 남은 항목으로 표시합니다.
 - 결정 원장(`reply-evidence.jsonl`)에 **생성 영수증과 검색 영수증**을 추가했습니다. 한 줄에서 프롬프트 바이트 수, 프롬프트 SHA-256(앞 16자), 사용 모델, 검색 시도 여부·검색 오류, 프롬프트에 실린 근거 ID 개수, 링크 요청/확보 수가 같은 `event_id`로 연결됩니다. 이전에는 성공 경로가 `prompt_bytes`/`model_endpoint_reachable`를 넘기지 않아 항상 null이었고, 검색 결과는 근거 ID 목록만 있어 "검색 실패"와 "모델이 근거를 안 씀"을 구분할 수 없었습니다. 프롬프트 원문은 저장하지 않으며, 실패·미파싱 시도에도 같은 영수증을 남깁니다.
 ### Changed
+- 응답시간 혼합 적합(`fit_response_time_distribution`)의 분할 탐색을 전 이중 루프(모든 `(first_split, second_split)` 열거, O(N²))에서 **결과가 완전히 동일한 분할정복 DP**(O(N log N))로 바꿨습니다. 후보 경계를 strict-increase 위치로 한정하고 크기창(`first ∈ [8, N-16]`, `second ∈ [first+8, N-8]`), 동률 시 가장 낮은 `(first, second)` 선택, 유효쌍 없으면 `None`(fail-closed) 계약은 그대로입니다. raw 기반 통계(`average`/`median`/`p90`/`min`/`max`)와 `prefix_sum`·`segment_sse`는 그대로이며 기존 정확값 테스트(`split_seconds == [15.0, 110.0]`, `global_upper_seconds == 890.0`, `tail_winsorized_count == 4`, weights 0.5/0.25/0.25)는 수정 없이 통과합니다. 실측 20,174행에서 661.7ms → 2.4ms.
+- 답장 페이싱이 인바운드의 **턴 종류**(질문/캡션/일반 진술)를 읽어 학습된 3-성분 혼합에서 성분을 고릅니다. 선택한 `component`·`component_weight`·`turn_kind`와 근거(`component_selection`, `turn_kind_policy_version`)를 timing sample → `provenance.response_timing` → 결정 기록·영수증에 남깁니다. `due = sent_at + sampled_anchor`(경과분 차감) 의미는 유지하고 만료 초안을 일괄 플러시하지 않습니다. 선호 성분을 쓸 수 없으면 학습 혼합으로 물러납니다.
 - 메뉴바 **모델 설정** 창을 외부 UI/UX 리뷰(1차 가중합 0.685 FAIL)에 따라 고쳤습니다. (1) 이미지 모델의 '미설정'과 '자동 선택'을 상태 줄로 분리하고 "아직 고른 이미지 모델이 없어요."를 제거했습니다. (2) 제목을 "답변 모델"/"이미지 답변 모델"로 바꾸고 각각 역할 설명을 넣었으며, "지금 쓰는 모델: …" 중복을 없애고 선택란 아래 상태 줄에 "적용됨 · 다음 답변부터 사용"만 표시합니다(긴 내부 ID는 툴팁). (3) 모델별 상태 줄(적용 중/적용됨/실패)과 "이전 모델로 되돌리기" 버튼을 추가하고 버튼 문구를 "모델 제공자 추가…", "모델 목록 새로고침"으로 바꿨습니다. (4) 창 높이를 400px로 키우고 섹션 간격·키보드 이동 순서를 정리했습니다.
 - 답장 지연이 학습된 응답시간 혼합(immediate 53% / short 31% / delayed 16%)을 그대로 쓰고, **이미 지난 시간을 차감**합니다. 이전에는 질문·조언은 immediate, 나머지는 short로 강제하고 2초 상한을 걸어 혼합이 전혀 반영되지 않았습니다. 생성이 끝난 시점의 경과 시간을 빼므로 지연을 이중으로 부과하지 않습니다.
 - 메뉴바 **단체 채팅방** 창이 카카오톡의 모든 단체방을 이름과 함께 보여줍니다. GUI 실행(launchd/Finder)은 번들 CLI 경로를 PATH에서 찾지 못해 `--bin` 없이 뜨는 경우가 있었고, 그러면 Python 계층이 `local-chats --groups`를 못 돌려 카탈로그에 등록된 방 1개만 `id:<chat_id>` 제목으로 남았습니다. 이제 `--bin`이 없으면 앱 번들 안의 CLI(`Contents/Resources/bin/openkakao-cli`)를 기본값으로 씁니다. 실측: 방 193개, `id:` 제목 0개.
@@ -35,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `watch.rs`의 패킷 핸들러 5곳이 복사해 갖고 있던 훅·웹훅 디스패치, 필터 가드, 방 라벨, 캐시 오류 처리, 출력 스캐폴드, 커서 갱신을 각각 정의 1곳으로 모았습니다. JSON 경로는 지연 평가를 유지하고, 사람용 출력 포맷 문자열과 인자 순서는 그대로입니다.
 
 ### Fixed
+- 페이싱이 `del analysis`로 인바운드 맥락을 버려 "왜 이 지연이 선택됐는지"를 사후에 증명할 수 없던 것을 고쳤습니다. 이제 모든 결정 레코드·영수증이 `provenance.response_timing`(선택 성분·턴 종류·근거)을 싣습니다.
 - 호스트 프리플라이트의 **방별 검사 제한을 90초 → 240초**로 늘렸습니다. 컨텍스트 DB가 커지면서 검사가 90초를 넘기면 "전 방 실패"로 호스트가 멈추고 방이 fence 되던 문제를 고쳤습니다(2026-09-13 실측).
 - 응답 유실 복구 경로와 지연 재확인 성공 판정에도 **준비 완료 조건을 동일하게 적용**합니다. 이전에는 ID만 일치하면 "적용됨"으로 갔습니다. 이미지 저장은 답변 모델 재조회로 확인할 수 없으므로 **"저장됨 · 준비 상태는 확인하지 못했습니다"**로 남깁니다.
 - 확인하지 못한 변경(재조회 불일치)에도 **재확인을 연결**하고, 타이머가 다른 변경 진행 중에 울리면 버리지 않고 다음 시도로 넘깁니다(Astra P0/P1).
