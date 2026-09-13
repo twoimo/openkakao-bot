@@ -9729,14 +9729,16 @@ def _inbound_asks_question(text: str) -> bool:
         ):
             return False
         return True
-    if re.search(r"(나요|까요|인가요|거야|거예요|임)\s*$", body):
+    if re.search(r"(나요|까요|인가요|거야|거예요)\s*$", body):
         return True
     if re.search(r"(답변|설명|대답|알려|말해)\s*해\s*(줘|봐|줄래)?\s*$", body):
         return True
     if re.search(r"(알려줘|설명해|답변해|말해줘|대답해|요약해)\s*(줘)?\s*$", body):
         return True
-    if re.search(r"(벌써|휴가가|끗이네|끝나|아쉽)", body):
-        return True
+    # Statements such as "오늘 휴가임", "벌써 금요일이네", "좀 아쉽다", and
+    # "주말 끝나니까 피곤하다" are shares/banter, not questions. Ending with the
+    # declarative "임" or containing these words used to give them question
+    # reply rights (2026-09-13).
     # Same interrogative tails the outbound gate treats as a question, so a
     # genuine "뭐예요" inbound keeps its reply rights and the suppress-exception.
     compact = " ".join(body.split())
@@ -9811,7 +9813,21 @@ def _inbound_signals_ai_detection(text: str) -> bool:
         return True
     if "저걸로ai" in compact or "그걸로ai" in compact:
         return True
-    if "알아보는방법" in compact:
+    # Ending/register complaints are the real tone feedback ("~네요로만 답장하네").
+    if re.search(
+        r"(?:말투|어미|끝말|답장|답변).{0,12}(?:반복|똑같|같은|계속|또\s*같)",
+        compact,
+    ):
+        return True
+    if re.search(
+        r"(?:네요|어요|에요|예요|나요|까요|죠|군요)\s*(?:로만|만)", folded
+    ):
+        return True
+    # "알아보는 방법" is a bot tell in an AI thread, but a topic when attached to
+    # something else ("가짜 뉴스 알아보는 방법"), so skip the topic-prefixed forms.
+    if "알아보는방법" in compact and not re.search(
+        r"(뉴스|기사|영상|서비스|광고|논문)", folded
+    ):
         return True
     return False
 
@@ -9976,26 +9992,14 @@ def _outbound_repeats_learned_tell(reply: str, inbound: str = "") -> bool:
     body = " ".join(str(reply or "").split())
     if not body:
         return False
-    folded = body.casefold()
-    compact = re.sub(r"\s+", "", folded)
-    reply_tokens = _content_tokens(body)
+    compact = re.sub(r"\s+", "", body.casefold())
     for avoid in learned_style_tell_avoids():
-        needle = avoid.casefold()
-        needle_compact = re.sub(r"\s+", "", needle)
-        if len(needle_compact) >= 4 and needle_compact in compact:
-            return True
-        avoid_tokens = _content_tokens(avoid)
-        if not avoid_tokens:
-            continue
-        shared = reply_tokens & avoid_tokens
-        if not shared:
-            continue
-        longest = max(avoid_tokens, key=len)
-        if len(longest) >= 3 and longest in reply_tokens:
-            return True
-        if len(shared) >= 2:
-            return True
-        if _token_jaccard(reply_tokens, avoid_tokens) >= 0.45:
+        needle = re.sub(r"\s+", "", avoid.casefold())
+        # Avoid only the exact learned phrase. Matching a shared content token
+        # (for example a topic noun like 테일스케일) blocked normal replies that
+        # reused the topic, so style feedback must not become a word ban
+        # (2026-09-13).
+        if len(needle) >= 4 and needle in compact:
             return True
     return False
 

@@ -1553,6 +1553,14 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "ai 뉴스 봤음 한도 올랐대"
             )
         )
+        # A topic that happens to contain "알아보는 방법" is not a bot tell, and
+        # the real ending-repetition complaint must be detected.
+        self.assertFalse(
+            module._inbound_signals_ai_detection("가짜 뉴스 알아보는 방법")
+        )
+        self.assertTrue(
+            module._inbound_signals_ai_detection("~네요로만 답장하네 ㄷㄷ")
+        )
         self.assertIsNone(module._identity_policy_decision(inbound))
         with tempfile.TemporaryDirectory() as temporary:
             module.STYLE_TELLS_LEDGER = Path(temporary) / "reply-style-tells.json"
@@ -1574,10 +1582,15 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             )
             self.assertIn("그건 텍스트 안 뜸", avoids)
             self.assertNotIn(module.AI_TELL_PROBE, avoids)
+            # Repeating the exact learned phrase is avoided...
             self.assertTrue(
+                module._outbound_repeats_learned_tell("그건 텍스트 안 뜸", inbound)
+            )
+            # ...but sharing only a topic token is not a word ban.
+            self.assertFalse(
                 module._outbound_repeats_learned_tell("텍스트 있는 것만 됨", inbound)
             )
-            self.assertFalse(
+            self.assertTrue(
                 module._policy_valid_draft("텍스트 있는 것만 됨", inbound, recent)
             )
             self.assertTrue(
@@ -2321,6 +2334,11 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(module._inbound_asks_question("오늘 시간 돼?"))
         self.assertTrue(module._inbound_asks_question("이거 뭐예요 ㅋㅋㅋ"))
         self.assertFalse(module._inbound_asks_question("이거때문에 개발자채용이늘엇나"))
+        # Shares/banter are not questions even without a "?".
+        self.assertFalse(module._inbound_asks_question("오늘 휴가임"))
+        self.assertFalse(module._inbound_asks_question("벌써 금요일이네"))
+        self.assertFalse(module._inbound_asks_question("좀 아쉽다"))
+        self.assertFalse(module._inbound_asks_question("주말 끝나니까 피곤하다"))
         # Trailing laughter and punctuation do not hide a question or an ending.
         self.assertTrue(module._reply_asks_question("보내시고 어우는 뭐예요 ㅋㅋㅋ"))
         self.assertEqual(module._reply_ending("지원이네요!!"), "네요")
