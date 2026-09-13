@@ -404,9 +404,9 @@ enum Palette {
 
     static func title(level: String) -> String {
         switch level {
-        case "green": return "정상"
+        case "green": return "정상 작동"
         case "yellow": return "처리 중"
-        case "red": return "오류"
+        case "red": return "확인 필요"
         case "off": return "꺼짐"
         default: return "대기"
         }
@@ -414,35 +414,35 @@ enum Palette {
 
     static func caption(code: String) -> String {
         switch code {
-        case "ready": return "대기 완료"
-        case "processing": return "파이프라인 동작"
-        case "ax_window_missing": return "창 없음"
-        case "leftover_occupancy": return "잔여 점유"
-        case "worker_unhealthy": return "워커 이상"
-        case "supervisor_unhealthy": return "감독 이상"
-        case "watchdog_unhealthy": return "감시 이상"
-        case "fenced": return "차단됨"
-        case "delivery_unknown": return "전송 미확인"
-        case "bake_digest_mismatch": return "런타임 불일치"
-        case "snapshot_unavailable": return "스냅샷 없음"
-        case "model_temporarily_unavailable": return "모델 대기"
-        case "auto_reply_off": return "자동답변 꺼짐"
+        case "ready": return "자동 답변 대기 중"
+        case "processing": return "답변 작성 중…"
+        case "ax_window_missing": return "카카오톡 창 열기 필요"
+        case "leftover_occupancy": return "이전 작업 정리 중"
+        case "worker_unhealthy": return "답변 프로그램 점검 중"
+        case "supervisor_unhealthy": return "서비스 점검 중"
+        case "watchdog_unhealthy": return "감시 서비스 점검 중"
+        case "fenced": return "일시 대기 중"
+        case "delivery_unknown": return "전송 상태 확인 중"
+        case "bake_digest_mismatch": return "업데이트 적용 중"
+        case "snapshot_unavailable": return "연결 확인 중"
+        case "model_temporarily_unavailable": return "AI 모델 연결 중"
+        case "auto_reply_off": return "자동 답변 꺼짐"
         case "service_off": return "서비스 꺼짐"
-        case "journal_error": return "저널 오류"
-        case "identity_mismatch": return "신원 불일치"
-        case "circuit_open": return "감시 회로"
-        case "preflight_failed": return "시작 전 점검"
-        case "stopped_unclean": return "감독 종료"
-        case "db_watch_exited": return "대화 감시 중단"
-        case "python_pin_missing": return "파이썬 없음"
-        case "kakaotalk_stopped": return "카카오톡 꺼짐"
-        case "launch_agent_missing": return "모니터 없음"
-        case "scheduled_waiting": return "예약 대기"
-        case "session_not_ready": return "세션 미준비"
-        case "session_unenrolled": return "세션 미등록"
-        case "session_bake_stale": return "런타임 구버전"
-        case "session_bake_current": return "런타임 최신"
-        case "reply_model_default": return "기본 모델"
+        case "journal_error": return "기록 점검 중"
+        case "identity_mismatch": return "계정 확인 중"
+        case "circuit_open": return "잠시 후 자동 재시도"
+        case "preflight_failed": return "연결 상태 점검 중"
+        case "stopped_unclean": return "정상 재시작 대기 중"
+        case "db_watch_exited": return "대화 감시 대기 중"
+        case "python_pin_missing": return "필수 구성 요소 확인 필요"
+        case "kakaotalk_stopped": return "카카오톡 실행 필요"
+        case "launch_agent_missing": return "백그라운드 설정 확인"
+        case "scheduled_waiting": return "자연스러운 전송 대기 중"
+        case "session_not_ready": return "준비 중…"
+        case "session_unenrolled": return "채팅방 등록 대기"
+        case "session_bake_stale": return "새 버전 적용 대기"
+        case "session_bake_current": return "최신 상태"
+        case "reply_model_default": return "기본 AI 모델 사용"
         default: return code
         }
     }
@@ -755,8 +755,8 @@ final class MenuPanelView: NSView {
     }
     var roomRowButtons: [NSButton] = []
     var tileButtons: [NSButton] = []
-    let autoButton = NSButton(title: "즉시 자동 답변", target: nil, action: #selector(AppDelegate.instantAutoReplyClicked))
-    let geekButton = NSButton(title: "즉시 긱뉴스 전송", target: nil, action: #selector(AppDelegate.instantGeekNewsClicked))
+    let autoButton = NSButton(title: "즉시 답장 보내기", target: nil, action: #selector(AppDelegate.instantAutoReplyClicked))
+    let geekButton = NSButton(title: "긱뉴스 바로 전송", target: nil, action: #selector(AppDelegate.instantGeekNewsClicked))
 
     init(model: MenubarModel, frame: NSRect) {
         self.model = model
@@ -1592,19 +1592,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 아니라 클릭 한 번으로 별도의 창이 열립니다 (R1.2, R5.2, R6.1, R8.1).
         // 답변 모델과 이미지 모델은 하나의 "모델 설정" 창으로 합쳤습니다 (R5.1).
         // 새로고침 메뉴는 없앴습니다 (R9.1). 화면은 스스로 갱신됩니다.
-        let logsItem = NSMenuItem(title: "기록…", action: #selector(showLogWindow), keyEquivalent: "l")
+        let logsItem = NSMenuItem(title: "답변 기록 보기…", action: #selector(showLogWindow), keyEquivalent: "l")
         logsItem.target = self
         logsItem.isEnabled = true
         menu.addItem(logsItem)
-        let modelItem = NSMenuItem(title: "모델 설정…", action: #selector(showModelSettingsWindow), keyEquivalent: ",")
+        let modelItem = NSMenuItem(title: "AI 모델 설정…", action: #selector(showModelSettingsWindow), keyEquivalent: ",")
         modelItem.target = self
         modelItem.isEnabled = true
         menu.addItem(modelItem)
-        let roomsItem = NSMenuItem(title: "채팅방…", action: #selector(showRoomsWindow), keyEquivalent: "m")
+        let roomsItem = NSMenuItem(title: "채팅방 관리…", action: #selector(showRoomsWindow), keyEquivalent: "m")
         roomsItem.target = self
         roomsItem.isEnabled = true
         menu.addItem(roomsItem)
-        let doctorItem = NSMenuItem(title: "자가 점검…", action: #selector(showDoctorWindow), keyEquivalent: "d")
+        let doctorItem = NSMenuItem(title: "자가 진단…", action: #selector(showDoctorWindow), keyEquivalent: "d")
         doctorItem.target = self
         doctorItem.isEnabled = true
         menu.addItem(doctorItem)
