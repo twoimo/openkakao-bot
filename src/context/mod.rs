@@ -2864,6 +2864,162 @@ fn response_delay_percentile(sorted: &[f64], ratio: f64) -> f64 {
     }
 }
 
+fn response_time_segment_sse(
+    prefix_sum: &[f64],
+    prefix_square_sum: &[f64],
+    start: usize,
+    end: usize,
+) -> f64 {
+    let count = (end - start) as f64;
+    let sum = prefix_sum[end] - prefix_sum[start];
+    let square_sum = prefix_square_sum[end] - prefix_square_sum[start];
+    (square_sum - sum * sum / count).max(0.0)
+}
+
+/// Smallest admissible `second_split` for every `first_candidates` entry.
+///
+/// The result is the index into `second_candidates` of the smallest minimiser
+/// of `sse(first, s) + sse(s, total)`, or `None` when the strict-increase
+/// window `[first + minimum, total - minimum]` holds no admissible boundary.
+///
+/// The smallest constrained minimiser is monotone non-decreasing in
+/// `first_split` because the segment SSE satisfies the quadrangle inequality
+///     sse(a, c) + sse(b, d) <= sse(a, d) + sse(b, c)   for a <= b <= c <= d,
+/// so divide-and-conquer optimisation is exact here. A ternary search over the
+/// middle boundary would not be: the objective is not unimodal, and a shape as
+/// ordinary as a dense uniform spread already has a local minimum that is not
+/// the global one.
+fn response_time_distribution_second_splits(
+    prefix_sum: &[f64],
+    prefix_square_sum: &[f64],
+    first_candidates: &[usize],
+    second_candidates: &[usize],
+    total: usize,
+    minimum: usize,
+) -> Vec<Option<usize>> {
+    #[allow(clippy::too_many_arguments)]
+    fn search(
+        prefix_sum: &[f64],
+        prefix_square_sum: &[f64],
+        first_candidates: &[usize],
+        second_candidates: &[usize],
+        total: usize,
+        minimum: usize,
+        first_start: usize,
+        first_end: usize,
+        second_start: usize,
+        second_end: usize,
+        optima: &mut [Option<usize>],
+    ) {
+        if first_start > first_end {
+            return;
+        }
+        if second_start > second_end {
+            // No admissible boundary is left for this first_split or any later
+            // one, because the lower bound only moves right with first_split.
+            for slot in &mut optima[first_start..=first_end] {
+                *slot = None;
+            }
+            return;
+        }
+        let first_midpoint = first_start + (first_end - first_start) / 2;
+        let first_split = first_candidates[first_midpoint];
+        let lower =
+            second_candidates.partition_point(|boundary| *boundary < first_split + minimum);
+        let scan_start = second_start.max(lower);
+        let mut best: Option<(f64, usize)> = None;
+        for position in scan_start..=second_end {
+            let second_split = second_candidates[position];
+            let sse =
+                response_time_segment_sse(prefix_sum, prefix_square_sum, 0, first_split)
+                    + response_time_segment_sse(
+                        prefix_sum,
+                        prefix_square_sum,
+                        first_split,
+                        second_split,
+                    )
+                    + response_time_segment_sse(prefix_sum, prefix_square_sum, second_split, total);
+            if best.is_none_or(|(best_sse, _)| sse < best_sse) {
+                best = Some((sse, position));
+            }
+        }
+        optima[first_midpoint] = best.map(|(_, position)| position);
+        match best {
+            Some((_, best_position)) => {
+                if first_midpoint > first_start {
+                    search(
+                        prefix_sum,
+                        prefix_square_sum,
+                        first_candidates,
+                        second_candidates,
+                        total,
+                        minimum,
+                        first_start,
+                        first_midpoint - 1,
+                        second_start,
+                        best_position,
+                        optima,
+                    );
+                }
+                if first_midpoint < first_end {
+                    search(
+                        prefix_sum,
+                        prefix_square_sum,
+                        first_candidates,
+                        second_candidates,
+                        total,
+                        minimum,
+                        first_midpoint + 1,
+                        first_end,
+                        best_position,
+                        second_end,
+                        optima,
+                    );
+                }
+            }
+            None => {
+                if first_midpoint < first_end {
+                    for slot in &mut optima[first_midpoint + 1..=first_end] {
+                        *slot = None;
+                    }
+                }
+                if first_midpoint > first_start {
+                    search(
+                        prefix_sum,
+                        prefix_square_sum,
+                        first_candidates,
+                        second_candidates,
+                        total,
+                        minimum,
+                        first_start,
+                        first_midpoint - 1,
+                        second_start,
+                        second_end,
+                        optima,
+                    );
+                }
+            }
+        }
+    }
+    let mut optima = vec![None; first_candidates.len()];
+    if !first_candidates.is_empty() && !second_candidates.is_empty() {
+        search(
+            prefix_sum,
+            prefix_square_sum,
+            first_candidates,
+            second_candidates,
+            total,
+            minimum,
+            0,
+            first_candidates.len() - 1,
+            0,
+            second_candidates.len() - 1,
+            &mut optima,
+        );
+    }
+    optima
+}
+
 fn fit_response_time_distribution(delays: &[f64]) -> Option<ResponseTimeDistribution> {
     if delays.len() < RESPONSE_TIME_DISTRIBUTION_MIN_SAMPLES
         || delays.iter().any(|delay| {
@@ -2880,27 +3036,44 @@ fn fit_response_time_distribution(delays: &[f64]) -> Option<ResponseTimeDistribu
         prefix_square_sum[index + 1] = prefix_square_sum[index] + value * value;
     }
     let segment_sse = |start: usize, end: usize| {
-        let count = (end - start) as f64;
-        let sum = prefix_sum[end] - prefix_sum[start];
-        let square_sum = prefix_square_sum[end] - prefix_square_sum[start];
-        (square_sum - sum * sum / count).max(0.0)
+        response_time_segment_sse(&prefix_sum, &prefix_square_sum, start, end)
     };
-    let mut best: Option<(f64, usize, usize)> = None;
+    // Exact three-way split search in O(N log N) instead of the O(N^2) pair
+    // scan, with an identical result. The per-first_split objective
+    //     g(s) = sse(first, s) + sse(s, N)
+    // is not unimodal, so a ternary or gradient walk does not find its minimum;
+    // the quadrangle inequality of the segment SSE is what makes the smallest
+    // minimiser monotone in first_split and divide-and-conquer exact. Walking
+    // first_split ascending while replacing only on a strict improvement keeps
+    // the exhaustive scan's lexicographically smallest `(first, second)` tie:
+    // the earliest improving first_split wins with its own smallest second_split.
     let minimum = RESPONSE_TIME_DISTRIBUTION_MIN_COMPONENT_SAMPLES;
-    for first_split in minimum..=delays.len() - 2 * minimum {
-        if delays[first_split - 1] >= delays[first_split] {
+    let total = delays.len();
+    let first_candidates = (minimum..=total - 2 * minimum)
+        .filter(|split| delays[split - 1] < delays[*split])
+        .collect::<Vec<_>>();
+    let second_candidates = (minimum..=total - minimum)
+        .filter(|split| delays[split - 1] < delays[*split])
+        .collect::<Vec<_>>();
+    let optima = response_time_distribution_second_splits(
+        &prefix_sum,
+        &prefix_square_sum,
+        &first_candidates,
+        &second_candidates,
+        total,
+        minimum,
+    );
+    let mut best: Option<(f64, usize, usize)> = None;
+    for (position, first_split) in first_candidates.into_iter().enumerate() {
+        let Some(second_position) = optima[position] else {
             continue;
-        }
-        for second_split in first_split + minimum..=delays.len() - minimum {
-            if delays[second_split - 1] >= delays[second_split] {
-                continue;
-            }
-            let sse = segment_sse(0, first_split)
-                + segment_sse(first_split, second_split)
-                + segment_sse(second_split, delays.len());
-            if best.as_ref().is_none_or(|(best_sse, _, _)| sse < *best_sse) {
-                best = Some((sse, first_split, second_split));
-            }
+        };
+        let second_split = second_candidates[second_position];
+        let sse = segment_sse(0, first_split)
+            + segment_sse(first_split, second_split)
+            + segment_sse(second_split, total);
+        if best.as_ref().is_none_or(|(best_sse, _, _)| sse < *best_sse) {
+            best = Some((sse, first_split, second_split));
         }
     }
     let (_, first_split, second_split) = best?;
@@ -6642,6 +6815,339 @@ mod tests {
         assert!(fit_response_time_distribution(&only_two_modes).is_none());
     }
 
+    /// Exhaustive reference for the shipped exact split search. Kept in the
+    /// test module so every randomized case can assert the optimized path
+    /// returns the identical distribution.
+    fn exhaustive_response_time_distribution(
+        delays: &[f64],
+    ) -> Option<ResponseTimeDistribution> {
+        if delays.len() < RESPONSE_TIME_DISTRIBUTION_MIN_SAMPLES
+            || delays.iter().any(|delay| {
+                !delay.is_finite() || !(0.0..=MAX_RESPONSE_DELAY_SECONDS as f64).contains(delay)
+            })
+        {
+            return None;
+        }
+        let transformed = delays.iter().map(|delay| delay.ln_1p()).collect::<Vec<_>>();
+        let mut prefix_sum = vec![0.0; transformed.len() + 1];
+        let mut prefix_square_sum = vec![0.0; transformed.len() + 1];
+        for (index, value) in transformed.iter().enumerate() {
+            prefix_sum[index + 1] = prefix_sum[index] + value;
+            prefix_square_sum[index + 1] = prefix_square_sum[index] + value * value;
+        }
+        let segment_sse = |start: usize, end: usize| {
+            let count = (end - start) as f64;
+            let sum = prefix_sum[end] - prefix_sum[start];
+            let square_sum = prefix_square_sum[end] - prefix_square_sum[start];
+            (square_sum - sum * sum / count).max(0.0)
+        };
+        let mut best: Option<(f64, usize, usize)> = None;
+        let minimum = RESPONSE_TIME_DISTRIBUTION_MIN_COMPONENT_SAMPLES;
+        for first_split in minimum..=delays.len() - 2 * minimum {
+            if delays[first_split - 1] >= delays[first_split] {
+                continue;
+            }
+            for second_split in first_split + minimum..=delays.len() - minimum {
+                if delays[second_split - 1] >= delays[second_split] {
+                    continue;
+                }
+                let sse = segment_sse(0, first_split)
+                    + segment_sse(first_split, second_split)
+                    + segment_sse(second_split, delays.len());
+                if best.as_ref().is_none_or(|(best_sse, _, _)| sse < *best_sse) {
+                    best = Some((sse, first_split, second_split));
+                }
+            }
+        }
+        let (_, first_split, second_split) = best?;
+        let global_upper_seconds = response_delay_percentile(delays, 0.9);
+        let immediate_upper_seconds = delays[first_split - 1].min(global_upper_seconds);
+        let short_lower_seconds = delays[first_split].max(MIN_SCHEDULED_RESPONSE_DELAY_SECONDS);
+        let short_upper_seconds = delays[second_split - 1].min(global_upper_seconds);
+        let delayed_lower_seconds =
+            delays[second_split].max(MIN_SCHEDULED_RESPONSE_DELAY_SECONDS);
+        if immediate_upper_seconds < MIN_SCHEDULED_RESPONSE_DELAY_SECONDS
+            || short_lower_seconds > short_upper_seconds
+            || delayed_lower_seconds > global_upper_seconds
+            || immediate_upper_seconds >= short_lower_seconds
+            || short_upper_seconds >= delayed_lower_seconds
+        {
+            return None;
+        }
+        let bounds = [
+            (
+                MIN_SCHEDULED_RESPONSE_DELAY_SECONDS,
+                immediate_upper_seconds,
+            ),
+            (short_lower_seconds, short_upper_seconds),
+            (delayed_lower_seconds, global_upper_seconds),
+        ];
+        let ranges = [
+            (0, first_split),
+            (first_split, second_split),
+            (second_split, delays.len()),
+        ];
+        let mut components = Vec::with_capacity(RESPONSE_TIME_DISTRIBUTION_COMPONENTS);
+        for ((start, end), ((lower_seconds, upper_seconds), name)) in ranges
+            .into_iter()
+            .zip(bounds.into_iter().zip(["immediate", "short", "delayed"]))
+        {
+            let values = delays[start..end]
+                .iter()
+                .map(|delay| delay.clamp(lower_seconds, upper_seconds))
+                .collect::<Vec<_>>();
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let stddev = (values
+                .iter()
+                .map(|value| (value - mean).powi(2))
+                .sum::<f64>()
+                / values.len() as f64)
+                .sqrt();
+            if !stddev.is_finite() || stddev <= 0.0 {
+                return None;
+            }
+            components.push(ResponseTimeComponent {
+                name: name.to_string(),
+                sample_count: values.len(),
+                weight: values.len() as f64 / delays.len() as f64,
+                normal_location_seconds: mean,
+                normal_scale_seconds: stddev,
+                lower_seconds,
+                upper_seconds,
+            });
+        }
+        let distribution = ResponseTimeDistribution {
+            schema_version: RESPONSE_TIME_DISTRIBUTION_SCHEMA_VERSION,
+            policy_version: RESPONSE_TIME_DISTRIBUTION_POLICY_VERSION.to_string(),
+            model_kind: RESPONSE_TIME_DISTRIBUTION_MODEL_KIND.to_string(),
+            fit_transform: RESPONSE_TIME_DISTRIBUTION_FIT_TRANSFORM.to_string(),
+            sample_count: delays.len(),
+            retained_sample_count: delays.len(),
+            tail_winsorized_count: delays
+                .iter()
+                .filter(|delay| **delay > global_upper_seconds)
+                .count(),
+            split_seconds: vec![immediate_upper_seconds, short_upper_seconds],
+            global_upper_seconds,
+            components,
+        };
+        response_time_distribution_is_valid(&distribution).then_some(distribution)
+    }
+
+    fn deterministic_delays(seed: u64, count: usize) -> Vec<f64> {
+        let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut values = (0..count)
+            .map(|index| {
+                // Three latent modes with heavy duplicates so the strict-increase
+                // boundary rule and the tie-break both get exercised.
+                let mode = index % 3;
+                let base = match mode {
+                    0 => 12.0,
+                    1 => 90.0,
+                    _ => 900.0,
+                };
+                let jitter = (next() * 40.0).floor();
+                let duplicate = if next() < 0.35 { 0.0 } else { 1.0 };
+                base + jitter * duplicate
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        values
+    }
+
+    #[test]
+    fn response_time_distribution_split_search_matches_exhaustive() {
+        for count in [32usize, 33, 40, 100, 257, 1000] {
+            for seed in 1u64..=8 {
+                let delays = deterministic_delays(seed, count);
+                let fast = fit_response_time_distribution(&delays);
+                let reference = exhaustive_response_time_distribution(&delays);
+                assert_eq!(
+                    fast.is_some(),
+                    reference.is_some(),
+                    "presence diverged at count={count} seed={seed}"
+                );
+                let (Some(fast), Some(reference)) = (fast, reference) else {
+                    continue;
+                };
+                assert_eq!(
+                    fast.split_seconds, reference.split_seconds,
+                    "split diverged at count={count} seed={seed}"
+                );
+                assert_eq!(fast.global_upper_seconds, reference.global_upper_seconds);
+                assert_eq!(
+                    fast.tail_winsorized_count,
+                    reference.tail_winsorized_count
+                );
+                assert_eq!(fast.sample_count, reference.sample_count);
+                for (optimized, naive) in fast.components.iter().zip(reference.components.iter()) {
+                    assert_eq!(optimized.name, naive.name);
+                    assert_eq!(optimized.sample_count, naive.sample_count);
+                    assert_eq!(optimized.weight, naive.weight);
+                    assert_eq!(optimized.normal_location_seconds, naive.normal_location_seconds);
+                    assert_eq!(optimized.normal_scale_seconds, naive.normal_scale_seconds);
+                    assert_eq!(optimized.lower_seconds, naive.lower_seconds);
+                    assert_eq!(optimized.upper_seconds, naive.upper_seconds);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn response_time_distribution_split_search_handles_plateaus() {
+        // A fully flat sample set has no strict-increase boundary, so the fit
+        // must fail closed exactly like the exhaustive scan.
+        assert!(fit_response_time_distribution(&vec![7.0; 64]).is_none());
+        // Duplicate runs at the boundaries leave only a narrow strict-increase
+        // window; the optimized search must still find the same pair.
+        let mut delays = vec![3.0; 12];
+        delays.extend((0..12).map(|index| 20.0 + index as f64));
+        delays.extend(vec![400.0; 12]);
+        delays.extend((0..12).map(|index| 800.0 + index as f64));
+        assert_eq!(
+            fit_response_time_distribution(&delays).map(|item| item.split_seconds),
+            exhaustive_response_time_distribution(&delays).map(|item| item.split_seconds),
+        );
+        // Heavy duplication ties many candidate pairs on SSE, so the tie-break
+        // (lowest first then lowest second) is what keeps the two paths equal.
+        for seed in 1u64..=16 {
+            let delays = duplicate_heavy_delays(seed, 200);
+            assert_eq!(
+                fit_response_time_distribution(&delays).map(|item| item.split_seconds),
+                exhaustive_response_time_distribution(&delays).map(|item| item.split_seconds),
+                "tie-break diverged at seed={seed}"
+            );
+        }
+    }
+
+    fn duplicate_heavy_delays(seed: u64, count: usize) -> Vec<f64> {
+        let mut state = seed.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+        let mut next = move || {
+            state = state
+                .wrapping_mul(2862933555777941757)
+                .wrapping_add(3037000493);
+            (state >> 33) as f64 / (1u64 << 31) as f64
+        };
+        // Only six distinct levels, so most segment SSEs tie and the boundary
+        // rule plus tie-break decide the winner.
+        let levels = [10.0, 30.0, 30.0, 120.0, 600.0, 600.0];
+        let mut values = (0..count)
+            .map(|_| levels[(next() * levels.len() as f64) as usize % levels.len()])
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        values
+    }
+
+    #[test]
+    fn response_time_distribution_split_search_scales_to_live_sample_counts() {
+        // The live chats carry up to ~20k response samples, where the previous
+        // O(N^2) pair scan was the slow path. A dense continuous shape is the
+        // worst case for it, because no duplicate run removes candidate
+        // boundaries: the exhaustive scan takes ~660 ms at 20,174 samples on
+        // this machine, and the O(N log N) search takes ~2.4 ms. The bound
+        // below is 100x the measured search while still failing an O(N^2)
+        // regression.
+        let delays = shaped_delays(99, 20_000, 2);
+        let started = std::time::Instant::now();
+        let fitted = fit_response_time_distribution(&delays).expect("live shape must fit");
+        let elapsed = started.elapsed();
+        assert_eq!(fitted.sample_count, 20_000);
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "exact split search took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn response_time_distribution_split_search_matches_exhaustive_across_shapes() {
+        // The divide-and-conquer split search rests on the quadrangle
+        // inequality of the segment SSE, a property of sorted shapes rather
+        // than of arbitrary inputs, so the equivalence is pinned against the
+        // exhaustive scan over a wide battery instead of assumed: every
+        // strict-increase window, every plateau, and every duplicate tie is
+        // compared on both paths, at counts around the minimum window (32, 33,
+        // 34) as well as at live scale.
+        for seed in 1u64..=24 {
+            for count in [32usize, 33, 34, 40, 47, 55, 64, 96, 150, 311, 640, 1000] {
+                for shape in 0..6u64 {
+                    let delays = shaped_delays(seed * 7 + shape, count, shape);
+                    let fast = fit_response_time_distribution(&delays);
+                    let reference = exhaustive_response_time_distribution(&delays);
+                    assert_eq!(
+                        fast.is_some(),
+                        reference.is_some(),
+                        "presence diverged at count={count} seed={seed} shape={shape}"
+                    );
+                    let (Some(fast), Some(reference)) = (fast, reference) else {
+                        continue;
+                    };
+                    assert_eq!(
+                        fast.split_seconds, reference.split_seconds,
+                        "split diverged at count={count} seed={seed} shape={shape}"
+                    );
+                    assert_eq!(fast.global_upper_seconds, reference.global_upper_seconds);
+                    assert_eq!(fast.tail_winsorized_count, reference.tail_winsorized_count);
+                    for (optimized, naive) in fast.components.iter().zip(reference.components.iter()) {
+                        assert_eq!(optimized.name, naive.name);
+                        assert_eq!(optimized.sample_count, naive.sample_count);
+                        assert_eq!(optimized.weight, naive.weight);
+                        assert_eq!(
+                            optimized.normal_location_seconds,
+                            naive.normal_location_seconds
+                        );
+                        assert_eq!(optimized.normal_scale_seconds, naive.normal_scale_seconds);
+                        assert_eq!(optimized.lower_seconds, naive.lower_seconds);
+                        assert_eq!(optimized.upper_seconds, naive.upper_seconds);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Six sorted shapes: three equal modes, a coarse staircase, a dense
+    /// uniform spread, a heavy-tail sweep, a six-level duplicate ladder, and a
+    /// stair of long duplicate runs. The last two collapse most candidate
+    /// boundaries, so they exercise the fail-closed paths and the tie-break.
+    fn shaped_delays(seed: u64, count: usize, shape: u64) -> Vec<f64> {
+        let mut state = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut values = (0..count)
+            .map(|index| match shape {
+                0 => {
+                    let base = match index % 3 {
+                        0 => 8.0,
+                        1 => 90.0,
+                        _ => 700.0,
+                    };
+                    base + (next() * 30.0).floor()
+                }
+                1 => (index / 4) as f64 * 25.0 + (next() * 6.0).floor(),
+                2 => next() * 900.0,
+                3 => (next().powf(2.5)) * 900.0,
+                4 => {
+                    const LEVELS: [f64; 6] = [10.0, 30.0, 30.0, 120.0, 600.0, 600.0];
+                    LEVELS[(next() * LEVELS.len() as f64) as usize % LEVELS.len()]
+                }
+                _ => (index / 6) as f64 * 120.0,
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        values
+    }
+
     #[test]
     fn response_time_distribution_migration_is_additive_backfills_and_repairs() {
         let dir = tempdir().unwrap();
@@ -9061,3 +9567,4 @@ mod tests {
     }
 
 }
+
