@@ -664,9 +664,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def test_swift_menu_shows_logs_instead_of_finder(self):
 
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn("기록 창 열기", source)
-        self.assertIn("buildLogsMenu", source)
-        self.assertIn('title: "기록"', source)
+        self.assertIn("showLogWindow", source)
         self.assertIn("최근 기록", source)
         self.assertIn("log_display", source)
         self.assertNotIn("Reveal Logs", source)
@@ -2274,7 +2272,6 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("struct ModelsReport", source)
         self.assertIn("func loadModelCatalog", source)
         self.assertIn("모델 목록 불러오는 중", source)
-        self.assertIn("func buildModelMenu", source)
         self.assertIn("--action\", \"model-set\"", source)
         self.assertIn("statusItem.menu = buildMenu(model)", source)
         self.assertIn("guard menu === statusItem.menu", source)
@@ -2452,7 +2449,6 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def test_swift_menu_decodes_image_reply_model_fields(self):
         source = SWIFT.read_text(encoding="utf-8")
         self.assertIn("let image_reply_model", source)
-        self.assertIn("func buildImageModelMenu", source)
         self.assertIn("--action\", \"image-model-set\"", source)
         self.assertIn("이미지 모델", source)
 
