@@ -626,6 +626,24 @@ fn local_db_identity_cache_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(|dir| dir.join("openkakao").join("local-db-identity.json"))
 }
 
+fn sha512_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let digest = sha2::Sha512::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// True when SHA-512(user_id) equals the account hash. KakaoTalk stores the
+/// account hash as SHA-512 of the decimal user id, so a plist or cache that
+/// pairs the active hash with a different id is inconsistent and must not be
+/// trusted (2026-09-13).
+fn user_id_matches_account_hash(user_id: i64, account_hash: &str) -> bool {
+    user_id > 0 && sha512_hex(user_id.to_string().as_bytes()) == account_hash
+}
+
 fn read_cached_user_id(uuid: &str, account_hash: &str) -> Option<i64> {
     let path = local_db_identity_cache_path()?;
     let metadata = std::fs::symlink_metadata(&path).ok()?;
@@ -650,7 +668,7 @@ fn read_cached_user_id(uuid: &str, account_hash: &str) -> Option<i64> {
     value
         .get("user_id")
         .and_then(|value| value.as_i64())
-        .filter(|id| *id > 0)
+        .filter(|id| user_id_matches_account_hash(*id, account_hash))
 }
 fn read_cached_user_id_for_uuid(uuid: &str) -> Option<i64> {
     let path = local_db_identity_cache_path()?;
@@ -806,6 +824,15 @@ fn get_user_id_from_plist_with_mode(mode: IdentityCacheMode) -> Result<i64> {
         let Ok(user_id) = extract_user_id_from_plist(&path) else {
             continue;
         };
+        // The id extracted from the plist must itself belong to the active
+        // account (SHA-512(id) == active hash). A plist can carry the active
+        // revision hash and another account's userId together; that pair must
+        // not be selected or cached.
+        if let Some(active_hash) = active_account_hash.as_deref() {
+            if !user_id_matches_account_hash(user_id, active_hash) {
+                continue;
+            }
+        }
         if mode == IdentityCacheMode::Normal {
             if let (Some(uuid), Some(account_hash)) =
                 (current_uuid.as_deref(), active_account_hash.as_deref())
@@ -2092,6 +2119,16 @@ mod tests {
             plist::Value::Integer(plist::Integer::from(revision)),
         );
         dict
+    }
+
+    #[test]
+    fn user_id_must_match_the_account_hash() {
+        let hash = sha512_hex(b"222");
+        assert!(user_id_matches_account_hash(222, &hash));
+        // Another account's id, even with the active hash present, is rejected.
+        assert!(!user_id_matches_account_hash(111, &hash));
+        assert!(!user_id_matches_account_hash(0, &hash));
+        assert!(!user_id_matches_account_hash(-1, &hash));
     }
 
     #[test]
