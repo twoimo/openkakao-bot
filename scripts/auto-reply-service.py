@@ -560,7 +560,7 @@ def _preflight_cli(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_runtime_env(config),
-        timeout=90,
+        timeout=240,
         check=False,
     )
     if len(result.stderr) > MAX_OUTPUT_BYTES:
@@ -658,7 +658,7 @@ def _perform_preflight(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_runtime_env(config),
-        timeout=90,
+        timeout=240,
         check=False,
     )
     if len(result.stderr) > MAX_OUTPUT_BYTES:
