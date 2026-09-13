@@ -11105,8 +11105,7 @@ def generate_reply(
             stderr_bytes,
         )
         # User objective: 오픈코드 Go 사용량 리밋 걸리면 안티그래비티 제미나이 3.8 플래시 high 폴백
-        err_msg = (stderr_bytes.decode("utf-8", "replace")[:800] + "
-" + stdout_bytes.decode("utf-8", "replace")[:800]).casefold()
+        err_msg = (stderr_bytes.decode("utf-8", "replace")[:800] + " " + stdout_bytes.decode("utf-8", "replace")[:800]).casefold()
         is_opencode = "opencode" in str(active_model).casefold()
         is_limit = failure_class in {"quota_exhausted", "rate_limited", "runner_timeout"} or any(
             m in err_msg for m in ("usage limit", "weekly limit", "daily limit", "429", "timed out", "unauthorized", "missing api key")
