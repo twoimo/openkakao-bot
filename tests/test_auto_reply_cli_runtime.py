@@ -596,6 +596,120 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(capped["component"], "short")
         self.assertEqual(capped["delay_seconds"], 20.0)
 
+    def test_response_turn_kind_classifies_question_caption_and_statement(self):
+        module = self._load_auto_reply_module("auto_reply_turn_kind_test")
+        self.assertEqual(module.response_turn_kind({"category": "question"}), "question")
+        self.assertEqual(module.response_turn_kind({"category": "advice"}), "question")
+        self.assertEqual(
+            module.response_turn_kind({"category": "social", "reason": "direct_question"}),
+            "question",
+        )
+        self.assertEqual(
+            module.response_turn_kind({"category": "social", "reason": "story_reaction"}),
+            "caption",
+        )
+        self.assertEqual(module.response_turn_kind({"attachment": "image"}), "caption")
+        self.assertEqual(
+            module.response_turn_kind({"category": "social", "reason": "casual_agreement"}),
+            "statement",
+        )
+        self.assertEqual(module.response_turn_kind({}), "statement")
+        self.assertEqual(
+            set(module.RESPONSE_TIME_TURN_COMPONENT_PREFERENCES)
+            - {"question", "caption"},
+            set(),
+        )
+
+    def test_turn_kind_preference_is_recorded_and_explained(self):
+        module = self._load_auto_reply_module("auto_reply_turn_kind_record_test")
+        stats = self._timing_stats(module)
+        question = module.sample_response_delay_for_analysis(
+            stats, {"category": "question"}, rng=random.Random(4)
+        )
+        self.assertEqual(question["component"], "immediate")
+        self.assertEqual(question["turn_kind"], "question")
+        self.assertEqual(question["turn_component_preference"], "immediate")
+        self.assertEqual(question["component_selection"], "turn_kind_preference")
+        self.assertEqual(
+            question["turn_kind_policy_version"],
+            module.RESPONSE_TIME_TURN_KIND_POLICY_VERSION,
+        )
+        self.assertGreater(question["component_weight"], 0.0)
+        caption = module.sample_response_delay_for_analysis(
+            stats, {"attachment": "image"}, rng=random.Random(4)
+        )
+        self.assertEqual(caption["component"], "short")
+        self.assertEqual(caption["turn_kind"], "caption")
+        self.assertEqual(caption["component_selection"], "turn_kind_preference")
+        # An ordinary statement keeps the learned mixture instead of a forced
+        # component; the record says so explicitly.
+        seen: set[str] = set()
+        rng = random.Random(17)
+        for _ in range(200):
+            sample = module.sample_response_delay_for_analysis(
+                stats, {"category": "social", "reason": "casual_agreement"}, rng=rng
+            )
+            self.assertEqual(sample["turn_kind"], "statement")
+            self.assertIsNone(sample["turn_component_preference"])
+            self.assertEqual(sample["component_selection"], "learned_mixture")
+            seen.add(sample["component"])
+        self.assertEqual(seen, {"immediate", "short", "delayed"})
+
+    def test_turn_kind_preference_falls_back_when_component_is_unavailable(self):
+        module = self._load_auto_reply_module("auto_reply_turn_kind_fallback_test")
+        stats = self._timing_stats(module)
+        real = module.sample_response_delay
+
+        def unavailable(stats_arg, *, rng=None, component_name=None):
+            if component_name == "immediate":
+                raise module.RetrievalError("response_time_component_unavailable")
+            return real(stats_arg, rng=rng, component_name=component_name)
+
+        with mock.patch.object(module, "sample_response_delay", unavailable):
+            sample = module.sample_response_delay_for_analysis(
+                stats, {"category": "question"}, rng=random.Random(9)
+            )
+        # The unavailable preference is dropped and the reply keeps the learned
+        # mixture rather than failing outright.
+        self.assertIn(sample["component"], {"immediate", "short", "delayed"})
+        self.assertEqual(sample["turn_kind"], "question")
+        self.assertIsNone(sample["turn_component_preference"])
+        self.assertEqual(sample["component_selection"], "learned_mixture")
+
+        def broken(stats_arg, *, rng=None, component_name=None):
+            raise module.RetrievalError("response_time_unavailable")
+
+        with mock.patch.object(module, "sample_response_delay", broken):
+            with self.assertRaises(module.RetrievalError):
+                module.sample_response_delay_for_analysis(
+                    stats, {"category": "question"}, rng=random.Random(9)
+                )
+
+    def test_response_delay_keeps_the_inbound_anchor_after_context_pacing(self):
+        module = self._load_auto_reply_module("auto_reply_turn_kind_anchor_test")
+        stats = self._timing_stats(module)
+        sample = module.sample_response_delay_for_analysis(
+            stats, {"category": "question"}, rng=random.Random(21), elapsed_seconds=7.0
+        )
+        # The queue row keeps the remaining wait, but the due time must be
+        # anchored to the inbound timestamp, not to "now".
+        self.assertEqual(
+            sample["anchor_delay_seconds"], sample["sampled_delay_seconds"]
+        )
+        self.assertEqual(
+            sample["delay_seconds"], sample["remaining_seconds"]
+        )
+        self.assertAlmostEqual(
+            sample["remaining_seconds"],
+            max(0.0, sample["anchor_delay_seconds"] - 7.0),
+            places=1,
+        )
+        sent_at = 1_700_000_000
+        self.assertEqual(
+            module.response_due_at(sent_at, sample["anchor_delay_seconds"], now=sent_at),
+            sent_at + sample["anchor_delay_seconds"],
+        )
+
     def test_response_time_mixture_schema_rejects_tampering(self):
         module = self._load_auto_reply_module("auto_reply_timing_schema_test")
         for mutate in (
@@ -1608,11 +1722,122 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 module._policy_valid_draft("아직 모르겠는데", inbound, recent)
             )
             payload = json.loads(module.STYLE_TELLS_LEDGER.read_text(encoding="utf-8"))
-            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(
+                payload["schema_version"], module.STYLE_TELLS_SCHEMA_VERSION
+            )
             self.assertEqual(payload["tells"][0]["avoid"], "그건 텍스트 안 뜸")
+            recorded_row = payload["tells"][0]
+            self.assertEqual(recorded_row["source"], "self_observed")
+            self.assertEqual(recorded_row["scope"], "room")
+            self.assertEqual(recorded_row["kind"], "ai_detection")
+            self.assertEqual(recorded_row["target_phrase"], "그건 텍스트 안 뜸")
+            self.assertEqual(recorded_row["confidence"], 0.5)
+            self.assertIsNone(recorded_row["expires_at"])
             self.assertNotIn("api_key", json.dumps(payload))
             again = module.record_learned_style_tells(inbound, recent, author="문승현")
             self.assertEqual(again.count("그건 텍스트 안 뜸"), 1)
+
+    def test_style_tell_schema_v1_rows_load_with_structured_defaults(self):
+        module = self._load_auto_reply_module("auto_reply_style_tell_compat_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            module.STYLE_TELLS_LEDGER = Path(temporary) / "reply-style-tells.json"
+            module._LEARNED_TELLS_CACHE = (0.0, ())
+            # A v1 row carries only the avoid/inbound pair. It must keep working
+            # while the structured fields are filled in with safe defaults.
+            module.STYLE_TELLS_LEDGER.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "tells": [
+                            {
+                                "tell_id": "abc",
+                                "recorded_at": "2026-09-01T00:00:00+00:00",
+                                "author": "문승현",
+                                "event_id": "db:1:2",
+                                "avoid": "그건 텍스트 안 뜸",
+                                "inbound": "무슨 ai 냄새가 나네",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            rows = module.load_learned_style_tells()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["kind"], "other")
+            self.assertEqual(rows[0]["scope"], "room")
+            self.assertEqual(rows[0]["source"], "operator")
+            self.assertEqual(rows[0]["confidence"], 0.9)
+            self.assertIsNone(rows[0]["expires_at"])
+            self.assertEqual(rows[0]["target_phrase"], "그건 텍스트 안 뜸")
+            self.assertTrue(
+                module._outbound_repeats_learned_tell(
+                    "그건 텍스트 안 뜸", "무슨 ai 냄새가 나네"
+                )
+            )
+
+    def test_expired_soft_style_tells_are_skipped_on_load(self):
+        module = self._load_auto_reply_module("auto_reply_style_tell_expiry_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            module.STYLE_TELLS_LEDGER = Path(temporary) / "reply-style-tells.json"
+            module._LEARNED_TELLS_CACHE = (0.0, ())
+            module.STYLE_TELLS_LEDGER.write_text(
+                json.dumps(
+                    {
+                        "schema_version": module.STYLE_TELLS_SCHEMA_VERSION,
+                        "tells": [
+                            {
+                                "avoid": "그건 텍스트 안 뜸",
+                                "kind": "length",
+                                "source": "operator",
+                                "expires_at": "2020-01-01T00:00:00+00:00",
+                            },
+                            {
+                                "avoid": "너무 길게 쓰네요",
+                                "kind": "length",
+                                "source": "operator",
+                                "expires_at": "2099-01-01T00:00:00+00:00",
+                            },
+                            {
+                                "avoid": "그건 왜 물어보는거임",
+                                "kind": "ai_detection",
+                                "source": "self_observed",
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            avoids = [row["avoid"] for row in module.load_learned_style_tells()]
+            self.assertNotIn("그건 텍스트 안 뜸", avoids)
+            self.assertIn("너무 길게 쓰네요", avoids)
+            self.assertIn("그건 왜 물어보는거임", avoids)
+            self.assertNotIn(
+                "그건 텍스트 안 뜸", module.learned_style_tell_avoids()
+            )
+
+    def test_style_tell_kind_scope_and_confidence(self):
+        module = self._load_auto_reply_module("auto_reply_style_tell_kind_test")
+        self.assertEqual(module._style_tell_kind("너무 길게 쓰네요"), "length")
+        self.assertEqual(module._style_tell_kind("~네요로만 답장하네"), "ending")
+        self.assertEqual(module._style_tell_kind("그건 왜 물어보는거임"), "question")
+        self.assertEqual(module._style_tell_kind("캡션 그대로 옮기지 마"), "caption")
+        self.assertEqual(module._style_tell_kind("틀린 정보 말고"), "factual_error")
+        self.assertEqual(module._style_tell_kind("그건 텍스트 안 뜸"), "other")
+        self.assertEqual(module._style_tell_scope("그건 텍스트 안 뜸"), "room")
+        structured = module._style_tell_structured(
+            "너무 길게 쓰지 마", "무슨 ai 냄새가 나네", source="self_observed"
+        )
+        self.assertEqual(structured["kind"], "length")
+        self.assertEqual(structured["source"], "self_observed")
+        self.assertEqual(structured["confidence"], 0.5)
+        self.assertEqual(structured["validity"], "active")
+        self.assertIsInstance(structured["expires_at"], str)
+        self.assertFalse(module._style_tell_expired(structured))
+        self.assertFalse(module._style_tell_expired({"expires_at": "nope"}))
+        self.assertFalse(module._style_tell_expired({}))
 
     def test_self_tell_candidates_skip_single_topic_tokens(self):
         module = self._load_auto_reply_module("auto_reply_self_tell_candidates")
@@ -4151,6 +4376,90 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(timed["reply"], "그건 좀")
         self.assertEqual(timed["fallback"], "timeout")
+
+    def test_select_ranked_reply_separates_rank_order_from_policy_eligibility(self):
+        module = self._load_auto_reply_module("auto_reply_rerank_policy_test")
+
+        class FakeClient:
+            def rank(self, query, drafts):
+                self.seen = list(drafts)
+                return {"ok": True, "fallback": "none", "scores": [0.0] * len(drafts)}
+
+        # A refused draft is never handed to the ranker, so rank order cannot
+        # launder a policy refusal into a sendable reply.
+        client = FakeClient()
+        chosen = module.select_ranked_reply(
+            "오늘 휴가임",
+            "ㅋㅋㅋ",
+            ["ㅋㅋㅋ", "그건 좀 아닌데", "ㅇㅇ 그렇구나"],
+            {},
+            [],
+            client=client,
+        )
+        self.assertEqual(client.seen, ["그건 좀 아닌데", "ㅇㅇ 그렇구나"])
+        self.assertEqual(len(chosen["policy_rejections"]), 1)
+        refusal = chosen["policy_rejections"][0]
+        self.assertEqual(refusal["index"], 0)
+        self.assertEqual(refusal["draft"], "ㅋㅋㅋ")
+        self.assertEqual(refusal["reason"], "reaction_mismatch")
+        self.assertEqual(refusal["codes"], ["reaction_mismatch"])
+        self.assertEqual(refusal["decision"], "rejected_reaction_mismatch")
+        # The preferred/duplicate twin produced one receipt entry, not two.
+        self.assertEqual(
+            sorted(item["decision"] for item in chosen["policy_rejections"]),
+            ["rejected_reaction_mismatch"],
+        )
+
+    def test_select_ranked_reply_never_skips_an_authorized_sender(self):
+        module = self._load_auto_reply_module("auto_reply_rerank_lenient_test")
+        # Every draft fails the full policy, and no question/photo shortcut
+        # applies. The light rules still let the operator's "never skip" rule win.
+        lenient = module.select_ranked_reply(
+            "오늘 휴가임", "ㅋㅋㅋ", ["ㅋㅋㅋ"], {}, []
+        )
+        self.assertEqual(lenient["fallback"], "lenient_policy")
+        self.assertEqual(lenient["reply"], "ㅋㅋㅋ")
+        self.assertTrue(lenient["policy_rejections"])
+        # The light rules still refuse a verbatim copy of the inbound message.
+        verbatim = module.select_ranked_reply(
+            "오늘 휴가임", "오늘 휴가임", ["오늘 휴가임"], {}, []
+        )
+        self.assertEqual(verbatim["fallback"], "all_policy_rejected")
+        self.assertEqual(verbatim["reply"], "")
+        self.assertEqual(
+            verbatim["policy_rejections"][0]["decision"], "rejected_echoes_inbound"
+        )
+        # An over-long draft is not rescued either.
+        too_long = module.select_ranked_reply("_" * 220, "x" * 300, ["x" * 300], {}, [])
+        self.assertEqual(too_long["fallback"], "all_policy_rejected")
+
+    def test_select_ranked_reply_always_reports_policy_rejections(self):
+        module = self._load_auto_reply_module("auto_reply_rerank_receipt_test")
+
+        class FakeClient:
+            def rank(self, query, drafts):
+                return {"ok": True, "fallback": "none", "scores": [0.5, 0.5]}
+
+        cases = {
+            "ranked": ("오늘 휴가임", ["그건 좀 아닌데", "ㅇㅇ 그렇구나"], {}),
+            "single": ("오늘 휴가임", ["그건 좀 아닌데"], {}),
+            "question_unknown": ("오늘 시간 돼?", ["ㅋㅋㅋ"], {}),
+            "photo_passthrough": ("사진 다시 보내봐", ["ㅋㅋㅋ"], {"attachment": "image"}),
+            "lenient_policy": ("오늘 휴가임", ["ㅋㅋㅋ"], {}),
+            "all_policy_rejected": ("오늘 휴가임", ["오늘 휴가임"], {}),
+        }
+        for label, (inbound, drafts, event) in cases.items():
+            with self.subTest(label=label):
+                result = module.select_ranked_reply(
+                    inbound, drafts[0], list(drafts), event, [], client=FakeClient()
+                )
+                self.assertIn("fallback", result)
+                self.assertIsInstance(result["policy_rejections"], list)
+                self.assertLessEqual(len(result["policy_rejections"]), 8)
+                for refusal in result["policy_rejections"]:
+                    self.assertTrue(refusal["reason"])
+                    self.assertEqual(refusal["decision"], "rejected_" + refusal["reason"])
+                    self.assertIn(refusal["reason"], refusal["codes"])
 
     def test_idle_runner_status_hash_is_bounded_and_module_local(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:

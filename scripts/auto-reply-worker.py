@@ -29,7 +29,7 @@ import threading
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import stat
@@ -313,10 +313,26 @@ STYLE_TELLS_LEDGER = Path(
         str(STATE.with_name("reply-style-tells.json")),
     )
 )
-STYLE_TELLS_SCHEMA_VERSION = 1
+STYLE_TELLS_SCHEMA_VERSION = 2
 STYLE_TELLS_MAX = 40
 STYLE_TELLS_AVOID_MAX = 80
 STYLE_TELLS_INBOUND_MAX = 220
+# Structured feedback fields. The ledger stays avoid-only for reply checking,
+# but every tell now records what kind of feedback it is, which phrase it
+# targets, who it covers, where it came from, how confident the signal is and
+# when it stops applying. Schema v1 rows load with these defaults.
+STYLE_TELL_KINDS = (
+    "length",
+    "ending",
+    "question",
+    "caption",
+    "factual_error",
+    "ai_detection",
+    "other",
+)
+STYLE_TELL_SCOPES = ("room", "recipient")
+STYLE_TELL_SOURCES = ("operator", "self_observed")
+STYLE_TELL_TARGET_MAX = 80
 _LEARNED_TELLS_CACHE: tuple[float, tuple[str, ...]] = (0.0, ())
 CONTEXT_SYNC_TIMEOUT_SECONDS = 90.0
 CONTEXT_BUNDLE_TIMEOUT_SECONDS = 30.0
@@ -371,6 +387,25 @@ RESPONSE_TIME_DISTRIBUTION_MODEL_KIND = "bounded-normal-mixture"
 RESPONSE_TIME_DISTRIBUTION_FIT_TRANSFORM = "log1p"
 RESPONSE_TIME_DISTRIBUTION_COMPONENT_NAMES = ("immediate", "short", "delayed")
 RESPONSE_TIME_DISTRIBUTION_MAX_ATTEMPTS = 256
+# Context-dependent pacing. The room has one learned mixture, but the
+# operator's real pacing is not uniform across turn kinds: a direct question
+# comes back on the immediate component, and a photo gets a beat while they
+# look at it. Statements keep the learned mixture untouched. Every choice is
+# recorded so the log, the decision record and the receipt can show it.
+RESPONSE_TIME_TURN_KIND_POLICY_VERSION = "turn-kind-preference-v1"
+RESPONSE_TIME_TURN_COMPONENT_PREFERENCES = {
+    "question": "immediate",
+    "caption": "short",
+}
+RESPONSE_TIME_CAPTION_REASONS = frozenset(
+    {
+        "photo_reply",
+        "story_reaction",
+        "media_unavailable",
+        "image_unavailable",
+        "image_caption",
+    }
+)
 REPLY_MEMORY_LIMIT = 6
 NON_HUMAN_AUTHORS = {
     "드리고",
@@ -6171,6 +6206,25 @@ def _last_self_reply_ending(recent_conversation: list[dict] | None) -> str:
     return _reply_ending(texts[-1]) if texts else ""
 
 
+def _lenient_policy_draft(drafts: list[str], inbound: str) -> str | None:
+    """Light safety rules for the never-skip fallback.
+
+    Operator rule: an authorized sender is never skipped, so a draft that the
+    full policy refused may still go out when it clears the light rules — not
+    empty, not longer than 220 characters, not a verbatim copy of the inbound
+    message. Every relaxation stays visible through the policy_rejections list.
+    """
+    normalized_inbound = " ".join(str(inbound or "").split())
+    for item in drafts:
+        text = " ".join(str(item or "").split())
+        if not text or len(text) > 220:
+            continue
+        if normalized_inbound and text == normalized_inbound:
+            continue
+        return text
+    return None
+
+
 def select_ranked_reply(
     inbound: str,
     preferred: str,
@@ -6185,8 +6239,16 @@ def select_ranked_reply(
     awe_allowed: bool | None = None,
 ) -> dict:
     recipient = _event_author_nickname(event)
-    candidates: list[str] = []
-    for item in [preferred, *drafts]:
+    # Eligibility and ranking are two different questions. This pass decides
+    # only whether a draft may be sent at all (its policy verdict, with a
+    # machine-readable reason for every rejection); the rerank sidecar decides
+    # order afterwards. Keeping them separate is what lets the receipt say which
+    # drafts were refused and why instead of burying that in rank order.
+    max_candidates = 8
+    eligible: list[str] = []
+    policy_rejections: list[dict] = []
+    rejected: set[str] = set()
+    for position, item in enumerate([preferred, *drafts]):
         text = " ".join(str(item or "").split())
         if not text:
             continue
@@ -6194,7 +6256,12 @@ def select_ranked_reply(
             text = _rewrite_youtube_title_label(text)
             if not text:
                 continue
-        if text not in candidates and _policy_valid_draft(
+        if text in eligible:
+            continue
+        if text in rejected:
+            continue
+        reasons: list[str] = []
+        if _policy_valid_draft(
             text,
             inbound,
             recent_conversation,
@@ -6203,11 +6270,27 @@ def select_ranked_reply(
             register=register,
             laughter_allowed=laughter_allowed,
             awe_allowed=awe_allowed,
+            reasons_out=reasons,
         ):
-            candidates.append(text)
-        if len(candidates) >= 8:
-            break
-    if not candidates:
+            eligible.append(text)
+            if len(eligible) >= max_candidates:
+                break
+            continue
+        codes = [code for code in reasons if code] or ["unknown"]
+        rejected.add(text)
+        policy_rejections.append(
+            {
+                "index": position,
+                "draft": text[:80],
+                "reason": codes[0],
+                "codes": codes,
+                "decision": "rejected_" + codes[0],
+            }
+        )
+    # The sidecar sees the eligible drafts; the rejection receipt keeps every
+    # refusal, bounded so one pathological burst cannot balloon the record.
+    policy_rejections = policy_rejections[:max_candidates]
+    if not eligible:
         inbound_is_question = _inbound_asks_question(inbound) or _reply_asks_question(
             inbound
         )
@@ -6229,6 +6312,7 @@ def select_ranked_reply(
                 "scores": [],
                 "winner_index": 0,
                 "fallback": "question_unknown",
+                "policy_rejections": policy_rejections,
             }
         if str(event.get("attachment") or "") == "image":
             fallback_text = fallback_text or _photo_fallback_reply(
@@ -6240,6 +6324,20 @@ def select_ranked_reply(
                 "scores": [],
                 "winner_index": 0,
                 "fallback": "photo_passthrough",
+                "policy_rejections": policy_rejections,
+            }
+        # 최후 폴백(사용자 요구: 인가 발신자 메시지는 스킵 금지). 경량 안전 규칙만
+        # 적용한다 — 빈 답·220자 초과·원문 그대로 복사만 금지하고, 나머지 품질
+        # 정책은 완화한다. 무엇을 왜 완화했는지 policy_rejections에 남긴다.
+        lenient = _lenient_policy_draft([preferred, *drafts], inbound)
+        if lenient is not None:
+            return {
+                "reply": lenient,
+                "drafts": [lenient],
+                "scores": [],
+                "winner_index": 0,
+                "fallback": "lenient_policy",
+                "policy_rejections": policy_rejections,
             }
         return {
             "reply": "",
@@ -6247,6 +6345,7 @@ def select_ranked_reply(
             "scores": [],
             "winner_index": None,
             "fallback": "all_policy_rejected",
+            "policy_rejections": policy_rejections,
         }
     # Operator instruction #11: never send two replies in a row that end with
     # the same final particle. The ranker already prefers a different ending,
@@ -6254,30 +6353,32 @@ def select_ranked_reply(
     # being sent (AHP: register_style).
     previous_ending = _last_self_reply_ending(recent_conversation)
     if previous_ending and all(
-        _reply_ending(candidate) == previous_ending for candidate in candidates
+        _reply_ending(candidate) == previous_ending for candidate in eligible
     ):
         return {
             "reply": "",
-            "drafts": candidates,
+            "drafts": eligible,
             "scores": [],
             "winner_index": None,
             "fallback": "same_ending_hold",
+            "policy_rejections": policy_rejections,
         }
-    if len(candidates) == 1:
+    if len(eligible) == 1:
         return {
-            "reply": candidates[0],
-            "drafts": candidates,
+            "reply": eligible[0],
+            "drafts": eligible,
             "scores": [],
             "winner_index": 0,
             "fallback": "none",
+            "policy_rejections": policy_rejections,
         }
     query = _rerank_query_text(event, inbound, recent_conversation, link_previews)
-    ranked = (client or _rerank_client()).rank(query, candidates)
+    ranked = (client or _rerank_client()).rank(query, eligible)
     scores = ranked.get("scores") if isinstance(ranked.get("scores"), list) else []
     fallback = str(ranked.get("fallback") or "none")
     if ranked.get("ok") is True and scores:
         order = sorted(
-            range(len(candidates)),
+            range(len(eligible)),
             key=lambda index: (
                 -float(scores[index])
                 if index < len(scores)
@@ -6288,68 +6389,25 @@ def select_ranked_reply(
         )
         fallback = "none"
     else:
-        order = list(range(len(candidates)))
+        order = list(range(len(eligible)))
         if fallback == "none":
             fallback = "timeout"
     # Operator instruction #11: never send two replies in a row that end with
     # the same final particle. Keep the ranker's order inside each group.
-    previous_ending = _last_self_reply_ending(recent_conversation)
-    if len(candidates) > 1 and previous_ending:
+    if previous_ending:
         order = sorted(
             order,
-            key=lambda index: _reply_ending(candidates[index]) == previous_ending,
+            key=lambda index: _reply_ending(eligible[index]) == previous_ending,
         )
-    policy_rejections: list[dict] = []
-    for index in order:
-        reasons: list[str] = []
-        ok_now = _policy_valid_draft(
-            candidates[index],
-            inbound,
-            recent_conversation,
-            recipient=recipient,
-            register=register,
-            laughter_allowed=laughter_allowed,
-            awe_allowed=awe_allowed,
-            reasons_out=reasons,
-        )
-        if ok_now:
-            return {
-                "reply": candidates[index],
-                "drafts": candidates,
-                "scores": scores,
-                "winner_index": index,
-                "fallback": fallback,
-            }
-        policy_rejections.append(
-            {
-                "index": index,
-                "draft": " ".join(str(candidates[index] or "").split())[:80],
-                "reasons": list(reasons) or ["unknown"],
-            }
-        )
-    # 최후 폴백(사용자 요구: 인가 발신자 메시지는 스킵 금지). 경량 안전 규칙만
-    # 적용한다 — 빈 답·220자 초과·원문 그대로 복사만 금지하고, 나머지 품질
-    # 정책은 완화한다. 무엇을 왜 완화했는지 fallback에 남긴다.
-    for index in order:
-        text = " ".join(str(candidates[index] or "").split())
-        if not text or len(text) > 220:
-            continue
-        if inbound and text == " ".join(str(inbound).split()):
-            continue
-        return {
-            "reply": candidates[index],
-            "drafts": candidates,
-            "scores": scores,
-            "winner_index": index,
-            "fallback": "lenient_policy",
-            "policy_rejections": policy_rejections,
-        }
+    # Every eligible draft already passed the policy, so the first draft in the
+    # rank order is the winner; the sidecar never reintroduces a refusal.
+    winner_index = order[0]
     return {
-        "reply": "",
-        "drafts": candidates,
+        "reply": eligible[winner_index],
+        "drafts": eligible,
         "scores": scores,
-        "winner_index": None,
-        "fallback": "all_policy_rejected",
+        "winner_index": winner_index,
+        "fallback": fallback,
         "policy_rejections": policy_rejections,
     }
 
@@ -7121,6 +7179,9 @@ def persist_reply_evidence_ledger(
             "prior_similarity": float(analysis.get("prior_similarity") or 0.0),
             "scheduled_delay_seconds": delay_seconds,
             "context_sync": dict((analysis.get("provenance") or {}).get("context_sync") or {}),
+            "response_timing": dict(
+                (analysis.get("provenance") or {}).get("response_timing") or {}
+            ),
             "model": _receipt_value(analysis, "model") or _active_reply_model(),
             "reasoning_effort": REPLY_REASONING_EFFORT,
             "drafts": [
@@ -7131,6 +7192,11 @@ def persist_reply_evidence_ledger(
             "rerank_scores": list(analysis.get("rerank_scores") or []),
             "winner_index": analysis.get("rerank_winner_index"),
             "fallback": str(analysis.get("rerank_fallback") or "none"),
+            "policy_rejections": [
+                dict(item)
+                for item in (analysis.get("rerank_policy_rejections") or [])
+                if isinstance(item, dict)
+            ][:8],
             "quoted_source": event.get("quoted_source") or _quoted_source_preview(event),
         }
         line = json.dumps(payload, ensure_ascii=False) + "\n"
@@ -7763,6 +7829,27 @@ def _elapsed_since_inbound(event: dict, *, now: float | None = None) -> float:
     return max(0.0, current - float(sent_at))
 
 
+def response_turn_kind(analysis: dict | None) -> str:
+    """Classify the turn a reply answers: question, caption or statement.
+
+    The pacing model is one mixture fitted to the room, but the operator's
+    pacing is not uniform across turn kinds. Reading the analysis instead of
+    discarding it is what lets a direct question come back immediately and a
+    photo get a beat without abandoning the learned mixture for statements.
+    The kind travels with the sample so the log and the receipt can show why a
+    component was chosen.
+    """
+    source = analysis if isinstance(analysis, dict) else {}
+    category = str(source.get("category") or "").strip()
+    reason = str(source.get("reason") or "").strip()
+    attachment = str(source.get("attachment") or "").strip()
+    if category in {"question", "advice"} or reason == "direct_question":
+        return "question"
+    if attachment == "image" or reason in RESPONSE_TIME_CAPTION_REASONS:
+        return "caption"
+    return "statement"
+
+
 def sample_response_delay_for_analysis(
     stats: dict | None,
     analysis: dict,
@@ -7773,19 +7860,37 @@ def sample_response_delay_for_analysis(
     """Sample the learned pacing mixture and charge only the remaining wait.
 
     The operator asked for 최연우's ordinary register, and the response-time
-    model already carries this room's three-component mixture. Forcing the
-    immediate component for questions, the short one otherwise, and then
-    clamping to ``SCHEDULED_REPLY_DELAY_CAP_SECONDS`` meant the mixture never
-    applied: every reply left as soon as generation finished.
+    model already carries this room's three-component mixture: forcing a single
+    component everywhere flattened that learned pacing.
 
     Two anchors matter and must not be mixed. ``delay_seconds`` /
     ``remaining_seconds`` is how much of the sampled wait is still owed from
     now, measured so the queue row (created_at ~ now) can record it.
     ``anchor_delay_seconds`` / ``sampled_delay_seconds`` is the full delay from
     the inbound timestamp, which is the only correct anchor for the due time.
+
+    The turn kind decides which component of that mixture applies: a direct
+    question is answered on the immediate component, a photo gets a beat while
+    the operator looks at it, and an ordinary statement keeps the learned
+    mixture. A preference that the room's fitted mixture cannot satisfy is
+    dropped back to the mixture instead of failing the reply.
     """
-    del analysis  # kept in the signature for callers that pass it
-    sampled = sample_response_delay(stats, rng=rng)
+    turn_kind = response_turn_kind(analysis)
+    preference = RESPONSE_TIME_TURN_COMPONENT_PREFERENCES.get(turn_kind)
+    if preference is None:
+        sampled = sample_response_delay(stats, rng=rng)
+    else:
+        try:
+            sampled = sample_response_delay(
+                stats,
+                rng=rng,
+                component_name=preference,
+            )
+        except RetrievalError as exc:
+            if "response_time_component_unavailable" not in str(exc):
+                raise
+            preference = None
+            sampled = sample_response_delay(stats, rng=rng)
     sampled_seconds = float(sampled["delay_seconds"])
     elapsed = 0.0
     if elapsed_seconds is not None:
@@ -7796,6 +7901,12 @@ def sample_response_delay_for_analysis(
         if not math.isfinite(elapsed):
             elapsed = 0.0
     remaining = max(0.0, sampled_seconds - elapsed)
+    sampled["turn_kind"] = turn_kind
+    sampled["turn_component_preference"] = preference
+    sampled["turn_kind_policy_version"] = RESPONSE_TIME_TURN_KIND_POLICY_VERSION
+    sampled["component_selection"] = (
+        "learned_mixture" if preference is None else "turn_kind_preference"
+    )
     sampled["sampled_delay_seconds"] = round(sampled_seconds, 1)
     sampled["elapsed_seconds"] = round(elapsed, 1)
     sampled["remaining_seconds"] = round(remaining, 1)
@@ -9846,6 +9957,118 @@ def _normalize_style_tell(value: object, limit: int = STYLE_TELLS_AVOID_MAX) -> 
     return " ".join(str(value or "").split())[:limit]
 
 
+def _style_tell_kind(avoid: str, inbound: str = "") -> str:
+    """Classify one learned tell so feedback is machine readable.
+
+    The kind stays a closed vocabulary (``STYLE_TELL_KINDS``) so the ledger and
+    the diagnostics can group feedback without re-parsing free text.
+    """
+    folded = " ".join(
+        (str(avoid or "") + " " + str(inbound or "")).split()
+    )
+    compact = re.sub(r"\s+", "", folded)
+    if re.search(r"(?:말투|어미|끝말|존댓말|반말|~?\b네요|~?\b어요)", folded):
+        return "ending"
+    if re.search(r"(?:너무\s*길|길어|짧게|짧았|길게)", folded):
+        return "length"
+    if re.search(r"(?:물어보|질문|왜\s*물어|질문이\s*많)", folded):
+        return "question"
+    if re.search(r"(?:캡션|제목|설명\s*그대로|링크\s*설명)", folded):
+        return "caption"
+    if re.search(r"(?:틀린\s*정보|잘못된\s*정보|사실과\s*다|근거\s*없|아닌\s*내용)", folded):
+        return "factual_error"
+    if "알아보" in compact or _inbound_signals_ai_detection(folded):
+        return "ai_detection"
+    return "other"
+
+
+def _style_tell_scope(avoid: str, inbound: str = "") -> str:
+    """Recipient scope when the tell names one person, otherwise room scope."""
+    folded = " ".join(
+        (str(avoid or "") + " " + str(inbound or "")).split()
+    )
+    for name in sorted(HONORIFIC_RECIPIENTS):
+        if name and name in folded:
+            return "recipient"
+    return "room"
+
+
+def _style_tell_target_phrase(message: str, limit: int = STYLE_TELL_TARGET_MAX) -> str:
+    """Longest phrase the reply must stop repeating, with laughter/ends trimmed."""
+    body = _analyzed_tail(_normalize_style_tell(message))
+    if len(body) >= 4:
+        return body[:limit]
+    return _normalize_style_tell(message, limit)
+
+
+def _style_tell_confidence(source: str) -> float:
+    """Operator feedback is authoritative; self-observed tells are a weaker cue."""
+    return 0.9 if source == "operator" else 0.5
+
+
+def _style_tell_expiry_hours(kind: str) -> int | None:
+    """Soft feedback ages out; durable detection/style feedback does not."""
+    if kind in {"length", "ending", "question", "caption"}:
+        return 24 * 90
+    return None
+
+
+def _style_tell_structured(
+    message: str,
+    inbound: str,
+    *,
+    source: str,
+) -> dict:
+    avoid = _normalize_style_tell(message)
+    kind = _style_tell_kind(avoid, inbound)
+    expiry_hours = _style_tell_expiry_hours(kind)
+    recorded_at = utc_now()
+    expires_at = None
+    if expiry_hours is not None:
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
+        ).isoformat()
+    return {
+        "kind": kind,
+        "target_phrase": _style_tell_target_phrase(avoid),
+        "scope": _style_tell_scope(avoid, inbound),
+        "source": source if source in STYLE_TELL_SOURCES else "operator",
+        "confidence": _style_tell_confidence(source),
+        "validity": "active",
+        "expires_at": expires_at,
+        "recorded_at": recorded_at,
+    }
+
+
+def _style_tell_field(value: object, allowed: tuple[str, ...], default: str) -> str:
+    text = str(value or "").strip()
+    return text if text in allowed else default
+
+
+def _style_tell_expired(row: dict) -> bool:
+    """A tell with no expiry stays active; expired soft feedback is skipped."""
+    raw = row.get("expires_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        expires = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires <= datetime.now(timezone.utc)
+
+
+def _style_tell_confidence_value(value: object, source: str) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return _style_tell_confidence(source)
+    if not math.isfinite(confidence):
+        return _style_tell_confidence(source)
+    return min(1.0, max(0.0, confidence))
+
+
 def _recent_self_tell_candidates(recent_conversation: list[dict]) -> list[str]:
     values: list[str] = []
     for row in reversed(list(recent_conversation or [])):
@@ -9879,7 +10102,7 @@ def load_learned_style_tells() -> list[dict]:
         return []
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != STYLE_TELLS_SCHEMA_VERSION
+        or payload.get("schema_version") not in (1, STYLE_TELLS_SCHEMA_VERSION)
     ):
         return []
     rows = payload.get("tells")
@@ -9893,15 +10116,36 @@ def load_learned_style_tells() -> list[dict]:
         avoid = _normalize_style_tell(item.get("avoid"))
         if len(avoid) < 4 or avoid in seen:
             continue
-        seen.add(avoid)
-        out.append(
-            {
-                "avoid": avoid,
-                "inbound": _normalize_style_tell(
-                    item.get("inbound"), STYLE_TELLS_INBOUND_MAX
-                ),
-            }
+        source = _style_tell_field(
+            item.get("source"), STYLE_TELL_SOURCES, "operator"
         )
+        row = {
+            "avoid": avoid,
+            "inbound": _normalize_style_tell(
+                item.get("inbound"), STYLE_TELLS_INBOUND_MAX
+            ),
+            "kind": _style_tell_field(
+                item.get("kind"), STYLE_TELL_KINDS, "other"
+            ),
+            "target_phrase": _normalize_style_tell(
+                item.get("target_phrase") or avoid, STYLE_TELL_TARGET_MAX
+            ),
+            "scope": _style_tell_field(
+                item.get("scope"), STYLE_TELL_SCOPES, "room"
+            ),
+            "source": source,
+            "confidence": _style_tell_confidence_value(
+                item.get("confidence"), source
+            ),
+            "validity": str(item.get("validity") or "active")[:32] or "active",
+            "expires_at": item.get("expires_at")
+            if isinstance(item.get("expires_at"), str)
+            else None,
+        }
+        if _style_tell_expired(row):
+            continue
+        seen.add(avoid)
+        out.append(row)
         if len(out) >= STYLE_TELLS_MAX:
             break
     return out
@@ -9926,6 +10170,38 @@ def learned_style_tell_avoids() -> list[str]:
     return list(avoids)
 
 
+def _style_tell_row(item: dict) -> dict | None:
+    """Normalize one tell for persistence, dropping rows without a usable phrase."""
+    avoid = _normalize_style_tell(item.get("avoid"))
+    if len(avoid) < 4:
+        return None
+    inbound = _normalize_style_tell(item.get("inbound"), STYLE_TELLS_INBOUND_MAX)
+    source = _style_tell_field(item.get("source"), STYLE_TELL_SOURCES, "operator")
+    structured = _style_tell_structured(avoid, inbound, source=source)
+    row = {
+        "tell_id": str(item.get("tell_id") or hashlib.sha256(avoid.encode("utf-8")).hexdigest()[:16])[:32],
+        "recorded_at": str(item.get("recorded_at") or structured["recorded_at"])[:40],
+        "author": str(item.get("author") or "")[:40],
+        "event_id": str(item.get("event_id") or "")[:80],
+        "avoid": avoid,
+        "inbound": inbound,
+    }
+    for key in ("kind", "target_phrase", "scope", "source", "confidence", "expires_at"):
+        if item.get(key) is not None:
+            row[key] = item.get(key)
+    row["kind"] = _style_tell_field(row.get("kind"), STYLE_TELL_KINDS, structured["kind"])
+    row["target_phrase"] = _normalize_style_tell(
+        row.get("target_phrase") or structured["target_phrase"], STYLE_TELL_TARGET_MAX
+    )
+    row["scope"] = _style_tell_field(row.get("scope"), STYLE_TELL_SCOPES, structured["scope"])
+    row["source"] = source
+    row["confidence"] = _style_tell_confidence_value(row.get("confidence"), source)
+    row["validity"] = str(item.get("validity") or "active")[:32] or "active"
+    if not isinstance(row.get("expires_at"), str):
+        row["expires_at"] = structured["expires_at"]
+    return row
+
+
 def persist_learned_style_tells(rows: list[dict]) -> Path | None:
     global _LEARNED_TELLS_CACHE
     path = STYLE_TELLS_LEDGER
@@ -9936,10 +10212,9 @@ def persist_learned_style_tells(rows: list[dict]) -> Path | None:
         payload = {
             "schema_version": STYLE_TELLS_SCHEMA_VERSION,
             "tells": [
-                item
-                for item in rows
-                if isinstance(item, dict)
-                and len(_normalize_style_tell(item.get("avoid"))) >= 4
+                row
+                for row in (_style_tell_row(item) for item in rows)
+                if row is not None
             ][:STYLE_TELLS_MAX],
         }
         fd, name = tempfile.mkstemp(prefix="reply-style-tells.", dir=parent)
@@ -9984,15 +10259,27 @@ def record_learned_style_tells(
         if len(avoid) < 4 or avoid in seen:
             continue
         seen.add(avoid)
+        # These tells come from the room's own detection feedback (someone in
+        # the chat flagged the assistant), so the source is self-observed and
+        # the classification stays durable rather than time-boxed.
+        structured = _style_tell_structured(
+            avoid, inbound_text, source="self_observed"
+        )
         added.append(
             {
                 "tell_id": hashlib.sha256(avoid.encode("utf-8")).hexdigest()[:16],
-                "recorded_at": utc_now(),
+                "recorded_at": structured["recorded_at"],
                 "author": str(author or "")[:40],
                 "event_id": str(event_id or "")[:80],
-                "kind": "ai_detection",
                 "avoid": avoid,
                 "inbound": inbound_text,
+                "kind": structured["kind"],
+                "target_phrase": structured["target_phrase"],
+                "scope": structured["scope"],
+                "source": structured["source"],
+                "confidence": structured["confidence"],
+                "validity": structured["validity"],
+                "expires_at": structured["expires_at"],
             }
         )
     if added:
@@ -12680,8 +12967,21 @@ def analyze_event(event: dict) -> dict:
                 "rerank_scores": list(ranked.get("scores") or []),
                 "rerank_winner_index": ranked.get("winner_index"),
                 "rerank_fallback": ranked.get("fallback") or "none",
+                "rerank_policy_rejections": list(
+                    ranked.get("policy_rejections") or []
+                ),
             }
         )
+        # Which drafts failed the policy and why belongs in the same
+        # provenance bundle the evidence ids come from, so the decision record
+        # and the receipt can both explain a refusal instead of only a rank.
+        provenance = result["provenance"]
+        provenance["rerank"] = {
+            "fallback": str(result.get("rerank_fallback") or "none"),
+            "policy_rejections": list(
+                result.get("rerank_policy_rejections") or []
+            ),
+        }
         scores = list(result.get("rerank_scores") or [])
         print(
             "[reply-rerank] drafts=%s scores=%s winner=%s fallback=%s"
