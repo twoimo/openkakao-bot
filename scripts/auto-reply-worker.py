@@ -10626,6 +10626,61 @@ def _generation_reply_model(has_images: bool) -> str:
     return text_model
 
 
+def _run_opencodex_generation(
+    model: str,
+    system_prompt: str,
+    prompt_bytes: bytes,
+    *,
+    timeout: float = 30.0,
+    base_url: str = "http://127.0.0.1:10100/v1",
+) -> tuple[int, bytes, bytes]:
+    try:
+        user_content = prompt_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        user_content = prompt_bytes.decode("utf-8", "replace")
+
+    target_model = model
+    if target_model in (
+        "google-antigravity/gemini-3.8-flash-high",
+        "google-antigravity/gemini-3.8-flash-tiered",
+        "gemini-3.8-flash",
+    ):
+        target_model = "google-antigravity/gemini-3.8-flash"
+    elif target_model in (
+        "google-antigravity/gemini-3.7-flash-tiered",
+        "gemini-3.7-flash",
+    ):
+        target_model = "google-antigravity/gemini-3.7-flash"
+    elif target_model.startswith("opencode-go-session/"):
+        target_model = target_model.replace("opencode-go-session/", "opencode-go/")
+
+    payload = {
+        "model": target_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer not-needed",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            content = str(body["choices"][0]["message"]["content"])
+            return 0, content.encode("utf-8"), b""
+    except urllib.error.HTTPError as exc:
+        err_bytes = exc.read()
+        return exc.code, b"", err_bytes
+    except Exception as exc:
+        return 1, b"", str(exc).encode("utf-8")
+
 def generate_reply(
     message: str,
     context: list[dict],
@@ -11061,9 +11116,34 @@ def generate_reply(
         )
 
     try:
-        returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
-            command,
-            cwd=Path("/tmp"),
+        if REPLY_RUNNER_KIND == "opencodex":
+            returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
+                active_model,
+                system_prompt,
+                prompt_bytes,
+                timeout=30.0,
+            )
+            if returncode != 0:
+                err_str = stderr_bytes.decode("utf-8", "replace").casefold()
+                if returncode == 429 or "usage limit" in err_str or "quota" in err_str:
+                    print(
+                        f"[reply-gen] OpenCodex limit on {active_model}; falling back to google-antigravity/gemini-3.8-flash",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    fb_rc, fb_stdout, fb_stderr = _run_opencodex_generation(
+                        "google-antigravity/gemini-3.8-flash",
+                        system_prompt,
+                        prompt_bytes,
+                        timeout=30.0,
+                    )
+                    if fb_rc == 0:
+                        returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
+                        active_model = "google-antigravity/gemini-3.8-flash"
+        else:
+            returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
+                command,
+                cwd=Path("/tmp"),
             env=env,
             timeout=(
                 120

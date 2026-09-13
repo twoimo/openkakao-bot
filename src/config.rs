@@ -432,27 +432,37 @@ pub fn validate_auto_reply_startup(
             );
         }
     }
-    if config.auto_reply.reply_runner_kind.as_deref() == Some("gjc") {
+    if matches!(
+        config.auto_reply.reply_runner_kind.as_deref(),
+        Some("opencodex") | Some("gjc")
+    ) {
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || !matches!(
                 config.model.provider.as_deref(),
-                Some("gjc") | Some("google-antigravity") | Some("opencode-go-session")
+                Some("opencodex")
+                    | Some("gjc")
+                    | Some("google-antigravity")
+                    | Some("opencode-go-session")
+                    | Some("opencode-go")
             )
         {
             anyhow::bail!(
-                "GJC reply runner requires model.privacy_mode=remote_explicit and model.provider=gjc, google-antigravity or opencode-go-session"
+                "OpenCodex/GJC reply runner requires model.privacy_mode=remote_explicit and model.provider=opencodex, gjc, google-antigravity or opencode-go-session"
             );
         }
         if !matches!(
             config.auto_reply.reply_model.as_deref(),
-            Some("google-antigravity/gemini-3.7-flash-tiered")
+            Some("google-antigravity/gemini-3.8-flash")
+                | Some("google-antigravity/gemini-3.7-flash")
+                | Some("google-antigravity/gemini-3.7-flash-tiered")
                 | Some("google-antigravity/gemini-3.8-flash-tiered")
                 | Some("google-antigravity/gemini-3.8-flash-high")
                 | Some("google-antigravity/gemini-3.6-flash-tiered")
+                | Some("opencode-go/deepseek-v4.1-flash")
                 | Some("opencode-go-session/deepseek-v4.1-flash"),
         ) {
             anyhow::bail!(
-                "GJC reply runner must explicitly attest reply_model=google-antigravity/gemini-3.7-flash-tiered, google-antigravity/gemini-3.6-flash-tiered or opencode-go-session/deepseek-v4.1-flash"
+                "reply runner must explicitly attest an allowed model (e.g. google-antigravity/gemini-3.8-flash or opencode-go/deepseek-v4.1-flash)"
             );
         }
     }

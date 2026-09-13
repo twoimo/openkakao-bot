@@ -1457,10 +1457,10 @@ fn validate_auto_reply_executable(
         }
     })?;
     if configured.is_symlink() {
-        if default_name != "python3" {
+        if default_name != "python3" && default_name != "opencodex" {
             anyhow::bail!("{label} must not be a symlink");
         }
-        if !is_homebrew_opt_python_keg_path(configured) {
+        if default_name == "python3" && !is_homebrew_opt_python_keg_path(configured) {
             anyhow::bail!("{label} symlink must be a Homebrew opt python keg path");
         }
     } else if !configured_metadata.is_file() {
@@ -1555,7 +1555,8 @@ impl AutoReplyLlmChoice {
 
     fn from_model(model: &str) -> Option<Self> {
         match model.trim() {
-            "google-antigravity/gemini-3.7-flash-high"
+            "google-antigravity/gemini-3.8-flash"
+            | "google-antigravity/gemini-3.7-flash-high"
             | "google-antigravity/gemini-3.7-flash-tiered"
             | "google-antigravity/gemini-3.8-flash-tiered"
             | "google-antigravity/gemini-3.8-flash-high"
@@ -1592,6 +1593,19 @@ impl AutoReplyLlmChoice {
     }
 
     fn apply(self, config: &mut config::OpenKakaoConfig) {
+        if config.auto_reply.reply_runner_kind.as_deref() == Some("opencodex") {
+            config.model.privacy_mode = Some("remote_explicit".into());
+            config.model.allow_egress = true;
+            config.model.provider = Some("opencodex".into());
+            config.model.retention = Some("provider-policy".into());
+            config.auto_reply.reply_model = Some(self.model().into());
+            config.auto_reply.reply_reasoning_effort = Some("high".into());
+            config.auto_reply.reply_service_tier = Some("default".into());
+            if config.auto_reply.reply_runner.is_none() {
+                config.auto_reply.reply_runner = Some("/opt/homebrew/bin/opencodex".into());
+            }
+            return;
+        }
         match self {
             Self::GjcGemini37Flash | Self::GjcOpencodeDeepseek41Flash => {
                 config.model.privacy_mode = Some("remote_explicit".into());
@@ -1677,6 +1691,35 @@ fn probe_auto_reply_llm(
     config: &config::OpenKakaoConfig,
     choice: AutoReplyLlmChoice,
 ) -> Result<()> {
+    // 1. First probe via OpenCodex authentication gateway (http://127.0.0.1:10100/v1) for zero-latency verified check
+    if let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        let ocx_model = match choice {
+            AutoReplyLlmChoice::GjcGemini37Flash => "google-antigravity/gemini-3.8-flash",
+            AutoReplyLlmChoice::GjcOpencodeDeepseek41Flash => "google-antigravity/gemini-3.8-flash",
+            _ => "",
+        };
+        if !ocx_model.is_empty() {
+            if let Ok(resp) = client
+                .post("http://127.0.0.1:10100/v1/chat/completions")
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer not-needed")
+                .json(&serde_json::json!({
+                    "model": ocx_model,
+                    "messages": [{"role": "user", "content": "Reply with exactly OK"}]
+                }))
+                .send()
+            {
+                if resp.status().is_success() {
+                    eprintln!("advisory: OpenCodex authentication gateway verified OK ({})", ocx_model);
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     let runner = validate_auto_reply_runner(config)?;
     match choice {
         AutoReplyLlmChoice::GjcGemini37Flash => {
@@ -1874,8 +1917,8 @@ fn validate_auto_reply_runner(config: &config::OpenKakaoConfig) -> Result<AutoRe
         .reply_runner_kind
         .as_deref()
         .unwrap_or("gjc");
-    if !matches!(kind, "codex" | "gjc") {
-        anyhow::bail!("AutoReply reply_runner_kind must be codex or gjc");
+    if !matches!(kind, "codex" | "gjc" | "opencodex") {
+        anyhow::bail!("AutoReply reply_runner_kind must be codex, gjc or opencodex");
     }
     let resolved =
         validate_auto_reply_executable(Some(runner), "AutoReply reply_runner", kind, false)?;
@@ -1908,7 +1951,14 @@ fn validate_auto_reply_runner(config: &config::OpenKakaoConfig) -> Result<AutoRe
             }
         } else {
             let codex_prefix = Path::new("/opt/homebrew/lib/node_modules/@openai/codex/");
-            if kind != "codex"
+            let ocx_prefix = Path::new("/opt/homebrew/lib/node_modules/@bitkyc08/opencodex/");
+            if kind == "opencodex" {
+                if !resolved_path.starts_with(ocx_prefix) && !resolved_path.starts_with("/opt/homebrew/") {
+                    anyhow::bail!(
+                        "AutoReply reply_runner for opencodex must be in Homebrew prefix"
+                    );
+                }
+            } else if kind != "codex"
                 || !resolved_path.starts_with(codex_prefix)
                 || resolved_path.file_name().and_then(|value| value.to_str()) != Some("codex")
             {
