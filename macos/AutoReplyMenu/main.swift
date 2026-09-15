@@ -1305,6 +1305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 저장을 확인한 뒤에도 오래된 조회가 화면을 되돌리지 않게, 확인된 값을 잠시 들고 있는다.
     var modelFallbackLocalOverride: (models: [String], source: String)?
     var modelFallbackNote: String?
+    /// 추가 메뉴를 마지막으로 그린 내용. 갱신마다 다시 만들면 펼쳐 둔 하위
+    /// 메뉴가 닫히므로, 내용이 그대로면 손대지 않는다.
+    var modelFallbackMenuSignature = ""
     var menuPanel: MenuPanelView?
     var inspectedRoomId = 0
     var roomsListExpanded = false
@@ -2263,9 +2266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let listed = modelFallbackChain
             .map { Self.friendlyModelName($0) }
             .joined(separator: " → ")
+        let count = "\(modelFallbackChain.count)/\(modelFallbackMax)개"
         let head = modelFallbackSource == "override"
-            ? "사용자 지정 · 다음 답변부터 사용"
-            : "내장 기본값 사용 · 바꾸려면 아래에서 추가하세요"
+            ? "사용자 지정 \(count) · 다음 답변부터 사용"
+            : "내장 기본값 \(count) · 바꾸려면 아래에서 추가하세요"
         return "\(head)\n\(listed)"
     }
 
@@ -2313,6 +2317,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func buildFallbackAddMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        // 풀다운 버튼은 0번 항목을 제목으로 쓴다. 메뉴를 새로 만들 때도 제목을
+        // 다시 넣어야 버튼 이름이 비지 않는다.
+        let title = NSMenuItem(title: "폴백 모델 추가…", action: nil, keyEquivalent: "")
+        title.isEnabled = false
+        menu.addItem(title)
         let providers = fallbackCandidateProviders()
         if catalogLoading && providers.isEmpty {
             let loading = NSMenuItem(title: "모델 목록 불러오는 중…", action: nil, keyEquivalent: "")
@@ -2329,19 +2338,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
+            menu.addItem(.separator())
             for provider in providers {
+                // 제공자당 모델이 수십 개라 평평한 목록은 고를 수 없다. 제공자별
+                // 하위 메뉴로 묶고, 지금 몇 개를 골랐는지 아래 줄에 남긴다.
+                let submenu = NSMenu()
+                submenu.autoenablesItems = false
                 for item in provider.models {
                     let row = NSMenuItem(
-                        title: "\(provider.label) · \(item.label)",
+                        title: item.label,
                         action: #selector(modelFallbackAdd(_:)),
                         keyEquivalent: ""
                     )
                     row.target = self
                     row.representedObject = item.id
+                    row.toolTip = item.id
                     row.isEnabled = !modelFallbackBusy
-                    menu.addItem(row)
+                    submenu.addItem(row)
                 }
+                let parent = NSMenuItem(
+                    title: "\(provider.label) · \(provider.models.count)개",
+                    action: nil,
+                    keyEquivalent: ""
+                )
+                parent.submenu = submenu
+                menu.addItem(parent)
             }
+            let footer = NSMenuItem(
+                title: "지금 \(modelFallbackChain.count)/\(modelFallbackMax)개 · 이미 고른 모델은 목록에서 빠집니다",
+                action: nil,
+                keyEquivalent: ""
+            )
+            footer.isEnabled = false
+            menu.addItem(.separator())
+            menu.addItem(footer)
         }
         return menu
     }
@@ -2355,6 +2385,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         button.toolTip = full
             ? "폴백은 최대 \(modelFallbackMax)개까지 저장할 수 있습니다."
             : "앞 모델이 사용량 한도에 걸렸을 때 이어서 시도할 모델을 고릅니다."
+        // 후보 목록을 버튼에 실제로 붙인다. 예전에는 메뉴를 만드는 함수만 있고
+        // 붙이는 곳이 없어, 추가 버튼을 눌러도 빈 메뉴가 떴다(2026-09-15).
+        let signature = fallbackMenuSignature(providers: providers)
+        if signature != modelFallbackMenuSignature {
+            modelFallbackMenuSignature = signature
+            button.menu = buildFallbackAddMenu()
+        }
+    }
+
+    /// 추가 메뉴를 다시 그릴 필요가 있는지 판단하는 서명.
+    func fallbackMenuSignature(providers: [ReplyModelProvider]) -> String {
+        let listed = providers
+            .map { provider in
+                provider.id + ":" + provider.models.map { $0.id }.joined(separator: ",")
+            }
+            .joined(separator: "|")
+        return [
+            listed,
+            modelFallbackChain.joined(separator: ","),
+            catalogLoading ? "loading" : "ready",
+            modelFallbackBusy ? "busy" : "idle",
+        ].joined(separator: "#")
     }
 
     /// "opencode-go-session/deepseek-v4.1-flash" → "DeepSeek V4.1 Flash · OpenCode Go".
