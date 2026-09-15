@@ -262,6 +262,7 @@ struct ModelsReport: Decodable {
     let fallback_source: String?
     let fallback_defaults: [String]?
     let fallback_max: Int?
+    let fallback_revision: Int64?
 }
 
 struct ReplyProviderPreset: Decodable {
@@ -349,6 +350,9 @@ struct ReplyModelFallbacks: Decodable {
     let source: String?
     let defaults: [String]?
     let max: Int?
+    // 저장 파일의 mtime(초). 화면은 이 값으로 "내 저장보다 먼저 읽은 조회"와
+    // "그 뒤 다른 곳에서 바뀐 값"을 가른다(2026-09-15).
+    let revision: Int64?
     // 저장된 모델 중 지금 카탈로그에 없는 것과, 지금 답변 모델. 화면은 표시만
     // 하고 판단하지 않는다 — 저장이 끝난 뒤 목록이 바뀌면 사용자가 고칠 수
     // 없는 줄이 남기 때문이다(2026-09-15).
@@ -1414,6 +1418,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelFallbackPrimary = ""
     /// 저장을 확인한 뒤에도 오래된 조회가 화면을 되돌리지 않게, 확인된 값을 잠시 들고 있는다.
     var modelFallbackLocalOverride: (models: [String], source: String)?
+    /// 마지막으로 반영한 저장 리비전(파일 mtime). 이보다 오래된 조회는
+    /// 무시하고, 더 새로운 변경은 다른 창·CLI에서 왔더라도 반영한다.
+    var modelFallbackRevision: Int64 = 0
     var modelFallbackNote: String?
     /// 추가 메뉴를 마지막으로 그린 내용. 갱신마다 다시 만들면 펼쳐 둔 하위
     /// 메뉴가 닫히므로, 내용이 그대로면 손대지 않는다.
@@ -1535,6 +1542,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func runPython(_ extra: [String] = [], timeout: TimeInterval = 8) -> Data? {
+        runPythonOutcome(extra, timeout: timeout).data
+    }
+
+    /// 시간 초과와 실패를 구분해서 돌려준다. 저장 요청이 제한 시간을 넘겼을 때
+    /// "저장하지 못했어요"라고 단정하면, 코어에는 이미 저장됐는데 화면만
+    /// 되돌리는 경우가 생긴다(2026-09-15).
+    func runPythonOutcome(
+        _ extra: [String] = [],
+        timeout: TimeInterval = 8
+    ) -> (data: Data?, timedOut: Bool) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: config.python)
         process.arguments = pythonArguments(extra)
@@ -1551,7 +1568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         do {
             try process.run()
         } catch {
-            return nil
+            return (nil, false)
         }
         // Drain stdout while the process runs. Waiting first deadlocks when
         // vector-list JSON exceeds the ~64KB pipe buffer.
@@ -1575,10 +1592,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         process.waitUntilExit()
         timeoutWork.cancel()
         _ = group.wait(timeout: .now() + 2)
+        // terminate()가 실제로 먹혔는지로 시간 초과를 판정한다. 종료 코드만
+        // 보면 신호로 끝난 정상 실패와 구분되지 않는다.
+        let timedOut = process.terminationReason == .uncaughtSignal
         guard process.terminationStatus == 0, !data.isEmpty else {
-            return nil
+            return (nil, timedOut)
         }
-        return data
+        return (data, timedOut)
     }
 
     func loadModel() -> MenubarModel? {
@@ -2256,7 +2276,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if clear { extra.append("--clear") }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let data = self.runPython(extra, timeout: 12)
+            let outcome = self.runPythonOutcome(extra, timeout: 12)
+            let data = outcome.data
             let report = data.flatMap { try? JSONDecoder().decode(ModelsReport.self, from: $0) }
             DispatchQueue.main.async {
                 self.modelFallbackBusy = false
@@ -2266,9 +2287,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     if let max = report.fallback_max {
                         self.modelFallbackMax = max
                     }
+                    // 저장 뒤 리비전을 올려, 저장 전에 읽힌 조회가 화면을
+                    // 되돌리지 않게 한다. 파일을 지우는 복원은 0을 보내므로
+                    // 이전 값을 그대로 둔다(2026-09-15).
+                    if let revision = report.fallback_revision, revision > 0 {
+                        self.modelFallbackRevision = revision
+                    }
                     // 저장이 확인된 값을 잠근다 — 늦게 도착한 조회가 화면을 되돌리지 않게.
                     self.modelFallbackLocalOverride = (models: saved, source: self.modelFallbackSource)
                     self.modelFallbackNote = note
+                } else if outcome.timedOut {
+                    // 저장 자체는 끝났을 수 있다. 실패로 단정하지 않고, 다시
+                    // 읽어 확인하라고 안내한다(2026-09-15).
+                    self.modelFallbackChain = previousChain
+                    self.modelFallbackSource = previousSource
+                    self.modelFallbackNote = "저장 결과를 확인하지 못했어요 · 잠시 뒤 실제 저장값이 자동으로 반영됩니다."
+                    self.refreshModelSettingsWindowIfOpen()
                 } else {
                     self.modelFallbackChain = previousChain
                     self.modelFallbackSource = previousSource
@@ -2348,13 +2382,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applyFallbackState(_ state: ReplyModelFallbacks?) {
         guard let state else { return }
         let source = (state.source ?? "default").lowercased()
+        let revision = state.revision ?? 0
         if let local = modelFallbackLocalOverride {
             // 로컬 확인값이 코어 값과 같아지면 더 이상 붙들지 않는다.
             if local.source == source, local.models == (state.models ?? []) {
                 modelFallbackLocalOverride = nil
+            } else if revision > modelFallbackRevision {
+                // 저장 리비전이 내가 들고 있는 값보다 새롭다 = 다른 창이나 CLI가
+                // 그 사이에 바꿨다. 내 확인값을 놓고 새 값을 그대로 반영한다.
+                modelFallbackLocalOverride = nil
             } else {
+                // 내 저장보다 먼저 읽힌 조회다. 화면을 되돌리지 않는다.
                 return
             }
+        }
+        if revision > modelFallbackRevision {
+            modelFallbackRevision = revision
         }
         modelFallbackChain = state.models ?? []
         modelFallbackSource = source

@@ -1405,7 +1405,22 @@ def reply_model_fallbacks_state(state_root: Path) -> dict[str, Any]:
         # 판단 결과를 함께 보낸다(2026-09-15).
         "unknown": [model for model in models if model not in allowed],
         "primary": _current_reply_model_id(root) or "",
+        # 저장한 시각을 리비전으로 알려 준다. 화면은 이 값보다 오래된 조회만
+        # 무시하고, 더 새로운 변경(다른 창·CLI)은 그대로 반영한다(2026-09-15).
+        "revision": _reply_model_fallbacks_revision(root),
     }
+
+
+def _reply_model_fallbacks_revision(state_root: Path) -> int:
+    """저장 파일의 mtime(ns). 저장한 적이 없으면 0."""
+
+    path = _reply_model_fallbacks_path(Path(state_root))
+    try:
+        if path.is_file() and not path.is_symlink():
+            return int(path.stat().st_mtime_ns)
+    except OSError:
+        pass
+    return 0
 
 
 def set_reply_model_fallbacks(
@@ -1511,6 +1526,7 @@ def set_reply_model_fallbacks(
         "fallback_source": state["source"],
         "fallback_defaults": list(state["defaults"]),
         "fallback_max": state["max"],
+        "fallback_revision": state["revision"],
         "warnings": [],
     }
 
@@ -1715,6 +1731,7 @@ def collect_reply_models(
             "fallback_source": fallbacks["source"],
             "fallback_defaults": list(fallbacks["defaults"]),
             "fallback_max": fallbacks["max"],
+            "fallback_revision": fallbacks["revision"],
         }
     )
     payload.setdefault("ok", True)
