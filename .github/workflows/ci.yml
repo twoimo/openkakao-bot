@@ -71,3 +71,25 @@ jobs:
 
       - name: Smoke CLI
         run: cargo build --manifest-path $MANIFEST && ./target/debug/openkakao-cli --version
+
+      # The menu extra is a separate program from the CLI and used to have no
+      # check at all: a broken card layout shipped because nothing compiled it
+      # (2026-09-16).
+      - name: Build menu extra
+        run: sh scripts/build-auto-reply-menubar.sh
+
+      - name: Menu extra tests
+        run: python3 -m unittest tests.test_auto_reply_menubar
+
+      # The windows cannot be seen from CI, so the app dumps every view frame
+      # and a PNG of each window off-screen, and the audit reads them back.
+      - name: Audit menu layout
+        run: |
+          APP=macos/AutoReplyMenu/build/AutoReplyMenu.app/Contents/MacOS/AutoReplyMenu
+          "$APP" --layout-audit /tmp/layout-audit \
+            --python "$(command -v python3)" \
+            --script "$PWD/scripts/auto-reply-menubar.py" \
+            --state-root /tmp/layout-audit-state \
+            --bin "$PWD/target/debug/openkakao-cli"
+          python3 scripts/audit-menubar-layout.py /tmp/layout-audit > /tmp/layout-audit/report.txt
+          python3 scripts/check-menubar-layout.py /tmp/layout-audit

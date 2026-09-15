@@ -29,17 +29,61 @@ APPKIT_INTERNALS = (
     "NSTableRowView",
     "NSTableColumn",
     "NSHardPocketView",
+    "NSButtonImageView",
+)
+
+# AppKit's own SwiftUI-backed widgets live under these hosting views. A search
+# field's clear button is 15pt wide on purpose; reporting it as clipped text
+# buried the labels that were actually cut off (2026-09-16).
+APPKIT_HOSTED = (
+    "_TtGC6AppKit",
+    "SearchFieldAccessoryButton",
+    "_NSKeyboardFocusClipView",
 )
 
 
 def is_internal(row: dict) -> bool:
-    """AppKit's own scroll/table internals overlap by design."""
+    """AppKit's own scroll/table internals overlap by design.
+
+    Only the internal view itself is skipped, never its children: the model
+    window puts its cards inside a scroll view, and skipping a whole
+    /NSScrollView subtree hid exactly the labels and cards that needed
+    checking (2026-09-16).
+    """
     kind = row["kind"]
     if kind.startswith("_") or kind.startswith("_Tt"):
         return True
     if kind.startswith(APPKIT_INTERNALS):
         return True
-    # Views scrolled by an NSScrollView legitimately extend past the window.
+    return any(marker in row["path"] for marker in APPKIT_HOSTED)
+
+
+def in_table_row(row: dict) -> bool:
+    """Cells inside an NSTableRowView overlap the row's own background."""
+    return "/NSTableRowView" in row["path"]
+
+
+# Containers that only position their children. Two of these can share space
+# without hiding anything, so their overlap is not reported.
+PLAIN_CONTAINERS = (
+    "NSView",
+    "NSStackView",
+    "NSBox",
+    "NSScrollView",
+)
+
+
+def draws_something(row: dict) -> bool:
+    """Whether the view puts visible content on screen by itself."""
+    if row.get("text"):
+        return True
+    if row.get("card"):
+        return True
+    return not row["kind"].startswith(PLAIN_CONTAINERS)
+
+
+def scrolled(row: dict) -> bool:
+    """Content inside a scroll view is legitimately larger than the window."""
     return "/NSScrollView" in row["path"]
 
 
@@ -133,6 +177,15 @@ def background(rows: list[list[tuple[int, int, int, int]]]) -> tuple[int, int, i
 
 
 def differs(pixel: tuple[int, int, int, int], base: tuple[int, int, int, int], slack: int = 6) -> bool:
+    """Any channel that moves counts as ink.
+
+    The borderless menu panel renders onto a transparent surface, so its black
+    text is ``(0, 0, 0, alpha)``: comparing RGB only made every glyph invisible
+    and reported a panel full of text as 4% ink (2026-09-16). Alpha belongs in
+    the comparison, and it also keeps light-mode white-on-white fills visible.
+    """
+    if abs(pixel[3] - base[3]) > slack:
+        return True
     return sum(abs(a - b) for a, b in zip(pixel[:3], base[:3])) > slack * 3
 
 
@@ -186,64 +239,97 @@ def audit(path: Path) -> dict:
     }
 
 
-def main(argv: list[str]) -> int:
-    directory = Path(argv[1] if len(argv) > 1 else "/tmp/layout-audit")
-    report: dict[str, dict] = {}
+def overlaps_in(rows: list[dict]) -> list[dict]:
+    """Siblings that share the same space hide each other's content."""
+    found: list[dict] = []
+    by_parent: dict[str, list[dict]] = {}
+    for row in rows:
+        if row["hidden"] or not row["path"].count("/"):
+            continue
+        by_parent.setdefault(row["path"].rsplit("/", 1)[0], []).append(row)
+    for siblings in by_parent.values():
+        for i in range(len(siblings)):
+            for j in range(i + 1, len(siblings)):
+                a, b = siblings[i], siblings[j]
+                if is_internal(a) or is_internal(b):
+                    continue
+                # Only a pair where both views paint something can hide text.
+                # Two plain containers sharing a frame (a spacer over a card,
+                # a scroll pocket over its scroll view) is normal AppKit
+                # structure, and reporting it buried the real overlaps
+                # (2026-09-16).
+                if not (draws_something(a) and draws_something(b)):
+                    continue
+                # A table cell sits on top of its row by design.
+                if in_table_row(a) and in_table_row(b):
+                    continue
+                ox = min(a["winLeft"] + a["w"], b["winLeft"] + b["w"]) - max(a["winLeft"], b["winLeft"])
+                oy = min(a["winTop"] + a["h"], b["winTop"] + b["h"]) - max(a["winTop"], b["winTop"])
+                if ox > 4 and oy > 4:
+                    found.append({
+                        "window": a["window"],
+                        "a": a["kind"] + " " + str(a.get("text", ""))[:24],
+                        "b": b["kind"] + " " + str(b.get("text", ""))[:24],
+                        "overlap": [round(ox, 1), round(oy, 1)],
+                    })
+    return found
+
+
+def analyze(directory: Path) -> dict:
+    """Measure an audit directory. Raises ValueError when it is unusable."""
+    if not directory.is_dir():
+        raise ValueError(f"no such audit directory: {directory}")
+    images: dict[str, dict] = {}
     for png in sorted(directory.glob("*.png")):
-        report[png.stem] = audit(png)
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+        images[png.stem] = audit(png)
+    if not images:
+        raise ValueError(f"no window images in {directory}")
     layout = directory / "layout.json"
-    if layout.exists():
-        rows = json.loads(layout.read_text(encoding="utf-8"))["windows"]
-        overflow = [
-            {k: row[k] for k in ("window", "path", "kind", "overRight", "overBottom") if k in row}
+    if not layout.exists():
+        raise ValueError(f"layout.json missing in {directory}")
+    rows = json.loads(layout.read_text(encoding="utf-8"))["windows"]
+    return {
+        "images": images,
+        "overflow": [
+            {k: row[k] for k in ("window", "path", "kind", "overRight", "overBottom", "underLeft", "underTop") if k in row}
             for row in rows
-            if any(key in row for key in ("overRight", "overBottom"))
-        ]
-        collapsed = [
+            if any(key in row for key in ("overRight", "overBottom", "underLeft", "underTop"))
+            and not is_internal(row)
+            and not scrolled(row)
+        ],
+        "collapsed_cards": [
             {k: row[k] for k in ("window", "path", "kind", "w", "h")}
             for row in rows
-            if not row["hidden"]
-            and row["kind"].endswith("CardView")
-            and row["h"] < 20
-        ]
-        print("\noverflow:", json.dumps(overflow, ensure_ascii=False))
-        print("collapsed cards:", json.dumps(collapsed, ensure_ascii=False))
-        clipped = [
-            {k: row[k] for k in ("window", "kind", "text", "w", "needW", "clipped") if k in row}
+            if not row["hidden"] and row["kind"].endswith("CardView") and row["h"] < 20
+        ],
+        # A one-line label inside a fixed-width column is clipped on purpose
+        # (the table truncates it and the full text is in the tooltip), so the
+        # report keeps the two cases apart.
+        "clipped": [
+            {k: row[k] for k in ("window", "path", "kind", "text", "w", "needW", "clipped") if k in row}
             for row in rows
             if not row["hidden"] and row.get("clipped") and not is_internal(row)
-        ]
-        print("clipped text:", json.dumps(clipped, ensure_ascii=False, indent=1))
-        # 같은 부모 안에서 형제가 겹치는지: 두 카드가 같은 자리를 차지하면 글자가 지워진다.
-        overlaps: list[dict] = []
-        by_parent: dict[str, list[dict]] = {}
-        for row in rows:
-            if row["hidden"] or not row["path"].count("/"):
-                continue
-            by_parent.setdefault(row["path"].rsplit("/", 1)[0], []).append(row)
-        for parent, siblings in by_parent.items():
-            for i in range(len(siblings)):
-                for j in range(i + 1, len(siblings)):
-                    a, b = siblings[i], siblings[j]
-                    if is_internal(a) or is_internal(b):
-                        continue
-                    if a["kind"] == b["kind"]:
-                        continue
-                    if a["kind"].startswith("_") or b["kind"].startswith("_"):
-                        continue
-                    ox = min(a["winLeft"] + a["w"], b["winLeft"] + b["w"]) - max(a["winLeft"], b["winLeft"])
-                    oy = min(a["winTop"] + a["h"], b["winTop"] + b["h"]) - max(a["winTop"], b["winTop"])
-                    if ox > 4 and oy > 4:
-                        overlaps.append({
-                            "window": a["window"],
-                            "a": a["kind"] + " " + str(a.get("text", ""))[:24],
-                            "b": b["kind"] + " " + str(b.get("text", ""))[:24],
-                            "overlap": [round(ox, 1), round(oy, 1)],
-                        })
-        print("overlapping siblings:", len(overlaps))
-        for item in overlaps[:12]:
-            print("  ", json.dumps(item, ensure_ascii=False))
+        ],
+        "overlaps": overlaps_in(rows),
+        "rows": rows,
+    }
+
+
+def main(argv: list[str]) -> int:
+    directory = Path(argv[1] if len(argv) > 1 else "/tmp/layout-audit")
+    try:
+        result = analyze(directory)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print(json.dumps(result["images"], indent=2, ensure_ascii=False))
+    print("\noverflow:", json.dumps(result["overflow"], ensure_ascii=False))
+    print("collapsed cards:", json.dumps(result["collapsed_cards"], ensure_ascii=False))
+    print("clipped text:", json.dumps(result["clipped"], ensure_ascii=False, indent=1))
+    overlaps = result["overlaps"]
+    print("overlapping siblings:", len(overlaps))
+    for item in overlaps[:12]:
+        print("  ", json.dumps(item, ensure_ascii=False))
     return 0
 
 

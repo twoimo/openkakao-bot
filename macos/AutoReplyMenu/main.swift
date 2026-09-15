@@ -850,13 +850,17 @@ enum LayoutAudit {
             entry["winTop"] = round((windowSize.height - inWindow.maxY) * 100) / 100
             entry["winLeft"] = round(inWindow.minX * 100) / 100
             // 오른쪽·아래로 창을 넘는지, 좌상단이 창 밖인지 표시한다.
+            // 부모 기준 frame을 창 크기와 비교하면 중첩 뷰에서 오탐이 난다.
+            // 창 기준 사각형 하나만 써서 네 방향을 모두 판단한다.
             if !child.isHidden {
-                let overshootRight = frame.maxX - windowSize.width
-                let overshootBottom = frame.maxY - windowSize.height
+                let overshootRight = inWindow.maxX - windowSize.width
+                let overshootBottom = -inWindow.minY
                 if overshootRight > 1 { entry["overRight"] = round(overshootRight * 100) / 100 }
                 if overshootBottom > 1 { entry["overBottom"] = round(overshootBottom * 100) / 100 }
-                if frame.minX < -1 { entry["underLeft"] = round(-frame.minX * 100) / 100 }
-                if frame.minY < -1 { entry["underTop"] = round(-frame.minY * 100) / 100 }
+                if inWindow.minX < -1 { entry["underLeft"] = round(-inWindow.minX * 100) / 100 }
+                if inWindow.maxY > windowSize.height + 1 {
+                    entry["underTop"] = round((inWindow.maxY - windowSize.height) * 100) / 100
+                }
             }
             if let field = child as? NSTextField {
                 entry["text"] = String(field.stringValue.prefix(visibleTextLimit))
@@ -982,6 +986,15 @@ final class PipelineView: NSView {
     var stages: [PipelineStage] = []
     var level: String = "yellow"
 
+    /// 점과 이름이 실제로 차지하는 높이. 창이 이 높이보다 훨씬 크면 위아래에
+    /// 아무것도 없는 띠가 남는다 (2026-09-16).
+    static let nodeRadius: CGFloat = 7
+    static let nodeLabelHeight: CGFloat = 12
+    static let contentHeight: CGFloat = nodeRadius * 2 + 5 + nodeLabelHeight
+    /// 내용 높이에 위아래 4pt만 더한 띠 높이. 예전에는 56pt 고정이라
+    /// 위아래로 12pt씩 빈 띠가 생겼다 (2026-09-16).
+    static let stripHeight: CGFloat = contentHeight + 8
+
     static let labels: [(id: String, title: String)] = [
         ("detect", "수신"),
         ("authorize", "인가"),
@@ -1005,11 +1018,11 @@ final class PipelineView: NSView {
         let pad: CGFloat = 18
         let usable = bounds.width - pad * 2
         let step = usable / CGFloat(max(count - 1, 1))
-        let radius: CGFloat = 7
+        let radius = Self.nodeRadius
         // 점과 이름을 세로 가운데에 둔다. 예전에는 높이의 40% 지점에 점을 두어
         // 위쪽에 아무것도 없는 띠가 남았다 (2026-09-16).
-        let labelHeight: CGFloat = 12
-        let contentHeight = radius * 2 + 5 + labelHeight
+        let labelHeight = Self.nodeLabelHeight
+        let contentHeight = Self.contentHeight
         let nodeY = max((bounds.height - contentHeight) / 2 + radius, radius + 2)
         var centers: [CGPoint] = []
         for index in 0..<count {
@@ -1385,11 +1398,34 @@ final class MenuPanelView: NSView {
     var roomTitle = ""
     var selectedRoomId = 0
     static let panelWidth: CGFloat = 408
-    static let panelBaseHeight: CGFloat = 228
     static let roomGridColumns = 2
     static let roomCellHeight: CGFloat = 28
     static let roomGridGap: CGFloat = 6
-    static let roomGridTop: CGFloat = 94
+    /// 위에서부터의 세로 리듬. 값 하나만 바꾸면 아래가 따라 움직이도록
+    /// 조각을 이어 붙여 계산한다. 예전에는 7/36/94/98/158/186이 따로 박혀
+    /// 있어 조각 사이 간격이 제각각이었다 (2026-09-16).
+    static let panelTop: CGFloat = 8
+    static let sideInset: CGFloat = 16
+    static let statusPillHeight: CGFloat = 22
+    static let afterStatusGap: CGFloat = 8
+    static let afterPipelineGap: CGFloat = 6
+    static let afterRoomGridGap: CGFloat = 8
+    static let tileHeight: CGFloat = 52
+    static let afterTileGap: CGFloat = 8
+    static let lampHeight: CGFloat = 18
+    static let afterLampGap: CGFloat = 10
+    static let actionHeight: CGFloat = 28
+    static let bottomInset: CGFloat = 12
+    /// 파이프라인 띠의 위쪽 좌표(패널 위에서부터).
+    static let pipelineTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
+    /// 방 목록 격자가 시작하는 위쪽 좌표. 파이프라인 띠 바로 아래에 붙는다.
+    static let roomGridTop: CGFloat = pipelineTop + PipelineView.stripHeight + afterPipelineGap
+    /// 지표 타일은 방 목록이 접혀 있을 때 격자 자리에서 바로 시작한다.
+    static let tileTop: CGFloat = roomGridTop
+    static let lampTop: CGFloat = tileTop + tileHeight + afterTileGap
+    static let actionTop: CGFloat = lampTop + lampHeight + afterLampGap
+    /// 상태 알약 + 파이프라인 띠 + 지표 타일 + 램프 줄 + 동작 버튼 + 아래 여백.
+    static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset
     var roomsExpanded = false {
         didSet {
             guard roomsExpanded != oldValue else { return }
@@ -1451,7 +1487,12 @@ final class MenuPanelView: NSView {
         guard expanded else { return 0 }
         let rooms = max(count, 1)
         let rows = (rooms + roomGridColumns - 1) / roomGridColumns
-        return 8 + CGFloat(rows) * roomCellHeight + CGFloat(max(rows - 1, 0)) * roomGridGap
+        return roomGridSpan(rows: rows) + afterRoomGridGap
+    }
+
+    /// 방 목록 격자 자체의 높이(배경 카드 여백은 뺀 값).
+    static func roomGridSpan(rows: Int) -> CGFloat {
+        CGFloat(rows) * roomCellHeight + CGFloat(max(rows - 1, 0)) * roomGridGap
     }
 
     func roomGridExtra() -> CGFloat {
@@ -1515,8 +1556,18 @@ final class MenuPanelView: NSView {
     func layoutRoomGrid() {
         let extra = roomGridExtra()
         let width = layoutWidth()
-        roomButton.frame = NSRect(x: width - 116, y: 7, width: 100, height: 22)
-        pipelineView.frame = NSRect(x: 8, y: 36, width: width - 16, height: 56)
+        roomButton.frame = NSRect(
+            x: width - 116,
+            y: Self.panelTop,
+            width: 100,
+            height: Self.statusPillHeight
+        )
+        pipelineView.frame = NSRect(
+            x: 8,
+            y: Self.pipelineTop,
+            width: width - 16,
+            height: PipelineView.stripHeight
+        )
         let columns = Self.roomGridColumns
         let gap = Self.roomGridGap
         let cellH = Self.roomCellHeight
@@ -1525,24 +1576,34 @@ final class MenuPanelView: NSView {
             let col = index % columns
             let row = index / columns
             button.frame = NSRect(
-                x: 16 + CGFloat(col) * (cellW + gap),
+                x: Self.sideInset + CGFloat(col) * (cellW + gap),
                 y: Self.roomGridTop + CGFloat(row) * (cellH + gap),
                 width: cellW,
                 height: cellH
             )
         }
-        let tileY: CGFloat = 98 + extra
-        let actionY: CGFloat = 186 + extra
-        let tileW = (width - 32 - 18) / 4
+        let tileY: CGFloat = Self.tileTop + extra
+        let actionY: CGFloat = Self.actionTop + extra
+        let tileW = (width - Self.sideInset * 2 - 18) / 4
         for (index, button) in tileButtons.enumerated() {
             button.target = tileTarget
-            button.frame = NSRect(x: 16 + CGFloat(index) * (tileW + 6), y: tileY, width: tileW, height: 52)
+            button.frame = NSRect(
+                x: Self.sideInset + CGFloat(index) * (tileW + 6),
+                y: tileY,
+                width: tileW,
+                height: Self.tileHeight
+            )
         }
         autoButton.target = tileTarget
         geekButton.target = tileTarget
-        let buttonW = (width - 32 - 8) / 2
-        autoButton.frame = NSRect(x: 16, y: actionY, width: buttonW, height: 28)
-        geekButton.frame = NSRect(x: 16 + buttonW + 8, y: actionY, width: buttonW, height: 28)
+        let buttonW = (width - Self.sideInset * 2 - 8) / 2
+        autoButton.frame = NSRect(x: Self.sideInset, y: actionY, width: buttonW, height: Self.actionHeight)
+        geekButton.frame = NSRect(
+            x: Self.sideInset + buttonW + 8,
+            y: actionY,
+            width: buttonW,
+            height: Self.actionHeight
+        )
     }
 
     func sync() {
@@ -1591,7 +1652,12 @@ final class MenuPanelView: NSView {
         ]
         let title = NSString(string: Palette.title(level: level))
         let titleSize = title.size(withAttributes: titleAttrs)
-        let statusPill = NSRect(x: 16, y: 8, width: 24 + titleSize.width, height: 22)
+        let statusPill = NSRect(
+            x: Self.sideInset,
+            y: Self.panelTop,
+            width: 24 + titleSize.width,
+            height: Self.statusPillHeight
+        )
         color.withAlphaComponent(0.16).setFill()
         NSBezierPath(roundedRect: statusPill, xRadius: 11, yRadius: 11).fill()
         color.setFill()
@@ -1623,10 +1689,16 @@ final class MenuPanelView: NSView {
         NSGraphicsContext.restoreGraphicsState()
 
         let extra = roomGridExtra()
-        let tileY: CGFloat = 98 + extra
-        let lampY: CGFloat = 158 + extra
+        let tileY: CGFloat = Self.tileTop + extra
+        let lampY: CGFloat = Self.lampTop + extra
         if roomsExpanded {
-            let card = NSRect(x: 12, y: 90, width: width - 24, height: extra)
+            let rows = (max(AppDelegate.inspectableRooms(in: model).count, 1) + Self.roomGridColumns - 1) / Self.roomGridColumns
+            let card = NSRect(
+                x: 12,
+                y: Self.roomGridTop - 4,
+                width: width - 24,
+                height: Self.roomGridSpan(rows: rows) + 8
+            )
             NSColor.labelColor.withAlphaComponent(0.045).setFill()
             NSBezierPath(roundedRect: card, xRadius: 10, yRadius: 10).fill()
         }
@@ -1639,7 +1711,7 @@ final class MenuPanelView: NSView {
         let tileW = (width - 32 - 18) / 4
         for (index, metric) in metrics.enumerated() {
             let x = 16 + CGFloat(index) * (tileW + 6)
-            let rect = NSRect(x: x, y: tileY, width: tileW, height: 52)
+            let rect = NSRect(x: x, y: tileY, width: tileW, height: Self.tileHeight)
             NSColor.labelColor.withAlphaComponent(0.055).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill()
             let value = NSString(string: Self.compact(metric.1))
@@ -1680,7 +1752,7 @@ final class MenuPanelView: NSView {
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
             let labelSize = label.size(withAttributes: labelAttrs)
-            let chip = NSRect(x: x, y: lampY, width: 16 + labelSize.width + 8, height: 18)
+            let chip = NSRect(x: x, y: lampY, width: 16 + labelSize.width + 8, height: Self.lampHeight)
             NSColor.labelColor.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: chip, xRadius: 9, yRadius: 9).fill()
             Palette.lamp(lamp.1).setFill()
@@ -1701,7 +1773,7 @@ final class MenuPanelView: NSView {
                 .foregroundColor: filled ? NSColor.white : NSColor.secondaryLabelColor,
             ]
             let size = label.size(withAttributes: attrs)
-            let pill = NSRect(x: slotX - size.width - 16, y: lampY, width: size.width + 14, height: 18)
+            let pill = NSRect(x: slotX - size.width - 16, y: lampY, width: size.width + 14, height: Self.lampHeight)
             (filled ? NSColor.systemGreen : NSColor.labelColor.withAlphaComponent(0.08)).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
             label.draw(at: CGPoint(x: pill.minX + 7, y: pill.minY + 2), withAttributes: attrs)
@@ -1748,6 +1820,19 @@ final class MiniPipelineView: NSView {
 
 final class CenteredLabelCell: NSTableCellView {
     let label: NSTextField
+
+    /// 한 줄짜리 열은 끝을 자르고 전체 글자를 툴팁에 둔다. 설명처럼 긴 글이
+    /// 창의 주 내용인 열은 두 줄로 접어 보여 준다. 예전에는 자가 점검의
+    /// 설명이 118pt 잘린 채로 나왔다 (2026-09-16).
+    func setLines(_ lines: Int) {
+        label.maximumNumberOfLines = lines
+        label.usesSingleLineMode = lines <= 1
+        label.lineBreakMode = lines <= 1 ? .byTruncatingTail : .byWordWrapping
+        if let cell = label.cell as? NSTextFieldCell {
+            cell.wraps = lines > 1
+            cell.lineBreakMode = lines <= 1 ? .byTruncatingTail : .byWordWrapping
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         let field = NSTextField(labelWithString: "")
@@ -1943,6 +2028,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelSettingsScroll: NSScrollView?
     /// 사용자가 창 크기를 직접 만졌으면 자동 축소를 하지 않는다.
     var modelWindowUserResized = false
+    /// 감사 모드에서 함께 재는 화면 밖 뷰(메뉴 패널 등).
+    var layoutAuditPanels: [(String, NSWindow, NSView)] = []
     var modelFallbackAddButton: NSPopUpButton?
     var modelFallbackResetButton: NSButton?
     var modelFallbackRestoreButton: NSButton?
@@ -4014,6 +4101,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ensureRoomsWindow()
         ensureVectorWindow()
         ensureDoctorWindow()
+        // 메뉴를 눌렀을 때 가장 먼저 보이는 화면도 같은 기준으로 잰다.
+        // 메뉴를 눌렀을 때 보이는 패널은 접힌 상태와 펼친 상태의 높이가
+        // 다르다. 둘 다 재야 어느 쪽에 빈 띠가 생기는지 알 수 있다.
+        layoutAuditPanels = []
+        for expanded in [false, true] {
+            guard let model = loadModel() else { break }
+            let rooms = Self.inspectableRooms(in: model)
+            let extra = MenuPanelView.roomGridExtra(count: rooms.count, expanded: expanded)
+            let panel = MenuPanelView(
+                model: model,
+                frame: NSRect(
+                    x: 0,
+                    y: 0,
+                    width: MenuPanelView.panelWidth,
+                    height: MenuPanelView.panelBaseHeight + extra
+                )
+            )
+            panel.selectedRoomId = inspectedRoomId
+            panel.roomsExpanded = expanded
+            let host = NSWindow(
+                contentRect: panel.frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            host.contentView = panel
+            layoutAuditPanels.append((expanded ? "menu-panel-rooms" : "menu-panel", host, panel))
+        }
         let windows: [(String, NSWindow?)] = [
             ("model", modelWindow),
             ("jobs", jobsWindow),
@@ -4063,6 +4178,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 content.cacheDisplay(in: content.bounds, to: rep)
                 if let data = rep.representation(using: .png, properties: [:]) {
                     let url = directory.appendingPathComponent(entry.0 + ".png")
+                    try? data.write(to: url)
+                    images.append(url.path)
+                }
+            }
+            window.orderOut(nil)
+        }
+        for (name, window, view) in layoutAuditPanels {
+            window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+            window.orderFrontRegardless()
+            view.layoutSubtreeIfNeeded()
+            LayoutAudit.collect(
+                from: view,
+                window: name,
+                path: name,
+                windowSize: view.bounds.size,
+                into: &rows
+            )
+            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = directory.appendingPathComponent(name + ".png")
                     try? data.write(to: url)
                     images.append(url.path)
                 }
@@ -4741,10 +4877,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         table.rowHeight = 44
         table.usesAlternatingRowBackgroundColors = true
         for spec in [
-            ("level", "상태", 72.0),
-            ("title", "항목", 110.0),
-            ("advice", "설명", 430.0),
-            ("heal", "조치", 90.0),
+            ("level", "상태", 64.0),
+            ("title", "항목", 108.0),
+            // 설명은 가장 긴 열이다. 창(760)에서 다른 세 열과 여백을 뺀 만큼만
+            // 갖게 해야 마지막 열이 창 밖으로 밀리지 않는다 (2026-09-16).
+            ("advice", "설명", 448.0),
+            ("heal", "조치", 78.0),
         ] as [(String, String, CGFloat)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.0))
             column.title = spec.1
@@ -4806,7 +4944,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let pipeline = PipelineView(frame: .zero)
         pipeline.translatesAutoresizingMaskIntoConstraints = false
-        pipeline.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        pipeline.heightAnchor.constraint(equalToConstant: PipelineView.stripHeight).isActive = true
         logPipeline = pipeline
 
         let summary = Chrome.summary("상태를 읽는 중")
@@ -5213,7 +5351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let pipeline = PipelineView(frame: .zero)
         pipeline.translatesAutoresizingMaskIntoConstraints = false
-        pipeline.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        pipeline.heightAnchor.constraint(equalToConstant: PipelineView.stripHeight).isActive = true
         roomsPipeline = pipeline
 
         let hint = Chrome.hint("동작·답변·긱뉴스·추가됨 칸의 상태를 눌러 켜고 끕니다. 답변이나 긱뉴스를 켜면 동작과 추가됨도 같이 켜집니다.")
@@ -5608,6 +5746,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     alignment: .left
                 )
                 field.toolTip = check.advice
+                // 자가 점검의 주 내용은 이 설명이다. 한 줄로 자르면 왜 문제인지
+                // 읽을 수 없어 두 줄로 접어 보여 준다 (2026-09-16).
+                field.setLines(2)
                 return field
             case "heal":
                 return reusedLabel(

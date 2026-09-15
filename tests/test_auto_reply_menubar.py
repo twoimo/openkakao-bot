@@ -1456,7 +1456,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("NSSegmentedControl", source)
         self.assertIn("enum Chrome", source)
         self.assertIn("static let panelWidth: CGFloat = 408", source)
-        self.assertIn("static let panelBaseHeight: CGFloat = 228", source)
+        # 패널 높이는 조각을 이어 붙여 계산한다. 숫자를 따로 박아 두면 조각을
+        # 고칠 때마다 아래가 겹치거나 빈 띠가 남는다 (2026-09-16).
+        self.assertIn("static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset", source)
+        self.assertIn("static let tileTop: CGFloat = roomGridTop", source)
+        self.assertIn("static let lampTop: CGFloat = tileTop + tileHeight + afterTileGap", source)
+        self.assertIn("static let actionTop: CGFloat = lampTop + lampHeight + afterLampGap", source)
         self.assertIn("vectorCompactStatusLine", source)
         self.assertNotIn("count) 멈춤", source)
         self.assertIn("vectorStatusLine", source)
@@ -3340,7 +3345,13 @@ class AutoReplyMenubarTests(unittest.TestCase):
         pipeline_start = source.find("final class PipelineView: NSView")
         pipeline_body = source[pipeline_start : pipeline_start + 2000]
         self.assertNotIn("bounds.height * 0.40", pipeline_body)
-        self.assertIn("let contentHeight = radius * 2 + 5 + labelHeight", pipeline_body)
+        # 점·이름이 차지하는 높이를 상수로 두고, 창은 그 높이에 맞춘 띠를 쓴다.
+        # 예전에는 56pt 고정이라 위아래로 12pt씩 빈 띠가 남았다 (2026-09-16).
+        self.assertIn("static let contentHeight: CGFloat = nodeRadius * 2 + 5 + nodeLabelHeight", pipeline_body)
+        self.assertIn("static let stripHeight: CGFloat = contentHeight + 8", pipeline_body)
+        self.assertIn("bounds.height - contentHeight", pipeline_body)
+        self.assertNotIn("heightAnchor.constraint(equalToConstant: 56)", source)
+        self.assertIn("PipelineView.stripHeight", source)
 
     def test_swift_has_a_layout_audit_mode(self):
         """The windows cannot be eyeballed from CI, so the app can dump the
@@ -3351,6 +3362,113 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("enum LayoutAudit", source)
         # The audit has to run after the run loop laid the views out.
         self.assertIn("DispatchQueue.main.async { [weak self] in", source)
+
+    def test_layout_audit_detects_collapsed_cards_and_empty_bands(self):
+        """The audit is the only way to check a window nobody can see, so it has
+        to actually report the defects it claims to find."""
+        import struct
+        import zlib
+
+        spec = importlib.util.spec_from_file_location(
+            "audit_menubar_layout", SCRIPTS / "audit-menubar-layout.py"
+        )
+        audit = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(audit)
+
+        def png(path: Path, rows: list[list[tuple[int, int, int, int]]]) -> None:
+            height = len(rows)
+            width = len(rows[0])
+            raw = b"".join(
+                b"\x00" + b"".join(struct.pack("BBBB", *pixel) for pixel in row)
+                for row in rows
+            )
+            def chunk(kind: bytes, body: bytes) -> bytes:
+                return (
+                    struct.pack(">I", len(body))
+                    + kind
+                    + body
+                    + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+                )
+            path.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw))
+                + chunk(b"IEND", b"")
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            background = (40, 40, 40, 255)
+            ink = (240, 240, 240, 255)
+            # 위 40줄은 비어 있고, 아래에 글자가 있는 창.
+            rows = [[background] * 200 for _ in range(120)]
+            for y in range(60, 100):
+                for x in range(20, 120):
+                    rows[y][x] = ink
+            png(directory / "sample.png", rows)
+            (directory / "layout.json").write_text(
+                json.dumps(
+                    {
+                        "windows": [
+                            {
+                                "window": "sample",
+                                "path": "sample/AutoReplyMenu.CardView#0",
+                                "kind": "AutoReplyMenu.CardView",
+                                "w": 180,
+                                "h": 4,
+                                "hidden": False,
+                                "winLeft": 10,
+                                "winTop": 10,
+                            },
+                            {
+                                "window": "sample",
+                                "path": "sample/NSTextField#1",
+                                "kind": "NSTextField",
+                                "text": "긴 안내 문구",
+                                "w": 40,
+                                "h": 14,
+                                "needW": 160,
+                                "clipped": 120,
+                                "hidden": False,
+                                "winLeft": 10,
+                                "winTop": 10,
+                            },
+                            {
+                                "window": "sample",
+                                "path": "sample/NSView#2",
+                                "kind": "NSView",
+                                "w": 50,
+                                "h": 50,
+                                "hidden": False,
+                                "winLeft": 0,
+                                "winTop": 0,
+                                "overBottom": 30,
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            result = audit.analyze(directory)
+            self.assertEqual([row["h"] for row in result["collapsed_cards"]], [4])
+            self.assertEqual(len(result["overflow"]), 1)
+            self.assertEqual(result["overflow"][0]["overBottom"], 30)
+            self.assertEqual(len(result["clipped"]), 1)
+            # 글자가 창의 절반 아래에만 있으므로 위쪽 빈 띠를 잡아내야 한다.
+            bands = result["images"]["sample"]["empty_row_bands"]
+            self.assertTrue(bands, "빈 띠를 못 찾았습니다")
+            self.assertLess(bands[0][0], 60)
+
+            # 감사 결과가 없으면 조용히 통과하지 않고 실패해야 한다.
+            empty = directory / "empty"
+            empty.mkdir()
+            with self.assertRaises(ValueError):
+                audit.analyze(empty)
+            with self.assertRaises(ValueError):
+                audit.analyze(directory / "missing")
 
     def test_menubar_exposes_the_knowledge_graph_action(self):
         """The action has to be answered before the frozen vector dispatch."""
