@@ -72,6 +72,17 @@ PLAIN_CONTAINERS = (
     "NSScrollView",
 )
 
+# A control draws its own title, and AppKit sizes that inner text view a few
+# points wider than the button so the glyph edges are not cut. That is the
+# control working, not content escaping (2026-09-16).
+CONTROL_CHILDREN = (
+    "NSButtonTextField",
+    "NSButtonImageView",
+    "NSTextFieldSimpleLabel",
+    "_NSCoreHostingView",
+    "_NSKeyboardFocusClipView",
+)
+
 
 def draws_something(row: dict) -> bool:
     """Whether the view puts visible content on screen by itself."""
@@ -189,26 +200,106 @@ def differs(pixel: tuple[int, int, int, int], base: tuple[int, int, int, int], s
     return sum(abs(a - b) for a, b in zip(pixel[:3], base[:3])) > slack * 3
 
 
-def bands(ink: list[int], threshold: int = 0) -> list[tuple[int, int, int]]:
-    """Return (start, end, length) of empty runs longer than 24 rows/columns."""
+def covered_by(
+    band: tuple[int, int, int],
+    ranges: tuple[tuple[float, float], ...],
+    scale: float,
+) -> bool:
+    """Whether an empty band falls inside ranges that are not layout."""
+    start, end = band[0], band[1]
+    for left, right in ranges:
+        if start >= left * scale - 1 and end <= right * scale + 1:
+            return True
+    return False
+
+
+# Every window is filled with a 16pt inset, so the outermost strip of a window
+# is padding by design. A scroller gutter sits just inside it, and the two
+# together read as one long empty band even though neither is wasted layout
+# (2026-09-16).
+WINDOW_PADDING = 20.0
+
+
+def ignored_columns(rows: list[dict]) -> dict[str, tuple[tuple[float, float], ...]]:
+    """Column ranges in each window that are padding or a scroller gutter.
+
+    The frames are in points and relative to the window, so a band measured in
+    pixels is converted back with the capture scale. Adjacent ranges are
+    merged, because padding next to a gutter is one visual gap.
+    """
+    spans: dict[str, list[tuple[float, float]]] = {}
+    widths: dict[str, float] = {}
+    for row in rows:
+        widths.setdefault(row["window"], float(row.get("windowW") or 0.0))
+        if row["hidden"] or "NSScroller" not in row["kind"]:
+            continue
+        left = row.get("winLeft", 0.0)
+        spans.setdefault(row["window"], []).append((left, left + row["w"]))
+    merged: dict[str, tuple[tuple[float, float], ...]] = {}
+    for window, ranges in spans.items():
+        width = widths.get(window, 0.0)
+        if width > 0:
+            ranges = ranges + [(0.0, WINDOW_PADDING), (width - WINDOW_PADDING, width)]
+        ranges.sort()
+        combined: list[tuple[float, float]] = []
+        for left, right in ranges:
+            if combined and left <= combined[-1][1] + 0.5:
+                combined[-1] = (combined[-1][0], max(combined[-1][1], right))
+            else:
+                combined.append((left, right))
+        merged[window] = tuple(combined)
+    return merged
+
+
+def bands(
+    ink: list[int],
+    threshold: int = 0,
+    min_points: int = 24,
+    scale: float = 1.0,
+) -> list[tuple[int, int, int]]:
+    """Return (start, end, length) of empty runs longer than min_points.
+
+    The threshold is a point size, and a Retina capture stores two pixels per
+    point. Comparing raw pixels made the same 22pt band fail at 2x and pass at
+    1x, so the run length is divided by the capture scale before it is judged
+    (2026-09-16). Reported lengths stay in pixels; only the decision is in
+    points.
+    """
     out: list[tuple[int, int, int]] = []
     start: int | None = None
+    limit = min_points * scale
     for index, value in enumerate(ink):
         empty = value <= threshold
         if empty and start is None:
             start = index
         elif not empty and start is not None:
-            if index - start > 24:
+            if index - start > limit:
                 out.append((start, index - 1, index - start))
             start = None
-    if start is not None and len(ink) - start > 24:
+    if start is not None and len(ink) - start > limit:
         out.append((start, len(ink) - 1, len(ink) - start))
     return out
 
 
-def audit(path: Path) -> dict:
+def audit(
+    path: Path,
+    scale: float = 0.0,
+    ignore_cols: tuple[tuple[float, float], ...] = (),
+) -> dict:
+    """Measure one window image.
+
+    scale is the capture scale (pixels per point). Zero means "work it out
+    from the window size in layout.json", which is what analyze() passes.
+
+    ignore_cols lists column ranges in points that are not layout at all: a
+    scroll view reserves a gutter for its scroller, and the gutter is empty
+    whenever the content fits. Reporting it as wasted space hid the bands that
+    matter (2026-09-16).
+    """
     width, height, rows = read_png(path)
     base = background(rows)
+    if scale <= 0:
+        scale = 1.0
     row_ink: list[int] = []
     col_ink = [0] * width
     total = 0
@@ -234,8 +325,13 @@ def audit(path: Path) -> dict:
         "bottom_margin": (height - 1 - max_y) if max_y >= 0 else None,
         "left_margin": min_x if max_x >= 0 else None,
         "right_margin": (width - 1 - max_x) if max_x >= 0 else None,
-        "empty_row_bands": bands(row_ink),
-        "empty_col_bands": bands(col_ink),
+        "scale": round(scale, 2),
+        "empty_row_bands": bands(row_ink, scale=scale),
+        "empty_col_bands": [
+            band
+            for band in bands(col_ink, scale=scale)
+            if not covered_by(band, ignore_cols, scale)
+        ],
     }
 
 
@@ -275,19 +371,70 @@ def overlaps_in(rows: list[dict]) -> list[dict]:
     return found
 
 
+def spills_in(rows: list[dict]) -> list[dict]:
+    """Children that stick out of their parent's box.
+
+    This is the general form of the collapsed-card bug: a container that
+    reports no height while its content keeps its own size draws the content
+    outside the card, which is what made every window look broken
+    (2026-09-16). Scroll documents and table rows are meant to be larger, so
+    they are skipped.
+    """
+    by_path = {row["path"]: row for row in rows}
+    found: list[dict] = []
+    for row in rows:
+        if row["hidden"] or not row["path"].count("/"):
+            continue
+        parent = by_path.get(row["path"].rsplit("/", 1)[0])
+        if parent is None or is_internal(parent) or is_internal(row):
+            continue
+        if scrolled(parent) or "/NSTableView" in parent["path"]:
+            continue
+        if row["kind"].startswith(CONTROL_CHILDREN) or parent["kind"].startswith("NSButton"):
+            continue
+        left = parent["winLeft"] - row["winLeft"]
+        right = (row["winLeft"] + row["w"]) - (parent["winLeft"] + parent["w"])
+        top = parent["winTop"] - row["winTop"]
+        bottom = (row["winTop"] + row["h"]) - (parent["winTop"] + parent["h"])
+        worst = max(left, right, top, bottom)
+        if worst > 2:
+            found.append({
+                "window": row["window"],
+                "parent": parent["kind"],
+                "child": row["kind"],
+                "out": round(worst, 1),
+                "parentBox": [parent["winLeft"], parent["winTop"], parent["w"], parent["h"]],
+                "childBox": [row["winLeft"], row["winTop"], row["w"], row["h"]],
+            })
+    return found
+
+
 def analyze(directory: Path) -> dict:
     """Measure an audit directory. Raises ValueError when it is unusable."""
     if not directory.is_dir():
         raise ValueError(f"no such audit directory: {directory}")
-    images: dict[str, dict] = {}
-    for png in sorted(directory.glob("*.png")):
-        images[png.stem] = audit(png)
-    if not images:
-        raise ValueError(f"no window images in {directory}")
     layout = directory / "layout.json"
     if not layout.exists():
         raise ValueError(f"layout.json missing in {directory}")
     rows = json.loads(layout.read_text(encoding="utf-8"))["windows"]
+    # Capture scale: a Retina window image is larger than the window's own
+    # point size. Without this the same gap is judged differently on a 1x and
+    # a 2x machine (2026-09-16).
+    point_sizes: dict[str, float] = {}
+    for row in rows:
+        if row.get("windowH"):
+            point_sizes.setdefault(row["window"], float(row["windowH"]))
+    images: dict[str, dict] = {}
+    ignored = ignored_columns(rows)
+    for png in sorted(directory.glob("*.png")):
+        scale = 1.0
+        points = point_sizes.get(png.stem, 0.0)
+        if points > 0:
+            _, height, _ = read_png(png)
+            scale = max(height / points, 0.1)
+        images[png.stem] = audit(png, scale=scale, ignore_cols=ignored.get(png.stem, ()))
+    if not images:
+        raise ValueError(f"no window images in {directory}")
     return {
         "images": images,
         "overflow": [
@@ -297,10 +444,14 @@ def analyze(directory: Path) -> dict:
             and not is_internal(row)
             and not scrolled(row)
         ],
+        # 어떤 카드가 내용을 담고도 납작해지면 안 된다. CardView만 보면 같은
+        # 실수가 다른 컨테이너에서 되풀이돼도 못 잡는다 (2026-09-16).
         "collapsed_cards": [
-            {k: row[k] for k in ("window", "path", "kind", "w", "h")}
+            {k: row[k] for k in ("window", "path", "kind", "w", "h", "card") if k in row}
             for row in rows
-            if not row["hidden"] and row["kind"].endswith("CardView") and row["h"] < 20
+            if not row["hidden"]
+            and row["h"] < 20
+            and (row["kind"].endswith("CardView") or row.get("card"))
         ],
         # A one-line label inside a fixed-width column is clipped on purpose
         # (the table truncates it and the full text is in the tooltip), so the
@@ -311,6 +462,7 @@ def analyze(directory: Path) -> dict:
             if not row["hidden"] and row.get("clipped") and not is_internal(row)
         ],
         "overlaps": overlaps_in(rows),
+        "spills": spills_in(rows),
         "rows": rows,
     }
 
@@ -329,6 +481,10 @@ def main(argv: list[str]) -> int:
     overlaps = result["overlaps"]
     print("overlapping siblings:", len(overlaps))
     for item in overlaps[:12]:
+        print("  ", json.dumps(item, ensure_ascii=False))
+    spills = result["spills"]
+    print("content spilling out of its parent:", len(spills))
+    for item in spills[:12]:
         print("  ", json.dumps(item, ensure_ascii=False))
     return 0
 

@@ -76,6 +76,10 @@ jobs:
       # check at all: a broken card layout shipped because nothing compiled it
       # (2026-09-16).
       - name: Build menu extra
+        env:
+          # The runner has no developer certificate; ad-hoc signing is enough
+          # to run the audit below (2026-09-16).
+          OPENKAKAO_SIGN_IDENTITY: "-"
         run: sh scripts/build-auto-reply-menubar.sh
 
       - name: Menu extra tests

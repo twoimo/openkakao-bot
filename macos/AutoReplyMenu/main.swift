@@ -1021,7 +1021,6 @@ final class PipelineView: NSView {
         let radius = Self.nodeRadius
         // 점과 이름을 세로 가운데에 둔다. 예전에는 높이의 40% 지점에 점을 두어
         // 위쪽에 아무것도 없는 띠가 남았다 (2026-09-16).
-        let labelHeight = Self.nodeLabelHeight
         let contentHeight = Self.contentHeight
         let nodeY = max((bounds.height - contentHeight) / 2 + radius, radius + 2)
         var centers: [CGPoint] = []
@@ -1404,18 +1403,21 @@ final class MenuPanelView: NSView {
     /// 위에서부터의 세로 리듬. 값 하나만 바꾸면 아래가 따라 움직이도록
     /// 조각을 이어 붙여 계산한다. 예전에는 7/36/94/98/158/186이 따로 박혀
     /// 있어 조각 사이 간격이 제각각이었다 (2026-09-16).
-    static let panelTop: CGFloat = 8
+    /// 조각 사이 간격은 모두 같은 값을 쓴다. 예전에는 6/8/10이 섞여 있어
+    /// 눈에 띄게 고르지 않았다 (2026-09-16).
+    static let gap: CGFloat = 8
+    static let panelTop: CGFloat = gap
     static let sideInset: CGFloat = 16
     static let statusPillHeight: CGFloat = 22
-    static let afterStatusGap: CGFloat = 8
-    static let afterPipelineGap: CGFloat = 6
-    static let afterRoomGridGap: CGFloat = 8
+    static let afterStatusGap: CGFloat = gap
+    static let afterPipelineGap: CGFloat = gap
+    static let afterRoomGridGap: CGFloat = gap
     static let tileHeight: CGFloat = 52
-    static let afterTileGap: CGFloat = 8
+    static let afterTileGap: CGFloat = gap
     static let lampHeight: CGFloat = 18
-    static let afterLampGap: CGFloat = 10
+    static let afterLampGap: CGFloat = gap
     static let actionHeight: CGFloat = 28
-    static let bottomInset: CGFloat = 12
+    static let bottomInset: CGFloat = gap
     /// 파이프라인 띠의 위쪽 좌표(패널 위에서부터).
     static let pipelineTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
     /// 방 목록 격자가 시작하는 위쪽 좌표. 파이프라인 띠 바로 아래에 붙는다.
@@ -2253,7 +2255,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let replyModels = (model.reply_model_providers ?? []).map {
             "\($0.id):\($0.models.count)"
         }.joined(separator: ",")
-        return [
+        // 한 배열 리터럴에 열아홉 조각을 넣으면 타입 검사기가 포기한다.
+        // CI 러너에서 실제로 "unable to type-check this expression in
+        // reasonable time"으로 빌드가 멈췄다 (2026-09-16). 조각을 변수로
+        // 나눠 두면 각 줄이 독립적으로 검사된다.
+        let fields: [String] = [
             model.level,
             model.primary_code,
             model.reply_model?.id ?? "",
@@ -2262,18 +2268,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             model.codes.joined(separator: ","),
             model.watermark ?? "",
             String(model.open_jobs),
+        ]
+        let counters: [String] = [
             String(model.sent),
             String(model.skipped),
             String(model.delivery_unknown),
+        ]
+        let body: [String] = [
             model.geeknews_slots.joined(separator: ","),
             stages,
             rooms,
+        ]
+        let tail: [String] = [
             roomsFingerprint(model.available_chats ?? []),
             model.vector_memory?.fingerprint ?? "",
             model.log_summary ?? "",
             logs,
             model.reply_receipts?.fingerprint ?? "",
-        ].joined(separator: "|")
+        ]
+        let all = fields + counters + body + tail
+        return all.joined(separator: "|")
     }
 
     func apply(_ model: MenubarModel, modelToken: Int) {
@@ -3370,6 +3384,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// 감사 모드에서 쓰는 동기 축소. 위 재귀는 다음 런루프를 기다리므로
+    /// 감사가 창을 재기 전에는 끝나지 않아, 빈 상태에서 창 아래에 143pt가
+    /// 그대로 남았다 (2026-09-16).
+    func shrinkModelSettingsWindowNow() {
+        for _ in 0..<4 {
+            guard let window = modelWindow,
+                  let stack = modelSettingsStack,
+                  modelSettingsScroll != nil,
+                  let content = window.contentView,
+                  !modelWindowUserResized else { return }
+            content.layoutSubtreeIfNeeded()
+            stack.layoutSubtreeIfNeeded()
+            let contentHeight = stack.fittingSize.height
+            guard contentHeight > 1 else { return }
+            let desired = contentHeight + 32
+            let current = content.bounds.height
+            guard current - desired > 12 else { return }
+            var frame = window.frame
+            let delta = current - desired
+            frame.size.height -= delta
+            frame.origin.y += delta
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
+        }
+    }
+
     func ensureModelSettingsWindow() {
         if modelWindow != nil {
             return
@@ -4106,7 +4146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 다르다. 둘 다 재야 어느 쪽에 빈 띠가 생기는지 알 수 있다.
         layoutAuditPanels = []
         for expanded in [false, true] {
-            guard let model = loadModel() else { break }
+            // 상태를 읽지 못해도 패널은 사용자가 가장 먼저 보는 화면이다.
+            // 감사는 그 경우까지 재야 한다 (2026-09-16).
+            let model = loadModel() ?? Self.unavailableModel()
             let rooms = Self.inspectableRooms(in: model)
             let extra = MenuPanelView.roomGridExtra(count: rooms.count, expanded: expanded)
             let panel = MenuPanelView(
@@ -4159,8 +4201,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ]) {
             applyVectorReport(report)
         }
+        // 창 크기 조정은 원래 다음 런루프에서 끝난다. 감사는 그 전에 재므로
+        // 여기서 한 번에 맞춘다.
+        shrinkModelSettingsWindowNow()
         for entry in windows {
             guard let window = entry.1, let content = window.contentView else { continue }
+            // 창을 옮기고 크기를 바꾸면 AppKit이 그 프레임을 autosave 이름에
+            // 저장한다. 감사가 운영자의 창 크기를 덮어쓰지 않도록 연결을
+            // 끊는다. 저장된 값 자체는 그대로 남는다 (2026-09-16).
+            window.setFrameAutosaveName("")
             // 창을 화면 밖에 세워 실제로 배치시킨다. 런루프가 돌지 않으면
             // AppKit이 배치를 미루고, 그러면 프레임을 잘못 읽는다.
             window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
@@ -4980,7 +5029,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let toolbar = Chrome.hstack([scopeTitle, scope, roomTitle, room, Chrome.spacer(), status], spacing: 8)
         let toolbarCard = Chrome.card(toolbar, padding: 10)
 
-        let empty = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 3)
+        // 기록을 읽기 전에는 빈 글자다. 보통 라벨이면 15pt를 차지해 창
+        // 가운데에 아무것도 없는 띠가 생긴다 (2026-09-16).
+        let empty = Chrome.statusLabel(size: 12, lines: 3)
         logEmptyLabel = empty
 
         let (scroll, table) = Chrome.table()
@@ -5217,8 +5268,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             logTable?.reloadData()
         }
         restoreLogSelection()
+        // 안내 글자는 기록이 있을 때만 숨긴다. 없을 때는 안내가 곧 내용이라
+        // 자리를 차지해야 한다 (2026-09-16).
         logEmptyLabel?.stringValue = logEmptyMessage()
-        logEmptyLabel?.isHidden = !displayedReceipts.isEmpty
         logTableScroll?.isHidden = receiptRows.isEmpty
         applyLogDetail()
         updateLogStatus()
