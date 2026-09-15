@@ -587,7 +587,10 @@ enum Chrome {
     }
 
     static func summary(_ text: String) -> NSTextField {
-        label(text, size: 15, weight: .semibold, lines: 1)
+        // 창의 머리말은 코어가 만든 문장이라 길이가 가변적이다. 한 줄로
+        // 고정하면 "…건너뜀 4013건"처럼 끝이 잘려 무슨 상태인지 못 읽는다
+        // (2026-09-16).
+        label(text, size: 15, weight: .semibold, lines: 2)
     }
 
     static func roundedButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
@@ -868,9 +871,19 @@ enum LayoutAudit {
                 // 글자가 잘리는지 보려면 실제로 필요한 폭과 가진 폭을 비교한다.
                 let needed = field.attributedStringValue.size().width
                 entry["needW"] = round(needed * 100) / 100
-                if field.maximumNumberOfLines <= 1, !field.stringValue.isEmpty {
+                entry["maxLines"] = field.maximumNumberOfLines
+                if !field.stringValue.isEmpty {
+                    // 여러 줄 라벨도 마지막 줄이 잘릴 수 있다. 줄 수만큼 나눠
+                    // 담을 수 있는지 본다. 예전에는 한 줄짜리만 검사해서
+                    // 머리말이 잘린 채로 통과했다 (2026-09-16).
+                    let lines = CGFloat(max(field.maximumNumberOfLines, 1))
+                    let capacity = frame.width * lines
                     let slack = frame.width - needed
-                    if slack < 0 { entry["clipped"] = round(-slack * 100) / 100 }
+                    if capacity - needed < 0 {
+                        entry["clipped"] = round((needed - capacity) * 100) / 100
+                    } else if slack < 0, field.maximumNumberOfLines <= 1 {
+                        entry["clipped"] = round(-slack * 100) / 100
+                    }
                 }
             }
             if let button = child as? NSButton {
