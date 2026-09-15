@@ -30,6 +30,21 @@
 //! * `context_sync.totals.indexed_messages` counts messages indexed *in that
 //!   sync run*, so it is `0` on an unchanged, fully indexed room. It cannot
 //!   prove that the index is missing.
+//!
+//! What the live room ledger actually contains (checked on 2026-09-15 against
+//! 971 rows): a `sent` row carries `status`, `decision`, `model`, `reply` and
+//! the send clock, and carries **no** `reason`, **no** `fallback`, **no**
+//! `retrieval` block and **no** prompt counts. Judgement fields therefore come
+//! from the generation half and only the outcome and its clock come from the
+//! delivery half, no matter which row is newer.
+//!
+//! Prompt counts are `null` on 834 of those rows, including every `sent` row:
+//! a turn that ends before prompt assembly (a stale-backlog skip, a model that
+//! never answered) records no count at all. `null` is preserved as `None` and
+//! rendered as "프롬프트 미생성"; only a recorded `0` is a drop to zero.
+//!
+//! Ledger stamps are UTC (`2026-09-11T18:27:52.233172+00:00`). Windows show
+//! KST, so the conversion happens here rather than in the drawing layer.
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -106,8 +121,12 @@ impl ModelAttempt {
 #[derive(Debug, Clone)]
 pub struct TurnReceipt {
     pub event_id: String,
+    /// The newest `recorded_at` across both halves; the sort key for a turn.
     pub recorded_at: String,
+    /// `HH:MM` in KST.
     pub clock: String,
+    /// `MM-DD HH:MM` in KST, for lists that span more than one day.
+    pub display_time: String,
     pub chat: String,
     pub log_id: Option<i64>,
     /// `sent` | `deferred` | `scheduled` | `skipped`
@@ -119,8 +138,12 @@ pub struct TurnReceipt {
     pub retrieval_state: RetrievalState,
     pub retrieval_error: Option<String>,
     pub candidates: i64,
-    pub retrieved: i64,
-    pub included: i64,
+    /// Evidence the prompt had before the byte budget. `None` is "not
+    /// recorded", which is not the same as zero.
+    pub retrieved: Option<i64>,
+    /// Evidence that survived into the prompt. `None` is "no prompt was
+    /// assembled", which is not the same as zero.
+    pub included: Option<i64>,
     pub model: String,
     pub attempts: Vec<ModelAttempt>,
     pub fallback_code: String,
@@ -129,8 +152,9 @@ pub struct TurnReceipt {
 }
 
 impl TurnReceipt {
-    /// `검색 성공 · 후보 10 · 입력 8 · 포함 3`. The three numbers come from
+    /// `검색 성공 · 후보 10 · 수집 12 · 포함 8`. The three numbers come from
     /// three different sets and are labelled so they cannot be read as one.
+    /// A count that was never recorded is spelled out instead of drawn as 0.
     pub fn retrieval_text(&self) -> String {
         match self.retrieval_state {
             RetrievalState::Unrecorded => RetrievalState::Unrecorded.text().to_string(),
@@ -144,32 +168,57 @@ impl TurnReceipt {
                     .unwrap_or_else(|| "사유 기록 없음".to_string());
                 format!("{} · {}", RetrievalState::Error.text(), detail)
             }
-            _ => format!(
-                "{} · 후보 {} · 입력 {} · 포함 {}",
-                self.retrieval_state.text(),
-                self.candidates,
-                self.retrieved,
-                self.included
-            ),
+            RetrievalState::Empty => {
+                format!(
+                    "{} · 후보 {}",
+                    RetrievalState::Empty.text(),
+                    self.candidates
+                )
+            }
+            RetrievalState::Ok => {
+                let mut parts = vec![
+                    RetrievalState::Ok.text().to_string(),
+                    format!("후보 {}", self.candidates),
+                ];
+                match (self.retrieved, self.included) {
+                    (Some(retrieved), Some(included)) => {
+                        parts.push(format!("수집 {retrieved}"));
+                        parts.push(format!("포함 {included}"));
+                    }
+                    (Some(retrieved), Option::None) => {
+                        parts.push(format!("수집 {retrieved}"));
+                        parts.push("프롬프트 미생성".to_string());
+                    }
+                    (None, Some(included)) => parts.push(format!("포함 {included}")),
+                    (Option::None, Option::None) => parts.push("프롬프트 미생성".to_string()),
+                }
+                parts.join(" · ")
+            }
         }
     }
 
     /// True when the prompt received less evidence than retrieval collected.
     /// This is the shape that produced the missed-context reply: the ledger has
-    /// candidates but the model never saw them.
+    /// candidates but the model never saw them. A missing count is not a zero
+    /// count, so an unrecorded prompt stage never sets this.
     pub fn evidence_dropped(&self) -> bool {
-        self.retrieval_state == RetrievalState::Ok && self.candidates > 0 && self.included == 0
+        self.retrieval_state == RetrievalState::Ok
+            && self.candidates > 0
+            && self.included == Some(0)
     }
 
     pub fn budget_trimmed(&self) -> bool {
-        self.retrieved > self.included
+        matches!(
+            (self.retrieved, self.included),
+            (Some(retrieved), Some(included)) if retrieved > included
+        )
     }
 
     /// The one-line list entry:
     /// `18:42 · 부자멘토멘티 | 전송 완료 · 질문 응답 | 검색 성공 · 후보 10 … | 답변…`
     pub fn summary(&self) -> String {
         let mut parts = vec![
-            format!("{} · {}", self.clock, self.chat),
+            format!("{} · {}", self.display_time, self.chat),
             format!("{} · {}", self.outcome_text, self.reason_text),
             self.retrieval_text(),
         ];
@@ -217,24 +266,40 @@ impl TurnReceipt {
         if !self.decision.is_empty() {
             lines.push(format!("   판단 · {}", decision_text(&self.decision)));
         }
+        lines.push(format!("   기록 시각 · {} (KST)", self.display_time));
         if self.outcome == "sent" {
             lines.push("   전송은 실제 발송 결과를 확인한 기록입니다.".to_string());
         } else if self.outcome == "deferred" {
-            lines.push("   보내지 않았습니다. 모델 실패가 아니라 보류 결정입니다.".to_string());
+            // Deferred is not only a policy decision: an exhausted model chain
+            // defers too, and the old wording hid that failure.
+            if self.reason_code.starts_with("model_") {
+                lines.push("   모델 호출이 끝내 성공하지 못해 이 턴을 미뤘습니다.".to_string());
+            } else if self.reason_code.is_empty() {
+                lines.push("   사유를 남기지 않고 끝난 턴입니다.".to_string());
+            } else {
+                lines.push("   이번 턴은 답변을 보내지 않은 채 미뤘습니다.".to_string());
+            }
         }
 
         lines.push(String::new());
         lines.push("② 검색과 포함 근거".to_string());
         lines.push(format!("   {}", self.retrieval_text()));
         if self.evidence_dropped() {
-            lines.push(
-                "   검색은 후보를 찾았지만 최종 입력에 하나도 들어가지 않았습니다.".to_string(),
-            );
+            if self.decision == "reply" {
+                lines.push(
+                    "   검색은 후보를 찾았지만 최종 입력에 하나도 들어가지 않았습니다.".to_string(),
+                );
+            } else {
+                lines.push("   답변하지 않은 턴이라 입력이 0건으로 기록되었습니다.".to_string());
+            }
         } else if self.budget_trimmed() {
             lines.push(format!(
-                "   프롬프트 예산 때문에 입력 {}건 중 {}건만 남았습니다.",
-                self.retrieved, self.included
+                "   프롬프트 예산 때문에 수집 {}건 중 {}건만 남았습니다.",
+                self.retrieved.unwrap_or_default(),
+                self.included.unwrap_or_default()
             ));
+        } else if self.retrieval_state == RetrievalState::Ok && self.included.is_none() {
+            lines.push("   근거는 찾았지만 프롬프트를 만들지 않은 채 턴이 끝났습니다.".to_string());
         }
         if self.retrieval_state == RetrievalState::Unrecorded {
             lines.push(
@@ -256,12 +321,10 @@ impl TurnReceipt {
             lines.push("   시도별 기록이 없습니다. 구버전 기록일 수 있습니다.".to_string());
         } else {
             for attempt in &self.attempts {
-                let tail = if attempt.result == "generated" {
-                    format!(" · 입력 {}건", attempt.included.unwrap_or(0))
-                } else if attempt.result == "skipped_precall" {
-                    format!(" · {}", attempt.reason_text())
-                } else {
-                    format!(" · {}", attempt.reason_text())
+                let tail = match (attempt.result.as_str(), attempt.included) {
+                    ("generated", Some(included)) => format!(" · 입력 {included}건"),
+                    ("generated", None) => " · 입력 기록 없음".to_string(),
+                    _ => format!(" · {}", attempt.reason_text()),
                 };
                 lines.push(format!(
                     "   {}. {} — {}{}",
@@ -280,6 +343,7 @@ impl TurnReceipt {
             "event_id": self.event_id,
             "recorded_at": self.recorded_at,
             "clock": self.clock,
+            "display_time": self.display_time,
             "chat": self.chat,
             "log_id": self.log_id,
             "outcome": self.outcome,
@@ -318,30 +382,56 @@ impl TurnReceipt {
 /// Human words for a ledger `reason` code. Unknown codes keep their raw form so
 /// a new decision reason shows up instead of silently reading as a failure.
 pub fn reason_text(code: &str) -> String {
+    if let Some((head, detail)) = split_explained_reason(code) {
+        if let Some(text) = known_reason(head) {
+            if detail.is_empty() {
+                return text.to_string();
+            }
+            return format!("{} (설명 기록 있음)", text);
+        }
+    }
+    match known_reason(code) {
+        Some(text) => text.to_string(),
+        None => format!("기록된 사유({code})"),
+    }
+}
+
+/// Writers append a free-text explanation after the code, separated by either a
+/// colon or a semicolon: social_reply: 티보 주문 소식에 대한 확인. Only the head
+/// is a code, so the tail is trimmed off before the lookup.
+fn split_explained_reason(code: &str) -> Option<(&str, &str)> {
+    let index = code.find(|ch: char| ch == ':' || ch == ';')?;
+    let (head, tail) = code.split_at(index);
+    Some((head.trim(), tail.get(1..).unwrap_or_default().trim()))
+}
+
+/// The mapped Korean phrase for a known reason code, or none when this build
+/// has never heard of the code.
+fn known_reason(code: &str) -> Option<&'static str> {
     match code {
-        "" => "사유 기록 없음".to_string(),
-        "direct_question" => "질문 응답".to_string(),
-        "social_reply" => "대화 참여".to_string(),
-        "reaction_reply" => "반응 답장".to_string(),
-        "useful_information" => "유용한 정보 공유".to_string(),
-        "geeknews_rss" => "긱뉴스 소식".to_string(),
-        "already_commented" => "이미 답변함".to_string(),
-        "stale_backlog" => "오래된 메시지".to_string(),
-        "model_temporarily_unavailable" => "모델 일시 사용 불가".to_string(),
-        "model_authentication_unavailable" => "모델 인증 실패".to_string(),
-        "model_usage_limited" => "모델 사용 한도 초과".to_string(),
-        "media_unavailable_clarification" => "사진 확인 불가".to_string(),
-        "warming" => "재정렬 준비 중".to_string(),
-        "missing_model" => "재정렬 모델 없음".to_string(),
-        "question_unknown" => "질문 판단 불가".to_string(),
-        "photo_passthrough" => "사진 그대로 전달".to_string(),
-        "lenient_policy" => "완화된 기준 적용".to_string(),
-        "all_policy_rejected" => "모든 후보가 기준 미달".to_string(),
-        "same_ending_hold" => "같은 말투라 보류".to_string(),
-        "sidecar_crash" => "재정렬 도구 중단".to_string(),
-        "timeout" => "재정렬 시간 초과".to_string(),
-        "delivery_unknown" => "전송 결과 미확인".to_string(),
-        other => format!("기록된 사유({other})"),
+        "" => Some("사유 기록 없음"),
+        "direct_question" => Some("질문 응답"),
+        "social_reply" => Some("대화 참여"),
+        "reaction_reply" => Some("반응 답장"),
+        "useful_information" => Some("유용한 정보 공유"),
+        "geeknews_rss" => Some("긱뉴스 소식"),
+        "already_commented" => Some("이미 답변함"),
+        "stale_backlog" => Some("오래된 메시지"),
+        "model_temporarily_unavailable" => Some("모델 일시 사용 불가"),
+        "model_authentication_unavailable" => Some("모델 인증 실패"),
+        "model_usage_limited" => Some("모델 사용 한도 초과"),
+        "media_unavailable_clarification" => Some("사진 확인 불가"),
+        "warming" => Some("재정렬 준비 중"),
+        "missing_model" => Some("재정렬 모델 없음"),
+        "question_unknown" => Some("질문 판단 불가"),
+        "photo_passthrough" => Some("사진 그대로 전달"),
+        "lenient_policy" => Some("완화된 기준 적용"),
+        "all_policy_rejected" => Some("모든 후보가 기준 미달"),
+        "same_ending_hold" => Some("같은 말투라 보류"),
+        "sidecar_crash" => Some("재정렬 도구 중단"),
+        "timeout" => Some("재정렬 시간 초과"),
+        "delivery_unknown" => Some("전송 결과 미확인"),
+        _ => Option::None,
     }
 }
 
@@ -399,19 +489,121 @@ fn as_string(value: Option<&Value>) -> String {
     }
 }
 
-/// `HH:MM` from an ISO-8601 UTC stamp, so a room's turns can be compared
-/// without dragging a date parser into the display layer.
-pub fn clock_of(recorded_at: &str) -> String {
-    let time = match recorded_at.split_once('T') {
-        Some((_, rest)) => rest,
-        None => return recorded_at.to_string(),
-    };
-    let head: String = time.chars().take(5).collect();
-    if head.len() == 5 && head.chars().nth(2) == Some(':') {
-        head
-    } else {
-        recorded_at.to_string()
+const KST_OFFSET_MINUTES: i64 = 9 * 60;
+
+/// A ledger timestamp taken apart far enough to reorder it and to shift it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    offset_minutes: i64,
+}
+
+fn parse_stamp(text: &str) -> Option<Stamp> {
+    let text = text.trim();
+    let (date, rest) = text.split_once('T')?;
+    let mut fields = date.split('-');
+    let year: i64 = fields.next()?.parse().ok()?;
+    let month: i64 = fields.next()?.parse().ok()?;
+    let day: i64 = fields.next()?.parse().ok()?;
+    if fields.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
     }
+    if rest.as_bytes().get(2) != Some(&b':') {
+        return None;
+    }
+    let hour: i64 = rest.get(0..2)?.parse().ok()?;
+    let minute: i64 = rest.get(3..5)?.parse().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(Stamp {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        offset_minutes: offset_minutes(rest)?,
+    })
+}
+
+fn offset_minutes(rest: &str) -> Option<i64> {
+    if rest.ends_with('Z') {
+        return Some(0);
+    }
+    let tail = rest.get(rest.len().checked_sub(6)?..)?;
+    let sign = match tail.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    if tail.as_bytes().get(3) != Some(&b':') {
+        return None;
+    }
+    let hours: i64 = tail.get(1..3)?.parse().ok()?;
+    let minutes: i64 = tail.get(4..6)?.parse().ok()?;
+    Some(sign * (hours * 60 + minutes))
+}
+
+/// Minutes since 1970-01-01T00:00Z, so turns can be ordered without a date
+/// library and without relying on the writer's textual format.
+fn epoch_minutes(stamp: Stamp) -> i64 {
+    days_from_civil(stamp.year, stamp.month, stamp.day) * 1440 + stamp.hour * 60 + stamp.minute
+        - stamp.offset_minutes
+}
+
+/// Howard Hinnant's civil-date algorithm, valid for the proleptic Gregorian
+/// calendar the ledger's ISO stamps use.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_shifted = (month + 9) % 12;
+    let day_of_year = (153 * month_shifted + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146097 + day_of_era - 719468
+}
+
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let days = days + 719468;
+    let era = if days >= 0 { days } else { days - 146096 } / 146097;
+    let day_of_era = days - era * 146097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_shifted = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_shifted + 2) / 5 + 1;
+    let month = if month_shifted < 10 {
+        month_shifted + 3
+    } else {
+        month_shifted - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// The ledger's UTC stamp as KST, which is the clock every window shows.
+/// Returns `(MM-DD HH:MM, HH:MM)`, or the raw text twice when it cannot be read.
+pub fn kst_display(recorded_at: &str) -> (String, String) {
+    let Some(stamp) = parse_stamp(recorded_at) else {
+        return (recorded_at.to_string(), recorded_at.to_string());
+    };
+    let total = epoch_minutes(stamp) + KST_OFFSET_MINUTES;
+    let minutes = total.rem_euclid(1440);
+    let clock = format!("{:02}:{:02}", minutes / 60, minutes % 60);
+    let (_, month, day) = civil_from_days(total.div_euclid(1440));
+    (format!("{month:02}-{day:02} {clock}"), clock)
+}
+
+/// Sort key for a turn. An unreadable stamp sorts oldest instead of splitting
+/// the list, and ties keep ledger order because the sort is stable.
+fn observed_key(recorded_at: &str) -> i64 {
+    parse_stamp(recorded_at)
+        .map(epoch_minutes)
+        .unwrap_or(i64::MIN)
 }
 
 fn parse_attempts(value: Option<&Value>) -> Vec<ModelAttempt> {
@@ -420,7 +612,9 @@ fn parse_attempts(value: Option<&Value>) -> Vec<ModelAttempt> {
         return attempts;
     };
     for (index, item) in items.iter().enumerate() {
-        let Value::Object(fields) = item else { continue };
+        let Value::Object(fields) = item else {
+            continue;
+        };
         let order = fields
             .get("order")
             .map(|raw| as_i64(Some(raw)))
@@ -456,26 +650,77 @@ fn record_event_id(record: &Value) -> String {
     as_string(record.get("event_id"))
 }
 
+/// A count that was recorded, or `None` when the field is absent or `null`.
+/// An array is not a count: the top-level `evidence_ids` is a list of ids, so
+/// reading it as a number would invent a zero.
+fn number_of(value: Option<&Value>) -> Option<i64> {
+    match value {
+        Some(Value::Number(number)) => Some(
+            number
+                .as_i64()
+                .or_else(|| number.as_f64().map(|float| float as i64))
+                .unwrap_or_default(),
+        ),
+        Some(Value::Bool(true)) => Some(1),
+        Some(Value::Bool(false)) => Some(0),
+        _ => None,
+    }
+}
+
+/// The retrieval block is the only place that holds all three counts, so it is
+/// read first; the top-level copies are consulted only when it is absent.
+fn count_of(block: Option<&Value>, records: &[Option<&Value>], key: &str) -> Option<i64> {
+    if let Some(block) = block {
+        if let Some(count) = number_of(block.get(key)) {
+            return Some(count);
+        }
+    }
+    records
+        .iter()
+        .flatten()
+        .find_map(|record| number_of(record.get(key)))
+}
+
 fn merge_group(records: &[&Value]) -> Option<TurnReceipt> {
+    // Judgement lives in the generation half, outcome in the delivery half.
+    // A deferred row means the turn had not decided yet, so it is only used
+    // when the event never reached a decision.
     let generation = records
         .iter()
         .rev()
-        .find(|record| record_kind(record) == "generation")
-        .copied();
+        .copied()
+        .filter(|record| record_kind(record) == "generation")
+        .find(|record| as_string(record.get("status")) != "deferred")
+        .or_else(|| {
+            records
+                .iter()
+                .rev()
+                .copied()
+                .find(|record| record_kind(record) == "generation")
+        });
     let delivery = records
         .iter()
         .rev()
-        .find(|record| record_kind(record) == "delivery")
-        .copied();
-    let latest = delivery.or(generation)?;
+        .copied()
+        .find(|record| record_kind(record) == "delivery");
 
-    let event_id = record_event_id(latest);
-    // The delivery half wins for outcome fields, because it is the later fact.
-    // Everything the delivery half does not carry falls back to generation.
-    let outcome = as_string(latest.get("status"));
-    let retrieval_block = generation
-        .and_then(|record| record.get("retrieval"))
-        .filter(|value| value.is_object());
+    let outcome_source = delivery.or(generation)?;
+    let decision_source = generation.or(delivery)?;
+    let halves = [generation, delivery];
+
+    let event_id = record_event_id(outcome_source);
+    let outcome = as_string(outcome_source.get("status"));
+    let recorded_at = halves
+        .iter()
+        .flatten()
+        .map(|record| as_string(record.get("recorded_at")))
+        .max_by_key(|text| observed_key(text))
+        .unwrap_or_default();
+    let (display_time, clock) = kst_display(&recorded_at);
+    let retrieval_block = halves
+        .iter()
+        .flatten()
+        .find_map(|record| record.get("retrieval").filter(|value| value.is_object()));
 
     let attempted = retrieval_block
         .and_then(|block| block.get("attempted"))
@@ -485,29 +730,18 @@ fn merge_group(records: &[&Value]) -> Option<TurnReceipt> {
         .and_then(Value::as_str)
         .filter(|text| !text.is_empty())
         .map(str::to_string);
-    let index_ready = generation
-        .and_then(|record| record.get("index_readiness"))
+    let index_ready = halves
+        .iter()
+        .flatten()
+        .find_map(|record| record.get("index_readiness"))
         .and_then(|value| value.get("ready"))
         .and_then(Value::as_bool);
 
     let candidates = retrieval_block
-        .map(|block| as_i64(block.get("evidence_ids")))
-        .unwrap_or_else(|| {
-            delivery
-                .and_then(|record| record.get("retrieval"))
-                .map(|block| as_i64(block.get("evidence_ids")))
-                .unwrap_or_default()
-        });
-    let retrieved = as_i64(latest.get("retrieved_evidence_ids")).max(
-        generation
-            .map(|record| as_i64(record.get("retrieved_evidence_ids")))
-            .unwrap_or_default(),
-    );
-    let included = as_i64(latest.get("prompt_evidence_ids")).max(
-        generation
-            .map(|record| as_i64(record.get("prompt_evidence_ids")))
-            .unwrap_or_default(),
-    );
+        .and_then(|block| number_of(block.get("evidence_ids")))
+        .unwrap_or_default();
+    let retrieved = count_of(retrieval_block, &halves, "retrieved_evidence_ids");
+    let included = count_of(retrieval_block, &halves, "prompt_evidence_ids");
 
     let retrieval_state = if index_ready == Some(false) {
         RetrievalState::IndexNotReady
@@ -526,11 +760,11 @@ fn merge_group(records: &[&Value]) -> Option<TurnReceipt> {
         }
     };
 
-    let reason_code = as_string(latest.get("reason"));
-    let attempts = parse_attempts(latest.get("model_attempts"))
+    let reason_code = as_string(decision_source.get("reason"));
+    let attempts = parse_attempts(decision_source.get("model_attempts"))
         .into_iter()
         .chain(parse_attempts(
-            generation.and_then(|record| record.get("model_attempts")),
+            Some(outcome_source).and_then(|record| record.get("model_attempts")),
         ))
         .collect::<Vec<_>>();
     let mut deduped: BTreeMap<usize, ModelAttempt> = BTreeMap::new();
@@ -539,20 +773,44 @@ fn merge_group(records: &[&Value]) -> Option<TurnReceipt> {
     }
     let attempts: Vec<ModelAttempt> = deduped.into_values().collect();
 
-    let recorded_at = as_string(latest.get("recorded_at"));
+    let decision = as_string(decision_source.get("decision"));
+    // The model that answered this turn: a sent row records the model that
+    // produced the delivered reply, so it wins when it names one.
+    let model = {
+        let delivered = as_string(outcome_source.get("model"));
+        if delivered.trim().is_empty() {
+            as_string(decision_source.get("model"))
+        } else {
+            delivered
+        }
+    };
+    let reply = {
+        let decided = as_string(decision_source.get("reply"));
+        if decided.trim().is_empty() {
+            as_string(outcome_source.get("reply"))
+        } else {
+            decided
+        }
+    };
+    let dropped = retrieval_state == RetrievalState::Ok && candidates > 0 && included == Some(0);
     let needs_attention = retrieval_state == RetrievalState::Error
         || (retrieval_state == RetrievalState::IndexNotReady)
+        || (dropped && decision == "reply")
         || (reason_code.starts_with("model_") && outcome != "sent");
 
     Some(TurnReceipt {
         event_id,
-        clock: clock_of(&recorded_at),
+        clock,
+        display_time,
         recorded_at,
-        chat: as_string(latest.get("chat")),
-        log_id: latest.get("log_id").and_then(Value::as_i64),
+        chat: as_string(outcome_source.get("chat")),
+        log_id: outcome_source
+            .get("log_id")
+            .and_then(Value::as_i64)
+            .or_else(|| decision_source.get("log_id").and_then(Value::as_i64)),
         outcome_text: outcome_text(&outcome),
         outcome,
-        decision: as_string(latest.get("decision")),
+        decision,
         reason_text: reason_text(&reason_code),
         reason_code,
         retrieval_state,
@@ -560,16 +818,20 @@ fn merge_group(records: &[&Value]) -> Option<TurnReceipt> {
         candidates,
         retrieved,
         included,
-        model: as_string(latest.get("model")),
+        model,
         attempts,
-        fallback_code: as_string(latest.get("fallback")),
-        preview: as_string(latest.get("reply")),
+        fallback_code: as_string(decision_source.get("fallback")),
+        preview: reply,
         needs_attention,
     })
 }
 
 /// Join each event's generation and delivery records, then describe the newest
 /// `limit` turns oldest-last so the window can append in reading order.
+///
+/// Turns are ordered by the newest stamp either half carries, not by where the
+/// event first appears: a turn that was deferred, retried and then sent is
+/// observed last even though its first record sits far earlier in the file.
 pub fn build_receipts(records: &[Value], limit: usize) -> Vec<TurnReceipt> {
     // Insertion order is preserved so recency ties keep ledger order.
     let mut order: Vec<String> = Vec::new();
@@ -592,6 +854,7 @@ pub fn build_receipts(records: &[Value], limit: usize) -> Vec<TurnReceipt> {
         .filter_map(|event_id| groups.get(event_id))
         .filter_map(|group| merge_group(group))
         .collect();
+    receipts.sort_by_key(|receipt| observed_key(&receipt.recorded_at));
     if limit > 0 && receipts.len() > limit {
         receipts.drain(..receipts.len() - limit);
     }
@@ -684,7 +947,7 @@ mod tests {
         // The delivery half carries no retrieval block; the generation half
         // must still supply the numbers.
         assert_eq!(receipt.candidates, 16);
-        assert_eq!(receipt.included, 12);
+        assert_eq!(receipt.included, Option::Some(12));
         assert_eq!(receipt.retrieval_state, RetrievalState::Ok);
         assert!(receipt.budget_trimmed());
     }
@@ -719,10 +982,7 @@ mod tests {
             10,
         );
         assert_eq!(receipts[0].retrieval_state, RetrievalState::Empty);
-        assert_eq!(
-            receipts[0].retrieval_text(),
-            "정상 0건 · 후보 0 · 입력 0 · 포함 0"
-        );
+        assert_eq!(receipts[0].retrieval_text(), "정상 0건 · 후보 0");
     }
 
     #[test]
@@ -739,7 +999,10 @@ mod tests {
             10,
         );
         assert_eq!(receipts[0].retrieval_state, RetrievalState::Error);
-        assert_eq!(receipts[0].retrieval_text(), "검색 오류 · 검색 명령 실행 실패");
+        assert_eq!(
+            receipts[0].retrieval_text(),
+            "검색 오류 · 검색 명령 실행 실패"
+        );
         assert!(receipts[0].needs_attention);
     }
 
@@ -852,7 +1115,7 @@ mod tests {
             10,
         );
         let text = receipts[0].retrieval_text();
-        assert_eq!(text, "검색 성공 · 후보 16 · 입력 16 · 포함 12");
+        assert_eq!(text, "검색 성공 · 후보 16 · 수집 16 · 포함 12");
     }
 
     #[test]
@@ -869,9 +1132,22 @@ mod tests {
     }
 
     #[test]
-    fn clock_uses_the_time_part_of_an_iso_stamp() {
-        assert_eq!(clock_of("2026-09-15T09:42:11Z"), "09:42");
-        assert_eq!(clock_of("not-a-stamp"), "not-a-stamp");
+    fn a_ledger_stamp_is_shown_in_kst() {
+        // 09:42 UTC is 18:42 the same day in KST.
+        assert_eq!(
+            kst_display("2026-09-15T09:42:11Z"),
+            ("09-15 18:42".to_string(), "18:42".to_string())
+        );
+        // The live ledger writes microsecond precision with an explicit offset.
+        assert_eq!(
+            kst_display("2026-09-11T18:27:52.233172+00:00"),
+            ("09-12 03:27".to_string(), "03:27".to_string())
+        );
+        // An unreadable stamp is shown as it was written, not as midnight.
+        assert_eq!(
+            kst_display("not-a-stamp"),
+            ("not-a-stamp".to_string(), "not-a-stamp".to_string())
+        );
     }
 
     #[test]
@@ -879,5 +1155,242 @@ mod tests {
         let text = "{\"event_id\": \"a\"}\nnot json\n\n{\"event_id\": \"b\"}\n";
         let records = parse_ledger(text);
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn sent_row_inherits_the_judgement_of_its_generation_row() {
+        // Every live sent row looks like this: no reason, no model, no counts.
+        let sent = json!({
+            "recorded_at": "2026-09-15T09:42:31Z",
+            "event_id": "evt-12",
+            "chat": "부자멘토멘티",
+            "log_id": 39100,
+            "status": "sent",
+            "decision": "reply",
+            "model": "provider/head",
+            "reply": "네, 맞아요.",
+        });
+        let receipts = build_receipts(&[generation("evt-12", json!({})), sent], 10);
+        let receipt = &receipts[0];
+        assert_eq!(receipt.outcome, "sent");
+        assert_eq!(receipt.reason_code, "direct_question");
+        assert_eq!(receipt.reason_text, "질문 응답");
+        assert_eq!(receipt.decision, "reply");
+        assert_eq!(receipt.model, "provider/head");
+        assert_eq!(receipt.display_time, "09-15 18:42");
+        assert_eq!(receipt.clock, "18:42");
+        assert!(receipt
+            .detail_lines()
+            .iter()
+            .any(|line| line.contains("기록 시각 · 09-15 18:42 (KST)")));
+    }
+
+    #[test]
+    fn null_prompt_count_reads_as_not_generated() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-13",
+                json!({
+                    "retrieval": {
+                        "attempted": true,
+                        "error": null,
+                        "evidence_ids": 12,
+                        "retrieved_evidence_ids": 19,
+                        "prompt_evidence_ids": null
+                    }
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.included, Option::None);
+        assert_eq!(receipt.retrieved, Option::Some(19));
+        assert_eq!(
+            receipt.retrieval_text(),
+            "검색 성공 · 후보 12 · 수집 19 · 프롬프트 미생성"
+        );
+        assert!(!receipt.evidence_dropped());
+        assert!(!receipt.needs_attention);
+        let detail = receipt.detail_lines().join("\n");
+        assert!(detail.contains("프롬프트를 만들지 않은 채"));
+        assert!(!detail.contains("예산 때문에"));
+    }
+
+    #[test]
+    fn the_retrieval_block_wins_over_null_top_level_copies() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-19",
+                json!({
+                    "retrieved_evidence_ids": null,
+                    "prompt_evidence_ids": null,
+                    "retrieval": {
+                        "attempted": true,
+                        "error": null,
+                        "evidence_ids": 12,
+                        "retrieved_evidence_ids": 19,
+                        "prompt_evidence_ids": 18
+                    }
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(
+            receipt.retrieval_text(),
+            "검색 성공 · 후보 12 · 수집 19 · 포함 18"
+        );
+        assert!(receipt.budget_trimmed());
+    }
+
+    #[test]
+    fn a_top_level_id_array_is_not_a_candidate_count() {
+        // The top-level evidence_ids is a list of ids, never a number.
+        let receipts = build_receipts(
+            &[generation("evt-18", json!({"evidence_ids": [11, 12, 13]}))],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.retrieval_state, RetrievalState::Unrecorded);
+        assert_eq!(receipt.candidates, 0);
+        assert_eq!(receipt.retrieval_text(), "검색 기록 없음");
+        assert!(!receipt.evidence_dropped());
+    }
+
+    #[test]
+    fn a_skipped_turn_records_zero_input_without_raising_attention() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-14",
+                json!({
+                    "status": "skipped",
+                    "decision": "skip",
+                    "reason": "already_commented",
+                    "reply": "",
+                    "retrieval": {"attempted": true, "error": null, "evidence_ids": 3},
+                    "retrieved_evidence_ids": 3,
+                    "prompt_evidence_ids": 0
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.outcome, "skipped");
+        assert!(receipt.evidence_dropped());
+        assert!(!receipt.needs_attention);
+        assert!(receipt
+            .detail_lines()
+            .iter()
+            .any(|line| line.contains("답변하지 않은 턴이라 입력이 0건")));
+    }
+
+    #[test]
+    fn limit_keeps_the_turn_that_was_observed_last() {
+        let records = vec![
+            generation(
+                "evt-a",
+                json!({
+                    "recorded_at": "2026-09-15T09:00:00Z",
+                    "status": "deferred",
+                    "reason": "model_temporarily_unavailable",
+                    "reply": ""
+                }),
+            ),
+            generation(
+                "evt-b",
+                json!({"recorded_at": "2026-09-15T09:30:00Z", "reply": "B 답변"}),
+            ),
+            generation(
+                "evt-a",
+                json!({
+                    "recorded_at": "2026-09-15T10:00:00Z",
+                    "reply": "A 답변"
+                }),
+            ),
+            json!({
+                "recorded_at": "2026-09-15T10:00:30Z",
+                "event_id": "evt-a",
+                "chat": "부자멘토멘티",
+                "log_id": 39100,
+                "status": "sent",
+                "decision": "reply",
+                "reply": "A 답변"
+            }),
+        ];
+        let receipts = build_receipts(&records, 1);
+        assert_eq!(receipts.len(), 1);
+        let receipt = &receipts[0];
+        assert_eq!(receipt.event_id, "evt-a");
+        assert_eq!(receipt.outcome, "sent");
+        assert_eq!(receipt.reason_text, "질문 응답");
+        assert_eq!(receipt.preview, "A 답변");
+    }
+
+    #[test]
+    fn deferred_after_a_model_failure_says_so() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-15",
+                json!({
+                    "status": "deferred",
+                    "reason": "model_temporarily_unavailable",
+                    "reply": ""
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert!(receipt.needs_attention);
+        let detail = receipt.detail_lines().join("\n");
+        assert!(detail.contains("모델 호출이 끝내 성공하지 못해"));
+        assert!(!detail.contains("보내지 않은 채 미뤘습니다"));
+    }
+
+    #[test]
+    fn deferred_without_a_reason_is_not_given_one() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-16",
+                json!({"status": "deferred", "reason": "", "reply": ""}),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.reason_text, "사유 기록 없음");
+        assert!(!receipt.needs_attention);
+        assert!(receipt
+            .detail_lines()
+            .iter()
+            .any(|line| line.contains("사유를 남기지 않고 끝난 턴")));
+    }
+
+    #[test]
+    fn a_reason_with_a_trailing_explanation_keeps_its_code_label() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-17",
+                json!({"reason": "social_reply: 티보 주문 소식에 대한 짧은 확인"}),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.reason_text, "대화 참여 (설명 기록 있음)");
+        assert_eq!(
+            receipt.reason_code,
+            "social_reply: 티보 주문 소식에 대한 짧은 확인"
+        );
+    }
+
+    #[test]
+    fn unknown_reason_codes_stay_visible() {
+        assert_eq!(
+            reason_text("brand_new_reason"),
+            "기록된 사유(brand_new_reason)"
+        );
+        assert_eq!(
+            reason_text("brand_new_reason: 왜 그런지"),
+            "기록된 사유(brand_new_reason: 왜 그런지)"
+        );
+        assert_eq!(reason_text("social_reply:"), "대화 참여");
     }
 }
