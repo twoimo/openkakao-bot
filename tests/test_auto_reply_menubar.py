@@ -3293,6 +3293,65 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("refreshKnowledgeGraph", source)
         self.assertIn("selectVectorRow(forKnowledgeNode:", source)
 
+    def test_swift_cards_grow_with_their_content(self):
+        """A card must take its height from its content.
+
+        The cards used to be NSBox(.custom) inside a vertical stack. NSBox
+        reports its own (zero) intrinsic height there instead of the content's,
+        so every card collapsed to 0pt: the border and background vanished and
+        the content spilled out of the card, which is what made the windows
+        look broken. The layout audit measured the collapsed height, so this
+        guards the fix (2026-09-16).
+        """
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("final class CardView: NSView", source)
+        self.assertIn("static func card(_ child: NSView, padding: CGFloat = 12) -> CardView", source)
+        card_start = source.find("final class CardView: NSView")
+        card_body = source[card_start : card_start + 2600]
+        # The content is pinned on all four sides, so the card height follows it.
+        self.assertIn("content.topAnchor.constraint(equalTo: topAnchor, constant: padding)", card_body)
+        self.assertIn("content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding)", card_body)
+        # NSBox would collapse again if it came back.
+        self.assertNotIn("box.contentView = container", source)
+
+    def test_swift_status_labels_do_not_hold_empty_space(self):
+        """An empty status line must not reserve a row.
+
+        The model window kept a fixed empty row for its notification field, so
+        the window ended with 142pt of dead space below the last card. The
+        labels now hide themselves while empty (2026-09-16).
+        """
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("final class AutoHidingLabel: NSTextField", source)
+        self.assertIn("static func statusLabel(size: CGFloat = 12, lines: Int = 2) -> AutoHidingLabel", source)
+        self.assertIn("let status = Chrome.statusLabel()", source)
+
+    def test_swift_model_window_shrinks_to_its_content(self):
+        """The model window must not keep a dead band under its last card."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("func shrinkModelSettingsWindow(attempt: Int = 0)", source)
+        # A window the operator resized by hand is left alone.
+        self.assertIn("modelWindowUserResized", source)
+        self.assertIn("func windowDidEndLiveResize(_ notification: Notification)", source)
+
+    def test_swift_pipeline_dots_are_vertically_centered(self):
+        """The pipeline drew its dots at 40% height and left a top band."""
+        source = SWIFT.read_text(encoding="utf-8")
+        pipeline_start = source.find("final class PipelineView: NSView")
+        pipeline_body = source[pipeline_start : pipeline_start + 2000]
+        self.assertNotIn("bounds.height * 0.40", pipeline_body)
+        self.assertIn("let contentHeight = radius * 2 + 5 + labelHeight", pipeline_body)
+
+    def test_swift_has_a_layout_audit_mode(self):
+        """The windows cannot be eyeballed from CI, so the app can dump the
+        geometry and a PNG of every window instead."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("case \"--layout-audit\": config.layoutAudit = take()", source)
+        self.assertIn("func runLayoutAudit(_ outputDir: String) -> String", source)
+        self.assertIn("enum LayoutAudit", source)
+        # The audit has to run after the run loop laid the views out.
+        self.assertIn("DispatchQueue.main.async { [weak self] in", source)
+
     def test_menubar_exposes_the_knowledge_graph_action(self):
         """The action has to be answered before the frozen vector dispatch."""
         source = MENUBAR.read_text(encoding="utf-8")

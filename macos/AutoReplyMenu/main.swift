@@ -449,6 +449,8 @@ struct Config {
     var rooms: [String] = []
     var bin: String = ""
     var interval: TimeInterval = 2.0
+    /// 비어 있지 않으면 창을 그리지 않고 레이아웃 감사만 하고 끝난다.
+    var layoutAudit: String = ""
 }
 
 enum Palette {
@@ -567,6 +569,21 @@ enum Chrome {
 
     static func hint(_ text: String, size: CGFloat = 11) -> NSTextField {
         label(text, size: size, color: .secondaryLabelColor)
+    }
+
+    /// 값이 비면 스스로 자리를 비우는 상태 줄. 스택에 빈 줄이 남아 창 아래에
+    /// 이유 없는 여백이 생기는 것을 막는다 (2026-09-16).
+    static func statusLabel(size: CGFloat = 12, lines: Int = 2) -> AutoHidingLabel {
+        let field = AutoHidingLabel(labelWithString: "")
+        field.font = NSFont.systemFont(ofSize: size)
+        field.textColor = .secondaryLabelColor
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.maximumNumberOfLines = lines
+        field.cell?.wraps = true
+        field.lineBreakMode = .byWordWrapping
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.isHidden = true
+        return field
     }
 
     static func summary(_ text: String) -> NSTextField {
@@ -689,26 +706,8 @@ enum Chrome {
         return view
     }
 
-    static func card(_ child: NSView, padding: CGFloat = 12) -> NSBox {
-        let box = NSBox()
-        box.boxType = .custom
-        box.translatesAutoresizingMaskIntoConstraints = false
-        box.cornerRadius = 8
-        box.borderWidth = 1
-        box.borderColor = NSColor.separatorColor.withAlphaComponent(0.25)
-        box.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45)
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        box.contentView = container
-        container.addSubview(child)
-        child.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            child.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
-            child.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
-            child.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            child.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
-        ])
-        return box
+    static func card(_ child: NSView, padding: CGFloat = 12) -> CardView {
+        CardView(content: child, padding: padding)
     }
 
     /// 내용이 창보다 길어질 수 있는 창을 스크롤 가능하게 감싼다. 폴백 모델을
@@ -751,6 +750,181 @@ final class FlippedContainerView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// 빈 글자면 스스로 숨는 라벨. 스택 안에서 빈 줄이 자리를 차지해 창 아래에
+/// 쓸모 없는 여백을 만드는 것을 막는다.
+final class AutoHidingLabel: NSTextField {
+    override var stringValue: String {
+        didSet { updateVisibility() }
+    }
+
+    override var attributedStringValue: NSAttributedString {
+        didSet { updateVisibility() }
+    }
+
+    private func updateVisibility() {
+        let empty = stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isHidden != empty {
+            isHidden = empty
+            superview?.needsLayout = true
+        }
+    }
+}
+
+/// 카드 한 장. 내용을 padding만큼 안쪽에 두고, 카드 자신은 내용 높이에 맞춰
+/// 늘어난다.
+///
+/// 예전에는 NSBox(.custom)를 썼는데, 세로 스택 안에서 NSBox는 내용이 아니라
+/// 자기 intrinsic 높이(0)를 주장해 카드가 납작하게 붕괴했다. 그러면 배경과
+/// 테두리가 안 보이고, 내용이 카드 밖으로 흘러넘쳐 창마다 위아래 간격이
+/// 들쭉날쭉해진다 (2026-09-16).
+final class CardView: NSView {
+    let padding: CGFloat
+    private let content: NSView
+
+    init(content: NSView, padding: CGFloat) {
+        self.content = content
+        self.padding = padding
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.borderWidth = 1
+        applyColors()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: padding),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func applyColors() {
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+}
+
+/// 레이아웃 감사: 창 안의 모든 뷰를 돌며 프레임과 빈 여백을 수치로 남긴다.
+/// 창을 눈으로 볼 수 없는 환경에서 "불필요한 간격"을 찾기 위한 도구다.
+enum LayoutAudit {
+    static let visibleTextLimit = 400
+
+    static func collect(
+        from root: NSView,
+        window: String,
+        path: String,
+        windowSize: NSSize,
+        into rows: inout [[String: Any]]
+    ) {
+        for (index, child) in root.subviews.enumerated() {
+            let frame = child.frame
+            let name = child.className
+            var entry: [String: Any] = [
+                "window": window,
+                "path": "\(path)/\(name)#\(index)",
+                "kind": name,
+                "x": round(frame.origin.x * 100) / 100,
+                "y": round(frame.origin.y * 100) / 100,
+                "w": round(frame.width * 100) / 100,
+                "h": round(frame.height * 100) / 100,
+                "hidden": child.isHidden,
+                "windowW": round(windowSize.width * 100) / 100,
+                "windowH": round(windowSize.height * 100) / 100,
+            ]
+            // 창 기준 좌표(위에서부터). 뷰마다 좌표계가 뒤집혀 있어 로컬
+            // 프레임만으로는 실제 순서를 알 수 없다.
+            let inWindow = child.convert(child.bounds, to: nil)
+            entry["winTop"] = round((windowSize.height - inWindow.maxY) * 100) / 100
+            entry["winLeft"] = round(inWindow.minX * 100) / 100
+            // 오른쪽·아래로 창을 넘는지, 좌상단이 창 밖인지 표시한다.
+            if !child.isHidden {
+                let overshootRight = frame.maxX - windowSize.width
+                let overshootBottom = frame.maxY - windowSize.height
+                if overshootRight > 1 { entry["overRight"] = round(overshootRight * 100) / 100 }
+                if overshootBottom > 1 { entry["overBottom"] = round(overshootBottom * 100) / 100 }
+                if frame.minX < -1 { entry["underLeft"] = round(-frame.minX * 100) / 100 }
+                if frame.minY < -1 { entry["underTop"] = round(-frame.minY * 100) / 100 }
+            }
+            if let field = child as? NSTextField {
+                entry["text"] = String(field.stringValue.prefix(visibleTextLimit))
+                entry["editable"] = field.isEditable
+                // 글자가 잘리는지 보려면 실제로 필요한 폭과 가진 폭을 비교한다.
+                let needed = field.attributedStringValue.size().width
+                entry["needW"] = round(needed * 100) / 100
+                if field.maximumNumberOfLines <= 1, !field.stringValue.isEmpty {
+                    let slack = frame.width - needed
+                    if slack < 0 { entry["clipped"] = round(-slack * 100) / 100 }
+                }
+            }
+            if let button = child as? NSButton {
+                let needed = button.attributedTitle.size().width + 24
+                entry["needW"] = round(needed * 100) / 100
+                if !button.title.isEmpty, frame.width < needed {
+                    entry["clipped"] = round((needed - frame.width) * 100) / 100
+                }
+            }
+            if let stack = child as? NSStackView {
+                entry["spacing"] = stack.spacing
+                entry["orientation"] = stack.orientation == .horizontal ? "h" : "v"
+                entry["arranged"] = stack.arrangedSubviews.count
+            }
+            if let box = child as? NSBox {
+                entry["boxType"] = box.boxType.rawValue
+                entry["corner"] = box.cornerRadius
+                if let inner = box.contentView {
+                    let padTop = inner.subviews.first.map { $0.frame.minY } ?? 0
+                    let padLeft = inner.subviews.first.map { $0.frame.minX } ?? 0
+                    let padBottom = inner.subviews.first.map { inner.bounds.height - $0.frame.maxY } ?? 0
+                    let padRight = inner.subviews.first.map { inner.bounds.width - $0.frame.maxX } ?? 0
+                    entry["innerPad"] = [
+                        "top": round(padTop * 100) / 100,
+                        "left": round(padLeft * 100) / 100,
+                        "bottom": round(padBottom * 100) / 100,
+                        "right": round(padRight * 100) / 100,
+                    ]
+                    entry["innerSize"] = [
+                        "w": round(inner.bounds.width * 100) / 100,
+                        "h": round(inner.bounds.height * 100) / 100,
+                    ]
+                }
+            }
+            if let card = child as? CardView {
+                entry["card"] = true
+                entry["padding"] = card.padding
+                if let inner = card.subviews.first {
+                    entry["innerPad"] = [
+                        "top": round(inner.frame.minY * 100) / 100,
+                        "left": round(inner.frame.minX * 100) / 100,
+                        "bottom": round((card.bounds.height - inner.frame.maxY) * 100) / 100,
+                        "right": round((card.bounds.width - inner.frame.maxX) * 100) / 100,
+                    ]
+                }
+            }
+            rows.append(entry)
+            collect(
+                from: child,
+                window: window,
+                path: "\(path)/\(name)#\(index)",
+                windowSize: windowSize,
+                into: &rows
+            )
+        }
+    }
+}
+
 func parseConfig(_ args: [String]) -> Config {
     var config = Config()
     var index = 0
@@ -773,6 +947,7 @@ func parseConfig(_ args: [String]) -> Config {
             if let value = Double(take()), value >= 0.5, value <= 15 {
                 config.interval = value
             }
+        case "--layout-audit": config.layoutAudit = take()
         default:
             break
         }
@@ -830,8 +1005,12 @@ final class PipelineView: NSView {
         let pad: CGFloat = 18
         let usable = bounds.width - pad * 2
         let step = usable / CGFloat(max(count - 1, 1))
-        let nodeY = bounds.height * 0.40
         let radius: CGFloat = 7
+        // 점과 이름을 세로 가운데에 둔다. 예전에는 높이의 40% 지점에 점을 두어
+        // 위쪽에 아무것도 없는 띠가 남았다 (2026-09-16).
+        let labelHeight: CGFloat = 12
+        let contentHeight = radius * 2 + 5 + labelHeight
+        let nodeY = max((bounds.height - contentHeight) / 2 + radius, radius + 2)
         var centers: [CGPoint] = []
         for index in 0..<count {
             centers.append(CGPoint(x: pad + CGFloat(index) * step, y: nodeY))
@@ -1758,6 +1937,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var lastImageSelection: ReplyModelSelection?
     // 폴백 사슬 (모델 설정 창의 한 섹션). 순서·출처는 코어가 계산한 값을 그대로 쓴다.
     var modelFallbackRows: NSStackView?
+    /// 내용 높이에 맞춰 창을 줄일 때, 같은 값으로 반복해서 흔들지 않도록 기억한다.
+    var lastModelContentHeight: CGFloat = 0
+    var modelSettingsStack: NSStackView?
+    var modelSettingsScroll: NSScrollView?
+    /// 사용자가 창 크기를 직접 만졌으면 자동 축소를 하지 않는다.
+    var modelWindowUserResized = false
     var modelFallbackAddButton: NSPopUpButton?
     var modelFallbackResetButton: NSButton?
     var modelFallbackRestoreButton: NSButton?
@@ -1806,6 +1991,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             atPath: config.logsDir,
             withIntermediateDirectories: true
         )
+        if !config.layoutAudit.isEmpty {
+            // 런루프가 한 바퀴 돈 뒤에 재야 AppKit이 배치를 끝낸 상태가 된다.
+            let directory = config.layoutAudit
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let summary = self.runLayoutAudit(directory)
+                FileHandle.standardError.write(Data(("layout-audit: " + summary + "\n").utf8))
+                NSApp.terminate(nil)
+            }
+            return
+        }
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         if let button = statusItem.button {
@@ -2999,6 +3195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func updateModelSettingsWindow() {
         guard modelWindow != nil else { return }
+        defer { shrinkModelSettingsWindow() }
         let providers = modelProvidersForWindow()
         // 폴백 사슬은 코어가 계산한 값을 먼저 반영하고, 그 위에 방금 저장한
         // 확인값을 유지한다(늦게 도착한 조회가 화면을 되돌리지 않게).
@@ -3057,6 +3254,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// 내용보다 창이 훨씬 길면 아래쪽에 아무것도 없는 빈 자리가 남는다.
+    /// 내용 높이에 맞춰 줄이되, 스크롤이 필요할 만큼 길면 손대지 않는다.
+    func shrinkModelSettingsWindow(attempt: Int = 0) {
+        guard let window = modelWindow,
+              let stack = modelSettingsStack,
+              modelSettingsScroll != nil,
+              let content = window.contentView,
+              !modelWindowUserResized,
+              attempt < 4 else { return }
+        stack.layoutSubtreeIfNeeded()
+        let contentHeight = stack.fittingSize.height
+        guard contentHeight > 1 else { return }
+        // 창이 담아야 할 높이는 내용 + 스크롤 여백(위 16 + 아래 16)이다.
+        let desired = contentHeight + 32
+        let current = content.bounds.height
+        guard current - desired > 12 else { return }
+        // 배치가 한 번에 수렴하지 않으므로, 줄어든 뒤 다시 재서 맞춘다.
+        guard abs(current - lastModelContentHeight) > 1 else { return }
+        lastModelContentHeight = current
+        var frame = window.frame
+        let delta = current - desired
+        frame.size.height -= delta
+        frame.origin.y += delta
+        window.setFrame(frame, display: true, animate: false)
+        DispatchQueue.main.async { [weak self] in
+            self?.shrinkModelSettingsWindow(attempt: attempt + 1)
+        }
+    }
+
     func ensureModelSettingsWindow() {
         if modelWindow != nil {
             return
@@ -3089,12 +3315,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         imagePopup.action = #selector(modelImagePopupChanged(_:))
         modelImagePopup = imagePopup
 
-        let status = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
+        let status = Chrome.statusLabel()
         modelStatusField = status
         // 모델별 상태 줄: 바꾼 행에서 바로 결과를 볼 수 있게 한다.
-        let replyStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
+        let replyStatus = Chrome.statusLabel()
         modelReplyStatus = replyStatus
-        let imageStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
+        let imageStatus = Chrome.statusLabel()
         modelImageStatus = imageStatus
 
         // 폴백 사슬: 앞 모델이 사용량 한도에 걸렸을 때 이어서 시도할 순서.
@@ -3110,7 +3336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         fallbackRows.spacing = 6
         fallbackRows.translatesAutoresizingMaskIntoConstraints = false
         modelFallbackRows = fallbackRows
-        let fallbackStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 3)
+        let fallbackStatus = Chrome.statusLabel(lines: 3)
         modelFallbackStatus = fallbackStatus
         let fallbackAdd = NSPopUpButton(frame: .zero, pullsDown: true)
         fallbackAdd.translatesAutoresizingMaskIntoConstraints = false
@@ -3170,7 +3396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             spacing: 12
         )
         // 폴백을 최대치까지 넣으면 창보다 길어지므로 스크롤로 감싼다.
-        Chrome.scrollable(stack, in: content)
+        modelSettingsStack = stack
+        modelSettingsScroll = Chrome.scrollable(stack, in: content)
+        window.delegate = self
         NSLayoutConstraint.activate([
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
             primaryCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -3775,6 +4003,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.orderFrontRegardless()
     }
 
+    /// 창을 화면에 띄우지 않고 배치만 해서 기하 수치와 그림을 남긴다. 눈으로
+    /// 보지 않고도 불필요한 빈 여백과 넘침을 찾기 위한 진단 모드다.
+    func runLayoutAudit(_ outputDir: String) -> String {
+        let directory = URL(fileURLWithPath: outputDir, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        ensureModelSettingsWindow()
+        ensureJobsWindow()
+        ensureLogWindow()
+        ensureRoomsWindow()
+        ensureVectorWindow()
+        ensureDoctorWindow()
+        let windows: [(String, NSWindow?)] = [
+            ("model", modelWindow),
+            ("jobs", jobsWindow),
+            ("log", logWindow),
+            ("rooms", roomsWindow),
+            ("vector", vectorWindow),
+            ("doctor", doctorWindow),
+        ]
+        var rows: [[String: Any]] = []
+        var images: [String] = []
+        // 실제 데이터를 채운 뒤에 재야 빈 목록으로 인한 거짓 여백을 보지 않는다.
+        if let model = loadModel() {
+            lastModel = model
+            updateModelSettingsWindow()
+            updateRoomsWindow(model)
+            applyLogReceipts(model)
+        }
+        if let report = loadJobs(status: jobsStatus) {
+            applyJobs(report)
+        }
+        if let report = loadDoctor(heal: false) {
+            applyDoctor(report)
+        }
+        if let report = loadVectorReport([
+            "--action", "vector-list",
+            "--vector-offset", "0",
+            "--vector-source", vectorSourceKind,
+        ]) {
+            applyVectorReport(report)
+        }
+        for entry in windows {
+            guard let window = entry.1, let content = window.contentView else { continue }
+            // 창을 화면 밖에 세워 실제로 배치시킨다. 런루프가 돌지 않으면
+            // AppKit이 배치를 미루고, 그러면 프레임을 잘못 읽는다.
+            window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+            window.orderFrontRegardless()
+            window.layoutIfNeeded()
+            content.layoutSubtreeIfNeeded()
+            LayoutAudit.collect(
+                from: content,
+                window: entry.0,
+                path: entry.0,
+                windowSize: content.bounds.size,
+                into: &rows
+            )
+            if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                content.cacheDisplay(in: content.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = directory.appendingPathComponent(entry.0 + ".png")
+                    try? data.write(to: url)
+                    images.append(url.path)
+                }
+            }
+            window.orderOut(nil)
+        }
+        let payload: [String: Any] = ["windows": rows, "images": images]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: directory.appendingPathComponent("layout.json"))
+        }
+        return String(rows.count) + " views, " + String(images.count) + " images"
+    }
+
     @objc func showLogWindow() {
         ensureLogWindow()
         guard let window = logWindow else {
@@ -4000,6 +4301,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return false
         }
         return true
+    }
+
+    /// 사용자가 크기를 직접 바꾼 창은 자동으로 줄이지 않는다. 자동 축소가
+    /// 방금 한 조절을 되돌리면 창이 제멋대로 움직이는 것처럼 보인다.
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === modelWindow else { return }
+        modelWindowUserResized = true
     }
 
     @objc func tileClicked(_ sender: NSButton) {
@@ -4461,13 +4769,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let lampsRow = Chrome.hstack(componentLamps.map { $0.label } + [Chrome.spacer()])
         let progress = Chrome.hint("자가 개선을 누르면 진행 상황이 여기 표시됩니다.")
         progressField = progress
-        let stack = Chrome.vstack([summary, hint, filter, lampsRow, progress, scroll, actions], spacing: 10)
+        // 일곱 덩어리가 각자 한 줄씩 차지하면 창을 키워도 빈 줄만 늘어난다.
+        // 요약·안내·램프를 한 카드로, 필터와 진행 문구를 한 줄로 묶는다
+        // (2026-09-16).
+        let headContent = Chrome.vstack([summary, hint, lampsRow], spacing: 6)
+        let headCard = Chrome.card(headContent, padding: 12)
+        let controlRow = Chrome.hstack([filter, Chrome.spacer(), progress], spacing: 10)
+        progress.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        progress.alignment = .right
+        let stack = Chrome.vstack([headCard, controlRow, scroll, actions], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            lampsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headContent.widthAnchor.constraint(equalTo: headCard.widthAnchor, constant: -24),
+            summary.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            hint.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            lampsRow.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            controlRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            filter.widthAnchor.constraint(lessThanOrEqualTo: controlRow.widthAnchor),
+            progress.widthAnchor.constraint(lessThanOrEqualTo: controlRow.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
