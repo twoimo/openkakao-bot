@@ -1,0 +1,10 @@
+# Test threads need a bigger stack than the 2 MiB default.
+#
+# Cli::try_parse_from walks the whole subcommand tree, and the derive-generated
+# clap parser recurses once per level. In a debug build that overflows a 2 MiB
+# thread and aborts the test binary with "fatal runtime error: stack overflow",
+# which failed CI on every push for a day while the library tests stayed green
+# (2026-09-16). The env table here applies to the processes cargo runs, so the
+# test harness picks it up without every caller exporting it.
+[env]
+RUST_MIN_STACK = "8388608"
