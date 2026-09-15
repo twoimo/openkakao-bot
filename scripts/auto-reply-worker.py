@@ -11029,6 +11029,20 @@ def generate_reply(
                 "The previous 최연우 reply ended with "
                 f"{previous_ending}. End this reply with a different final particle."
             ]
+        try:
+            from auto_reply_knowledge_graph import query_knowledge_context
+            kg_contexts = query_knowledge_context(message)
+            if kg_contexts:
+                instructions = list(instructions) + [
+                    "Authoritative Knowledge Graph Context (established background facts; adhere strictly): "
+                    + " | ".join(kg_contexts)
+                ]
+        except Exception:
+            pass
+        if normalized_image_paths:
+            instructions = list(instructions) + [
+                "Photo inspection rule: If the photo shows running shoes, outdoor track, road, park, workout gear, or running stats, this is a running/workout verification photo. React with encouragement, distance, or pacing. Do not guess it is food or eating (never ask '얼마나 먹는 거임')."
+            ]
 
     prompt = (
         {

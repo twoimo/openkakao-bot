@@ -1383,12 +1383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorLoadToken = 0
     var lastVectorFingerprint = ""
     var vectorSourceStyle = true
-    var vectorSourceKind = "style"
+    var vectorSourceKind = "knowledge_graph"
     var vectorTopicKey = ""
     var vectorSourceButton: NSPopUpButton?
     var vectorTopicButton: NSPopUpButton?
-    let vectorSourceTitles = ["최연우 기억", "모든 대화", "주제별 지식", "설명 자료", "답장 기록", "말투·반응 통계", "탐색 프롬프트"]
-    let vectorSourceKeys = ["style", "messages", "topics", "references", "replies", "profiles", "prompts"]
+    let vectorSourceTitles = ["지식 그래프", "최연우 기억", "모든 대화", "주제별 지식", "설명 자료", "답장 기록", "말투·반응 통계", "탐색 프롬프트"]
+    let vectorSourceKeys = ["knowledge_graph", "style", "messages", "topics", "references", "replies", "profiles", "prompts"]
     var vectorRestoreButton: NSButton?
     // 모델 설정 창 (답변 모델 + 이미지 모델 통합, R5)
     var modelWindow: NSWindow?
@@ -1749,11 +1749,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         roomsItem.target = self
         roomsItem.isEnabled = true
         menu.addItem(roomsItem)
-        let doctorItem = NSMenuItem(title: "자가 진단…", action: #selector(showDoctorWindow), keyEquivalent: "d")
-        doctorItem.target = self
-        doctorItem.isEnabled = true
-        menu.addItem(doctorItem)
-        let vectorItem = NSMenuItem(title: "대화 기억…", action: #selector(showVectorWindow), keyEquivalent: "k")
+        let vectorItem = NSMenuItem(title: "지식 그래프 (대화 기억)…", action: #selector(showVectorWindow), keyEquivalent: "k")
         vectorItem.target = self
         vectorItem.isEnabled = true
         menu.addItem(vectorItem)
@@ -4987,20 +4983,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if vectorWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "대화 기억", size: NSSize(width: 980, height: 720), autosave: "AutoReplyVector")
-        window.title = "대화 기억"
+        let window = Chrome.operatorWindow(title: "지식 그래프 (대화 기억)", size: NSSize(width: 980, height: 720), autosave: "AutoReplyVector")
+        window.title = "지식 그래프 (대화 기억)"
         window.delegate = self
         let content = NSView()
         window.contentView = content
 
-        let hint = Chrome.hint("원문과 128차원 해시 임베딩을 같이 저장합니다. 설명 자료는 여러 사람에게 자세히 설명한 순간(사진+텍스트)을 누가/무엇을/어떻게/왜로 묶어 둔 검색 기억입니다. 주제별 지식은 카테고리 묶음이고, 탐색 프롬프트는 그 기억을 찾아 답장을 만들 때 모델에 들어가는 지시입니다. 채팅방을 비우면 모든 방이 나옵니다.")
+        let hint = Chrome.hint("안드레 카파시 LLM Wiki 개념을 적용한 결정적 지식 그래프입니다. 대화에서 정립된 고유 개념(알쫀쿠, 러닝, 멤버별 특징)과 관계망을 추적하여 일관된 맥락의 답변을 보장합니다.")
         vectorHint = hint
 
         let chatLabel = Chrome.label("보기", size: 11, color: .secondaryLabelColor, lines: 1)
         chatLabel.setContentHuggingPriority(.required, for: .horizontal)
         let source = NSPopUpButton(frame: .zero, pullsDown: false)
         source.translatesAutoresizingMaskIntoConstraints = false
-        source.addItems(withTitles: ["최연우 기억", "모든 대화", "주제별 지식", "설명 자료", "답장 기록", "말투·반응 통계", "탐색 프롬프트"])
+        source.addItems(withTitles: vectorSourceTitles)
         source.selectItem(at: max(vectorSourceKeys.firstIndex(of: vectorSourceKind) ?? 0, 0))
         source.target = self
         source.action = #selector(vectorSourceChanged)

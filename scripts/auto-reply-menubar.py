@@ -156,7 +156,7 @@ _orig_add_api_provider = add_api_provider
 _orig_collect_vector_list = collect_vector_list
 _orig_upsert_vector_row = upsert_vector_row
 from auto_reply_reference_store import collect_reference_list
-VECTOR_LIST_SOURCES = frozenset(set(VECTOR_LIST_SOURCES) | {"references"})
+VECTOR_LIST_SOURCES = frozenset(set(VECTOR_LIST_SOURCES) | {"references", "knowledge_graph"})
 _DOCTOR_LEVEL_RANK = {"fail": 3, "warn": 2, "off": 1, "ok": 0}
 _GJC_GLOBAL_MODELS_ENV = "OPENKAKAO_GJC_GLOBAL_MODELS"
 
@@ -1023,6 +1023,16 @@ def collect_vector_list(
     topic: str = "",
 ):
     # Source audit: list path uses m.vector / , vector columns only.
+    if source == "knowledge_graph":
+        from auto_reply_knowledge_graph import collect_knowledge_graph_list
+        return collect_knowledge_graph_list(
+            db_path,
+            query=query,
+            chat=chat,
+            limit=limit,
+            offset=offset,
+            topic=topic,
+        )
     if source == "references":
         bin_raw = _argv_flag_value("--bin")
         return collect_reference_list(
