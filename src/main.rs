@@ -1721,6 +1721,18 @@ fn probe_auto_reply_llm(
     }
 
     let runner = validate_auto_reply_runner(config)?;
+    if runner.kind == "opencodex" {
+        let output = Command::new(&runner.path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .output()
+            .context("probe opencodex reply runner")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if output.status.success() && stdout.contains("opencodex") {
+            return Ok(());
+        }
+        anyhow::bail!("opencodex runner failed probe: {}", stdout.trim());
+    }
     match choice {
         AutoReplyLlmChoice::GjcGemini37Flash => {
             let output = Command::new(&runner.path)

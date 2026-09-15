@@ -137,6 +137,15 @@ PROVIDER_ACTIONS = frozenset(
 )
 DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
 IMAGE_MODEL_ACTIONS = frozenset({"image-model-set"})
+FALLBACK_MODEL_ACTIONS = frozenset({"fallback-models-set"})
+MAX_REPLY_FALLBACK_MODELS = 6
+REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
+# 사용자가 아무것도 고르지 않았을 때 쓰는 내장 폴백 사슬. 워커도 같은 순서를
+# 쓴다(scripts/auto-reply-worker.py: DEFAULT_REPLY_FALLBACK_MODELS).
+DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
+    "google-antigravity/gemini-3.8-flash",
+    "google-antigravity/gemini-3.7-flash-tiered",
+)
 _WRAPPER_ONLY_FLAGS.update(_CATALOG_MUTATE_FLAGS)
 
 _orig_main = main
@@ -157,6 +166,45 @@ def _gjc_global_models_path() -> Path:
         return Path(override).expanduser()
     return Path.home() / ".gjc" / "agent" / "models.yml"
 
+
+
+# oMLX (local MLX-Serve) was retired; filter its provider and models from menus.
+_RETIRED_PROVIDER_TAGS: frozenset[str] = frozenset({"omlx", "mlx", "ddalcu", "mlx-community"})
+_HIDDEN_CANONICAL: frozenset[str] = _RETIRED_PROVIDER_TAGS
+
+
+def _strip_hidden_providers(providers: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    for p in providers:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "").strip().lower()
+        plabel = str(p.get("label") or "").strip().lower()
+        if pid in _RETIRED_PROVIDER_TAGS or plabel in _RETIRED_PROVIDER_TAGS:
+            continue
+        models = p.get("models") or []
+        kept = []
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            mid = str(m.get("id") or "").strip()
+            mlabel = str(m.get("label") or "").strip().lower()
+            mcanon = str(m.get("canonical") or "").strip().lower()
+            mprov = str(m.get("provider") or "").strip().lower()
+            if (
+                mcanon in _RETIRED_PROVIDER_TAGS
+                or mlabel in _RETIRED_PROVIDER_TAGS
+                or mprov in _RETIRED_PROVIDER_TAGS
+                or any(mid.startswith(prefix) for prefix in ("omlx/", "mlx/", "ddalcu/", "mlx-community/"))
+            ):
+                continue
+            kept.append(m)
+        if not kept:
+            continue
+        cleaned = dict(p)
+        cleaned["models"] = kept
+        result.append(cleaned)
+    return result
 
 def _standalone_reply_providers(state_root: Path) -> list[dict]:
     parser = globals().get("_parse_custom_models_yml")
@@ -194,7 +242,7 @@ def _standalone_reply_providers(state_root: Path) -> list[dict]:
             for item in models:
                 if str(item.get("id")) not in seen:
                     existing["models"].append(dict(item))
-    return [merged[key] for key in sorted(merged)]
+    return _strip_hidden_providers([merged[key] for key in sorted(merged)])
 
 
 def _ensure_current_model_listed(providers: list[dict], state_root: Path) -> list[dict]:
@@ -944,7 +992,11 @@ _UI_VIEW_FALLBACKS: dict[str, dict[str, Any]] = {
     },
     "coverage": {"summary": "", "status": "결과를 불러오지 못했어요.", "rows": []},
     "improvement": {"rows": [], "empty": "기록을 불러오지 못했어요."},
-    "onboarding": {"available": [], "blocked": ["권한 상태를 불러오지 못했어요."]},
+    "onboarding": {
+        "available": [],
+        "blocked": ["권한 상태를 불러오지 못했어요."],
+        "permissions": [],
+    },
 }
 
 
@@ -1332,6 +1384,195 @@ def _ensure_omlx_model_resident(model: str) -> bool:
         return False
 
 
+def _displayed_reply_providers(state_root: Path) -> list[dict[str, Any]]:
+    """Providers exactly as the AI model-settings popups render them.
+
+    The save gates for model-set and image-model-set must accept every model
+    the user can see in the menu. Since the gateway migration the displayed
+    list is wider than the legacy gjc models.yml files, so both gates consult
+    this single source instead of their own older lists (2026-09-13).
+    """
+    try:
+        payload = collect_reply_models_standalone(Path(state_root))
+    except Exception:
+        return []
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    return list(providers) if isinstance(providers, list) else []
+
+
+def _reply_model_fallbacks_path(state_root: Path) -> Path:
+    return Path(state_root) / REPLY_MODEL_FALLBACKS_NAME
+
+
+def _normalize_fallback_model(value: Any) -> str:
+    model = str(value or "").strip()
+    if not model or len(model) > 200 or any(ch.isspace() for ch in model):
+        return ""
+    return model
+
+
+def _fallback_allowed_model_ids(state_root: Path) -> set[str]:
+    """Every model id the model-settings popups can show, plus the built-ins.
+
+    The fallback chain saves model ids, so its save gate reads the same
+    display/save single source as set_reply_model and set_image_reply_model
+    (2026-09-15).
+    """
+
+    allowed: set[str] = set(DEFAULT_REPLY_FALLBACK_MODELS)
+    try:
+        agent_models_path = _gjc_agent_dir(state_root) / "models.yml"
+        custom_providers = _parse_custom_models_yml(
+            agent_models_path
+        ) or _parse_custom_models_yml(Path(state_root) / "models.yml")
+    except Exception:
+        custom_providers = []
+    for provider in custom_providers or []:
+        for item in provider.get("models") or []:
+            if isinstance(item, dict) and item.get("id"):
+                allowed.add(str(item["id"]))
+    for provider in _global_catalog_providers(state_root=state_root):
+        for item in provider.get("models") or []:
+            if isinstance(item, dict) and item.get("id"):
+                allowed.add(str(item["id"]))
+    for provider in _displayed_reply_providers(state_root):
+        for item in provider.get("models") or []:
+            if isinstance(item, dict) and item.get("id"):
+                allowed.add(str(item["id"]))
+    for model in (
+        _current_reply_model_id(state_root),
+        _read_image_reply_model(state_root)[0],
+    ):
+        if model:
+            allowed.add(model)
+    return allowed
+
+
+def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
+    """User-ordered fallback chain; source=default when nothing is saved.
+
+    An empty saved list is not the same as "nothing saved": it means the
+    operator wants no fallback at all, so the primary model's limit ends the
+    turn instead of silently switching models (2026-09-15). A file whose
+    entries are all invalid is treated as missing rather than as "no fallback".
+    """
+
+    path = _reply_model_fallbacks_path(state_root)
+    raw: Any = None
+    try:
+        if path.is_file() and not path.is_symlink() and 0 < path.stat().st_size <= 8192:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raw = None
+    if isinstance(raw, dict) and raw.get("schema_version") == 1:
+        models = raw.get("models")
+        if isinstance(models, list):
+            cleaned: list[str] = []
+            for item in models:
+                model = _normalize_fallback_model(item)
+                if model and model not in cleaned:
+                    cleaned.append(model)
+                if len(cleaned) >= MAX_REPLY_FALLBACK_MODELS:
+                    break
+            if cleaned or not models:
+                return cleaned, "override"
+    return list(DEFAULT_REPLY_FALLBACK_MODELS), "default"
+
+
+def reply_model_fallbacks_state(state_root: Path) -> dict[str, Any]:
+    models, source = read_reply_model_fallbacks(Path(state_root))
+    return {
+        "models": models,
+        "source": source,
+        "defaults": list(DEFAULT_REPLY_FALLBACK_MODELS),
+        "max": MAX_REPLY_FALLBACK_MODELS,
+    }
+
+
+def set_reply_model_fallbacks(
+    state_root: Path,
+    models: str | list[str] | None,
+    now: float | None = None,
+    clear: bool = False,
+):
+    """Save the ordered fallback chain.
+
+    Two different "nothing here" requests exist and must not be merged: an
+    empty list means the operator wants no fallback (the primary model's limit
+    ends the turn), while clear=True removes the saved list so the built-in
+    defaults apply again (2026-09-15).
+    """
+
+    if models is None and not clear:
+        return {
+            "ok": False,
+            "action": "fallback-models-set",
+            "privacy": "content_redacted",
+            "reason": "models_required",
+            "warnings": ["저장할 폴백 모델 목록이 필요합니다."],
+        }
+    raw_items = (
+        []
+        if clear
+        else models.split(",")
+        if isinstance(models, str)
+        else list(models or [])
+    )
+    wanted: list[str] = []
+    for item in raw_items:
+        model = _normalize_fallback_model(item)
+        if model and model not in wanted:
+            wanted.append(model)
+    if len(wanted) > MAX_REPLY_FALLBACK_MODELS:
+        return {
+            "ok": False,
+            "action": "fallback-models-set",
+            "privacy": "content_redacted",
+            "reason": "too_many_fallbacks",
+            "warnings": [
+                f"폴백 모델은 최대 {MAX_REPLY_FALLBACK_MODELS}개까지 저장할 수 있습니다."
+            ],
+        }
+    allowed = _fallback_allowed_model_ids(Path(state_root))
+    if any(model not in allowed for model in wanted):
+        return {
+            "ok": False,
+            "action": "fallback-models-set",
+            "privacy": "content_redacted",
+            "reason": "model_not_in_catalog",
+            "warnings": ["등록된 프로바이더 모델만 폴백으로 쓸 수 있습니다."],
+        }
+    stamp = time.time() if now is None else float(now)
+    path = _reply_model_fallbacks_path(Path(state_root))
+    try:
+        if clear:
+            path.unlink(missing_ok=True)
+        else:
+            _atomic_write_json(
+                path,
+                {"schema_version": 1, "models": wanted, "updated_at": int(stamp)},
+            )
+    except OSError:
+        return {
+            "ok": False,
+            "action": "fallback-models-set",
+            "privacy": "content_redacted",
+            "reason": "fallback_override_write_failed",
+            "warnings": ["폴백 모델 목록을 저장하지 못했습니다."],
+        }
+    state = reply_model_fallbacks_state(path.parent)
+    return {
+        "ok": True,
+        "action": "fallback-models-set",
+        "privacy": "content_redacted",
+        "fallback_models": list(state["models"]),
+        "fallback_source": state["source"],
+        "fallback_defaults": list(state["defaults"]),
+        "fallback_max": state["max"],
+        "warnings": [],
+    }
+
+
 def set_reply_model(
     state_root: Path,
     model: str,
@@ -1355,6 +1596,15 @@ def set_reply_model(
         for m in provider.get("models") or []:
             if isinstance(m, dict) and "id" in m:
                 allowed_model_ids.add(m["id"])
+    # Single-source the save gate with the menu display list. The gateway
+    # catalog (post-gjc migration) is merged into what "AI 모델 설정" renders,
+    # so a model the user can see must also be saveable; the old gate missed
+    # those entries and returned model_not_in_catalog for displayed models
+    # (2026-09-13).
+    for provider in _displayed_reply_providers(state_root):
+        for item in provider.get("models") or []:
+            if isinstance(item, dict) and item.get("id"):
+                allowed_model_ids.add(str(item["id"]))
     if wanted in allowed_model_ids:
         import time as _time
         stamp = _time.time() if now is None else float(now)
@@ -1431,6 +1681,11 @@ def set_image_reply_model(
         for item in provider.get("models") or []:
             if isinstance(item, dict) and item.get("id"):
                 allowed_model_ids.add(str(item["id"]))
+    # Same display/save single-source as set_reply_model above.
+    for provider in _displayed_reply_providers(state_root):
+        for item in provider.get("models") or []:
+            if isinstance(item, dict) and item.get("id"):
+                allowed_model_ids.add(str(item["id"]))
     if wanted not in allowed_model_ids:
         return {
             "ok": False,
@@ -1475,6 +1730,7 @@ def collect_reply_models(
     payload = collect_reply_models_standalone(
         state_root, now=now, refresh=refresh, fetcher=fetcher
     )
+    fallbacks = reply_model_fallbacks_state(Path(state_root))
     try:
         base = _orig_collect_reply_models(
             state_root, now=now, refresh=refresh, fetcher=fetcher
@@ -1509,10 +1765,69 @@ def collect_reply_models(
     payload["image_label"] = image_parts[1] if len(image_parts) > 1 else image_id
     payload["image_provider"] = image_parts[0] if len(image_parts) > 1 else ""
     payload["image_source"] = image_source
+    # 폴백 사슬은 모델 설정 창의 한 섹션이다. 화면이 추정하지 않도록 저장된
+    # 목록과 출처(사용자 지정/내장 기본값), 상한을 함께 돌려준다 (2026-09-15).
+    payload.update(
+        {
+            "fallback_models": list(fallbacks["models"]),
+            "fallback_source": fallbacks["source"],
+            "fallback_defaults": list(fallbacks["defaults"]),
+            "fallback_max": fallbacks["max"],
+        }
+    )
     payload.setdefault("ok", True)
     payload.setdefault("action", "models")
     payload.setdefault("privacy", "content_redacted")
+    # Strip retired providers/models (omlx) injected by the gateway catalog.
+    payload["providers"] = _strip_hidden_providers(payload.get("providers") or [])
     return payload
+
+
+_orig_attach_reply_model = globals().get("attach_reply_model")
+
+
+def _clean_attach_reply_model(snap, state_root, *args, **kwargs):
+    if callable(_orig_attach_reply_model):
+        res = _orig_attach_reply_model(snap, state_root, *args, **kwargs)
+        if isinstance(res, dict):
+            snap = res
+    if not isinstance(snap, dict):
+        return snap
+    if "reply_model_providers" in snap:
+        snap["reply_model_providers"] = _strip_hidden_providers(snap["reply_model_providers"])
+    image_id, image_source = _read_image_reply_model(Path(state_root))
+    reply_obj = snap.get("reply_model") if isinstance(snap.get("reply_model"), dict) else {}
+    reply_id = str(reply_obj.get("id") or "").strip() or _current_reply_model_id(Path(state_root))
+    image_enabled = not _reply_model_sees_images(reply_id)
+    chosen = image_id if image_enabled else reply_id
+    snap["image_reply_model"] = {
+        "id": chosen,
+        "label": chosen.split("/", 1)[-1],
+        "canonical": chosen.split("/", 1)[-1],
+        "provider": chosen.split("/", 1)[0] if "/" in chosen else "",
+        "source": image_source if image_enabled else "unused",
+        "enabled": image_enabled,
+        "auto_selected": bool(
+            image_enabled
+            and (
+                str(image_source).strip().lower() == "auto"
+                or image_id.lower().endswith("/auto")
+                or image_id.lower() == "auto"
+            )
+        ),
+    }
+    return snap
+
+attach_reply_model = _clean_attach_reply_model
+
+_orig_reply_model_payload = globals().get("reply_model_payload")
+if callable(_orig_reply_model_payload):
+    def _clean_reply_model_payload(state_root, *args, **kwargs):
+        res = _orig_reply_model_payload(state_root, *args, **kwargs)
+        if isinstance(res, dict) and "providers" in res:
+            res["providers"] = _strip_hidden_providers(res["providers"])
+        return res
+    reply_model_payload = _clean_reply_model_payload
 
 
 def prepare_reply_model(state_root: Path, model: str):
@@ -1666,6 +1981,7 @@ def main():
         args.action in MODEL_ACTIONS
         or args.action in PROVIDER_ACTIONS
         or args.action in IMAGE_MODEL_ACTIONS
+        or args.action in FALLBACK_MODEL_ACTIONS
     ):
         # 값 없는 단독 플래그(--no-wait)도 참으로 본다. _argv_flag_value()는
         # 마지막 단독 플래그에 빈 문자열을 돌려주어 저장 전용 분기가 영영
@@ -1698,6 +2014,22 @@ def main():
             _print_json(
                 set_image_reply_model(
                     state_root, _argv_flag_value("--model"), now=time.time()
+                )
+            )
+            return 0
+        if args.action == "fallback-models-set":
+            state_raw = _argv_flag_value("--state-root")
+            state_root = (
+                Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+            )
+            # --clear는 "내장 기본값으로"이고, 빈 --models는 "폴백 없음"이다.
+            clear = "--clear" in sys.argv
+            _print_json(
+                set_reply_model_fallbacks(
+                    state_root,
+                    _argv_flag_value("--models"),
+                    now=time.time(),
+                    clear=clear,
                 )
             )
             return 0
@@ -1829,53 +2161,106 @@ def main():
 
 
 
-orig_snapshot = globals().get("collect_snapshot")
-if callable(orig_snapshot):
-    def _snapshot_with_models(state_root, *args, **kwargs):
-        snap = orig_snapshot(state_root, *args, **kwargs)
-        if not isinstance(snap, dict):
-            return snap
-        try:
-            models = collect_reply_models(Path(state_root))
-        except Exception:
-            return snap
-        snap = dict(snap)
-        snap["reply_model_providers"] = list(models.get("providers") or [])
-        reply_id = str(models.get("model") or "").strip() or _current_reply_model_id(
-            Path(state_root)
-        )
-        image_enabled = not _reply_model_sees_images(reply_id)
-        image_id, image_source = _read_image_reply_model(Path(state_root))
-        chosen = image_id if image_enabled else reply_id
-        snap["image_reply_model"] = {
-            "id": chosen,
-            "label": chosen.split("/", 1)[-1],
-            "canonical": chosen.split("/", 1)[-1],
-            "provider": chosen.split("/", 1)[0] if "/" in chosen else "",
-            "source": image_source if image_enabled else "unused",
-            "enabled": image_enabled,
-            # 화면이 문자열을 추정하지 않도록 자동 선택 여부를 명시적으로 알려 준다.
-            "auto_selected": bool(
-                image_enabled
-                and (
-                    str(image_source).strip().lower() == "auto"
-                    or image_id.lower().endswith("/auto")
-                    or image_id.lower() == "auto"
-                )
-            ),
-        }
-        model_id = str(models.get("model") or "").strip()
-        if model_id:
-            snap["reply_model"] = {
-                "id": model_id,
-                "label": str(models.get("label") or model_id),
-                "canonical": model_id.split("/", 1)[-1],
-                "provider": str(models.get("provider") or model_id.split("/", 1)[0]),
-                "source": str(models.get("source") or "none"),
-            }
-        return snap
+def _attach_fallback_state(snap: Any, state_root: Any) -> Any:
+    """Add the fallback chain the model-settings window draws.
 
-    globals()["collect_snapshot"] = _snapshot_with_models
+    The window reads this straight off the snapshot, so the field has to be
+    attached on the path the menu itself uses. Older callers ignore the extra
+    key (2026-09-15).
+    """
+
+    if not isinstance(snap, dict) or state_root is None:
+        return snap
+    try:
+        state = reply_model_fallbacks_state(Path(state_root))
+    except Exception:
+        return snap
+    snap = dict(snap)
+    snap["reply_model_fallbacks"] = state
+    return snap
+
+
+def _wrap_snapshot_owner(owner: Any, attr: str) -> bool:
+    """Wrap one layer's snapshot builder.
+
+    The runtime is the frozen wrapper plus overlay pyc, and the overlay builds
+    the snapshot itself through ``_collect_menubar_model``. Wrapping only the
+    impl layer never runs on the real menu path, so the hook has to land on the
+    layer the menu actually calls (2026-09-15).
+    """
+
+    original = owner.get(attr) if hasattr(owner, "get") else None
+    if not callable(original) or getattr(original, "_openkakao_fallbacks", False):
+        return False
+
+    def wrapper(*args, **kwargs):
+        snap = original(*args, **kwargs)
+        state_root = args[0] if args else kwargs.get("state_root")
+        return _attach_fallback_state(snap, state_root)
+
+    wrapper._openkakao_fallbacks = True
+    try:
+        owner[attr] = wrapper
+    except Exception:
+        return False
+    return True
+
+
+_SNAPSHOT_ATTRS = (
+    "collect_menubar_model",
+    "collect_snapshot",
+    "_collect_menubar_model",
+    "_collect_snapshot",
+)
+
+
+def _patch_overlay_fallbacks(namespace: Any) -> bool:
+    """Wrap every snapshot builder the overlay namespace exposes."""
+
+    if not isinstance(namespace, dict):
+        return False
+    installed = False
+    for attr in _SNAPSHOT_ATTRS:
+        installed = _wrap_snapshot_owner(namespace, attr) or installed
+    return installed
+
+
+def _install_fallback_snapshot_hook() -> None:
+    """Put ``reply_model_fallbacks`` on every snapshot surface.
+
+    The frozen wrapper resolves overlay names lazily through a module
+    ``__getattr__`` and keeps the overlay unloaded until something asks for it,
+    so this hooks the loader rather than forcing the overlay open at import
+    time (2026-09-15).
+    """
+
+    ensure = globals().get("_ensure_overlay")
+    if callable(ensure) and not getattr(ensure, "_openkakao_fallback_hook", False):
+
+        def _ensure_overlay_with_fallbacks(*args, **kwargs):
+            namespace = ensure(*args, **kwargs)
+            try:
+                _patch_overlay_fallbacks(namespace)
+            except Exception:
+                pass
+            return namespace
+
+        _ensure_overlay_with_fallbacks._openkakao_fallback_hook = True
+        globals()["_ensure_overlay"] = _ensure_overlay_with_fallbacks
+        return
+    # Fall back to patching whatever snapshot builder is already reachable.
+    for name in ("collect_menubar_model", "collect_snapshot"):
+        fn = globals().get(name)
+        owner = getattr(fn, "__globals__", None)
+        if _patch_overlay_fallbacks(owner):
+            return
+    impl = globals().get("_read_catalog")
+    impl_globals = getattr(impl, "__globals__", None)
+    if isinstance(impl_globals, dict):
+        _wrap_snapshot_owner(impl_globals, "collect_menubar_model")
+
+
+_install_fallback_snapshot_hook()
 
 
 def _enrollment_room_ids(state_root: Path) -> set[int] | None:
@@ -2072,10 +2457,68 @@ def _scope_menubar_rooms_to_enrollment() -> None:
     classify = impl_globals.get("_classify_room")
     if callable(classify) and not getattr(classify, "_openkakao_scoped", False):
         def scoped_classify(room, *args, **kwargs):
+            cid = int(room.get("chat_id") or 0) if isinstance(room, dict) else 0
+            allowed = _enrollment_room_ids(_ACTIVE_STATE_ROOT) if _ACTIVE_STATE_ROOT else None
+            if allowed is not None and cid not in allowed:
+                return ("off", ["service_off"])
             return classify(_soften_candidate_fence(room), *args, **kwargs)
 
         scoped_classify._openkakao_scoped = True
         impl_globals["_classify_room"] = scoped_classify
+
+    orig_collect = impl_globals.get("collect_menubar_model")
+    if callable(orig_collect) and not getattr(orig_collect, "_openkakao_with_models", False):
+        def _model_with_image_and_providers(*args, **kwargs):
+            snap = orig_collect(*args, **kwargs)
+            if not isinstance(snap, dict):
+                return snap
+            state_root = args[0] if args else kwargs.get("state_root")
+            if state_root is None:
+                return snap
+            try:
+                models = collect_reply_models(Path(state_root))
+            except Exception:
+                return snap
+            snap["reply_model_providers"] = list(models.get("providers") or [])
+            reply_id = str(models.get("model") or "").strip() or _current_reply_model_id(
+                Path(state_root)
+            )
+            image_enabled = not _reply_model_sees_images(reply_id)
+            image_id, image_source = _read_image_reply_model(Path(state_root))
+            chosen = image_id if image_enabled else reply_id
+            snap["image_reply_model"] = {
+                "id": chosen,
+                "label": chosen.split("/", 1)[-1],
+                "canonical": chosen.split("/", 1)[-1],
+                "provider": chosen.split("/", 1)[0] if "/" in chosen else "",
+                "source": image_source if image_enabled else "unused",
+                "enabled": image_enabled,
+                "auto_selected": bool(
+                    image_enabled
+                    and (
+                        str(image_source).strip().lower() == "auto"
+                        or image_id.lower().endswith("/auto")
+                        or image_id.lower() == "auto"
+                    )
+                ),
+            }
+            for chat in snap.get("available_chats") or []:
+                if isinstance(chat, dict) and str(chat.get("title") or "").startswith("id:"):
+                    cat_title = _existing_catalog_title(Path(state_root), chat.get("chat_id"))
+                    if cat_title:
+                        chat["title"] = cat_title
+            # 모델 설정 창의 폴백 사슬도 같은 스냅샷에 실어 보낸다. 이 경로는
+            # 화면이 실제로 쓰는 경로라, 여기서 빠지면 창이 기본값만 보여 준다.
+            try:
+                snap["reply_model_fallbacks"] = reply_model_fallbacks_state(
+                    Path(state_root)
+                )
+            except Exception:
+                pass
+            return snap
+
+        _model_with_image_and_providers._openkakao_with_models = True
+        impl_globals["collect_menubar_model"] = _model_with_image_and_providers
 
     validate = impl_globals.get("_validated_catalog_entry")
     if callable(validate) and not getattr(validate, "_openkakao_titled", False):
@@ -2089,24 +2532,6 @@ def _scope_menubar_rooms_to_enrollment() -> None:
 
         titled_entry._openkakao_titled = True
         impl_globals["_validated_catalog_entry"] = titled_entry
-
-    catalog = impl_globals.get("_read_catalog")
-    if not callable(catalog) or getattr(catalog, "_openkakao_scoped", False):
-        return
-
-    def scoped_catalog(state_root):
-        entries = catalog(state_root)
-        allowed = _enrollment_room_ids(Path(state_root))
-        if not allowed or not isinstance(entries, list):
-            return entries
-        return [
-            entry
-            for entry in entries
-            if isinstance(entry, dict) and int(entry.get("chat_id") or 0) in allowed
-        ]
-
-    scoped_catalog._openkakao_scoped = True
-    impl_globals["_read_catalog"] = scoped_catalog
 
 
 if __name__ == "__main__":

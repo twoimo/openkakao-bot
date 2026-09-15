@@ -257,6 +257,11 @@ struct ModelsReport: Decodable {
     let image_model: String?
     let image_label: String?
     let image_provider: String?
+    // 폴백 사슬 저장 응답. 구버전 파이썬은 이 필드를 보내지 않는다.
+    let fallback_models: [String]?
+    let fallback_source: String?
+    let fallback_defaults: [String]?
+    let fallback_max: Int?
 }
 
 struct ReplyProviderPreset: Decodable {
@@ -332,6 +337,16 @@ struct MenubarModel: Decodable {
     let reply_model: ReplyModelSelection?
     let image_reply_model: ReplyModelSelection?
     let reply_model_providers: [ReplyModelProvider]?
+    // 폴백 사슬: 코어가 계산한 목록/출처/기본값/상한. 구버전은 보내지 않는다.
+    let reply_model_fallbacks: ReplyModelFallbacks?
+}
+
+/// 모델 설정 창의 폴백 섹션이 그대로 그리는 값. 판단은 코어(파이썬)가 한다.
+struct ReplyModelFallbacks: Decodable {
+    let models: [String]?
+    let source: String?
+    let defaults: [String]?
+    let max: Int?
 }
 
 // 라이브옵스 창 뷰 모델 (task 11). 각 필드는 코어의 ui_shell::*_view가 만든
@@ -358,6 +373,17 @@ struct ImprovementViewModel: Decodable {
 struct OnboardingViewModel: Decodable {
     let available: [String]
     let blocked: [String]
+    /// 코어가 만든 권한 체크리스트. 구버전 응답에는 없을 수 있어 옵션으로 받는다.
+    let permissions: [OnboardingPermission]?
+}
+
+struct OnboardingPermission: Decodable {
+    let id: String
+    let label: String
+    let granted: Bool
+    let status: String
+    let unlocks: [String]
+    let how_to_grant: String
 }
 
 struct Config {
@@ -608,7 +634,47 @@ enum Chrome {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
     }
+
+    /// 내용이 창보다 길어질 수 있는 창을 스크롤 가능하게 감싼다. 폴백 모델을
+    /// 여러 개 넣으면 세로로 길어지므로 잘려 보이지 않게 한다.
+    @discardableResult
+    static func scrollable(
+        _ child: NSView,
+        in parent: NSView,
+        insets: NSEdgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+    ) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        let document = FlippedContainerView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(child)
+        scroll.documentView = document
+        parent.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: insets.left),
+            scroll.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -insets.right),
+            scroll.topAnchor.constraint(equalTo: parent.topAnchor, constant: insets.top),
+            scroll.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -insets.bottom),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            child.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            child.topAnchor.constraint(equalTo: document.topAnchor),
+            child.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+        return scroll
+    }
 }
+
+/// 스크롤 문서 뷰. 위에서 아래로 쌓이도록 좌표계를 뒤집는다.
+final class FlippedContainerView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 func parseConfig(_ args: [String]) -> Config {
     var config = Config()
     var index = 0
@@ -1264,6 +1330,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 같은 값이 두 곳에 남지 않도록, 되돌리기에 필요한 직전 선택만 보관한다.
     var lastReplySelection: ReplyModelSelection?
     var lastImageSelection: ReplyModelSelection?
+    // 폴백 사슬 (모델 설정 창의 한 섹션). 순서·출처는 코어가 계산한 값을 그대로 쓴다.
+    var modelFallbackRows: NSStackView?
+    var modelFallbackAddButton: NSPopUpButton?
+    var modelFallbackResetButton: NSButton?
+    var modelFallbackStatus: NSTextField?
+    var modelFallbackChain: [String] = []
+    var modelFallbackSource = "default"
+    var modelFallbackMax = 6
+    var modelFallbackBusy = false
+    /// 저장을 확인한 뒤에도 오래된 조회가 화면을 되돌리지 않게, 확인된 값을 잠시 들고 있는다.
+    var modelFallbackLocalOverride: (models: [String], source: String)?
+    var modelFallbackNote: String?
     // 라이브옵스 창 (task 11) — 판단은 전부 코어(ui_shell::*_view)가 만든 문자열을
     // 그리기만 합니다. Swift에는 조건 분기가 없습니다.
     var durabilityWindow: NSWindow?
@@ -1612,6 +1690,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorItem.target = self
         vectorItem.isEnabled = true
         menu.addItem(vectorItem)
+        menu.addItem(.separator())
+        // 창이 있는데 메뉴에 없던 항목들을 채웁니다. 모두 보기 전용 창입니다.
+        let durabilityItem = NSMenuItem(title: "대량 검증…", action: #selector(showDurabilityWindow), keyEquivalent: "u")
+        durabilityItem.target = self
+        durabilityItem.isEnabled = true
+        menu.addItem(durabilityItem)
+        let coverageItem = NSMenuItem(title: "기능 점검…", action: #selector(showCoverageWindow), keyEquivalent: "f")
+        coverageItem.target = self
+        coverageItem.isEnabled = true
+        menu.addItem(coverageItem)
+        let improvementItem = NSMenuItem(title: "자기개선…", action: #selector(showImprovementWindow), keyEquivalent: "g")
+        improvementItem.target = self
+        improvementItem.isEnabled = true
+        menu.addItem(improvementItem)
+        let onboardingItem = NSMenuItem(title: "권한 설정…", action: #selector(showOnboardingWindow), keyEquivalent: "o")
+        onboardingItem.target = self
+        onboardingItem.isEnabled = true
+        menu.addItem(onboardingItem)
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "메뉴 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
@@ -2111,9 +2207,238 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         submenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
 
+    // MARK: - 폴백 모델 사슬 (모델 설정 창)
+
+    /// 폴백 사슬을 코어에 저장한다. 화면은 저장이 확인된 뒤에만 바뀐 값을 확정하고,
+    /// 실패하면 이전 목록으로 되돌린다(답변/이미지 모델과 같은 규약).
+    /// 폴백 사슬을 코어에 저장한다. clear는 저장한 목록을 지워 내장 기본값으로
+    /// 돌리는 요청이고, 빈 목록은 "폴백 없음"이라는 다른 요청이다 — 한도에
+    /// 걸리면 다른 모델로 넘어가지 않고 답변을 건너뛴다.
+    func saveFallbackChain(_ models: [String], note: String, clear: Bool = false) {
+        guard !modelFallbackBusy else { return }
+        let previousChain = modelFallbackChain
+        let previousSource = modelFallbackSource
+        modelFallbackBusy = true
+        modelFallbackNote = nil
+        refreshModelSettingsWindowIfOpen()
+        // 모델 ID에는 쉼표가 들어갈 수 없으므로 목록은 CSV 한 인자로 보낸다.
+        let csv = models.joined(separator: ",")
+        var extra = ["--action", "fallback-models-set", "--models", csv]
+        if clear { extra.append("--clear") }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let data = self.runPython(extra, timeout: 12)
+            let report = data.flatMap { try? JSONDecoder().decode(ModelsReport.self, from: $0) }
+            DispatchQueue.main.async {
+                self.modelFallbackBusy = false
+                if let report, report.ok == true, let saved = report.fallback_models {
+                    self.modelFallbackChain = saved
+                    self.modelFallbackSource = report.fallback_source ?? "override"
+                    if let max = report.fallback_max {
+                        self.modelFallbackMax = max
+                    }
+                    // 저장이 확인된 값을 잠근다 — 늦게 도착한 조회가 화면을 되돌리지 않게.
+                    self.modelFallbackLocalOverride = (models: saved, source: self.modelFallbackSource)
+                    self.modelFallbackNote = note
+                } else {
+                    self.modelFallbackChain = previousChain
+                    self.modelFallbackSource = previousSource
+                    self.modelFallbackNote = "저장하지 못했어요. 값을 확인한 뒤 다시 시도해 주세요."
+                    self.presentOperatorResult(action: "fallback-models-set", data: data)
+                }
+                self.refreshModelSettingsWindowIfOpen()
+            }
+        }
+    }
+
+    @objc func modelFallbackAdd(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, !id.isEmpty else { return }
+        guard !modelFallbackChain.contains(id) else { return }
+        guard modelFallbackChain.count < modelFallbackMax else { return }
+        var next = modelFallbackChain
+        next.append(id)
+        saveFallbackChain(next, note: "폴백을 추가했어요 · 다음 답변부터 사용")
+    }
+
+    @objc func modelFallbackMoveUp(_ sender: NSButton) {
+        let index = sender.tag
+        guard index > 0, index < modelFallbackChain.count else { return }
+        var next = modelFallbackChain
+        next.swapAt(index, index - 1)
+        saveFallbackChain(next, note: "폴백 순서를 바꿨어요 · 다음 답변부터 사용")
+    }
+
+    @objc func modelFallbackMoveDown(_ sender: NSButton) {
+        let index = sender.tag
+        guard index >= 0, index < modelFallbackChain.count - 1 else { return }
+        var next = modelFallbackChain
+        next.swapAt(index, index + 1)
+        saveFallbackChain(next, note: "폴백 순서를 바꿨어요 · 다음 답변부터 사용")
+    }
+
+    @objc func modelFallbackRemove(_ sender: NSButton) {
+        let index = sender.tag
+        guard index >= 0, index < modelFallbackChain.count else { return }
+        var next = modelFallbackChain
+        next.remove(at: index)
+        saveFallbackChain(
+            next,
+            note: next.isEmpty
+                ? "마지막 폴백을 지웠어요 — 내장 기본값을 다시 씁니다."
+                : "폴백을 뺐어요 · 다음 답변부터 사용"
+        )
+    }
+
+    @objc func modelFallbackResetClicked(_ sender: Any?) {
+        saveFallbackChain(
+            [],
+            note: "내장 기본값으로 되돌렸어요 · 다음 답변부터 사용",
+            clear: true
+        )
+    }
+
     func modelProvidersForWindow() -> [ReplyModelProvider] {
         let live = lastModel?.reply_model_providers ?? []
         return catalogProviders.isEmpty ? live : catalogProviders
+    }
+
+    /// 코어가 보낸 폴백 사슬을 화면 상태로 옮긴다. 저장 확인이 끝난 직후에는
+    /// 방금 저장한 값을 유지해, 늦게 도착한 조회가 화면을 되돌리지 않게 한다.
+    func applyFallbackState(_ state: ReplyModelFallbacks?) {
+        guard let state else { return }
+        let source = (state.source ?? "default").lowercased()
+        if let local = modelFallbackLocalOverride {
+            // 로컬 확인값이 코어 값과 같아지면 더 이상 붙들지 않는다.
+            if local.source == source, local.models == (state.models ?? []) {
+                modelFallbackLocalOverride = nil
+            } else {
+                return
+            }
+        }
+        modelFallbackChain = state.models ?? []
+        modelFallbackSource = source
+        modelFallbackMax = max(state.max ?? 6, 1)
+    }
+
+    /// 폴백 모델 선택 목록: 현재 답변/이미지 모델을 뺀, 화면에 보이는 모든 모델.
+    func fallbackCandidateProviders() -> [ReplyModelProvider] {
+        let providers = modelProvidersForWindow()
+        let current = currentReplyModel ?? lastModel?.reply_model
+        let currentId = current?.id ?? ""
+        let imageId = (currentImageReplyModel ?? lastModel?.image_reply_model)?.id ?? ""
+        let blocked = Set([currentId, imageId].filter { !$0.isEmpty })
+        return providers.map { provider in
+            ReplyModelProvider(
+                id: provider.id,
+                label: provider.label,
+                models: provider.models.filter {
+                    !blocked.contains($0.id) && !modelFallbackChain.contains($0.id)
+                }
+            )
+        }.filter { !$0.models.isEmpty }
+    }
+
+    func fallbackStatusText() -> String {
+        if let note = modelFallbackNote { return note }
+        if modelFallbackBusy { return "폴백 모델을 저장하는 중이에요…" }
+        if modelFallbackChain.isEmpty {
+            return "폴백 없음 — 앞 모델이 한도에 걸리면 답변을 건너뜁니다."
+        }
+        let listed = modelFallbackChain
+            .map { Self.friendlyModelName($0) }
+            .joined(separator: " → ")
+        let head = modelFallbackSource == "override"
+            ? "사용자 지정 · 다음 답변부터 사용"
+            : "내장 기본값 사용 · 바꾸려면 아래에서 추가하세요"
+        return "\(head)\n\(listed)"
+    }
+
+    /// 폴백 행을 다시 그린다. 순서 이동은 위/아래 버튼만 쓰고, 값은 코어에 저장한다.
+    func rebuildFallbackRows() {
+        guard let rows = modelFallbackRows else { return }
+        for view in rows.arrangedSubviews {
+            rows.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        if modelFallbackChain.isEmpty {
+            let empty = Chrome.hint(
+                "폴백 모델이 없습니다. '폴백 모델 추가…'에서 골라 주세요.",
+                size: 12
+            )
+            rows.addArrangedSubview(empty)
+        }
+        for (index, model) in modelFallbackChain.enumerated() {
+            let order = Chrome.label("\(index + 1).", size: 12, color: .secondaryLabelColor, lines: 1)
+            order.setContentHuggingPriority(.required, for: .horizontal)
+            let name = Chrome.label(Self.friendlyModelName(model), size: 12, lines: 1)
+            name.toolTip = "모델 ID: \(model)"
+            let up = Chrome.roundedButton("▲", target: self, action: #selector(modelFallbackMoveUp(_:)))
+            up.tag = index
+            up.toolTip = "이 폴백을 한 칸 위로 올립니다."
+            up.isEnabled = index > 0 && !modelFallbackBusy
+            up.setContentHuggingPriority(.required, for: .horizontal)
+            let down = Chrome.roundedButton("▼", target: self, action: #selector(modelFallbackMoveDown(_:)))
+            down.tag = index
+            down.toolTip = "이 폴백을 한 칸 아래로 내립니다."
+            down.isEnabled = index < modelFallbackChain.count - 1 && !modelFallbackBusy
+            down.setContentHuggingPriority(.required, for: .horizontal)
+            let remove = Chrome.roundedButton("삭제", target: self, action: #selector(modelFallbackRemove(_:)))
+            remove.tag = index
+            remove.toolTip = "이 폴백을 목록에서 뺍니다."
+            remove.isEnabled = !modelFallbackBusy
+            remove.setContentHuggingPriority(.required, for: .horizontal)
+            let row = Chrome.hstack([order, name, Chrome.spacer(), up, down, remove], spacing: 6)
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        }
+    }
+
+    /// '폴백 모델 추가…' 메뉴를 만든다. 이미 고른 모델과 현재 답변/이미지 모델은 뺀다.
+    func buildFallbackAddMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let providers = fallbackCandidateProviders()
+        if catalogLoading && providers.isEmpty {
+            let loading = NSMenuItem(title: "모델 목록 불러오는 중…", action: nil, keyEquivalent: "")
+            loading.isEnabled = false
+            menu.addItem(loading)
+        } else if providers.isEmpty {
+            let empty = NSMenuItem(
+                title: modelFallbackChain.count >= modelFallbackMax
+                    ? "폴백은 최대 \(modelFallbackMax)개까지입니다"
+                    : "추가할 모델이 없습니다 — '모델 목록 새로고침'을 눌러 주세요",
+                action: nil,
+                keyEquivalent: ""
+            )
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for provider in providers {
+                for item in provider.models {
+                    let row = NSMenuItem(
+                        title: "\(provider.label) · \(item.label)",
+                        action: #selector(modelFallbackAdd(_:)),
+                        keyEquivalent: ""
+                    )
+                    row.target = self
+                    row.representedObject = item.id
+                    row.isEnabled = !modelFallbackBusy
+                    menu.addItem(row)
+                }
+            }
+        }
+        return menu
+    }
+
+    /// 추가 버튼은 상한에 걸렸거나 고를 모델이 없을 때 눌리지 않게 한다.
+    func updateFallbackAddButton() {
+        guard let button = modelFallbackAddButton else { return }
+        let full = modelFallbackChain.count >= modelFallbackMax
+        let providers = fallbackCandidateProviders()
+        button.isEnabled = !full && !modelFallbackBusy && !providers.isEmpty
+        button.toolTip = full
+            ? "폴백은 최대 \(modelFallbackMax)개까지 저장할 수 있습니다."
+            : "앞 모델이 사용량 한도에 걸렸을 때 이어서 시도할 모델을 고릅니다."
     }
 
     /// "opencode-go-session/deepseek-v4.1-flash" → "DeepSeek V4.1 Flash · OpenCode Go".
@@ -2171,6 +2496,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func updateModelSettingsWindow() {
         guard modelWindow != nil else { return }
         let providers = modelProvidersForWindow()
+        // 폴백 사슬은 코어가 계산한 값을 먼저 반영하고, 그 위에 방금 저장한
+        // 확인값을 유지한다(늦게 도착한 조회가 화면을 되돌리지 않게).
+        applyFallbackState(lastModel?.reply_model_fallbacks)
 
         let reply = currentReplyModel ?? lastModel?.reply_model
         let replyId = reply?.id ?? ""
@@ -2210,6 +2538,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let popup = modelImagePopup {
             populateModelPopup(popup, providers: providers, currentId: imageId, enabled: imageEnabled && !modelChangeInFlight)
         }
+
+        modelFallbackStatus?.stringValue = fallbackStatusText()
+        modelFallbackResetButton?.isEnabled = modelFallbackSource == "override" && !modelFallbackBusy
+        rebuildFallbackRows()
+        updateFallbackAddButton()
     }
 
     func refreshModelSettingsWindowIfOpen() {
@@ -2224,7 +2557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         let window = Chrome.operatorWindow(
             title: "모델 설정",
-            size: NSSize(width: 620, height: 400),
+            size: NSSize(width: 620, height: 560),
             autosave: "AutoReplyModelSettings"
         )
         let content = NSView()
@@ -2258,6 +2591,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 2)
         modelImageStatus = imageStatus
 
+        // 폴백 사슬: 앞 모델이 사용량 한도에 걸렸을 때 이어서 시도할 순서.
+        let fallbackTitle = Chrome.label("폴백 모델", size: 13, weight: .semibold, lines: 1)
+        let fallbackSummary = Chrome.hint(
+            "앞 모델이 사용량 한도에 걸리면 위에서부터 이 순서대로 다시 시도합니다.",
+            size: 12
+        )
+        let fallbackRows = NSStackView()
+        fallbackRows.orientation = .vertical
+        fallbackRows.alignment = .leading
+        fallbackRows.distribution = .fill
+        fallbackRows.spacing = 6
+        fallbackRows.translatesAutoresizingMaskIntoConstraints = false
+        modelFallbackRows = fallbackRows
+        let fallbackStatus = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 3)
+        modelFallbackStatus = fallbackStatus
+        let fallbackAdd = NSPopUpButton(frame: .zero, pullsDown: true)
+        fallbackAdd.translatesAutoresizingMaskIntoConstraints = false
+        fallbackAdd.addItem(withTitle: "폴백 모델 추가…")
+        modelFallbackAddButton = fallbackAdd
+        let fallbackReset = Chrome.roundedButton(
+            "내장 기본값으로",
+            target: self,
+            action: #selector(modelFallbackResetClicked(_:))
+        )
+        fallbackReset.toolTip = "저장한 폴백 목록을 지우고 내장 기본값을 씁니다."
+        fallbackReset.isEnabled = false
+        modelFallbackResetButton = fallbackReset
+        let fallbackActions = Chrome.hstack([fallbackAdd, fallbackReset, Chrome.spacer()])
+
         let registerButton = Chrome.roundedButton("모델 제공자 추가…", target: self, action: #selector(modelProviderRegisterClicked(_:)))
         let reloadButton = Chrome.roundedButton("모델 목록 새로고침", target: self, action: #selector(reloadModelsClicked))
         let revertButton = Chrome.roundedButton("이전 모델로 되돌리기", target: self, action: #selector(modelRevertClicked(_:)))
@@ -2267,22 +2629,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let stack = Chrome.vstack(
             [hint, replyTitle, replySummary, replyPopup, replyStatus,
-             imageTitle, imageSummary, imagePopup, imageStatus, status, actions],
+             imageTitle, imageSummary, imagePopup, imageStatus,
+             fallbackTitle, fallbackSummary, fallbackRows, fallbackStatus, fallbackActions,
+             status, actions],
             spacing: 8
         )
         stack.setCustomSpacing(16, after: replyStatus)
-        Chrome.fill(stack, in: content)
+        stack.setCustomSpacing(16, after: imageStatus)
+        stack.setCustomSpacing(16, after: fallbackActions)
+        // 폴백을 최대치까지 넣으면 창보다 길어지므로 스크롤로 감싼다.
+        Chrome.scrollable(stack, in: content)
         NSLayoutConstraint.activate([
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
             replyPopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
             imagePopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            fallbackRows.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            fallbackStatus.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            fallbackActions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             status.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        // 키보드 순서: 답변 모델 → 이미지 모델 → 제공자 추가 → 목록 새로고침.
+        // 키보드 순서: 답변 모델 → 이미지 모델 → 폴백 추가 → 기본값 복원 →
+        // 제공자 추가 → 목록 새로고침 → 되돌리기.
         window.initialFirstResponder = replyPopup
         replyPopup.nextKeyView = imagePopup
-        imagePopup.nextKeyView = registerButton
+        imagePopup.nextKeyView = fallbackAdd
+        fallbackAdd.nextKeyView = fallbackReset
+        fallbackReset.nextKeyView = registerButton
         registerButton.nextKeyView = reloadButton
         reloadButton.nextKeyView = revertButton
         modelWindow = window
@@ -2818,6 +3191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 fallback = "모델을 바꾸지 못했습니다."
             } else if action == "image-model-set" {
                 fallback = "이미지 모델을 바꾸지 못했습니다."
+            } else if action == "fallback-models-set" {
+                fallback = "폴백 모델 목록을 저장하지 못했습니다."
             } else if action == "provider-add" {
                 fallback = "프로바이더를 등록하지 못했습니다."
             } else {
@@ -2828,6 +3203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 title = "답변 모델"
             } else if action == "image-model-set" {
                 title = "이미지 모델"
+            } else if action == "fallback-models-set" {
+                title = "폴백 모델"
             } else if action == "provider-add" {
                 title = "프로바이더 등록"
             } else {
@@ -3856,6 +4233,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 lines.append("")
                 lines.append("막힌 기능과 허용 방법:")
                 lines.append(contentsOf: view.blocked.map { " · \($0)" })
+                // 코어가 만든 권한 체크리스트를 맨 위에 붙인다. 상태 단어와
+                // 허용 방법 모두 코어 문구라 Swift는 그리기만 한다.
+                let checklist = view.permissions ?? []
+                if !checklist.isEmpty {
+                    var head = ["권한 상태:"]
+                    for permission in checklist {
+                        let mark = permission.granted ? "✓" : "•"
+                        var row = "\(mark) \(permission.label) — \(permission.status)"
+                        if !permission.unlocks.isEmpty {
+                            row += " · 여는 기능: \(permission.unlocks.joined(separator: ", "))"
+                        }
+                        head.append(row)
+                        if !permission.granted {
+                            head.append("    → \(permission.how_to_grant)")
+                        }
+                    }
+                    head.append("")
+                    lines = head + lines
+                }
                 self.setLines(lines, on: text)
             }
         }
@@ -5193,7 +5589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vector_memory: nil,
             reply_model: nil,
             image_reply_model: nil,
-            reply_model_providers: nil
+            reply_model_providers: nil,
+            reply_model_fallbacks: nil
         )
     }
 

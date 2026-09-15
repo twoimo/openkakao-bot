@@ -219,10 +219,18 @@ fn onboarding_json(granted: Option<&str>) -> Value {
         None => probe_permission_state(),
     };
     let map = capabilities(&state);
-    let view = onboarding_view(&map);
+    let view = onboarding_view(&map, &state);
     json!({
         "available": view.available,
         "blocked": view.blocked,
+        "permissions": view.permissions.iter().map(|p| json!({
+            "id": p.id,
+            "label": p.label,
+            "granted": p.granted,
+            "status": p.status,
+            "unlocks": p.unlocks,
+            "how_to_grant": p.how_to_grant,
+        })).collect::<Vec<_>>(),
     })
 }
 

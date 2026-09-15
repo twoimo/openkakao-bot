@@ -12,7 +12,7 @@
 //! What this module pins down:
 //!
 //! * **Windows, not dropdowns.** Every primary feature — 기록, 모델 설정,
-//!   채팅방, 자가 점검, 대화 기억 — is a [`AppWindow`] that opens on click. The
+//!   채팅방, 자가 진단, 대화 기억 — is a [`AppWindow`] that opens on click. The
 //!   reply-model and image-model menus collapse into the single
 //!   [`AppWindow::ModelSettings`] entry (R5.1, R5.3).
 //! * **No refresh menu (R9.1).** [`build_menu`] never emits
@@ -41,7 +41,7 @@ use crate::improve::HistoryEntry;
 use crate::live_sample::Progress;
 use crate::logging::{FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus};
 use crate::memory::{MemoryItem, MemoryKind, MemoryStore, RagComparisonRow};
-use crate::packaging::{Capability, CapabilityMap, Permission};
+use crate::packaging::{Capability, CapabilityMap, Permission, PermissionState};
 use crate::safety::SendGrade;
 
 /// A primary feature window opened from the menu bar (Component 1, Component 14).
@@ -60,7 +60,7 @@ pub enum AppWindow {
     ModelSettings,
     /// 채팅방 — the chat-room management window (R6).
     ChatRooms,
-    /// 자가 점검 — the self-check (doctor) window (R7).
+    /// 자가 진단 — the self-check (doctor) window (R7).
     SelfCheck,
     /// 대화 기억 — the conversation-memory window (R8).
     Memory,
@@ -96,7 +96,7 @@ impl AppWindow {
             AppWindow::History => "기록",
             AppWindow::ModelSettings => "모델 설정",
             AppWindow::ChatRooms => "채팅방",
-            AppWindow::SelfCheck => "자가 점검",
+            AppWindow::SelfCheck => "자가 진단",
             AppWindow::Memory => "대화 기억",
             AppWindow::Durability => "대량 검증",
             AppWindow::Coverage => "기능 점검",
@@ -820,6 +820,30 @@ pub struct OnboardingView {
     /// Plain-language lines for blocked features, each naming the required
     /// permission and how to grant it (R9.6, R9.11).
     pub blocked: Vec<String>,
+    /// One row per required macOS permission, in the fixed Permission::ALL
+    /// order, so the window can draw a checklist instead of a wall of text
+    /// (R9.7, R9.11).
+    pub permissions: Vec<PermissionView>,
+}
+
+/// One permission row in the 권한 설정 window (R9.7, R9.11).
+///
+/// The core decides the label, the granted flag, and the plain-language
+/// how-to; the Swift shell only draws them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionView {
+    /// Stable code — one of Permission::as_str.
+    pub id: String,
+    /// Beginner-friendly Korean label.
+    pub label: String,
+    /// Whether the permission is currently granted.
+    pub granted: bool,
+    /// Plain-language state word ("허용됨" / "아직 막힘").
+    pub status: String,
+    /// Feature labels this permission unlocks, in the fixed capability order.
+    pub unlocks: Vec<String>,
+    /// The plain-language steps to grant it.
+    pub how_to_grant: String,
 }
 
 /// A beginner-friendly Korean label for a capability (R9.11).
@@ -838,7 +862,7 @@ fn capability_label(capability: Capability) -> &'static str {
 }
 
 /// A beginner-friendly Korean label for a permission (R9.7).
-fn permission_label(permission: Permission) -> &'static str {
+pub fn permission_label(permission: Permission) -> &'static str {
     match permission {
         Permission::Accessibility => "손쉬운 사용",
         Permission::FullDiskAccess => "전체 디스크 접근",
@@ -853,7 +877,7 @@ fn permission_label(permission: Permission) -> &'static str {
 /// pure function that decides which features each permission unlocks; this
 /// connector only turns that decision into beginner-friendly Korean lines so
 /// the Swift shell holds no branching (R9.11).
-pub fn onboarding_view(map: &CapabilityMap) -> OnboardingView {
+pub fn onboarding_view(map: &CapabilityMap, state: &PermissionState) -> OnboardingView {
     let available = map
         .available
         .iter()
@@ -871,7 +895,33 @@ pub fn onboarding_view(map: &CapabilityMap) -> OnboardingView {
             )
         })
         .collect();
-    OnboardingView { available, blocked }
+    // The checklist rows come straight from the fixed permission catalog, so
+    // the window can always show all three with a granted/blocked mark even
+    // when no capability is blocked (R9.7, R9.11).
+    let permissions = Permission::ALL
+        .iter()
+        .map(|permission| PermissionView {
+            id: permission.as_str().to_string(),
+            label: permission_label(*permission).to_string(),
+            granted: state.is_granted(*permission),
+            status: if state.is_granted(*permission) {
+                "허용됨".to_string()
+            } else {
+                "아직 막힘".to_string()
+            },
+            unlocks: Capability::ALL
+                .iter()
+                .filter(|capability| capability.required_permission() == Some(*permission))
+                .map(|capability| capability_label(*capability).to_string())
+                .collect(),
+            how_to_grant: permission.how_to_grant().to_string(),
+        })
+        .collect();
+    OnboardingView {
+        available,
+        blocked,
+        permissions,
+    }
 }
 
 #[cfg(test)]
@@ -1260,7 +1310,7 @@ mod tests {
             crate::packaging::Permission::FullDiskAccess,
         ]);
         let map = crate::packaging::capabilities(&state);
-        let view = onboarding_view(&map);
+        let view = onboarding_view(&map, &state);
         assert_eq!(
             view.available.len() + view.blocked.len(),
             crate::packaging::Capability::ALL.len()
@@ -1272,5 +1322,35 @@ mod tests {
             .any(|l| l.contains("메시지 보내기") && l.contains("손쉬운 사용") && l.contains("시스템 설정")));
         // Local read is available since full-disk-access is granted.
         assert!(view.available.iter().any(|l| l.contains("카카오톡 대화 읽기")));
+        // The checklist always carries all three permissions, in the fixed
+        // order, with the granted flag and the how-to (R9.7, R9.11).
+        assert_eq!(view.permissions.len(), crate::packaging::Permission::ALL.len());
+        let ids: Vec<&str> = view.permissions.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["accessibility", "full_disk_access", "screen_recording"]);
+        let accessibility = &view.permissions[0];
+        assert_eq!(accessibility.label, "손쉬운 사용");
+        assert!(!accessibility.granted, "AX was not granted in this state");
+        assert_eq!(accessibility.status, "아직 막힘");
+        assert_eq!(accessibility.unlocks, ["메시지 보내기", "텔레그램 읽기"]);
+        assert!(accessibility.how_to_grant.contains("시스템 설정"));
+        let full_disk = &view.permissions[1];
+        assert!(full_disk.granted, "full-disk-access was granted");
+        assert_eq!(full_disk.status, "허용됨");
+        assert_eq!(
+            full_disk.unlocks,
+            ["카카오톡 대화 읽기", "맥락 검색", "대화 반영(데이터셋 갱신)"]
+        );
+        // 화면 캡처는 화면 기록 권한만 연다 — 목록이 정확히 갈리는지 고정한다.
+        let screen = &view.permissions[2];
+        assert_eq!(screen.unlocks, ["화면 캡처로 이미지 확보"]);
+    }
+
+    #[test]
+    fn onboarding_view_marks_every_permission_granted_when_all_are() {
+        let state = crate::packaging::PermissionState::all();
+        let map = crate::packaging::capabilities(&state);
+        let view = onboarding_view(&map, &state);
+        assert!(view.permissions.iter().all(|p| p.granted));
+        assert!(view.blocked.is_empty());
     }
 }

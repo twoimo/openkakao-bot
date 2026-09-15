@@ -3,7 +3,7 @@
 //! The menu-bar UI itself is SwiftUI/AppKit and cannot run under `cargo`, so the
 //! behavior it must obey lives in the toolkit-agnostic core model
 //! [`openkakao_cli::ui_shell`]. The live-ops spec grows the window set from five
-//! to nine (기록·모델 설정·채팅방·자가 점검·대화 기억 + 대량 검증·기능 점검·자기개선·
+//! to nine (기록·모델 설정·채팅방·자가 진단·대화 기억 + 대량 검증·기능 점검·자기개선·
 //! 권한 설정), and every new window must reuse the exact same contract. These
 //! tests exercise that model directly for **all nine** windows:
 //!

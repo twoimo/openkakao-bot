@@ -15,8 +15,40 @@ fi
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$PLIST" "$APP/Contents/Info.plist"
-SDK=$(/usr/bin/xcrun --show-sdk-path)
-/usr/bin/swiftc -O \
+
+# Assemble Resources from the repository so the installer never has to carry
+# over an older app's Resources. The build used to leave Resources empty, and
+# install-auto-reply-menubar.sh then preserved whatever the previous install
+# had — the running app kept stale scripts and a stale CLI for a day
+# (2026-09-13).
+RES="$APP/Contents/Resources"
+rm -rf "$RES/scripts" "$RES/bin"
+mkdir -p "$RES/scripts" "$RES/bin"
+for pattern in '*.py' '*.pyc' '*.sh' '*.command' '*.json'; do
+  for f in "$ROOT"/scripts/$pattern; do
+    [ -e "$f" ] && cp "$f" "$RES/scripts/"
+  done
+done
+if [ -x "$ROOT/target/release/openkakao-cli" ]; then
+  cp "$ROOT/target/release/openkakao-cli" "$RES/bin/openkakao-cli"
+fi
+# Toolchain: prefer the selected Xcode, but an unagreed Xcode license makes
+# `xcrun` fail and the menu extra then cannot be rebuilt at all. Fall back to
+# CommandLineTools, which ships the same AppKit frameworks (2026-09-15).
+SWIFTC=/usr/bin/swiftc
+SDK=$(/usr/bin/xcrun --show-sdk-path 2>/dev/null || true)
+if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+  if [ -x /Library/Developer/CommandLineTools/usr/bin/swiftc ]; then
+    SWIFTC=/Library/Developer/CommandLineTools/usr/bin/swiftc
+    SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+    export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+  fi
+fi
+if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+  echo "build-auto-reply-menubar: no usable macOS SDK (run 'sudo xcodebuild -license')" >&2
+  exit 3
+fi
+"$SWIFTC" -O \
   -target arm64-apple-macosx13.0 \
   -sdk "$SDK" \
   -framework AppKit \

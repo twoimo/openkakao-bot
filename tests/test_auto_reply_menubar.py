@@ -665,7 +665,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
         source = SWIFT.read_text(encoding="utf-8")
         self.assertIn("showLogWindow", source)
-        self.assertIn("최근 기록", source)
+        self.assertIn("답변 기록", source)
         self.assertIn("log_display", source)
         self.assertNotIn("Reveal Logs", source)
         self.assertNotIn("revealLogs", source)
@@ -854,7 +854,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             source,
         )
         self.assertIn("let size = NSSize(width: 18, height: 14)", source)
-        self.assertIn('title: "채팅방…"', source)
+        self.assertIn('title: "채팅방 관리…"', source)
         self.assertIn("available_chats", source)
         self.assertIn('"제목"', source)
         self.assertIn('title: "추가"', source)
@@ -862,8 +862,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn('placeholderString = "id"', source)
         self.assertIn("systemGray", source)
         self.assertIn('case "off"', source)
-        self.assertIn("즉시 자동 답변", source)
-        self.assertIn("즉시 긱뉴스 전송", source)
+        self.assertIn("즉시 답장 보내기", source)
+        self.assertIn("긱뉴스 바로 전송", source)
         self.assertNotIn("menuAutoReplyItem", source)
         self.assertNotIn("menuGeekNewsItem", source)
         self.assertNotIn("let autoNow = NSMenuItem(", source)
@@ -871,7 +871,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("auto-reply-now", source)
         self.assertIn("geeknews-now", source)
         self.assertNotIn("Reveal Logs", source)
-        self.assertIn('title: "자가 점검…"', source)
+        self.assertIn('title: "자가 진단…"', source)
         self.assertNotIn('title: "자가 개선…"', source)
         self.assertNotIn("showImproveWindow", source)
         self.assertIn("runImprovePipeline", source)
@@ -906,7 +906,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("문제 \(fail)", source)
         self.assertIn("전체", source)
         self.assertIn("자가 개선", source)
-        self.assertIn("자가 점검", source)
+        self.assertIn("자가 진단", source)
 
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
@@ -1069,7 +1069,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             prep = json.loads(
                 os.popen(
-                    f"/opt/homebrew/opt/python@3.11/bin/python3.11 {MENUBAR} "
+                    f"{sys.executable} {MENUBAR} "
                     f"--state-root '{state.resolve()}' --action improve-prep"
                 ).read()
             )
@@ -1138,19 +1138,21 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             global_yml = Path(temporary) / "global-models.yml"
             global_yml.write_text(
-                "omlx:\n"
-                "  models:\n"
-                "    - id: Qwen3.6-35B-A3B-4bit\n"
-                "      name: Qwen 4bit\n",
+                "providers:\n"
+                "  omlx:\n"
+                "    models:\n"
+                "      - id: Qwen3.6-35B-A3B-4bit\n"
+                "        name: Qwen 4bit\n",
                 encoding="utf-8",
             )
             app_dir = state / "gjc-agent"
             app_dir.mkdir(mode=0o700)
             (app_dir / "models.yml").write_text(
-                "omlx:\n"
-                "  models:\n"
-                "    - id: Qwen3.6-35B-A3B-8bit\n"
-                "      name: Qwen 8bit\n",
+                "providers:\n"
+                "  omlx:\n"
+                "    models:\n"
+                "      - id: Qwen3.6-35B-A3B-8bit\n"
+                "        name: Qwen 8bit\n",
                 encoding="utf-8",
             )
             helper._private_json(
@@ -1167,10 +1169,18 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 else:
                     os.environ["OPENKAKAO_GJC_GLOBAL_MODELS"] = previous
             providers = {p["id"]: p for p in payload["providers"]}
-            self.assertIn("omlx", providers)
-            ids = [m["id"] for m in providers["omlx"]["models"]]
-            self.assertIn("omlx/Qwen3.6-35B-A3B-4bit", ids)
-            self.assertIn("omlx/Qwen3.6-35B-A3B-8bit", ids)
+            # oMLX provider and its models must be filtered out (retired).
+            self.assertNotIn("omlx", providers)
+            all_ids = [
+                m["id"]
+                for p in payload["providers"]
+                for m in p.get("models", [])
+            ]
+            for mid in all_ids:
+                self.assertFalse(
+                    mid.startswith("omlx/"),
+                    f"omlx model {mid} should have been filtered",
+                )
             self.assertEqual(payload.get("privacy"), "content_redacted")
             encoded = json.dumps(payload, ensure_ascii=False)
             for secret in FORBIDDEN:
@@ -1420,7 +1430,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("tileClicked", source)
         self.assertIn("showJobsWindow", source)
         self.assertIn("--jobs-status", source)
-        self.assertIn('title: "채팅방…"', source)
+        self.assertIn('title: "채팅방 관리…"', source)
         self.assertIn("작업 목록", source)
         self.assertNotIn('title: "Rooms…"', source)
         self.assertIn("jobsSkipClicked", source)
@@ -2117,23 +2127,26 @@ class AutoReplyMenubarTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             helper, module, state, room, queue, now, model = self._model(root)
-            catalog = [
-                {
-                    "id": "google-antigravity/gemini-3.7-flash-tiered",
-                    "canonical": "gemini-3.7-flash-tiered",
-                    "provider": "google-antigravity",
-                    "label": "gemini-3.7-flash-tiered",
-                },
-                {
-                    "id": "google-antigravity/gemini-3.6-flash-tiered",
-                    "canonical": "gemini-3.6-flash-tiered",
-                    "provider": "google-antigravity",
-                    "label": "gemini-3.6-flash-tiered",
-                },
-            ]
             module._atomic_write_json(
                 state / "gjc-model-catalog.json",
-                {"schema_version": 1, "updated_at": int(now), "models": catalog},
+                {
+                    "schema_version": 1,
+                    "updated_at": int(now),
+                    "models": [
+                        {
+                            "id": "google-antigravity/gemini-3.7-flash-tiered",
+                            "canonical": "gemini-3.7-flash-tiered",
+                            "provider": "google-antigravity",
+                            "label": "gemini-3.7-flash-tiered",
+                        },
+                        {
+                            "id": "google-antigravity/gemini-3.6-flash-tiered",
+                            "canonical": "gemini-3.6-flash-tiered",
+                            "provider": "google-antigravity",
+                            "label": "gemini-3.6-flash-tiered",
+                        },
+                    ],
+                },
             )
             result = module.set_reply_model(
                 state.resolve(),
@@ -2263,7 +2276,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("self?.refresh()", clicked)
         self.assertIn("snapshotLag", source)
         wrapper = MENUBAR.read_text(encoding="utf-8")
-        self.assertIn("if args.action in MODEL_ACTIONS or args.action in PROVIDER_ACTIONS:", wrapper)
+        # The fast-path dispatch must cover all three model action families
+        # before the frozen main runs; the source wraps the condition across
+        # lines, so assert on the fragments instead of one exact line.
+        self.assertIn("args.action in MODEL_ACTIONS", wrapper)
+        self.assertIn("or args.action in PROVIDER_ACTIONS", wrapper)
+        self.assertIn("or args.action in IMAGE_MODEL_ACTIONS", wrapper)
         self.assertIn("allow_fetch=False", wrapper.split("def set_reply_model", 1)[1].split("def collect_reply_models", 1)[0])
 
     def test_swift_menu_decodes_reply_model_fields(self):
@@ -2281,23 +2299,15 @@ class AutoReplyMenubarTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             now = 1_000.0
-            catalog = [
-                {
-                    "id": "google-antigravity/gemini-3.7-flash-tiered",
-                    "canonical": "gemini-3.7-flash-tiered",
-                    "provider": "google-antigravity",
-                    "label": "gemini-3.7-flash-tiered",
-                },
-                {
-                    "id": "google-antigravity/gemini-3.6-flash-tiered",
-                    "canonical": "gemini-3.6-flash-tiered",
-                    "provider": "google-antigravity",
-                    "label": "gemini-3.6-flash-tiered",
-                },
-            ]
-            module._atomic_write_json(
-                state / "gjc-model-catalog.json",
-                {"schema_version": 1, "updated_at": int(now), "models": catalog},
+            agent_dir = state / "gjc-agent"
+            agent_dir.mkdir(mode=0o700, exist_ok=True)
+            (agent_dir / "models.yml").write_text(
+                "providers:\n"
+                "  google-antigravity:\n"
+                "    models:\n"
+                "      - id: gemini-3.7-flash-tiered\n"
+                "      - id: gemini-3.6-flash-tiered\n",
+                encoding="utf-8",
             )
             image_id, source = module._read_image_reply_model(state)
             self.assertEqual(image_id, "google-antigravity/gemini-3.7-flash-tiered")
@@ -2451,6 +2461,182 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("let image_reply_model", source)
         self.assertIn("--action\", \"image-model-set\"", source)
         self.assertIn("이미지 모델", source)
+
+    def test_reply_model_fallbacks_default_when_nothing_saved(self):
+        module = load("auto_reply_menubar_fallbacks_default")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            models, source = module.read_reply_model_fallbacks(state)
+            self.assertEqual(source, "default")
+            self.assertEqual(models, list(module.DEFAULT_REPLY_FALLBACK_MODELS))
+
+    def test_reply_model_fallbacks_save_reads_back_ordered_chain(self):
+        module = load("auto_reply_menubar_fallbacks_save")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            module._fallback_allowed_model_ids = lambda _root: {
+                "kiro/claude-opus-5",
+                "kiro/claude-sonnet-5",
+                "kiro/claude-opus-4.8",
+            }
+            saved = module.set_reply_model_fallbacks(
+                state,
+                "kiro/claude-opus-5,kiro/claude-sonnet-5,kiro/claude-opus-4.8",
+                now=1.0,
+            )
+            self.assertTrue(saved["ok"])
+            self.assertEqual(
+                saved["fallback_models"],
+                ["kiro/claude-opus-5", "kiro/claude-sonnet-5", "kiro/claude-opus-4.8"],
+            )
+            self.assertEqual(saved["fallback_source"], "override")
+            # The window and the worker read this file, so check the on-disk shape.
+            payload = json.loads(
+                (state / module.REPLY_MODEL_FALLBACKS_NAME).read_text(encoding="utf-8")
+            )
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["models"], saved["fallback_models"])
+            self.assertEqual(
+                module.read_reply_model_fallbacks(state),
+                (saved["fallback_models"], "override"),
+            )
+
+    def test_reply_model_fallbacks_empty_list_means_no_fallback(self):
+        module = load("auto_reply_menubar_fallbacks_empty")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            module._fallback_allowed_model_ids = lambda _root: set()
+            saved = module.set_reply_model_fallbacks(state, "", now=1.0)
+            self.assertTrue(saved["ok"])
+            self.assertEqual(saved["fallback_models"], [])
+            # An empty list is a real choice, so it must not read as the defaults.
+            self.assertEqual(saved["fallback_source"], "override")
+            self.assertEqual(module.read_reply_model_fallbacks(state), ([], "override"))
+
+    def test_reply_model_fallbacks_clear_restores_builtin_defaults(self):
+        module = load("auto_reply_menubar_fallbacks_clear")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
+            module.set_reply_model_fallbacks(state, "kiro/claude-opus-5", now=1.0)
+            self.assertTrue((state / module.REPLY_MODEL_FALLBACKS_NAME).is_file())
+            cleared = module.set_reply_model_fallbacks(state, None, now=2.0, clear=True)
+            self.assertTrue(cleared["ok"])
+            self.assertEqual(cleared["fallback_source"], "default")
+            self.assertFalse((state / module.REPLY_MODEL_FALLBACKS_NAME).is_file())
+            self.assertEqual(
+                cleared["fallback_models"], list(module.DEFAULT_REPLY_FALLBACK_MODELS)
+            )
+
+    def test_reply_model_fallbacks_rejects_overflow_and_unknown_models(self):
+        module = load("auto_reply_menubar_fallbacks_reject")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
+            too_many = module.set_reply_model_fallbacks(
+                state, ",".join(f"kiro/m{index}" for index in range(7)), now=1.0
+            )
+            self.assertFalse(too_many["ok"])
+            self.assertEqual(too_many["reason"], "too_many_fallbacks")
+            unknown = module.set_reply_model_fallbacks(state, "nope/nope", now=1.0)
+            self.assertFalse(unknown["ok"])
+            self.assertEqual(unknown["reason"], "model_not_in_catalog")
+            self.assertFalse((state / module.REPLY_MODEL_FALLBACKS_NAME).exists())
+
+    def test_reply_model_fallbacks_snapshot_reaches_the_settings_window(self):
+        # The settings window draws straight from the snapshot, and the frozen
+        # overlay builds that snapshot through its own reference. A hook that
+        # only patches the impl layer leaves the window showing defaults.
+        module = load("auto_reply_menubar_fallbacks_snapshot")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            root.joinpath(module.REPLY_MODEL_FALLBACKS_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": ["kiro/claude-opus-5"],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot = module.collect_menubar_model(root)
+            self.assertEqual(
+                snapshot["reply_model_fallbacks"]["models"], ["kiro/claude-opus-5"]
+            )
+            self.assertEqual(
+                snapshot["reply_model_fallbacks"]["source"], "override"
+            )
+            self.assertEqual(
+                snapshot["reply_model_fallbacks"]["max"],
+                module.MAX_REPLY_FALLBACK_MODELS,
+            )
+
+    def test_models_action_exposes_fallback_chain(self):
+        module = load("auto_reply_menubar_fallbacks_models_action")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            root.joinpath(module.REPLY_MODEL_FALLBACKS_NAME).write_text(
+                json.dumps({"schema_version": 1, "models": [], "updated_at": 1}),
+                encoding="utf-8",
+            )
+            payload = module.collect_reply_models(root)
+            self.assertEqual(payload["fallback_models"], [])
+            self.assertEqual(payload["fallback_source"], "override")
+            self.assertEqual(
+                payload["fallback_defaults"], list(module.DEFAULT_REPLY_FALLBACK_MODELS)
+            )
+            self.assertEqual(payload["fallback_max"], module.MAX_REPLY_FALLBACK_MODELS)
+
+    def test_worker_uses_saved_fallback_chain_and_respects_empty(self):
+        worker_path = SCRIPTS / "auto-reply-worker.py"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            state = root / "rooms" / "1" / "reply-state.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("{}", encoding="utf-8")
+            os.environ["OPENKAKAO_REPLY_STATE"] = str(state)
+            spec = importlib.util.spec_from_file_location(
+                "auto_reply_fallback_chain", worker_path
+            )
+            worker = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(worker)
+            path = root / worker.REPLY_MODEL_FALLBACKS_NAME
+
+            self.assertEqual(
+                worker._reply_fallback_candidates(),
+                list(worker.DEFAULT_REPLY_FALLBACK_MODELS),
+            )
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                worker._reply_fallback_candidates(),
+                ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+            )
+            # "No fallback" must survive as an empty chain, not become defaults.
+            path.write_text(
+                json.dumps({"schema_version": 1, "models": [], "updated_at": 1}),
+                encoding="utf-8",
+            )
+            self.assertEqual(worker._reply_fallback_candidates(), [])
+
+    def test_swift_menu_renders_fallback_model_chain(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("let fallback_models", source)
+        self.assertIn("struct ReplyModelFallbacks", source)
+        self.assertIn("reply_model_fallbacks", source)
+        self.assertIn("--action\", \"fallback-models-set\"", source)
+        self.assertIn("\"--clear\"", source)
+        self.assertIn("폴백 모델", source)
 
 
     def test_provider_preset_parser_reads_gjc_setup_list(self):
