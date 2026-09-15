@@ -372,6 +372,7 @@ impl TurnReceipt {
             "fallback_used": self.fallback_attempt().is_some(),
             "fallback_code": self.fallback_code,
             "preview": self.preview,
+            "preview_text": self.preview_text(),
             "needs_attention": self.needs_attention,
             "summary": self.summary(),
             "detail": self.detail_lines(),
@@ -1116,6 +1117,18 @@ mod tests {
         );
         let text = receipts[0].retrieval_text();
         assert_eq!(text, "검색 성공 · 후보 16 · 수집 16 · 포함 12");
+    }
+
+    #[test]
+    fn the_window_shows_the_same_short_reply_the_summary_uses() {
+        let long = "x".repeat(60);
+        let receipts = build_receipts(&[generation("evt-p", json!({"reply": long}))], 10);
+        let receipt = &receipts[0];
+        let payload = receipt.to_json();
+        assert_eq!(payload["preview"].as_str().unwrap().chars().count(), 60);
+        let shown = payload["preview_text"].as_str().unwrap().to_string();
+        assert_eq!(shown.chars().count(), 49, "48 characters and one ellipsis");
+        assert!(receipt.summary().ends_with(&shown), "one shortening rule");
     }
 
     #[test]
