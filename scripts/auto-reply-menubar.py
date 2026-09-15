@@ -144,6 +144,7 @@ REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 # 쓴다(scripts/auto-reply-worker.py: DEFAULT_REPLY_FALLBACK_MODELS).
 DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
     "google-antigravity/gemini-3.8-flash",
+    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
     "google-antigravity/gemini-3.7-flash-tiered",
 )
 _WRAPPER_ONLY_FLAGS.update(_CATALOG_MUTATE_FLAGS)
@@ -168,8 +169,9 @@ def _gjc_global_models_path() -> Path:
 
 
 
-# oMLX (local MLX-Serve) was retired; filter its provider and models from menus.
-_RETIRED_PROVIDER_TAGS: frozenset[str] = frozenset({"omlx", "mlx", "ddalcu", "mlx-community"})
+# The legacy oMLX server (port 8080) was retired; filter only legacy oMLX.
+# The active MLX-Serve gateway (mlx/*) remains available for local generation.
+_RETIRED_PROVIDER_TAGS: frozenset[str] = frozenset({"omlx"})
 _HIDDEN_CANONICAL: frozenset[str] = _RETIRED_PROVIDER_TAGS
 
 
@@ -195,7 +197,7 @@ def _strip_hidden_providers(providers: list[dict]) -> list[dict]:
                 mcanon in _RETIRED_PROVIDER_TAGS
                 or mlabel in _RETIRED_PROVIDER_TAGS
                 or mprov in _RETIRED_PROVIDER_TAGS
-                or any(mid.startswith(prefix) for prefix in ("omlx/", "mlx/", "ddalcu/", "mlx-community/"))
+                or mid.startswith("omlx/")
             ):
                 continue
             kept.append(m)
@@ -1715,6 +1717,11 @@ def collect_reply_models(
     payload["providers"] = _ensure_current_model_listed(
         list(payload.get("providers") or []), Path(state_root)
     )
+    for fb_model in list(fallbacks.get("models") or []) + list(fallbacks.get("defaults") or []):
+        payload["providers"] = _ensure_listed_model(
+            list(payload.get("providers") or []),
+            fb_model,
+        )
     # 답변 모델 목록과 함께 저장된 이미지 모델도 돌려준다. 화면이 이미지 변경을
     # "저장됨"이라고 말하려면 답변 목록이 아니라 이 필드를 확인해야 한다.
     image_id, image_source = _read_image_reply_model(Path(state_root))

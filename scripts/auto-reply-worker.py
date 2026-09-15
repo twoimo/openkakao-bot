@@ -208,6 +208,7 @@ _REPLY_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}$")
 MAX_REPLY_FALLBACK_MODELS = 6
 DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
     "google-antigravity/gemini-3.8-flash",
+    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
     "google-antigravity/gemini-3.7-flash-tiered",
 )
 MODEL_CALL_LEASE_SECONDS = 180.0
@@ -10711,9 +10712,12 @@ def _reply_fallback_candidates() -> list[str]:
     return models or list(DEFAULT_REPLY_FALLBACK_MODELS)
 
 def _fallback_thinking_effort(model: str) -> str:
-    """Fallbacks answer at high effort, except the retired local runtime."""
+    """Fallbacks answer at high effort, except the local runtimes."""
 
-    return "medium" if str(model or "").startswith("omlx/") else "high"
+    # Both local runtimes (oMLX and the MLX-Serve gateway) answer without a
+    # thinking budget; asking for one only spends latency on the same reply.
+    folded = str(model or "").casefold()
+    return "medium" if folded.startswith(("omlx/", "mlx/")) else "high"
 
 def _open_fallback_lease(model: str) -> dict | None:
     """Open a call lease for one fallback model, or None when it cannot run.
@@ -10889,12 +10893,17 @@ def _run_opencodex_generation(
         ],
     }
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    session_lane = "openkakao-bujamentor"
+    session_digest = hashlib.sha256(
+        ("opencodex/opencode-go/session/v1\0" + session_lane).encode("utf-8")
+    ).hexdigest()[:32]
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=data,
         headers={
             "Content-Type": "application/json",
             "Authorization": "Bearer not-needed",
+            "x-opencode-session": f"ocx_{session_digest}",
         },
     )
     try:
@@ -11348,18 +11357,28 @@ def generate_reply(
                 active_model,
                 system_prompt,
                 prompt_bytes,
-                timeout=30.0,
+                timeout=45.0,
             )
             if returncode != 0:
                 err_str = stderr_bytes.decode("utf-8", "replace").casefold()
-                if returncode == 429 or "usage limit" in err_str or "quota" in err_str:
+                failure_class, _ = _classify_model_failure(
+                    returncode,
+                    stdout_bytes,
+                    stderr_bytes,
+                )
+                if (
+                    returncode == 429
+                    or "usage limit" in err_str
+                    or "quota" in err_str
+                    or failure_class in MODEL_CIRCUIT_FAILURE_CLASSES
+                ):
                     winner = _model_fallback_chain(
                         active_model,
                         lambda candidate: _run_opencodex_generation(
                             candidate,
                             system_prompt,
                             prompt_bytes,
-                            timeout=30.0,
+                            timeout=45.0,
                         ),
                     )
                     if winner is not None:
