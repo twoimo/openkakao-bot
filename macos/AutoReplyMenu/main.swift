@@ -339,6 +339,8 @@ struct MenubarModel: Decodable {
     let reply_model_providers: [ReplyModelProvider]?
     // 폴백 사슬: 코어가 계산한 목록/출처/기본값/상한. 구버전은 보내지 않는다.
     let reply_model_fallbacks: ReplyModelFallbacks?
+    // 답변 기록 창: 코어(CLI)가 만든 턴 기록. 훅이 없는 구버전 스냅샷에는 없다.
+    let reply_receipts: ReplyReceipts?
 }
 
 /// 모델 설정 창의 폴백 섹션이 그대로 그리는 값. 판단은 코어(파이썬)가 한다.
@@ -352,6 +354,86 @@ struct ReplyModelFallbacks: Decodable {
     // 없는 줄이 남기 때문이다(2026-09-15).
     let unknown: [String]?
     let primary: String?
+}
+
+/// 답변 기록 창이 그대로 그리는 턴 기록. 문구와 판단은 코어가 만든다.
+struct ReplyReceipts: Decodable {
+    let rooms: [ReplyReceiptRoom]?
+    let limit: Int?
+    let read_at: Double?
+    let missing: Bool?
+
+    /// 서명용 지문. 읽은 시각은 2초마다 바뀌므로 쓰지 않는다.
+    var fingerprint: String {
+        (rooms ?? []).map { room in
+            let turns = (room.receipts ?? []).map {
+                "\($0.event_id ?? ""):\($0.outcome ?? ""):\($0.needs_attention == true ? 1 : 0)"
+            }.joined(separator: ",")
+            return "\(room.chat_id ?? ""):\(room.count ?? 0):\(turns)"
+        }.joined(separator: ";")
+    }
+}
+
+struct ReplyReceiptRoom: Decodable {
+    let chat_id: String?
+    let chat: String?
+    let count: Int?
+    let needs_attention: Int?
+    let lines: [String]?
+    let receipts: [TurnReceipt]?
+    let missing: Bool?
+}
+
+struct TurnReceipt: Decodable {
+    let event_id: String?
+    let recorded_at: String?
+    let display_time: String?
+    let clock: String?
+    let chat: String?
+    let outcome: String?
+    let outcome_text: String?
+    let decision: String?
+    let reason_code: String?
+    let reason_text: String?
+    let retrieval_state: String?
+    let retrieval_text: String?
+    let model: String?
+    let model_attempts: [TurnAttempt]?
+    let fallback_used: Bool?
+    let fallback_code: String?
+    // 코어가 48자로 줄인 미리보기만 쓴다. 원문(preview)은 창에서 그리지 않는다.
+    let preview_text: String?
+    let needs_attention: Bool?
+    let summary: String?
+    let detail: [String]?
+}
+
+struct TurnAttempt: Decodable {
+    let order: Int?
+    let model: String?
+    let result: String?
+    let result_text: String?
+    let reason_code: String?
+    let reason_text: String?
+    let included: Int?
+}
+
+/// 기록 창의 한 행. 방 정보를 함께 들고 있어야 새로고침 뒤에도 같은 턴을
+/// 계속 고른 채로 있을 수 있다.
+struct ReceiptRow {
+    let key: String
+    let roomId: String
+    let room: String
+    let time: String
+    let outcome: String
+    let outcomeText: String
+    let reasonText: String
+    let retrievalText: String
+    let reply: String
+    let attention: Bool
+    let summary: String
+    let detail: [String]
+    let sortKey: String
 }
 
 struct Config {
@@ -1217,10 +1299,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var lastSignature = ""
     var lastModel: MenubarModel?
     var logWindow: NSWindow?
-    var logTextView: NSTextView?
     var logPipeline: PipelineView?
     var logSummary: NSTextField?
     var logHint: NSTextField?
+    var logTable: NSTableView?
+    var logTableScroll: NSScrollView?
+    var logScopeButton: NSPopUpButton?
+    var logRoomButton: NSPopUpButton?
+    var logStatusField: NSTextField?
+    var logEmptyLabel: NSTextField?
+    var logDetailView: NSTextView?
+    var receiptRows: [ReceiptRow] = []
+    var displayedReceipts: [ReceiptRow] = []
+    var receiptTitles: [(id: String, title: String)] = []
+    var logScopes: [(code: String, title: String)] = []
+    var logRoomIds: [String] = []
+    var logScopeValue = ""
+    var logRoomValue = ""
+    var selectedReceiptKey = ""
+    var lastReceiptFingerprint = ""
+    var lastLogDetailKey = ""
+    var logPageMissing = false
+    var logPageUnread = false
+    var logReadAt: Double = 0
     var roomsWindow: NSWindow?
     var roomsTable: NSTableView?
     var roomsFilterField: NSTextField?
@@ -1325,7 +1426,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var refreshQueued = false
     var lastStatusImageKey = ""
     var lastApplySignature = ""
-    var lastLogTextKey = ""
     var currentReplyModel: ReplyModelSelection?
     var currentImageReplyModel: ReplyModelSelection?
     var catalogProviders: [ReplyModelProvider] = []
@@ -1516,6 +1616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             model.vector_memory?.fingerprint ?? "",
             model.log_summary ?? "",
             logs,
+            model.reply_receipts?.fingerprint ?? "",
         ].joined(separator: "|")
     }
 
@@ -3951,7 +4052,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if logWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "최근 기록", size: NSSize(width: 740, height: 560), autosave: "AutoReplyLogs")
+        let window = Chrome.operatorWindow(title: "답변 기록", size: NSSize(width: 1000, height: 720), autosave: "AutoReplyReceipts")
         let content = NSView()
         window.contentView = content
 
@@ -3962,43 +4063,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let summary = Chrome.summary("상태를 읽는 중")
         logSummary = summary
-        let hint = Chrome.hint("최근 무슨 일이 있었는지 쉬운 말로 보여 줍니다. 대화 내용, 초안, 이름은 나오지 않습니다.")
+        let hint = Chrome.hint("턴마다 무슨 일이 있었는지 한 줄로 보여 줍니다. 답변은 앞부분만 잘린 채로 나오고, 대화 원문은 나오지 않습니다.")
         logHint = hint
 
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
-        scroll.borderType = .noBorder
-        scroll.drawsBackground = true
-        scroll.autohidesScrollers = true
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        let scope = NSPopUpButton(frame: .zero, pullsDown: false)
+        scope.translatesAutoresizingMaskIntoConstraints = false
+        scope.target = self
+        scope.action = #selector(logScopeChanged(_:))
+        logScopeButton = scope
 
-        let text = NSTextView(frame: .zero)
-        text.isEditable = false
-        text.isSelectable = true
-        text.font = NSFont.systemFont(ofSize: 13)
-        text.textColor = NSColor.labelColor
-        text.backgroundColor = NSColor.textBackgroundColor
-        text.minSize = NSSize(width: 0, height: 0)
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        text.isHorizontallyResizable = false
-        text.isVerticallyResizable = true
-        text.textContainerInset = NSSize(width: 16, height: 14)
-        text.textContainer?.widthTracksTextView = true
-        text.textContainer?.lineFragmentPadding = 4
-        text.textContainer?.containerSize = NSSize(width: 700, height: CGFloat.greatestFiniteMagnitude)
-        scroll.documentView = text
-        logTextView = text
+        let room = NSPopUpButton(frame: .zero, pullsDown: false)
+        room.translatesAutoresizingMaskIntoConstraints = false
+        room.target = self
+        room.action = #selector(logRoomChanged(_:))
+        room.lineBreakMode = .byTruncatingTail
+        logRoomButton = room
 
-        let stack = Chrome.vstack([pipeline, summary, hint, scroll], spacing: 10)
-        Chrome.fill(stack, in: content, insets: NSEdgeInsets(top: 16, left: 16, bottom: 0, right: 16))
+        let status = Chrome.label("기록을 읽는 중", size: 11, color: .secondaryLabelColor, lines: 1)
+        status.alignment = .right
+        logStatusField = status
+        let toolbar = Chrome.hstack([scope, room, Chrome.spacer(), status], spacing: 8)
+
+        let empty = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 3)
+        logEmptyLabel = empty
+
+        let (scroll, table) = Chrome.table()
+        table.delegate = self
+        table.dataSource = self
+        Chrome.addColumn(table, id: "time", title: "시각", width: 92, minWidth: 76, alignment: .left)
+        Chrome.addColumn(table, id: "room", title: "채팅방", width: 150, minWidth: 96, alignment: .left)
+        Chrome.addColumn(table, id: "outcome", title: "결과", width: 92, minWidth: 76, alignment: .center)
+        Chrome.addColumn(table, id: "reason", title: "사유", width: 150, minWidth: 96, alignment: .left)
+        Chrome.addColumn(table, id: "retrieval", title: "검색·입력", width: 200, minWidth: 120, alignment: .left)
+        Chrome.addColumn(table, id: "reply", title: "답변", width: 220, minWidth: 120, alignment: .left)
+        logTable = table
+        logTableScroll = scroll
+
+        let detailScroll = NSScrollView()
+        detailScroll.translatesAutoresizingMaskIntoConstraints = false
+        detailScroll.hasVerticalScroller = true
+        detailScroll.hasHorizontalScroller = false
+        detailScroll.autohidesScrollers = true
+        detailScroll.borderType = .bezelBorder
+        detailScroll.drawsBackground = true
+        let detail = NSTextView(frame: .zero)
+        detail.isEditable = false
+        detail.isSelectable = true
+        detail.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        detail.textColor = NSColor.labelColor
+        detail.backgroundColor = NSColor.textBackgroundColor
+        detail.minSize = NSSize(width: 0, height: 0)
+        detail.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        detail.isHorizontallyResizable = false
+        detail.isVerticallyResizable = true
+        detail.textContainerInset = NSSize(width: 10, height: 8)
+        detail.textContainer?.widthTracksTextView = true
+        detail.string = ""
+        detailScroll.documentView = detail
+        logDetailView = detail
+
+        let stack = Chrome.vstack([pipeline, summary, hint, toolbar, empty, scroll, detailScroll], spacing: 10)
+        Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
             summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 280),
+            detailScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
+            detailScroll.heightAnchor.constraint(equalToConstant: 176),
+            scope.widthAnchor.constraint(greaterThanOrEqualToConstant: 132),
+            room.widthAnchor.constraint(greaterThanOrEqualToConstant: 168),
+            room.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
         ])
         logWindow = window
     }
@@ -4014,78 +4152,282 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             logSummary?.stringValue = summary
         }
-        applyLogText(displayLogLines(model))
+        applyLogReceipts(model)
     }
 
-    func logLineColor(_ line: String) -> NSColor {
-        if line.hasPrefix("문제") {
-            return NSColor.systemRed
-        }
-        if line.hasPrefix("주의") {
-            return NSColor.systemOrange
-        }
-        if line.hasPrefix("정상") {
-            return NSColor.systemGreen
-        }
-        if line.hasPrefix("꺼짐") {
-            return NSColor.systemGray
-        }
-        return NSColor.secondaryLabelColor
+    @objc func logScopeChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        logScopeValue = index >= 0 && index < logScopes.count ? logScopes[index].code : ""
+        applyLogFilter()
     }
 
-    func applyLogText(_ lines: [String]) {
-        guard let text = logTextView else { return }
-        let key = lines.joined(separator: "\n")
-        if key == lastLogTextKey, (text.textStorage?.length ?? 0) > 0 {
+    @objc func logRoomChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        logRoomValue = index >= 0 && index < logRoomIds.count ? logRoomIds[index] : ""
+        applyLogFilter()
+    }
+
+    /// 기록 창을 채운다. 문구와 판단은 코어(CLI)가 만들고 여기서는 방으로 묶어
+    /// 최신 순으로 줄 세우기만 한다. 2초마다 불리므로 목록이 그대로면 표를 다시
+    /// 그리지 않는다 — 다시 그리면 스크롤과 선택이 튄다(2026-09-15).
+    func applyLogReceipts(_ model: MenubarModel) {
+        let page = model.reply_receipts
+        var rows: [ReceiptRow] = []
+        var titles: [(id: String, title: String)] = []
+        for room in page?.rooms ?? [] {
+            let id = (room.chat_id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = receiptRoomTitle(id, room: room, model: model)
+            titles.append((id, title))
+            for receipt in room.receipts ?? [] {
+                let event = (receipt.event_id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let time = receipt.display_time ?? receipt.clock ?? ""
+                rows.append(ReceiptRow(
+                    key: "\(id)|\(event.isEmpty ? time + (receipt.reason_code ?? "") : event)",
+                    roomId: id,
+                    room: title,
+                    time: time,
+                    outcome: receipt.outcome ?? "",
+                    outcomeText: receipt.outcome_text ?? "",
+                    reasonText: receipt.reason_text ?? "",
+                    retrievalText: receipt.retrieval_text ?? "",
+                    reply: receipt.preview_text ?? "",
+                    attention: receipt.needs_attention ?? false,
+                    summary: receipt.summary ?? "",
+                    detail: receipt.detail ?? [],
+                    sortKey: receipt.recorded_at ?? ""
+                ))
+            }
+        }
+        rows.sort { left, right in
+            if left.sortKey == right.sortKey {
+                return left.time > right.time
+            }
+            return left.sortKey > right.sortKey
+        }
+        let fingerprint = rows.map { "\($0.key):\($0.outcome):\($0.retrievalText):\($0.reply)" }.joined(separator: "|")
+        let changed = fingerprint != lastReceiptFingerprint
+        lastReceiptFingerprint = fingerprint
+        receiptRows = rows
+        receiptTitles = titles
+        logPageMissing = page == nil
+        logPageUnread = page?.missing ?? false
+        logReadAt = page?.read_at ?? 0
+        syncLogScopes()
+        syncLogRooms()
+        applyLogFilter(reload: changed)
+    }
+
+    /// 방 이름은 채팅방 목록에서 먼저 찾고, 없으면 기록이 스스로 적어 둔 이름을
+    /// 쓴다. 둘 다 없으면 방 번호를 그대로 보여 준다.
+    func receiptRoomTitle(_ id: String, room: ReplyReceiptRoom, model: MenubarModel) -> String {
+        if let chat = model.available_chats?.first(where: { String($0.chat_id) == id }), !chat.title.isEmpty {
+            return chat.title
+        }
+        for receipt in room.receipts ?? [] {
+            let name = (receipt.chat ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return name
+            }
+        }
+        let own = (room.chat ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !own.isEmpty, own != id {
+            return own
+        }
+        return id
+    }
+
+    /// 결과 필터에는 실제로 기록에 나온 결과만 넣는다. 항목 이름도 코어가 쓴
+    /// 낱말을 그대로 쓰므로 화면과 기록의 말이 갈라지지 않는다.
+    func syncLogScopes() {
+        var scopes: [(code: String, title: String)] = [("", "전체"), ("attention", "확인 필요")]
+        for code in Self.receiptOutcomeCodes {
+            if let row = receiptRows.first(where: { $0.outcome == code }) {
+                scopes.append((code, row.outcomeText.isEmpty ? code : row.outcomeText))
+            }
+        }
+        logScopes = scopes
+        guard let popup = logScopeButton else { return }
+        let titles = scopes.map { $0.title }
+        if popup.itemTitles != titles {
+            popup.removeAllItems()
+            popup.addItems(withTitles: titles)
+        }
+        if let index = scopes.firstIndex(where: { $0.code == logScopeValue }) {
+            if popup.indexOfSelectedItem != index {
+                popup.selectItem(at: index)
+            }
+        } else {
+            logScopeValue = ""
+            popup.selectItem(at: 0)
+        }
+    }
+
+    func syncLogRooms() {
+        var ids = [""]
+        var titles = ["모든 채팅방"]
+        for room in receiptTitles where !room.id.isEmpty {
+            if ids.contains(room.id) {
+                continue
+            }
+            ids.append(room.id)
+            titles.append(room.title)
+        }
+        logRoomIds = ids
+        guard let popup = logRoomButton else { return }
+        if popup.itemTitles != titles {
+            popup.removeAllItems()
+            popup.addItems(withTitles: titles)
+        }
+        if let index = ids.firstIndex(of: logRoomValue) {
+            if popup.indexOfSelectedItem != index {
+                popup.selectItem(at: index)
+            }
+        } else {
+            logRoomValue = ""
+            popup.selectItem(at: 0)
+        }
+    }
+
+    func applyLogFilter(reload: Bool = true) {
+        rememberLogSelection()
+        displayedReceipts = receiptRows.filter { row in
+            if !logRoomValue.isEmpty, row.roomId != logRoomValue {
+                return false
+            }
+            if logScopeValue.isEmpty {
+                return true
+            }
+            if logScopeValue == "attention" {
+                return row.attention
+            }
+            return row.outcome == logScopeValue
+        }
+        if reload {
+            logTable?.reloadData()
+        }
+        restoreLogSelection()
+        logEmptyLabel?.stringValue = logEmptyMessage()
+        logEmptyLabel?.isHidden = !displayedReceipts.isEmpty
+        logTableScroll?.isHidden = receiptRows.isEmpty
+        applyLogDetail()
+        updateLogStatus()
+    }
+
+    func rememberLogSelection() {
+        guard let table = logTable else { return }
+        let row = table.selectedRow
+        if row >= 0, row < displayedReceipts.count {
+            selectedReceiptKey = displayedReceipts[row].key
+        }
+    }
+
+    /// 선택은 (방, 턴)으로 기억한다. 새 기록이 위에 붙어도 같은 턴을 계속
+    /// 보고 있어야 하고, 그 턴이 사라졌을 때만 맨 위로 돌아간다.
+    func restoreLogSelection() {
+        guard let table = logTable else { return }
+        if let index = displayedReceipts.firstIndex(where: { $0.key == selectedReceiptKey }) {
+            if table.selectedRow != index {
+                table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            }
             return
         }
-        lastLogTextKey = key
-        let output = NSMutableAttributedString()
-        let para = NSMutableParagraphStyle()
-        para.lineSpacing = 3
-        para.paragraphSpacing = 8
-        para.lineBreakMode = .byWordWrapping
-        let bodyFont = NSFont.systemFont(ofSize: 13)
-        let headFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        let rows = lines.isEmpty ? ["아직 쉽게 풀어서 보여 줄 기록이 없습니다."] : lines
-        for (index, line) in rows.enumerated() {
-            if index > 0 {
-                output.append(NSAttributedString(string: "\n"))
+        if displayedReceipts.isEmpty {
+            selectedReceiptKey = ""
+            if table.selectedRow != -1 {
+                table.deselectAll(nil)
             }
-            let color = logLineColor(line)
-            let separator = line.range(of: " — ") ?? line.range(of: " · ")
-            if let separator {
-                let prefix = String(line[..<separator.lowerBound])
-                let rest = String(line[separator.lowerBound...])
-                output.append(NSAttributedString(
-                    string: prefix,
-                    attributes: [
-                        .font: headFont,
-                        .foregroundColor: color,
-                        .paragraphStyle: para,
-                    ]
-                ))
-                output.append(NSAttributedString(
-                    string: rest,
-                    attributes: [
-                        .font: bodyFont,
-                        .foregroundColor: NSColor.labelColor,
-                        .paragraphStyle: para,
-                    ]
-                ))
-            } else {
-                output.append(NSAttributedString(
-                    string: line,
-                    attributes: [
-                        .font: bodyFont,
-                        .foregroundColor: NSColor.labelColor,
-                        .paragraphStyle: para,
-                    ]
-                ))
+            return
+        }
+        selectedReceiptKey = displayedReceipts[0].key
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    }
+
+    func applyLogDetail() {
+        guard let view = logDetailView else { return }
+        let row = logTable?.selectedRow ?? -1
+        var lines: [String] = []
+        if row >= 0, row < displayedReceipts.count {
+            lines = displayedReceipts[row].detail
+            if lines.isEmpty, !displayedReceipts[row].summary.isEmpty {
+                lines = [displayedReceipts[row].summary]
+            }
+        } else {
+            lines = logFriendlyLines()
+        }
+        let text = lines.isEmpty ? "이 턴에 대한 자세한 기록이 없습니다." : lines.joined(separator: "\n")
+        if text == lastLogDetailKey, (view.textStorage?.length ?? 0) > 0 {
+            return
+        }
+        lastLogDetailKey = text
+        view.string = text
+    }
+
+    /// 고른 행이 없을 때 아래 칸에 채우는 코어의 한 줄 요약.
+    func logFriendlyLines() -> [String] {
+        guard let model = lastModel else { return [] }
+        let rooms = model.reply_receipts?.rooms ?? []
+        if !logRoomValue.isEmpty {
+            if let room = rooms.first(where: { ($0.chat_id ?? "") == logRoomValue }),
+               let lines = room.lines, !lines.isEmpty {
+                return lines
             }
         }
-        text.textStorage?.setAttributedString(output)
-        text.scrollToEndOfDocument(nil)
+        let lines = rooms.flatMap { $0.lines ?? [] }
+        return lines.isEmpty ? displayLogLines(model) : lines
+    }
+
+    func logEmptyMessage() -> String {
+        if logPageMissing {
+            return "설치된 앱이 턴 기록을 아직 보내지 않습니다. 앱과 CLI를 다시 설치하면 여기에 채워집니다."
+        }
+        if receiptRows.isEmpty || logPageUnread {
+            return "아직 기록된 턴이 없습니다. 답변을 시도하면 한 줄씩 쌓입니다."
+        }
+        return "고른 조건에 맞는 기록이 없습니다."
+    }
+
+    /// 결과 필터에 넣는 순서. 항목 낱말은 코어가 준 outcome_text를 그대로 쓴다.
+    static let receiptOutcomeCodes = ["sent", "deferred", "scheduled", "skipped"]
+
+    func logOutcomeColor(_ row: ReceiptRow) -> NSColor {
+        if row.attention {
+            return NSColor.systemRed
+        }
+        switch row.outcome {
+        case "sent":
+            return NSColor.systemGreen
+        case "deferred":
+            return NSColor.systemOrange
+        case "skipped", "scheduled":
+            return NSColor.secondaryLabelColor
+        default:
+            return NSColor.labelColor
+        }
+    }
+
+    func updateLogStatus() {
+        guard let field = logStatusField else { return }
+        var parts: [String] = []
+        if displayedReceipts.count != receiptRows.count {
+            parts.append("\(displayedReceipts.count)/\(receiptRows.count)건")
+        } else {
+            parts.append("\(receiptRows.count)건")
+        }
+        let attention = displayedReceipts.filter { $0.attention }.count
+        if attention > 0 {
+            parts.append("확인 필요 \(attention)")
+        }
+        if logReadAt > 0 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.dateFormat = "HH:mm"
+            parts.append("\(formatter.string(from: Date(timeIntervalSince1970: logReadAt))) 기준")
+        }
+        if logPageMissing {
+            parts.append("기록 없음")
+        }
+        field.stringValue = parts.joined(separator: " · ")
+        field.textColor = attention > 0 ? NSColor.systemRed : NSColor.secondaryLabelColor
     }
 
     func ensureRoomsWindow() {
@@ -4214,7 +4556,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         text: String,
         font: NSFont,
         color: NSColor,
-        alignment: NSTextAlignment = .center
+        alignment: NSTextAlignment = .center,
+        toolTip: String? = nil
     ) -> CenteredLabelCell {
         let ident = NSUserInterfaceItemIdentifier("cell.\(column)")
         let cell: CenteredLabelCell
@@ -4231,6 +4574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         (cell.label.cell as? NSTextFieldCell)?.alignment = .center
         cell.label.alignment = alignment
         (cell.label.cell as? NSTextFieldCell)?.alignment = alignment
+        cell.label.toolTip = toolTip
         return cell
     }
 
@@ -4263,6 +4607,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func numberOfRows(in tableView: NSTableView) -> Int {
 
+        if tableView === logTable {
+            return displayedReceipts.count
+        }
         if tableView === doctorTable {
             return displayedChecks.count
         }
@@ -4276,6 +4623,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === logTable {
+            guard row >= 0, row < displayedReceipts.count, let column = tableColumn else { return nil }
+            let receipt = displayedReceipts[row]
+            // 같은 턴이 어디서 왔는지 코어가 적어 둔 한 줄을 그대로 띄운다.
+            let tip = receipt.summary.isEmpty ? nil : receipt.summary
+            switch column.identifier.rawValue {
+            case "time":
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.time",
+                    text: receipt.time,
+                    font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+                    color: NSColor.secondaryLabelColor,
+                    alignment: .left,
+                    toolTip: tip
+                )
+            case "room":
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.room",
+                    text: receipt.room,
+                    font: NSFont.systemFont(ofSize: 12),
+                    color: NSColor.labelColor,
+                    alignment: .left,
+                    toolTip: tip
+                )
+            case "outcome":
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.outcome",
+                    text: receipt.outcomeText,
+                    font: NSFont.systemFont(ofSize: 12, weight: receipt.attention ? .semibold : .regular),
+                    color: logOutcomeColor(receipt),
+                    alignment: .center,
+                    toolTip: tip
+                )
+            case "reason":
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.reason",
+                    text: receipt.reasonText,
+                    font: NSFont.systemFont(ofSize: 12),
+                    color: NSColor.labelColor,
+                    alignment: .left,
+                    toolTip: tip
+                )
+            case "retrieval":
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.retrieval",
+                    text: receipt.retrievalText,
+                    font: NSFont.systemFont(ofSize: 11),
+                    color: NSColor.secondaryLabelColor,
+                    alignment: .left,
+                    toolTip: tip
+                )
+            default:
+                return reusedLabel(
+                    in: tableView,
+                    column: "log.reply",
+                    text: receipt.reply,
+                    font: NSFont.systemFont(ofSize: 12),
+                    color: receipt.reply.isEmpty ? NSColor.secondaryLabelColor : NSColor.labelColor,
+                    alignment: .left,
+                    toolTip: tip
+                )
+            }
+        }
         if tableView === vectorTable {
             guard row >= 0, row < displayedVectors.count, let column = tableColumn else { return nil }
             let item = displayedVectors[row]
@@ -4491,6 +4906,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = notification.object as? NSTableView else { return }
+        if table === logTable {
+            let row = logTable?.selectedRow ?? -1
+            if row >= 0, row < displayedReceipts.count {
+                selectedReceiptKey = displayedReceipts[row].key
+            }
+            applyLogDetail()
+            return
+        }
         if table === vectorTable {
             fillVectorFormFromSelection()
             return
@@ -5335,7 +5758,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             reply_model: nil,
             image_reply_model: nil,
             reply_model_providers: nil,
-            reply_model_fallbacks: nil
+            reply_model_fallbacks: nil,
+            reply_receipts: nil
         )
     }
 
