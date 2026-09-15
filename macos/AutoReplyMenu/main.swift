@@ -689,6 +689,28 @@ enum Chrome {
         return view
     }
 
+    static func card(_ child: NSView, padding: CGFloat = 12) -> NSBox {
+        let box = NSBox()
+        box.boxType = .custom
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.cornerRadius = 8
+        box.borderWidth = 1
+        box.borderColor = NSColor.separatorColor.withAlphaComponent(0.25)
+        box.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45)
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        box.contentView = container
+        container.addSubview(child)
+        child.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            child.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            child.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            child.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            child.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
+        ])
+        return box
+    }
+
     /// 내용이 창보다 길어질 수 있는 창을 스크롤 가능하게 감싼다. 폴백 모델을
     /// 여러 개 넣으면 세로로 길어지므로 잘려 보이지 않게 한다.
     @discardableResult
@@ -2791,25 +2813,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         modelRevertButton = revertButton
         let actions = Chrome.hstack([registerButton, reloadButton, revertButton, Chrome.spacer()])
 
-        let stack = Chrome.vstack(
-            [hint, replyTitle, replySummary, replyPopup, replyStatus,
-             imageTitle, imageSummary, imagePopup, imageStatus,
-             fallbackTitle, fallbackSummary, fallbackRows, fallbackStatus, fallbackActions,
-             status, actions],
+        // 섹션 1: 주요 모델 설정 카드 (카드 레이아웃으로 불필요한 공백 제거)
+        replyTitle.setContentHuggingPriority(.required, for: .horizontal)
+        imageTitle.setContentHuggingPriority(.required, for: .horizontal)
+        replyTitle.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        imageTitle.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        let replyRow = Chrome.hstack([replyTitle, replyPopup], spacing: 10)
+        let imageRow = Chrome.hstack([imageTitle, imagePopup], spacing: 10)
+        let primaryContent = Chrome.vstack(
+            [replyRow, replySummary, replyStatus, imageRow, imageSummary, imageStatus],
             spacing: 8
         )
-        stack.setCustomSpacing(16, after: replyStatus)
-        stack.setCustomSpacing(16, after: imageStatus)
-        stack.setCustomSpacing(16, after: fallbackActions)
+        primaryContent.setCustomSpacing(12, after: replyStatus)
+        let primaryCard = Chrome.card(primaryContent, padding: 14)
+
+        // 섹션 2: 폴백 모델 사슬 카드
+        let fallbackContent = Chrome.vstack(
+            [fallbackTitle, fallbackSummary, fallbackRows, fallbackStatus, fallbackActions],
+            spacing: 8
+        )
+        let fallbackCard = Chrome.card(fallbackContent, padding: 14)
+
+        let stack = Chrome.vstack(
+            [hint, primaryCard, fallbackCard, status, actions],
+            spacing: 12
+        )
         // 폴백을 최대치까지 넣으면 창보다 길어지므로 스크롤로 감싼다.
         Chrome.scrollable(stack, in: content)
         NSLayoutConstraint.activate([
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            replyPopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            imagePopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fallbackRows.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fallbackStatus.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fallbackActions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            primaryCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            primaryContent.widthAnchor.constraint(equalTo: primaryCard.widthAnchor, constant: -28),
+            replyRow.widthAnchor.constraint(equalTo: primaryContent.widthAnchor),
+            imageRow.widthAnchor.constraint(equalTo: primaryContent.widthAnchor),
+            fallbackCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            fallbackContent.widthAnchor.constraint(equalTo: fallbackCard.widthAnchor, constant: -28),
+            fallbackRows.widthAnchor.constraint(equalTo: fallbackContent.widthAnchor),
+            fallbackActions.widthAnchor.constraint(equalTo: fallbackContent.widthAnchor),
             status.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -3840,17 +3880,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         traceScroll.documentView = trace
         jobsTrace = trace
 
-        let stack = Chrome.vstack([summary, filter, hint, scroll, traceScroll, actions], spacing: 10)
+        // 목록 요약과 안내는 한 카드로 묶고, 필터는 바로 아래 한 줄에 둔다.
+        // 예전에는 여섯 줄이 각자 한 줄씩 차지해 창마다 위아래 여백만 남았다
+        // (2026-09-16).
+        let headerContent = Chrome.vstack([summary, hint], spacing: 4)
+        let headerCard = Chrome.card(headerContent, padding: 12)
+
+        let filterRow = Chrome.hstack([filter, Chrome.spacer()], spacing: 8)
+
+        let traceTitle = Chrome.label("선택한 작업의 과정", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
+        let traceContent = Chrome.vstack([traceTitle, traceScroll], spacing: 6)
+        let traceCard = Chrome.card(traceContent, padding: 10)
+
+        let stack = Chrome.vstack([headerCard, filterRow, scroll, traceCard, actions], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            filter.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
+            summary.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            filterRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180),
-            traceScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            traceScroll.heightAnchor.constraint(equalToConstant: 120),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            traceCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            traceContent.widthAnchor.constraint(equalTo: traceCard.widthAnchor, constant: -20),
+            traceTitle.widthAnchor.constraint(equalTo: traceContent.widthAnchor),
+            traceScroll.widthAnchor.constraint(equalTo: traceContent.widthAnchor),
+            traceScroll.heightAnchor.constraint(equalToConstant: 112),
         ])
         jobsWindow = window
     }
@@ -4121,7 +4179,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let status = Chrome.label("기록을 읽는 중", size: 11, color: .secondaryLabelColor, lines: 1)
         status.alignment = .right
         logStatusField = status
-        let toolbar = Chrome.hstack([scope, room, Chrome.spacer(), status], spacing: 8)
+        // 필터는 한 줄로 붙이고, 남는 가로 공간은 spacer가 먹는다. 예전에는
+        // 팝업 둘과 상태가 각자 폭을 요구해 가운데가 벌어졌다 (2026-09-16).
+        scope.setContentHuggingPriority(.required, for: .horizontal)
+        room.setContentHuggingPriority(.required, for: .horizontal)
+        status.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let scopeTitle = Chrome.label("결과", size: 11, color: .secondaryLabelColor, lines: 1)
+        scopeTitle.setContentHuggingPriority(.required, for: .horizontal)
+        let roomTitle = Chrome.label("채팅방", size: 11, color: .secondaryLabelColor, lines: 1)
+        roomTitle.setContentHuggingPriority(.required, for: .horizontal)
+        let toolbar = Chrome.hstack([scopeTitle, scope, roomTitle, room, Chrome.spacer(), status], spacing: 8)
+        let toolbarCard = Chrome.card(toolbar, padding: 10)
 
         let empty = Chrome.label("", size: 12, color: .secondaryLabelColor, lines: 3)
         logEmptyLabel = empty
@@ -4161,21 +4229,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         detailScroll.documentView = detail
         logDetailView = detail
 
-        let stack = Chrome.vstack([pipeline, summary, hint, toolbar, empty, scroll, detailScroll], spacing: 10)
+        // 요약·안내·필터를 한 카드로 묶어 위쪽 여백을 없앤다.
+        let headerContent = Chrome.vstack([summary, hint, toolbarCard], spacing: 8)
+        let headerCard = Chrome.card(headerContent, padding: 12)
+
+        let detailTitle = Chrome.label("선택한 턴의 자세한 기록", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
+        let detailContent = Chrome.vstack([detailTitle, detailScroll], spacing: 6)
+        let detailCard = Chrome.card(detailContent, padding: 10)
+
+        let stack = Chrome.vstack([pipeline, headerCard, empty, scroll, detailCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
+            summary.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbarCard.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbar.widthAnchor.constraint(equalTo: toolbarCard.widthAnchor, constant: -20),
             empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            detailScroll.heightAnchor.constraint(equalToConstant: 176),
-            scope.widthAnchor.constraint(greaterThanOrEqualToConstant: 132),
-            room.widthAnchor.constraint(greaterThanOrEqualToConstant: 168),
-            room.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
+            detailCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            detailContent.widthAnchor.constraint(equalTo: detailCard.widthAnchor, constant: -20),
+            detailTitle.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
+            detailScroll.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            detailScroll.heightAnchor.constraint(equalToConstant: 168),
+            scope.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
+            scope.widthAnchor.constraint(lessThanOrEqualToConstant: 168),
+            room.widthAnchor.constraint(greaterThanOrEqualToConstant: 148),
+            room.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
         ])
         logWindow = window
     }
@@ -4498,6 +4581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         deleteButton.bezelStyle = .rounded
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         let toolbar = Chrome.hstack([filter, addButton, deleteButton], spacing: 8)
+        let toolbarCard = Chrome.card(toolbar, padding: 10)
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -4524,14 +4608,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         roomsTable = table
 
-        let stack = Chrome.vstack([pipeline, hint, toolbar, scroll], spacing: 10)
+        let headerContent = Chrome.vstack([hint, toolbarCard], spacing: 8)
+        let headerCard = Chrome.card(headerContent, padding: 12)
+
+        let stack = Chrome.vstack([pipeline, headerCard, scroll], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
+            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbarCard.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbar.widthAnchor.constraint(equalTo: toolbarCard.widthAnchor, constant: -20),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 280),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             filter.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
         ])
         window.initialFirstResponder = filter
@@ -5030,7 +5120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let findButton = NSButton(title: "찾기", target: self, action: #selector(vectorSearchClicked))
         findButton.bezelStyle = .rounded
         findButton.translatesAutoresizingMaskIntoConstraints = false
-        let toolbar = Chrome.hstack([chatLabel, source, topic, chat, search, findButton], spacing: 8)
+        // 여섯 컨트롤을 한 줄에 밀어 넣으면 좁은 창에서 라벨이 잘리고 칸이
+        // 들쭉날쭉해진다. 고르는 줄과 찾는 줄로 나눈다 (2026-09-16).
+        let pickRow = Chrome.hstack([chatLabel, source, topic, chat, Chrome.spacer()], spacing: 8)
+        let findRow = Chrome.hstack([search, findButton], spacing: 8)
+        let toolbarContent = Chrome.vstack([pickRow, findRow], spacing: 8)
+        let toolbarCard = Chrome.card(toolbarContent, padding: 10)
 
         let summary = Chrome.label("기록 없음", size: 11, color: .secondaryLabelColor, lines: 1)
         vectorSummary = summary
@@ -5093,7 +5188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         topicsField.toolTip = "쉼표로 주제를 넣거나 비우면 내용에서 자동으로 묶습니다."
         topicsField.widthAnchor.constraint(equalToConstant: 180).isActive = true
         vectorTopicsField = topicsField
-        let meta = Chrome.hstack([userLabel, user, dateLabel, date, topicLabel, topicsField, embedLabel, embed], spacing: 8)
+        let metaTop = Chrome.hstack([userLabel, user, dateLabel, date, topicLabel, topicsField, Chrome.spacer()], spacing: 8)
+        let metaBottom = Chrome.hstack([embedLabel, embed, Chrome.spacer()], spacing: 8)
+        let metaContent = Chrome.vstack([metaTop, metaBottom], spacing: 8)
+        let metaCard = Chrome.card(metaContent, padding: 10)
 
         let messageLabel = Chrome.label("내용", size: 11, color: .secondaryLabelColor, lines: 1)
         messageLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -5116,6 +5214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorMessageView = message
         let editor = Chrome.hstack([messageLabel, messageScroll], spacing: 8)
         editor.alignment = .top
+        let editorCard = Chrome.card(editor, padding: 10)
 
         let restoreButton = NSButton(title: "기본값 복원", target: self, action: #selector(vectorRestoreClicked))
         restoreButton.bezelStyle = .rounded
@@ -5136,20 +5235,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorDeleteButton = deleteButton
         let formActions = Chrome.hstack([addButton, saveButton, deleteButton, restoreButton, Chrome.spacer()], spacing: 8)
 
-        let stack = Chrome.vstack(
-            [hint, toolbar, pager, scroll, meta, editor, formActions],
-            spacing: 10
-        )
+        // 머리말(설명+도구+쪽수)을 한 카드, 편집 묶음(값·내용·버튼)을 다른 카드로
+        // 묶어 사이 여백만 남긴다. 예전에는 일곱 덩어리가 각자 한 줄씩이라
+        // 창을 키워도 빈 줄만 늘었다 (2026-09-16).
+        let headerContent = Chrome.vstack([hint, toolbarCard, pager], spacing: 8)
+        let headerCard = Chrome.card(headerContent, padding: 12)
+
+        let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
+        let editCard = Chrome.card(editContent, padding: 12)
+
+        let stack = Chrome.vstack([headerCard, scroll, editCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            pager.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
+            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbarCard.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbarContent.widthAnchor.constraint(equalTo: toolbarCard.widthAnchor, constant: -20),
+            pickRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
+            findRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
+            pager.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            meta.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            editor.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            formActions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
+            editCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            editContent.widthAnchor.constraint(equalTo: editCard.widthAnchor, constant: -24),
+            metaCard.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            metaContent.widthAnchor.constraint(equalTo: metaCard.widthAnchor, constant: -20),
+            metaTop.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
+            metaBottom.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
+            editorCard.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            editor.widthAnchor.constraint(equalTo: editorCard.widthAnchor, constant: -20),
+            formActions.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
             search.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
         ])
         window.initialFirstResponder = search

@@ -11486,55 +11486,6 @@ def generate_reply(
                             flush=True,
                         )
         else:
-            returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
-                active_model,
-                system_prompt,
-                prompt_bytes,
-                timeout=45.0,
-            )
-            if returncode != 0:
-                err_str = stderr_bytes.decode("utf-8", "replace").casefold()
-                failure_class, _ = _classify_model_failure(
-                    returncode,
-                    stdout_bytes,
-                    stderr_bytes,
-                )
-                if (
-                    returncode == 429
-                    or "usage limit" in err_str
-                    or "quota" in err_str
-                    or failure_class in MODEL_CIRCUIT_FAILURE_CLASSES
-                ):
-                    winner = _model_fallback_chain(
-                        active_model,
-                        lambda candidate: _run_opencodex_generation(
-                            candidate,
-                            system_prompt,
-                            prompt_bytes,
-                            timeout=45.0,
-                        ),
-                    )
-                    if winner is not None:
-                        # The fallback answered. Close the first attempt, then run
-                        # the rest of the turn on the lease that generated it.
-                        first_class, _first_retry = _classify_model_failure(
-                            returncode,
-                            stdout_bytes,
-                            stderr_bytes,
-                        )
-                        _close_model_lease(lease_token, active_model, first_class)
-                        lease_token = winner["lease_token"]
-                        lease_retry_at = winner["retry_at"]
-                        returncode = winner["returncode"]
-                        stdout_bytes = winner["stdout"]
-                        stderr_bytes = winner["stderr"]
-                        active_model = winner["model"]
-                        print(
-                            f"[reply-gen] fallback answered on {active_model}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-        else:
             returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
                 command,
                 cwd=Path("/tmp"),
