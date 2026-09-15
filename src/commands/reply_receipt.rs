@@ -85,6 +85,10 @@ pub fn collect(
         let mut payload = render_room(&chat, &records, limit);
         payload["ledger"] = serde_json::json!(path.to_string_lossy());
         payload["missing"] = serde_json::json!(false);
+        // The window matches a receipt page to a room row by this id, so it is
+        // always present: the requested id, or the directory name when the
+        // caller passed a bare --ledger path.
+        payload["chat_id"] = serde_json::json!(chat);
         rooms.push(payload);
     }
     Ok(rooms)
@@ -164,6 +168,7 @@ mod tests {
         let rooms = collect(None, Some(&dir), &["55".to_string()], 10).unwrap();
         assert_eq!(rooms[0]["missing"], serde_json::json!(false));
         assert_eq!(rooms[0]["count"], serde_json::json!(1));
+        assert_eq!(rooms[0]["chat_id"], serde_json::json!("55"));
         assert!(rooms[0]["lines"][0].as_str().unwrap().contains("질문 응답"));
     }
 }
