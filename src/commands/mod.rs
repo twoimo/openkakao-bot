@@ -15,5 +15,4 @@ pub mod profile;
 pub mod read;
 pub mod rest;
 pub mod send;
-pub mod ui_view;
 pub mod watch;

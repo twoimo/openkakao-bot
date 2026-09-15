@@ -349,43 +349,6 @@ struct ReplyModelFallbacks: Decodable {
     let max: Int?
 }
 
-// 라이브옵스 창 뷰 모델 (task 11). 각 필드는 코어의 ui_shell::*_view가 만든
-// 쉬운말 문자열 그대로입니다. Swift는 이 문자열을 붙여서 그리기만 합니다.
-struct DurabilityViewModel: Decodable {
-    let auto_reply: [String]
-    let geeknews: [String]
-    let verdict: [String]
-    let seed: String
-}
-
-struct CoverageViewModel: Decodable {
-    let summary: String
-    let status: String
-    let rows: [String]
-}
-
-struct ImprovementViewModel: Decodable {
-    // 코어의 ImprovementView가 만든 줄. 비어 있으면 empty 안내가 채워집니다.
-    let rows: [String]
-    let empty: String?
-}
-
-struct OnboardingViewModel: Decodable {
-    let available: [String]
-    let blocked: [String]
-    /// 코어가 만든 권한 체크리스트. 구버전 응답에는 없을 수 있어 옵션으로 받는다.
-    let permissions: [OnboardingPermission]?
-}
-
-struct OnboardingPermission: Decodable {
-    let id: String
-    let label: String
-    let granted: Bool
-    let status: String
-    let unlocks: [String]
-    let how_to_grant: String
-}
-
 struct Config {
     var python: String = "/opt/homebrew/opt/python@3.11/bin/python3.11"
     var script: String = ""
@@ -1342,16 +1305,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 저장을 확인한 뒤에도 오래된 조회가 화면을 되돌리지 않게, 확인된 값을 잠시 들고 있는다.
     var modelFallbackLocalOverride: (models: [String], source: String)?
     var modelFallbackNote: String?
-    // 라이브옵스 창 (task 11) — 판단은 전부 코어(ui_shell::*_view)가 만든 문자열을
-    // 그리기만 합니다. Swift에는 조건 분기가 없습니다.
-    var durabilityWindow: NSWindow?
-    var durabilityTextView: NSTextView?
-    var coverageWindow: NSWindow?
-    var coverageTextView: NSTextView?
-    var improvementWindow: NSWindow?
-    var improvementTextView: NSTextView?
-    var onboardingWindow: NSWindow?
-    var onboardingTextView: NSTextView?
     var menuPanel: MenuPanelView?
     var inspectedRoomId = 0
     var roomsListExpanded = false
@@ -1400,12 +1353,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         if let timer {
             RunLoop.main.add(timer, forMode: .common)
-        }
-        // 처음 실행(온보딩 완료 기록 없음)이면 권한 설정 화면을 바로 엽니다 (R9.6).
-        // 어떤 권한에 무엇이 필요한지·허용 방법은 코어 capabilities()가 만듭니다.
-        if !UserDefaults.standard.bool(forKey: "AutoReplyOnboardingShown") {
-            UserDefaults.standard.set(true, forKey: "AutoReplyOnboardingShown")
-            showOnboardingWindow()
         }
     }
 
@@ -1634,19 +1581,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let window = modelWindow, window.isVisible {
             updateModelSettingsWindow()
         }
-        // 라이브옵스 창도 열려 있으면 같은 자동 갱신 규약을 따릅니다 (R9.2, R9.3).
-        if let window = durabilityWindow, window.isVisible {
-            refreshDurabilityWindow()
-        }
-        if let window = coverageWindow, window.isVisible {
-            refreshCoverageWindow()
-        }
-        if let window = improvementWindow, window.isVisible {
-            refreshImprovementWindow()
-        }
-        if let window = onboardingWindow, window.isVisible {
-            refreshOnboardingWindow()
-        }
     }
 
     func buildMenu(_ model: MenubarModel) -> NSMenu {
@@ -1690,24 +1624,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorItem.target = self
         vectorItem.isEnabled = true
         menu.addItem(vectorItem)
-        menu.addItem(.separator())
-        // 창이 있는데 메뉴에 없던 항목들을 채웁니다. 모두 보기 전용 창입니다.
-        let durabilityItem = NSMenuItem(title: "대량 검증…", action: #selector(showDurabilityWindow), keyEquivalent: "u")
-        durabilityItem.target = self
-        durabilityItem.isEnabled = true
-        menu.addItem(durabilityItem)
-        let coverageItem = NSMenuItem(title: "기능 점검…", action: #selector(showCoverageWindow), keyEquivalent: "f")
-        coverageItem.target = self
-        coverageItem.isEnabled = true
-        menu.addItem(coverageItem)
-        let improvementItem = NSMenuItem(title: "자기개선…", action: #selector(showImprovementWindow), keyEquivalent: "g")
-        improvementItem.target = self
-        improvementItem.isEnabled = true
-        menu.addItem(improvementItem)
-        let onboardingItem = NSMenuItem(title: "권한 설정…", action: #selector(showOnboardingWindow), keyEquivalent: "o")
-        onboardingItem.target = self
-        onboardingItem.isEnabled = true
-        menu.addItem(onboardingItem)
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "메뉴 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
@@ -3977,286 +3893,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ])
         logWindow = window
     }
-
-    // ---------------------------------------------------------------------
-    // 라이브옵스 창 (task 11, R1/R5/R8/R9)
-    //
-    // 이 네 창과 온보딩 화면은 코어의 ui_shell::*_view가 만든 쉬운말 문자열을
-    // 그대로 그립니다. Swift에는 판단·분기 로직이 없습니다 (design: "Swift only
-    // draws the strings core produces").
-    //
-    // 스모크 확인(별도 1회): 아이콘 클릭 후 10초 안에 메뉴바 항목이 뜨는지(R9.2),
-    // 그리고 DMG 안에 서명·공증을 통과한 .app 1개와 끌어다 놓을 설치 위치 1개가
-    // 있는지(R9.4)는 무거운 런타임 로직 없이 배포 스모크 스크립트에서 한 번
-    // 확인합니다. packaging::package() / capabilities()가 코어에서 그 규칙을
-    // 검증합니다.
-    // ---------------------------------------------------------------------
-
-    /// 여러 줄 텍스트를 그리는 단순 창을 만듭니다 (라이브옵스 창 공용).
-    func makeLinesWindow(title: String, autosave: String, hint: String) -> (NSWindow, NSTextView) {
-        let window = Chrome.operatorWindow(title: title, size: NSSize(width: 720, height: 540), autosave: autosave)
-        let content = NSView()
-        window.contentView = content
-
-        let hintField = Chrome.hint(hint)
-
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
-        scroll.borderType = .noBorder
-        scroll.drawsBackground = true
-        scroll.autohidesScrollers = true
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
-
-        let text = NSTextView(frame: .zero)
-        text.isEditable = false
-        text.isSelectable = true
-        text.font = NSFont.systemFont(ofSize: 13)
-        text.textColor = NSColor.labelColor
-        text.backgroundColor = NSColor.textBackgroundColor
-        text.minSize = NSSize(width: 0, height: 0)
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        text.isHorizontallyResizable = false
-        text.isVerticallyResizable = true
-        text.textContainerInset = NSSize(width: 16, height: 14)
-        text.textContainer?.widthTracksTextView = true
-        text.textContainer?.lineFragmentPadding = 4
-        text.textContainer?.containerSize = NSSize(width: 680, height: CGFloat.greatestFiniteMagnitude)
-        scroll.documentView = text
-
-        let stack = Chrome.vstack([hintField, scroll], spacing: 10)
-        Chrome.fill(stack, in: content, insets: NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
-        NSLayoutConstraint.activate([
-            hintField.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 320),
-        ])
-        return (window, text)
-    }
-
-    /// 코어가 만든 줄을 그대로 텍스트 뷰에 붙입니다. 서식 판단은 없습니다.
-    func setLines(_ lines: [String], on text: NSTextView?) {
-        guard let text else { return }
-        text.string = lines.joined(separator: "\n")
-    }
-
-    // ----- 대량 검증 (R1) -----
-
-    func ensureDurabilityWindow() {
-        if durabilityWindow != nil { return }
-        let (window, text) = makeLinesWindow(
-            title: "대량 검증",
-            autosave: "AutoReplyDurability",
-            hint: "가짜 어댑터로 자동 답변 1000회·긱뉴스 100회를 돌린 결과입니다. 실제 전송과 외부 송신은 0건입니다."
-        )
-        durabilityWindow = window
-        durabilityTextView = text
-    }
-
-    @objc func showDurabilityWindow() {
-        ensureDurabilityWindow()
-        guard let window = durabilityWindow else {
-            alertOperator(title: "대량 검증 창을 열지 못했어요", message: "잠시 뒤 메뉴에서 다시 눌러 주세요.")
-            return
-        }
-        presentOperatorWindow(window)
-        setLines(["결과를 불러오는 중…"], on: durabilityTextView)
-        refreshDurabilityWindow()
-    }
-
-    func refreshDurabilityWindow() {
-        guard durabilityWindow != nil else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let data = self.runPython(["--action", "durability-view"], timeout: 15)
-            DispatchQueue.main.async {
-                guard let text = self.durabilityTextView else { return }
-                guard let data,
-                      let view = try? JSONDecoder().decode(DurabilityViewModel.self, from: data)
-                else {
-                    self.setLines(
-                        ["대량 검증 결과를 아직 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."],
-                        on: text
-                    )
-                    return
-                }
-                var lines = view.auto_reply
-                lines.append("")
-                lines.append(contentsOf: view.geeknews)
-                lines.append("")
-                lines.append(contentsOf: view.verdict)
-                lines.append("")
-                lines.append(view.seed)
-                self.setLines(lines, on: text)
-            }
-        }
-    }
-
-    // ----- 기능 점검 (R5) -----
-
-    func ensureCoverageWindow() {
-        if coverageWindow != nil { return }
-        let (window, text) = makeLinesWindow(
-            title: "기능 점검",
-            autosave: "AutoReplyCoverage",
-            hint: "방마다 여섯 기능이 제대로 되는지 점검한 결과입니다. 실제 전송은 하지 않습니다."
-        )
-        coverageWindow = window
-        coverageTextView = text
-    }
-
-    @objc func showCoverageWindow() {
-        ensureCoverageWindow()
-        guard let window = coverageWindow else {
-            alertOperator(title: "기능 점검 창을 열지 못했어요", message: "잠시 뒤 메뉴에서 다시 눌러 주세요.")
-            return
-        }
-        presentOperatorWindow(window)
-        setLines(["결과를 불러오는 중…"], on: coverageTextView)
-        refreshCoverageWindow()
-    }
-
-    func refreshCoverageWindow() {
-        guard coverageWindow != nil else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let data = self.runPython(["--action", "coverage-view"], timeout: 15)
-            DispatchQueue.main.async {
-                guard let text = self.coverageTextView else { return }
-                guard let data,
-                      let view = try? JSONDecoder().decode(CoverageViewModel.self, from: data)
-                else {
-                    self.setLines(
-                        ["기능 점검 결과를 아직 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."],
-                        on: text
-                    )
-                    return
-                }
-                var lines = [view.summary, view.status, ""]
-                lines.append(contentsOf: view.rows)
-                self.setLines(lines, on: text)
-            }
-        }
-    }
-
-    // ----- 자기개선 (R8) -----
-
-    func ensureImprovementWindow() {
-        if improvementWindow != nil { return }
-        let (window, text) = makeLinesWindow(
-            title: "자기개선",
-            autosave: "AutoReplyImprovement",
-            hint: "답변 품질을 스스로 고친 기록입니다. 대화 내용·초안·이름은 나오지 않습니다."
-        )
-        improvementWindow = window
-        improvementTextView = text
-    }
-
-    @objc func showImprovementWindow() {
-        ensureImprovementWindow()
-        guard let window = improvementWindow else {
-            alertOperator(title: "자기개선 창을 열지 못했어요", message: "잠시 뒤 메뉴에서 다시 눌러 주세요.")
-            return
-        }
-        presentOperatorWindow(window)
-        setLines(["기록을 불러오는 중…"], on: improvementTextView)
-        refreshImprovementWindow()
-    }
-
-    func refreshImprovementWindow() {
-        guard improvementWindow != nil else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let data = self.runPython(["--action", "improvement-view"], timeout: 15)
-            DispatchQueue.main.async {
-                guard let text = self.improvementTextView else { return }
-                guard let data,
-                      let view = try? JSONDecoder().decode(ImprovementViewModel.self, from: data)
-                else {
-                    self.setLines(
-                        ["자기개선 기록을 아직 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."],
-                        on: text
-                    )
-                    return
-                }
-                let lines = view.rows.isEmpty
-                    ? [view.empty ?? "아직 자기개선 기록이 없어요."]
-                    : view.rows
-                self.setLines(lines, on: text)
-            }
-        }
-    }
-
-    // ----- 권한 설정 / 온보딩 (R9.6, R9.11) -----
-
-    func ensureOnboardingWindow() {
-        if onboardingWindow != nil { return }
-        let (window, text) = makeLinesWindow(
-            title: "권한 설정",
-            autosave: "AutoReplyOnboarding",
-            hint: "지금 허용된 권한과 그로 인해 쓸 수 있는 기능, 막힌 기능과 허용 방법을 보여 줍니다."
-        )
-        onboardingWindow = window
-        onboardingTextView = text
-    }
-
-    @objc func showOnboardingWindow() {
-        ensureOnboardingWindow()
-        guard let window = onboardingWindow else {
-            alertOperator(title: "권한 설정 창을 열지 못했어요", message: "잠시 뒤 메뉴에서 다시 눌러 주세요.")
-            return
-        }
-        presentOperatorWindow(window)
-        setLines(["권한 상태를 불러오는 중…"], on: onboardingTextView)
-        refreshOnboardingWindow()
-    }
-
-    func refreshOnboardingWindow() {
-        guard onboardingWindow != nil else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let data = self.runPython(["--action", "onboarding-view"], timeout: 15)
-            DispatchQueue.main.async {
-                guard let text = self.onboardingTextView else { return }
-                guard let data,
-                      let view = try? JSONDecoder().decode(OnboardingViewModel.self, from: data)
-                else {
-                    self.setLines(
-                        ["권한 상태를 아직 불러오지 못했어요. 잠시 뒤 다시 열어 주세요."],
-                        on: text
-                    )
-                    return
-                }
-                var lines = ["사용할 수 있는 기능:"]
-                lines.append(contentsOf: view.available.map { " · \($0)" })
-                lines.append("")
-                lines.append("막힌 기능과 허용 방법:")
-                lines.append(contentsOf: view.blocked.map { " · \($0)" })
-                // 코어가 만든 권한 체크리스트를 맨 위에 붙인다. 상태 단어와
-                // 허용 방법 모두 코어 문구라 Swift는 그리기만 한다.
-                let checklist = view.permissions ?? []
-                if !checklist.isEmpty {
-                    var head = ["권한 상태:"]
-                    for permission in checklist {
-                        let mark = permission.granted ? "✓" : "•"
-                        var row = "\(mark) \(permission.label) — \(permission.status)"
-                        if !permission.unlocks.isEmpty {
-                            row += " · 여는 기능: \(permission.unlocks.joined(separator: ", "))"
-                        }
-                        head.append(row)
-                        if !permission.granted {
-                            head.append("    → \(permission.how_to_grant)")
-                        }
-                    }
-                    head.append("")
-                    lines = head + lines
-                }
-                self.setLines(lines, on: text)
-            }
-        }
-    }
-
 
     func updateLogWindow(_ model: MenubarModel) {
         let inspected = Self.selectedRoom(in: model, preferred: inspectedRoomId)

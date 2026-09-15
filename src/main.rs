@@ -1111,18 +1111,6 @@ enum Commands {
         #[command(subcommand)]
         command: ExperimentCommand,
     },
-    /// Emit one live-ops menu-bar window's data as a single JSON line (task 11)
-    UiView {
-        /// Which window to render: durability | coverage | improvement | onboarding
-        #[arg(long)]
-        window: String,
-        /// Onboarding only: comma-separated granted permissions (overrides live probes)
-        #[arg(long)]
-        granted: Option<String>,
-        /// Menu-bar state root (defaults to ~/Library/Application Support/openkakao)
-        #[arg(long = "state-root")]
-        state_root: Option<std::path::PathBuf>,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1180,7 +1168,6 @@ fn is_local_only_command(command: &Commands) -> bool {
             | Commands::AutoReplyHost { .. }
             | Commands::Dataset { .. }
             | Commands::Experiment { .. }
-            | Commands::UiView { .. }
     )
 }
 
@@ -7394,11 +7381,6 @@ fn main() -> Result<()> {
                 version_b,
             } => commands::experiment::cmd_experiment_compare(version_a, version_b, json)?,
         },
-        Commands::UiView {
-            window,
-            granted,
-            state_root,
-        } => commands::ui_view::cmd_ui_view(&window, state_root, granted)?,
     }
 
     if cli.completion_promise {

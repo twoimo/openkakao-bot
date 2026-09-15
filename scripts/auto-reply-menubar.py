@@ -937,93 +937,6 @@ def _strip_argv_flags(flags: tuple[str, ...]) -> None:
     sys.argv = kept
 
 
-def _binary_supports_ui_view(path: str) -> bool:
-    """Whether an openkakao-cli binary actually has the `ui-view` subcommand.
-
-    The menu-bar app spawns this bridge with a fixed PATH whose first entry may
-    be an older Homebrew install without `ui-view`; probing each candidate makes
-    the resolver pick a binary that truly supports the command.
-    """
-    try:
-        result = subprocess.run(
-            [path, "ui-view", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception:
-        return False
-    return result.returncode == 0
-
-
-def _openkakao_cli_bin() -> str | None:
-    """First openkakao-cli binary that supports `ui-view`.
-
-    Order: OPENKAKAO_CLI_BIN, ~/.local/bin, repo release/debug builds, then PATH.
-    Fresh, user-owned locations are tried before PATH so a stale Homebrew copy
-    (first on the app's fixed PATH) never wins.
-    """
-    repo_root = Path(__file__).resolve().parents[1]
-    candidates: list[str] = []
-    env_bin = os.environ.get("OPENKAKAO_CLI_BIN")
-    if env_bin:
-        candidates.append(env_bin)
-    # Self-contained app bundle: openkakao-cli shipped next to scripts/ as
-    # Contents/Resources/bin/openkakao-cli (parents[1] is Resources here).
-    candidates.append(str(repo_root / "bin" / "openkakao-cli"))
-    candidates.append(str(Path.home() / ".local" / "bin" / "openkakao-cli"))
-    candidates.append(str(repo_root / "target" / "release" / "openkakao-cli"))
-    candidates.append(str(repo_root / "target" / "debug" / "openkakao-cli"))
-    which = shutil.which("openkakao-cli")
-    if which:
-        candidates.append(which)
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file() and _binary_supports_ui_view(candidate):
-            return candidate
-    return None
-
-
-_UI_VIEW_FALLBACKS: dict[str, dict[str, Any]] = {
-    "durability": {
-        "auto_reply": [],
-        "geeknews": [],
-        "verdict": ["결과를 불러오지 못했어요. openkakao-cli 실행 파일을 찾을 수 없어요."],
-        "seed": "",
-    },
-    "coverage": {"summary": "", "status": "결과를 불러오지 못했어요.", "rows": []},
-    "improvement": {"rows": [], "empty": "기록을 불러오지 못했어요."},
-    "onboarding": {
-        "available": [],
-        "blocked": ["권한 상태를 불러오지 못했어요."],
-        "permissions": [],
-    },
-}
-
-
-def _run_ui_view(window: str, state_root: Path) -> int:
-    """Run the core `ui-view` command; on any failure emit a valid fallback JSON."""
-    fallback = _UI_VIEW_FALLBACKS.get(window, {})
-    bin_path = _openkakao_cli_bin()
-    if not bin_path:
-        _print_json(fallback)
-        return 0
-    try:
-        result = subprocess.run(
-            [bin_path, "ui-view", "--window", window, "--state-root", str(state_root)],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-    except Exception:
-        _print_json(fallback)
-        return 0
-    if result.returncode == 0 and result.stdout.strip():
-        sys.stdout.write(result.stdout)
-        return 0
-    _print_json(fallback)
-    return 0
-
-
 def _catalog_lock(state_root: Path):
     """Serialize catalog mutations across processes."""
 
@@ -2048,17 +1961,6 @@ def main():
             )
             return 0
         return _orig_main()
-    if args.action in {
-        "durability-view",
-        "coverage-view",
-        "improvement-view",
-        "onboarding-view",
-    }:
-        state_raw = _argv_flag_value("--state-root")
-        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
-        window = args.action.removesuffix("-view")
-        return _run_ui_view(window, state_root)
-
     if args.action in {"doctor", "doctor-heal"}:
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT

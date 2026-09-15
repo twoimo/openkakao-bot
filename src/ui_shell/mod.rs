@@ -35,23 +35,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::coverage::{CoverageMatrix, Counts, Feature, Verdict};
-use crate::durability::{BatchTally, HarnessReport, HarnessVerdict};
-use crate::improve::HistoryEntry;
 use crate::live_sample::Progress;
 use crate::logging::{FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus};
 use crate::memory::{MemoryItem, MemoryKind, MemoryStore, RagComparisonRow};
-use crate::packaging::{Capability, CapabilityMap, Permission, PermissionState};
 use crate::safety::SendGrade;
 
 /// A primary feature window opened from the menu bar (Component 1, Component 14).
 ///
 /// There is exactly one entry per feature. The former separate reply-model and
-/// image-model menus are unified under [`AppWindow::ModelSettings`] (R5.1). The
-/// live-ops spec grows this set from five to nine: the four new windows
-/// [`AppWindow::Durability`] (대량 검증, R1), [`AppWindow::Coverage`] (기능 점검,
-/// R5), [`AppWindow::Improvement`] (자기개선, R8), and [`AppWindow::Onboarding`]
-/// (권한 설정, R9) reuse the same window contract and auto-refresh cadence.
+/// image-model menus are unified under [`AppWindow::ModelSettings`] (R5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AppWindow {
     /// 기록 — the pipeline/history window (R1, R2).
@@ -64,29 +56,17 @@ pub enum AppWindow {
     SelfCheck,
     /// 대화 기억 — the conversation-memory window (R8).
     Memory,
-    /// 대량 검증 — the durability-harness aggregate window (R1).
-    Durability,
-    /// 기능 점검 — the coverage-matrix window (R5).
-    Coverage,
-    /// 자기개선 — the self-improvement history window (R8).
-    Improvement,
-    /// 권한 설정 — the onboarding / permission window (R9.6, R9.11).
-    Onboarding,
 }
 
 impl AppWindow {
     /// Every window, in the fixed menu order (R10.2 — consistent open method).
-    pub fn all() -> [AppWindow; 9] {
+    pub fn all() -> [AppWindow; 5] {
         [
             AppWindow::History,
             AppWindow::ModelSettings,
             AppWindow::ChatRooms,
             AppWindow::SelfCheck,
             AppWindow::Memory,
-            AppWindow::Durability,
-            AppWindow::Coverage,
-            AppWindow::Improvement,
-            AppWindow::Onboarding,
         ]
     }
 
@@ -98,10 +78,6 @@ impl AppWindow {
             AppWindow::ChatRooms => "채팅방",
             AppWindow::SelfCheck => "자가 진단",
             AppWindow::Memory => "대화 기억",
-            AppWindow::Durability => "대량 검증",
-            AppWindow::Coverage => "기능 점검",
-            AppWindow::Improvement => "자기개선",
-            AppWindow::Onboarding => "권한 설정",
         }
     }
 
@@ -113,10 +89,6 @@ impl AppWindow {
             AppWindow::ChatRooms => "chat_rooms",
             AppWindow::SelfCheck => "self_check",
             AppWindow::Memory => "memory",
-            AppWindow::Durability => "durability",
-            AppWindow::Coverage => "coverage",
-            AppWindow::Improvement => "improvement",
-            AppWindow::Onboarding => "onboarding",
         }
     }
 }
@@ -581,349 +553,6 @@ pub fn sample_progress_view(progress: &Progress) -> Vec<String> {
     rows
 }
 
-// ---------------------------------------------------------------------------
-// Durability window display connector (Task 11, R1.5, R1.6, R1.7)
-// ---------------------------------------------------------------------------
-
-/// The durability (대량 검증) window's screen model (R1.5–R1.7).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DurabilityView {
-    /// Plain-language lines for the automatic-reply batch.
-    pub auto_reply: Vec<String>,
-    /// Plain-language lines for the GeekNews batch.
-    pub geeknews: Vec<String>,
-    /// Plain-language lines describing the verdict (R1.6, R1.7).
-    pub verdict: Vec<String>,
-    /// The seed line, echoed for reproducibility (R1.8).
-    pub seed: String,
-}
-
-/// Render one batch tally as plain-language lines (R1.5).
-fn batch_lines(label: &str, tally: &BatchTally) -> Vec<String> {
-    vec![
-        format!(
-            "{}: 시도 {} · 보낼 수 있음 {} · 막음 {} · 예외 {}",
-            label, tally.attempted, tally.allowed, tally.fenced, tally.unhandled_panics
-        ),
-        format!(
-            "{} 처리 시간: 중앙값 {}ms · 상위 5% {}ms",
-            label, tally.p50_ms, tally.p95_ms
-        ),
-    ]
-}
-
-/// Build the durability window's screen model from a [`HarnessReport`] (R1.5–R1.7).
-///
-/// The verdict lines turn [`HarnessVerdict`] into plain language: a pass is a
-/// single reassurance line, a fail lists each failed condition with its
-/// measured value and next action (R1.7), and an abort reports the completed
-/// and not-run counts (R1.10).
-pub fn durability_view(report: &HarnessReport) -> DurabilityView {
-    let mut verdict = Vec::new();
-    match &report.verdict {
-        HarnessVerdict::Pass => {
-            verdict.push("합격했어요. 실제 전송과 외부 송신이 모두 0건이에요.".to_string());
-        }
-        HarnessVerdict::Fail(conditions) => {
-            verdict.push("불합격이에요. 아래 항목을 확인해 주세요.".to_string());
-            for c in conditions {
-                verdict.push(format!("{} (측정값 {}) — {}", c.name, c.observed, c.next_step));
-            }
-        }
-        HarnessVerdict::Aborted {
-            completed,
-            not_run,
-            reasons,
-        } => {
-            verdict.push(format!(
-                "검증을 끝까지 못 했어요. 끝낸 처리 {}건, 하지 못한 처리 {}건이에요.",
-                completed, not_run
-            ));
-            for reason in reasons {
-                verdict.push(reason.clone());
-            }
-        }
-    }
-    // Both tripwires must read zero; surface them so the window can show it.
-    verdict.push(format!(
-        "실제 전송 {}건 · 외부 송신 {}건",
-        report.real_sends, report.network_egress
-    ));
-
-    DurabilityView {
-        auto_reply: batch_lines("자동 답변", &report.auto_reply),
-        geeknews: batch_lines("긱뉴스", &report.geeknews),
-        verdict,
-        seed: format!("무작위 시드: {}", report.seed),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Coverage window display connector (Task 11, R5.5, R5.9)
-// ---------------------------------------------------------------------------
-
-/// The coverage (기능 점검) window's screen model (R5.5).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoverageView {
-    /// The overall count summary line (R5.5).
-    pub summary: String,
-    /// Whether the four counts sum to the total, and the overall pass state
-    /// (R5.5, R5.9), rendered as a plain-language line.
-    pub status: String,
-    /// One plain-language line per `(room, feature)` combination, in the matrix
-    /// order.
-    pub rows: Vec<String>,
-}
-
-/// A beginner-friendly Korean label for a feature (R5.1).
-fn feature_label(feature: Feature) -> &'static str {
-    match feature {
-        Feature::AutoReply => "자동 답변",
-        Feature::GeekNews => "긱뉴스 게시",
-        Feature::LinkForward => "링크 전달",
-        Feature::TelegramRelay => "텔레그램 중계",
-        Feature::ContextSearch => "맥락 검색",
-        Feature::StyleApply => "말투 적용",
-    }
-}
-
-/// A beginner-friendly Korean label for a verdict (R5.2).
-fn verdict_label(verdict: &Verdict) -> &'static str {
-    match verdict {
-        Verdict::Pass => "정상",
-        Verdict::Fail(_) => "실패",
-        Verdict::Unsupported(_) => "미지원",
-        Verdict::Blocked(_) => "차단",
-    }
-}
-
-/// Render the four-count summary line (R5.5).
-fn counts_summary(prefix: &str, total: usize, counts: &Counts) -> String {
-    format!(
-        "{} {}개 · 정상 {} · 실패 {} · 미지원 {} · 차단 {}",
-        prefix, total, counts.pass, counts.fail, counts.unsupported, counts.blocked
-    )
-}
-
-/// Build the coverage window's screen model from a [`CoverageMatrix`] (R5.5, R5.9).
-///
-/// The matrix stores cells in a `BTreeMap`, so iterating it yields a stable,
-/// deterministic order regardless of which worker computed each cell (R5.14).
-pub fn coverage_view(matrix: &CoverageMatrix) -> CoverageView {
-    let summary = counts_summary("전체", matrix.total, &matrix.totals);
-
-    let status = if matrix.total == 0 {
-        "점검할 방이 없어요. 채팅방 창에서 자동화 대상 방을 추가해 주세요.".to_string()
-    } else if matrix.overall_pass() {
-        "전체 합격이에요. 실패한 조합이 없어요.".to_string()
-    } else if !matrix.sums_match_total {
-        "판정하지 못한 조합이 있어요. 잠시 뒤 다시 점검해 주세요.".to_string()
-    } else {
-        format!("실패한 조합이 {}개 있어요.", matrix.totals.fail)
-    };
-
-    let rows = matrix
-        .cells
-        .iter()
-        .map(|((room, feature), verdict)| {
-            format!(
-                "{} · {} — {}",
-                room.label(),
-                feature_label(*feature),
-                verdict_label(verdict)
-            )
-        })
-        .collect();
-
-    CoverageView {
-        summary,
-        status,
-        rows,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Self-improvement window display connector (Task 11, R8.16)
-// ---------------------------------------------------------------------------
-
-/// The self-improvement (자기개선) window's screen model (R8.16).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ImprovementView {
-    /// One plain-language line per history entry, newest first.
-    Rows(Vec<String>),
-    /// No history yet — a plain-language empty notice.
-    Empty(String),
-}
-
-/// A beginner-friendly Korean label for a problem-signal kind (R8.2).
-fn problem_kind_label(kind: &str) -> &'static str {
-    match kind {
-        "low_quality" => "품질 낮음",
-        "reask" => "되물음",
-        "repeat_question" => "질문 반복",
-        "owner_correction" => "직접 정정",
-        "topic_drift" => "주제 벗어남",
-        _ => "문제 신호",
-    }
-}
-
-/// Render a stored verdict code as plain language (R8.16).
-fn improve_verdict_label(verdict: &str) -> String {
-    if verdict == "promoted" {
-        "새 설정으로 바꿨어요".to_string()
-    } else if verdict == "rolled_back" {
-        "이전 설정으로 되돌렸어요".to_string()
-    } else if let Some(reason) = verdict.strip_prefix("rejected:") {
-        format!("바꾸지 않았어요 ({})", reason)
-    } else if verdict.is_empty() {
-        "구성 적용".to_string()
-    } else {
-        verdict.to_string()
-    }
-}
-
-/// Render one self-improvement history entry as a plain-language line (R8.16).
-pub fn improvement_line(entry: &HistoryEntry) -> String {
-    let mut line = String::new();
-    if !entry.problem_kind.is_empty() {
-        line.push_str(problem_kind_label(&entry.problem_kind));
-        line.push_str(" · ");
-    }
-    line.push_str(&improve_verdict_label(&entry.verdict));
-    if !entry.changed_keys.is_empty() {
-        line.push_str(&format!(" (바뀐 항목: {})", entry.changed_keys));
-    }
-    line
-}
-
-/// Build the self-improvement window's screen model from the redacted history
-/// (R8.16). Entries are expected newest-first; an empty history yields a
-/// plain-language empty notice.
-pub fn improvement_view(entries: &[HistoryEntry]) -> ImprovementView {
-    if entries.is_empty() {
-        return ImprovementView::Empty(
-            "아직 자기개선 기록이 없어요. 대화가 쌓이면 여기에 표시돼요.".to_string(),
-        );
-    }
-    ImprovementView::Rows(entries.iter().map(improvement_line).collect())
-}
-
-// ---------------------------------------------------------------------------
-// Onboarding window display connector (Task 11, R9.6, R9.11)
-// ---------------------------------------------------------------------------
-
-/// The onboarding (권한 설정) window's screen model (R9.6, R9.11).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OnboardingView {
-    /// Plain-language lines for currently available features (R9.11).
-    pub available: Vec<String>,
-    /// Plain-language lines for blocked features, each naming the required
-    /// permission and how to grant it (R9.6, R9.11).
-    pub blocked: Vec<String>,
-    /// One row per required macOS permission, in the fixed Permission::ALL
-    /// order, so the window can draw a checklist instead of a wall of text
-    /// (R9.7, R9.11).
-    pub permissions: Vec<PermissionView>,
-}
-
-/// One permission row in the 권한 설정 window (R9.7, R9.11).
-///
-/// The core decides the label, the granted flag, and the plain-language
-/// how-to; the Swift shell only draws them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PermissionView {
-    /// Stable code — one of Permission::as_str.
-    pub id: String,
-    /// Beginner-friendly Korean label.
-    pub label: String,
-    /// Whether the permission is currently granted.
-    pub granted: bool,
-    /// Plain-language state word ("허용됨" / "아직 막힘").
-    pub status: String,
-    /// Feature labels this permission unlocks, in the fixed capability order.
-    pub unlocks: Vec<String>,
-    /// The plain-language steps to grant it.
-    pub how_to_grant: String,
-}
-
-/// A beginner-friendly Korean label for a capability (R9.11).
-fn capability_label(capability: Capability) -> &'static str {
-    match capability {
-        Capability::AxSend => "메시지 보내기",
-        Capability::TelegramRead => "텔레그램 읽기",
-        Capability::LocalRead => "카카오톡 대화 읽기",
-        Capability::ContextSearch => "맥락 검색",
-        Capability::DatasetRefresh => "대화 반영(데이터셋 갱신)",
-        Capability::CoverageVerify => "기능 점검",
-        Capability::ScreenCaptureImages => "화면 캡처로 이미지 확보",
-        Capability::GeekNewsPost => "긱뉴스 게시",
-        Capability::LinkForward => "링크 전달",
-    }
-}
-
-/// A beginner-friendly Korean label for a permission (R9.7).
-pub fn permission_label(permission: Permission) -> &'static str {
-    match permission {
-        Permission::Accessibility => "손쉬운 사용",
-        Permission::FullDiskAccess => "전체 디스크 접근",
-        Permission::ScreenRecording => "화면 기록",
-    }
-}
-
-/// Build the onboarding window's screen model from a [`CapabilityMap`] (R9.6,
-/// R9.11).
-///
-/// The map itself is produced by [`crate::packaging::capabilities`], the single
-/// pure function that decides which features each permission unlocks; this
-/// connector only turns that decision into beginner-friendly Korean lines so
-/// the Swift shell holds no branching (R9.11).
-pub fn onboarding_view(map: &CapabilityMap, state: &PermissionState) -> OnboardingView {
-    let available = map
-        .available
-        .iter()
-        .map(|c| capability_label(*c).to_string())
-        .collect();
-    let blocked = map
-        .blocked
-        .iter()
-        .map(|(capability, permission, how)| {
-            format!(
-                "{} — 필요 권한: {}. {}",
-                capability_label(*capability),
-                permission_label(*permission),
-                how
-            )
-        })
-        .collect();
-    // The checklist rows come straight from the fixed permission catalog, so
-    // the window can always show all three with a granted/blocked mark even
-    // when no capability is blocked (R9.7, R9.11).
-    let permissions = Permission::ALL
-        .iter()
-        .map(|permission| PermissionView {
-            id: permission.as_str().to_string(),
-            label: permission_label(*permission).to_string(),
-            granted: state.is_granted(*permission),
-            status: if state.is_granted(*permission) {
-                "허용됨".to_string()
-            } else {
-                "아직 막힘".to_string()
-            },
-            unlocks: Capability::ALL
-                .iter()
-                .filter(|capability| capability.required_permission() == Some(*permission))
-                .map(|capability| capability_label(*capability).to_string())
-                .collect(),
-            how_to_grant: permission.how_to_grant().to_string(),
-        })
-        .collect();
-    OnboardingView {
-        available,
-        blocked,
-        permissions,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -942,10 +571,10 @@ mod tests {
     }
 
     #[test]
-    fn menu_opens_all_nine_feature_windows_and_quit() {
+    fn menu_opens_all_five_feature_windows_and_quit() {
         let menu = build_menu();
-        // All nine feature windows appear, including the four live-ops windows.
-        assert_eq!(AppWindow::all().len(), 9);
+        // All five feature windows appear.
+        assert_eq!(AppWindow::all().len(), 5);
         for w in AppWindow::all() {
             assert!(
                 menu.contains(&MenuItemKind::OpenWindow(w)),
@@ -960,15 +589,6 @@ mod tests {
             .filter(|k| matches!(k, MenuItemKind::OpenWindow(AppWindow::ModelSettings)))
             .count();
         assert_eq!(model_entries, 1);
-        // The four new live-ops windows are present with distinct keys.
-        for w in [
-            AppWindow::Durability,
-            AppWindow::Coverage,
-            AppWindow::Improvement,
-            AppWindow::Onboarding,
-        ] {
-            assert!(menu.contains(&MenuItemKind::OpenWindow(w)));
-        }
     }
 
     // ----- Window contract (R1.4, R1.5, R10.4) -----
@@ -1139,19 +759,17 @@ mod tests {
         assert!(store.list(MemoryKind::Note).expect("list").is_empty());
     }
 
-    // ----- New live-ops windows: keys and titles (Task 11) -----
+    // ----- Window keys and titles -----
 
     #[test]
-    fn nine_windows_have_distinct_titles_and_keys() {
+    fn five_windows_have_distinct_titles_and_keys() {
         let windows = AppWindow::all();
-        assert_eq!(windows.len(), 9);
+        assert_eq!(windows.len(), 5);
         let titles: BTreeSet<&str> = windows.iter().map(|w| w.menu_title()).collect();
         let keys: BTreeSet<&str> = windows.iter().map(|w| w.key()).collect();
-        assert_eq!(titles.len(), 9, "every window title is distinct");
-        assert_eq!(keys.len(), 9, "every window key is distinct");
-        // Failure message names the new windows too (R1.5).
-        assert!(window_open_failure_message(AppWindow::Durability).contains("대량 검증"));
-        assert!(window_open_failure_message(AppWindow::Onboarding).contains("권한 설정"));
+        assert_eq!(titles.len(), 5, "every window title is distinct");
+        assert_eq!(keys.len(), 5, "every window key is distinct");
+        assert!(window_open_failure_message(AppWindow::History).contains("기록"));
     }
 
     // ----- Sample progress view (R2.2, R2.9) -----
@@ -1172,185 +790,5 @@ mod tests {
         let rows = sample_progress_view(&progress);
         assert!(rows[0].contains("342/1000"));
         assert!(rows[1].contains("나와의 채팅 300"));
-    }
-
-    // ----- Durability view (R1.6, R1.7) -----
-
-    fn empty_report(verdict: HarnessVerdict) -> HarnessReport {
-        HarnessReport {
-            auto_reply: BatchTally {
-                attempted: 1000,
-                allowed: 600,
-                fenced: 400,
-                p50_ms: 3,
-                p95_ms: 8,
-                ..BatchTally::default()
-            },
-            geeknews: BatchTally {
-                attempted: 100,
-                allowed: 100,
-                ..BatchTally::default()
-            },
-            seed: 7,
-            real_sends: 0,
-            network_egress: 0,
-            confirmed_sends: 700,
-            commit_success_records: 700,
-            gate_mismatch: 0,
-            verdict,
-        }
-    }
-
-    #[test]
-    fn durability_view_pass_and_fail() {
-        let pass = durability_view(&empty_report(HarnessVerdict::Pass));
-        assert!(pass.auto_reply[0].contains("시도 1000"));
-        assert!(pass.verdict.iter().any(|l| l.contains("합격")));
-        assert!(pass.seed.contains("7"));
-
-        let fail = durability_view(&empty_report(HarnessVerdict::Fail(vec![
-            crate::durability::FailedCondition {
-                name: "real_sends_zero",
-                observed: "3".to_string(),
-                next_step: "확인해 주세요.".to_string(),
-            },
-        ])));
-        assert!(fail.verdict.iter().any(|l| l.contains("불합격")));
-        assert!(fail.verdict.iter().any(|l| l.contains("real_sends_zero")));
-    }
-
-    // ----- Coverage view (R5.5, R5.9) -----
-
-    #[test]
-    fn coverage_view_summary_and_rows() {
-        let room = crate::coverage::RoomKey {
-            chat_id: 1,
-            title: "스터디".to_string(),
-            needs_id_suffix: false,
-        };
-        let mut cells = std::collections::BTreeMap::new();
-        cells.insert((room.clone(), Feature::AutoReply), Verdict::Pass);
-        cells.insert(
-            (room.clone(), Feature::ContextSearch),
-            Verdict::Unsupported(crate::coverage::UnsupportedReason::FeatureDisabled),
-        );
-        let matrix = CoverageMatrix {
-            total: 2,
-            totals: Counts {
-                pass: 1,
-                fail: 0,
-                unsupported: 1,
-                blocked: 0,
-            },
-            cells,
-            by_room: std::collections::BTreeMap::new(),
-            by_feature: std::collections::BTreeMap::new(),
-            sums_match_total: true,
-        };
-        let view = coverage_view(&matrix);
-        assert!(view.summary.contains("전체 2개"));
-        assert!(view.status.contains("전체 합격"));
-        assert!(view.rows.iter().any(|r| r.contains("스터디") && r.contains("자동 답변") && r.contains("정상")));
-        assert!(view.rows.iter().any(|r| r.contains("미지원")));
-    }
-
-    #[test]
-    fn coverage_view_zero_rooms_notice() {
-        let matrix = CoverageMatrix {
-            total: 0,
-            totals: Counts::default(),
-            cells: std::collections::BTreeMap::new(),
-            by_room: std::collections::BTreeMap::new(),
-            by_feature: std::collections::BTreeMap::new(),
-            sums_match_total: true,
-        };
-        let view = coverage_view(&matrix);
-        assert!(view.status.contains("점검할 방이 없어요"));
-    }
-
-    // ----- Improvement view (R8.16) -----
-
-    #[test]
-    fn improvement_view_empty_and_rows() {
-        assert!(matches!(improvement_view(&[]), ImprovementView::Empty(_)));
-
-        let entries = vec![
-            HistoryEntry {
-                at: 2_000,
-                problem_kind: "low_quality".to_string(),
-                changed_keys: "prompt_version".to_string(),
-                verdict: "promoted".to_string(),
-                generation: Some(2),
-            },
-            HistoryEntry {
-                at: 1_000,
-                problem_kind: "reask".to_string(),
-                changed_keys: String::new(),
-                verdict: "rejected:gain_too_small".to_string(),
-                generation: None,
-            },
-        ];
-        match improvement_view(&entries) {
-            ImprovementView::Rows(rows) => {
-                assert!(rows[0].contains("품질 낮음"));
-                assert!(rows[0].contains("새 설정으로 바꿨어요"));
-                assert!(rows[0].contains("prompt_version"));
-                assert!(rows[1].contains("바꾸지 않았어요"));
-            }
-            other => panic!("expected rows, got {other:?}"),
-        }
-    }
-
-    // ----- Onboarding view (R9.6, R9.11) -----
-
-    #[test]
-    fn onboarding_view_partitions_available_and_blocked() {
-        // Only full-disk-access granted: AX + telegram + screen-capture blocked.
-        let state = crate::packaging::PermissionState::from_granted([
-            crate::packaging::Permission::FullDiskAccess,
-        ]);
-        let map = crate::packaging::capabilities(&state);
-        let view = onboarding_view(&map, &state);
-        assert_eq!(
-            view.available.len() + view.blocked.len(),
-            crate::packaging::Capability::ALL.len()
-        );
-        // Blocked lines name the required permission and how to grant it.
-        assert!(view
-            .blocked
-            .iter()
-            .any(|l| l.contains("메시지 보내기") && l.contains("손쉬운 사용") && l.contains("시스템 설정")));
-        // Local read is available since full-disk-access is granted.
-        assert!(view.available.iter().any(|l| l.contains("카카오톡 대화 읽기")));
-        // The checklist always carries all three permissions, in the fixed
-        // order, with the granted flag and the how-to (R9.7, R9.11).
-        assert_eq!(view.permissions.len(), crate::packaging::Permission::ALL.len());
-        let ids: Vec<&str> = view.permissions.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["accessibility", "full_disk_access", "screen_recording"]);
-        let accessibility = &view.permissions[0];
-        assert_eq!(accessibility.label, "손쉬운 사용");
-        assert!(!accessibility.granted, "AX was not granted in this state");
-        assert_eq!(accessibility.status, "아직 막힘");
-        assert_eq!(accessibility.unlocks, ["메시지 보내기", "텔레그램 읽기"]);
-        assert!(accessibility.how_to_grant.contains("시스템 설정"));
-        let full_disk = &view.permissions[1];
-        assert!(full_disk.granted, "full-disk-access was granted");
-        assert_eq!(full_disk.status, "허용됨");
-        assert_eq!(
-            full_disk.unlocks,
-            ["카카오톡 대화 읽기", "맥락 검색", "대화 반영(데이터셋 갱신)"]
-        );
-        // 화면 캡처는 화면 기록 권한만 연다 — 목록이 정확히 갈리는지 고정한다.
-        let screen = &view.permissions[2];
-        assert_eq!(screen.unlocks, ["화면 캡처로 이미지 확보"]);
-    }
-
-    #[test]
-    fn onboarding_view_marks_every_permission_granted_when_all_are() {
-        let state = crate::packaging::PermissionState::all();
-        let map = crate::packaging::capabilities(&state);
-        let view = onboarding_view(&map, &state);
-        assert!(view.permissions.iter().all(|p| p.granted));
-        assert!(view.blocked.is_empty());
     }
 }

@@ -2,20 +2,20 @@
 //!
 //! The menu-bar UI itself is SwiftUI/AppKit and cannot run under `cargo`, so the
 //! behavior it must obey lives in the toolkit-agnostic core model
-//! [`openkakao_cli::ui_shell`]. The live-ops spec grows the window set from five
-//! to nine (기록·모델 설정·채팅방·자가 진단·대화 기억 + 대량 검증·기능 점검·자기개선·
-//! 권한 설정), and every new window must reuse the exact same contract. These
-//! tests exercise that model directly for **all nine** windows:
+//! [`openkakao_cli::ui_shell`]. The menu-bar shell exposes five windows
+//! (기록·모델 설정·채팅방·자가 진단·대화 기억) and every one of them must reuse the
+//! exact same contract. These tests exercise that model directly for **all
+//! five** windows:
 //!
 //! 1. Re-opening a window focuses the existing one instead of building a second,
-//!    for every one of the nine windows (focus-don't-recreate).
-//! 2. The built menu has no refresh entry and lists exactly the nine
+//!    for every one of the five windows (focus-don't-recreate).
+//! 2. The built menu has no refresh entry and lists exactly the five
 //!    window-opens plus quit — nothing more, nothing less.
 //! 3. The auto-refresh cadence honors the 3-second change-event deadline and the
 //!    60-second fallback poll.
 //! 4. A failed open preserves the last shown screen and the prior windows, for
-//!    every one of the nine windows, and yields a plain-language message.
-//! 5. `AppWindow::all()` has exactly nine entries, each with a distinct,
+//!    every one of the five windows, and yields a plain-language message.
+//! 5. `AppWindow::all()` has exactly five entries, each with a distinct,
 //!    non-empty `menu_title` and a distinct, non-empty `key`.
 //!
 //! No Kakao database, network, or AX call is involved — the model is pure.
@@ -30,9 +30,9 @@ use openkakao_cli::ui_shell::{
 };
 
 /// The exact set of windows the live-ops shell must expose (R9.2, R9.12).
-const EXPECTED_WINDOW_COUNT: usize = 9;
+const EXPECTED_WINDOW_COUNT: usize = 5;
 
-/// R9.2/R9.12: `AppWindow::all()` is exactly the nine live-ops windows, and each
+/// R9.2/R9.12: `AppWindow::all()` is exactly the five menu-bar windows, and each
 /// carries a distinct, non-empty menu title and a distinct, non-empty stable
 /// key. This pins the window catalog the menu and onboarding both draw from.
 #[test]
@@ -41,10 +41,10 @@ fn all_windows_have_distinct_nonempty_titles_and_keys() {
     assert_eq!(
         windows.len(),
         EXPECTED_WINDOW_COUNT,
-        "the shell must expose exactly nine windows (R9.2/R9.12)"
+        "the shell must expose exactly five windows (R9.2/R9.12)"
     );
 
-    // The nine windows are exactly the expected set, in the fixed menu order.
+    // The five windows are exactly the expected set, in the fixed menu order.
     assert_eq!(
         windows,
         [
@@ -53,10 +53,6 @@ fn all_windows_have_distinct_nonempty_titles_and_keys() {
             AppWindow::ChatRooms,
             AppWindow::SelfCheck,
             AppWindow::Memory,
-            AppWindow::Durability,
-            AppWindow::Coverage,
-            AppWindow::Improvement,
-            AppWindow::Onboarding,
         ],
     );
 
@@ -75,7 +71,7 @@ fn all_windows_have_distinct_nonempty_titles_and_keys() {
 }
 
 /// R9.2/R9.12: clicking a window that is already open brings it to front and
-/// never builds a second window, for every one of the nine feature windows.
+/// never builds a second window, for every one of the five feature windows.
 #[test]
 fn reopening_any_window_focuses_the_existing_one() {
     for w in AppWindow::all() {
@@ -106,10 +102,10 @@ fn reopening_any_window_focuses_the_existing_one() {
     }
 }
 
-/// R9.2: every one of the nine windows can be open at once, each opened exactly
+/// R9.2: every one of the five windows can be open at once, each opened exactly
 /// once, and re-clicking any of them focuses without rebuilding.
 #[test]
-fn all_nine_windows_open_once_and_coexist() {
+fn all_five_windows_open_once_and_coexist() {
     let mut shell = WindowShell::new();
     let mut builds = 0;
 
@@ -123,7 +119,7 @@ fn all_nine_windows_open_once_and_coexist() {
         assert_eq!(outcome, OpenOutcome::Opened, "{w:?} opens fresh");
     }
     assert_eq!(builds, EXPECTED_WINDOW_COUNT, "each window built once");
-    assert_eq!(shell.open_count(), EXPECTED_WINDOW_COUNT, "all nine coexist");
+    assert_eq!(shell.open_count(), EXPECTED_WINDOW_COUNT, "all five coexist");
 
     // A second pass focuses every window without any further builds.
     for w in AppWindow::all() {
@@ -140,20 +136,20 @@ fn all_nine_windows_open_once_and_coexist() {
     assert_eq!(shell.open_count(), EXPECTED_WINDOW_COUNT);
 }
 
-/// R9.2: the menu has no refresh entry and lists exactly the nine window-opens
+/// R9.2: the menu has no refresh entry and lists exactly the five window-opens
 /// plus quit — no extra, missing, or disguised entries.
 #[test]
-fn menu_lists_exactly_nine_opens_and_quit_without_refresh() {
+fn menu_lists_exactly_five_opens_and_quit_without_refresh() {
     let menu = build_menu();
 
     // No refresh entry, in any form.
     assert!(!menu.contains(&MenuItemKind::Refresh));
 
-    // Exactly nine window-opens plus one quit — ten items total.
+    // Exactly five window-opens plus one quit — six items total.
     assert_eq!(
         menu.len(),
         EXPECTED_WINDOW_COUNT + 1,
-        "menu must be nine window-opens plus quit"
+        "menu must be five window-opens plus quit"
     );
 
     let mut opened: BTreeSet<AppWindow> = BTreeSet::new();
@@ -224,7 +220,7 @@ fn failed_refresh_preserves_last_screen() {
 
 /// R9.2/R9.12: a failed window open leaves the previously open windows exactly
 /// as they were and yields a plain-language message with a next action, for
-/// every one of the nine windows.
+/// every one of the five windows.
 #[test]
 fn failed_open_keeps_prior_windows_and_explains_plainly() {
     for target in AppWindow::all() {
