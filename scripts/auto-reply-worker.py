@@ -10752,6 +10752,78 @@ def _close_model_lease(lease_token: str, model: str, failure_class: str) -> None
         pass
 
 
+def _model_fallback_chain(
+    active_model: str,
+    run_model,
+    *,
+    on_attempt=None,
+) -> dict | None:
+    """Try each configured fallback model once, in order, until one answers.
+
+    The chain is a fixed ordered plan rather than an error-specific patch: every
+    candidate takes its own call lease, a failed attempt is closed before the
+    next one starts, and the winner's lease travels with the winner. That is what
+    keeps a fallback that answered from being reported as circuit_unavailable and
+    deferred anyway. Returns None when no candidate could run, and never raises:
+    one broken candidate is skipped instead of ending the turn (2026-09-15).
+    """
+
+    for candidate in _reply_fallback_candidates():
+        if candidate == active_model:
+            continue
+        slot = _open_fallback_lease(candidate)
+        if slot is None:
+            if on_attempt is not None:
+                on_attempt(candidate, "lease_unavailable")
+            continue
+        if on_attempt is not None:
+            on_attempt(candidate, "")
+        try:
+            returncode, stdout_bytes, stderr_bytes = run_model(candidate)
+        except Exception as exc:
+            _close_model_lease(slot["lease_token"], candidate, "runner_failed")
+            print(
+                "[reply-gen] fallback error: %r" % (exc,),
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+        if returncode != 0:
+            failure_class, _retry = _classify_model_failure(
+                returncode,
+                stdout_bytes,
+                stderr_bytes,
+            )
+            _close_model_lease(slot["lease_token"], candidate, failure_class)
+            continue
+        return {
+            "model": candidate,
+            "lease_token": slot["lease_token"],
+            "retry_at": slot["retry_at"],
+            "returncode": returncode,
+            "stdout": stdout_bytes,
+            "stderr": stderr_bytes,
+        }
+    return None
+
+
+def _model_swap_in_command(command: list[str], model: str) -> list[str]:
+    """Point an already-built runner command at another model and effort."""
+
+    swapped = list(command)
+    try:
+        index = swapped.index("--model")
+        swapped[index + 1] = model
+    except (ValueError, IndexError):
+        swapped.extend(["--model", model])
+    try:
+        index = swapped.index("--thinking")
+        swapped[index + 1] = _fallback_thinking_effort(model)
+    except (ValueError, IndexError):
+        swapped.extend(["--thinking", _fallback_thinking_effort(model)])
+    return swapped
+
+
 def _reply_model_sees_images(model: str) -> bool:
     folded = str(model or "").casefold()
     if not folded:
@@ -11281,31 +11353,16 @@ def generate_reply(
             if returncode != 0:
                 err_str = stderr_bytes.decode("utf-8", "replace").casefold()
                 if returncode == 429 or "usage limit" in err_str or "quota" in err_str:
-                    for fb_model in _reply_fallback_candidates():
-                        if fb_model == active_model:
-                            continue
-                        fb_slot = _open_fallback_lease(fb_model)
-                        if fb_slot is None:
-                            continue
-                        print(
-                            f"[reply-gen] OpenCodex limit on {active_model}; falling back to {fb_model}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                        fb_rc, fb_stdout, fb_stderr = _run_opencodex_generation(
-                            fb_model,
+                    winner = _model_fallback_chain(
+                        active_model,
+                        lambda candidate: _run_opencodex_generation(
+                            candidate,
                             system_prompt,
                             prompt_bytes,
                             timeout=30.0,
-                        )
-                        if fb_rc != 0:
-                            fb_class, _fb_retry = _classify_model_failure(
-                                fb_rc,
-                                fb_stdout,
-                                fb_stderr,
-                            )
-                            _close_model_lease(fb_slot["lease_token"], fb_model, fb_class)
-                            continue
+                        ),
+                    )
+                    if winner is not None:
                         # The fallback answered. Close the first attempt, then run
                         # the rest of the turn on the lease that generated it.
                         first_class, _first_retry = _classify_model_failure(
@@ -11314,15 +11371,17 @@ def generate_reply(
                             stderr_bytes,
                         )
                         _close_model_lease(lease_token, active_model, first_class)
-                        lease_token = fb_slot["lease_token"]
-                        lease_retry_at = fb_slot["retry_at"]
-                        returncode, stdout_bytes, stderr_bytes = (
-                            fb_rc,
-                            fb_stdout,
-                            fb_stderr,
+                        lease_token = winner["lease_token"]
+                        lease_retry_at = winner["retry_at"]
+                        returncode = winner["returncode"]
+                        stdout_bytes = winner["stdout"]
+                        stderr_bytes = winner["stderr"]
+                        active_model = winner["model"]
+                        print(
+                            f"[reply-gen] fallback answered on {active_model}",
+                            file=sys.stderr,
+                            flush=True,
                         )
-                        active_model = fb_model
-                        break
         else:
             returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
                 command,
@@ -11356,7 +11415,51 @@ def generate_reply(
             flush=True,
         )
     except subprocess.TimeoutExpired:
-        return fail_model_call("runner_timeout")
+        # A timed-out primary used to end the turn before the fallback chain was
+        # ever consulted, so a slow provider defeated the whole point of having
+        # fallbacks. Give the chain one bounded chance first (2026-09-15).
+        if REPLY_RUNNER_KIND != "opencodex":
+            def _run_timeout_candidate(
+                candidate: str,
+                _command: list[str] = command,
+            ) -> tuple:
+                return _run_bounded_process(
+                    _model_swap_in_command(_command, candidate),
+                    cwd=Path("/tmp"),
+                    env=env,
+                    timeout=45,
+                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                    stderr_cap=MAX_MODEL_STDERR_BYTES,
+                    stdin_bytes=model_stdin_bytes,
+                    stdin_cap=(
+                        MAX_MODEL_PROMPT_BYTES
+                        if model_stdin_bytes is not None
+                        else None
+                    ),
+                    isolate_group=True,
+                )
+
+            try:
+                winner = _model_fallback_chain(active_model, _run_timeout_candidate)
+            except Exception:
+                winner = None
+            if winner is not None:
+                _close_model_lease(lease_token, active_model, "runner_timeout")
+                lease_token = winner["lease_token"]
+                lease_retry_at = winner["retry_at"]
+                returncode = winner["returncode"]
+                stdout_bytes = winner["stdout"]
+                stderr_bytes = winner["stderr"]
+                active_model = winner["model"]
+                print(
+                    f"[reply-gen] timeout_fallback answered on {active_model}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                return fail_model_call("runner_timeout")
+        else:
+            return fail_model_call("runner_timeout")
     except _CaptureOverflow:
         return fail_model_call("runner_output_overflow")
     except OSError:
@@ -11370,58 +11473,39 @@ def generate_reply(
         # User objective: 오픈코드 Go 사용량 리밋 걸리면 안티그래비티 제미나이 3.8 플래시 high 폴백
         err_msg = (stderr_bytes.decode("utf-8", "replace")[:800] + " " + stdout_bytes.decode("utf-8", "replace")[:800]).casefold()
         is_opencode = "opencode" in str(active_model).casefold()
-        is_limit = failure_class in {"quota_exhausted", "rate_limited", "runner_timeout"} or any(
+        # `_classify_model_failure` returns `rate_limit`; the old `rate_limited`
+        # spelling never matched, so a rate-limited primary never reached the
+        # fallback chain. One name, one meaning (2026-09-15).
+        is_limit = failure_class in {
+            "quota_exhausted",
+            "rate_limit",
+            "usage_limit",
+            "runner_timeout",
+            "authentication",
+        } or any(
             m in err_msg for m in ("usage limit", "weekly limit", "daily limit", "429", "timed out", "unauthorized", "missing api key")
         )
         if is_opencode and is_limit:
-            for fb_model in _reply_fallback_candidates():
-                if fb_model == active_model:
-                    continue
-                fb_slot = _open_fallback_lease(fb_model)
-                if fb_slot is None:
-                    continue
-                fb_thinking = _fallback_thinking_effort(fb_model)
-                print(
-                    f"[reply-gen] opencode_go_quota_fallback: {active_model} -> {fb_model} {fb_thinking}",
-                    file=sys.stderr,
-                    flush=True,
+            def _run_candidate(candidate: str, _command: list[str] = command) -> tuple:
+                fallback_command = _model_swap_in_command(_command, candidate)
+                return _run_bounded_process(
+                    fallback_command,
+                    cwd=Path("/tmp"),
+                    env=env,
+                    timeout=45,
+                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                    stderr_cap=MAX_MODEL_STDERR_BYTES,
+                    stdin_bytes=model_stdin_bytes,
+                    stdin_cap=(
+                        MAX_MODEL_PROMPT_BYTES
+                        if model_stdin_bytes is not None
+                        else None
+                    ),
+                    isolate_group=True,
                 )
-                fallback_command = list(command)
-                try:
-                    m_idx = fallback_command.index("--model")
-                    fallback_command[m_idx + 1] = fb_model
-                except ValueError:
-                    fallback_command.extend(["--model", fb_model])
-                try:
-                    t_idx = fallback_command.index("--thinking")
-                    fallback_command[t_idx + 1] = fb_thinking
-                except ValueError:
-                    fallback_command.extend(["--thinking", fb_thinking])
 
-                try:
-                    fb_rc, fb_stdout, fb_stderr = _run_bounded_process(
-                        fallback_command,
-                        cwd=Path("/tmp"),
-                        env=env,
-                        timeout=45,
-                        stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-                        stderr_cap=MAX_MODEL_STDERR_BYTES,
-                        stdin_bytes=model_stdin_bytes,
-                        stdin_cap=MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None,
-                        isolate_group=True,
-                    )
-                except Exception as fb_exc:
-                    _close_model_lease(fb_slot["lease_token"], fb_model, "runner_failed")
-                    print(f"[reply-gen] fallback error: {fb_exc}", file=sys.stderr, flush=True)
-                    continue
-                if fb_rc != 0:
-                    fb_class, _fb_retry = _classify_model_failure(
-                        fb_rc,
-                        fb_stdout,
-                        fb_stderr,
-                    )
-                    _close_model_lease(fb_slot["lease_token"], fb_model, fb_class)
-                    continue
+            winner = _model_fallback_chain(active_model, _run_candidate)
+            if winner is not None:
                 # The fallback answered. Close the first attempt, then run the
                 # rest of the turn on the lease that generated it.
                 first_class, _first_retry = _classify_model_failure(
@@ -11430,11 +11514,17 @@ def generate_reply(
                     stderr_bytes,
                 )
                 _close_model_lease(lease_token, active_model, first_class)
-                lease_token = fb_slot["lease_token"]
-                lease_retry_at = fb_slot["retry_at"]
-                returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
-                active_model = fb_model
-                break
+                lease_token = winner["lease_token"]
+                lease_retry_at = winner["retry_at"]
+                returncode = winner["returncode"]
+                stdout_bytes = winner["stdout"]
+                stderr_bytes = winner["stderr"]
+                active_model = winner["model"]
+                print(
+                    f"[reply-gen] opencode_go_quota_fallback answered on {active_model}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     if returncode != 0:
         print(

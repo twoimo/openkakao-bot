@@ -115,15 +115,38 @@ class FallbackLeaseTests(unittest.TestCase):
         finally:
             module._finish_model_call_failure = original
 
-    def test_both_fallback_loops_lease_per_model(self):
+    def test_one_shared_chain_leases_each_candidate(self):
+        """Both runner paths go through one chain runner that leases per model.
+
+        The chain used to be duplicated inside generate_reply, so a fix in one
+        copy left the other broken. One runner keeps the lease rule in one place.
+        """
+
         source = WORKER.read_text(encoding="utf-8")
+        chain_start = source.index("def _model_fallback_chain(")
+        chain_end = source.index(chr(10) + "def ", chain_start + 1)
+        chain = source[chain_start:chain_end]
+        self.assertEqual(chain.count("for candidate in _reply_fallback_candidates():"), 1)
+        self.assertEqual(chain.count("slot = _open_fallback_lease(candidate)"), 1)
+        self.assertEqual(chain.count('_close_model_lease(slot["lease_token"], candidate'), 2)
+        self.assertIn('"lease_token": slot["lease_token"]', chain)
+
         start = source.index("def generate_reply(")
         end = source.index(chr(10) + "def ", start + 1)
         body = source[start:end]
-        self.assertEqual(body.count("for fb_model in _reply_fallback_candidates():"), 2)
-        self.assertEqual(body.count("fb_slot = _open_fallback_lease(fb_model)"), 2)
-        self.assertEqual(body.count("if fb_slot is None:"), 2)
-        self.assertEqual(body.count('lease_token = fb_slot["lease_token"]'), 2)
+        self.assertNotIn("for fb_model in _reply_fallback_candidates():", body)
+        self.assertEqual(body.count("_model_fallback_chain("), 3)
+        self.assertEqual(body.count('lease_token = winner["lease_token"]'), 3)
+
+    def test_rate_limit_spelling_matches_the_classifier(self):
+        """The chain gate must test the class the classifier actually returns."""
+
+        source = WORKER.read_text(encoding="utf-8")
+        self.assertNotIn('"rate_limited"', source)
+        start = source.index("def generate_reply(")
+        end = source.index(chr(10) + "def ", start + 1)
+        body = source[start:end]
+        self.assertIn('"rate_limit",', body)
 
 
 if __name__ == "__main__":
