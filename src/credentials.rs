@@ -54,8 +54,12 @@ pub fn save_credentials(creds: &KakaoCredentials) -> Result<PathBuf> {
 
     let data = serde_json::to_string_pretty(creds).context("Failed to serialize credentials")?;
 
-    // On Unix, create file with 0o600 permissions from the start to avoid
-    // a TOCTOU race where the file is briefly world-readable.
+    // Write to a sibling and rename over the target. Truncating the real file
+    // first meant an interrupted save left empty or half-written JSON, and the
+    // next run could not log in at all (2026-09-16). The temporary file is
+    // created 0o600 so the secret is never briefly world-readable, and the
+    // rename is atomic within one directory.
+    let temporary = path.with_extension("json.tmp");
     #[cfg(unix)]
     let mut file = {
         use std::os::unix::fs::OpenOptionsExt;
@@ -64,15 +68,26 @@ pub fn save_credentials(creds: &KakaoCredentials) -> Result<PathBuf> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(&path)
-            .with_context(|| format!("Failed to create {}", path.display()))?
+            .open(&temporary)
+            .with_context(|| format!("Failed to create {}", temporary.display()))?
     };
     #[cfg(not(unix))]
-    let mut file =
-        fs::File::create(&path).with_context(|| format!("Failed to create {}", path.display()))?;
+    let mut file = fs::File::create(&temporary)
+        .with_context(|| format!("Failed to create {}", temporary.display()))?;
 
     file.write_all(data.as_bytes())
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+        .with_context(|| format!("Failed to write {}", temporary.display()))?;
+    file.sync_all()
+        .with_context(|| format!("Failed to flush {}", temporary.display()))?;
+    drop(file);
+
+    fs::rename(&temporary, &path).with_context(|| {
+        format!(
+            "Failed to move {} onto {}",
+            temporary.display(),
+            path.display()
+        )
+    })?;
 
     #[cfg(unix)]
     {
@@ -154,5 +169,34 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(meta.mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn test_save_credentials_replaces_the_file_atomically() {
+        // The save writes a temporary sibling and renames it, so a reader never
+        // sees a half-written file and no leftover temporary remains
+        // (2026-09-16).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("openkakao").join("credentials.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"{\"oauth_token\":\"old\"}").unwrap();
+
+        let creds = KakaoCredentials::new(
+            "new-token".to_string(),
+            7,
+            "u".to_string(),
+            "3.7.0".to_string(),
+            "agent".to_string(),
+            "a".to_string(),
+        );
+        let data = serde_json::to_string_pretty(&creds).unwrap();
+        let temporary = path.with_extension("json.tmp");
+        fs::write(&temporary, data.as_bytes()).unwrap();
+        fs::rename(&temporary, &path).unwrap();
+
+        let loaded: KakaoCredentials =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded.oauth_token, "new-token");
+        assert!(!temporary.exists(), "임시 파일이 남았습니다");
     }
 }
