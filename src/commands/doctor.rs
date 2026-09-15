@@ -872,7 +872,7 @@ pub fn cmd_doctor_self_check(json: bool, config: &OpenKakaoConfig) -> Result<()>
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        println!("openkakao-cli 자가 점검 (v{})", VERSION);
+        println!("openkakao-cli 자가 진단 (v{})", VERSION);
         println!();
         for item in &report.items {
             let icon = match item.status {

@@ -263,7 +263,7 @@ impl Doctor {
                 attempts: 0,
                 repaired: false,
                 final_status: item.status.clone(),
-                guidance: Some("점검 항목을 찾을 수 없어요. 자가 점검을 다시 실행해 주세요.".to_string()),
+                guidance: Some("점검 항목을 찾을 수 없어요. 자가 진단을 다시 실행해 주세요.".to_string()),
             };
         };
         self.repair_probe(probe.as_ref())

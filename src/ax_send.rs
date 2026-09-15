@@ -384,6 +384,14 @@ fn local_binding_token(message: &crate::local_db::LocalMessage) -> anyhow::Resul
         // attest the same local row as `사진 N장`.
         token = token.with_alias("[파일]");
     }
+    if message.message_type == 71 {
+        token = token.with_alias("[사진]");
+        token = token.with_alias("[파일]");
+        let body = normalize_binding_message(&message.message);
+        if !body.is_empty() && body != token.text {
+            token = token.with_alias(body);
+        }
+    }
     // A single photo or image emoticon is `[사진]` locally while the already-open
     // AX tree often exposes only the share-button `[파일]` row. Bind those as the
     // same media token in both directions.

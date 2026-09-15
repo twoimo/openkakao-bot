@@ -67,9 +67,23 @@ import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = Path(
-    os.environ.get("OPENKAKAO_BINARY", str(ROOT / "target" / "release" / "openkakao-cli"))
-)
+def _find_cli_bin() -> Path:
+    env_bin = os.environ.get("OPENKAKAO_BINARY")
+    if env_bin and Path(env_bin).is_file():
+        return Path(env_bin)
+    p = Path(__file__).resolve()
+    bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
+    if bundle_bin.is_file():
+        return bundle_bin
+    repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
+    if repo_bin.is_file():
+        return repo_bin
+    app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
+    if app_bin.is_file():
+        return app_bin
+    return repo_bin
+
+BIN = _find_cli_bin()
 CHAT = os.environ.get("OPENKAKAO_TARGET_CHAT_NAME", "부자멘토멘티").strip() or "부자멘토멘티"
 HONORIFIC_RECIPIENTS = frozenset({"현준"})
 STYLE_POLICY_VERSION = "ordinary-conversation-v3"
@@ -186,8 +200,16 @@ WORKER_STATUS_INTERVAL_SECONDS = 1.0
 WORKER_STATUS_MAX_BYTES = 64 * 1024
 REPLY_MODEL_OVERRIDE_NAME = "reply-model.json"
 REPLY_IMAGE_MODEL_OVERRIDE_NAME = "reply-image-model.json"
+REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
 _REPLY_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}$")
+# 사용자가 모델 설정 창에서 고른 폴백 사슬. 저장된 목록이 없으면 아래 내장
+# 기본값을 쓴다 (2026-09-15).
+MAX_REPLY_FALLBACK_MODELS = 6
+DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
+    "google-antigravity/gemini-3.8-flash",
+    "google-antigravity/gemini-3.7-flash-tiered",
+)
 MODEL_CALL_LEASE_SECONDS = 180.0
 MODEL_MIN_DEFER_SECONDS = 5.0
 MODEL_RETRY_HINT_MAX_SECONDS = 24.0 * 60.0 * 60.0
@@ -9000,6 +9022,55 @@ def _profile_laughter_rate(profile: dict | None) -> float | None:
     return runs / sample_count
 
 
+def _owner_laughter_run_lengths(profile: dict | None) -> list[int]:
+    """Extract the owner ㅋ run-length distribution from common_tokens.
+
+    Returns a flat list of observed run lengths (each repeated by count),
+    suitable for random.choice sampling. Only counts runs of 3+ ㅋ.
+    Falls back to [3, 4, 5, 3, 4] if no data.
+    """
+    if not isinstance(profile, dict):
+        return [3, 4, 5, 3, 4]
+    tokens = profile.get("common_tokens")
+    if tokens is None:
+        tokens = profile.get("common_tokens_json")
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except (TypeError, ValueError):
+            return [3, 4, 5, 3, 4]
+    if not isinstance(tokens, dict):
+        return [3, 4, 5, 3, 4]
+    lengths: list[int] = []
+    for token, count in tokens.items():
+        if not isinstance(token, str) or not re.fullmatch(r"ㅋ{3,}", token):
+            continue
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            continue
+        lengths.extend([len(token)] * n)
+    return lengths if lengths else [3, 4, 5, 3, 4]
+
+
+def _resample_laughter_runs(text: str, profile: dict | None = None) -> str:
+    """Replace each ㅋ{3,} run with a length sampled from the owner distribution.
+
+    Prevents the model tendency to always emit exactly 3 ㅋ.
+    Runs shorter than 3 are left as-is (stripped by the policy).
+    """
+    import random
+    pool = _owner_laughter_run_lengths(profile)
+    if not pool:
+        return text
+
+    def _replace(match):
+        return "ㅋ" * random.choice(pool)
+
+    return re.sub(r"ㅋ{3,}", _replace, text)
+
+
+
 def _recent_laughter_context(recent_conversation: list[dict] | None) -> bool:
     """True when the other person laughed or reacted in the last few turns."""
     rows = [row for row in (recent_conversation or []) if isinstance(row, dict)]
@@ -9141,6 +9212,8 @@ def _sanitize_outbound_reaction(
     text = " ".join(str(reply or "").split())
     if not text:
         return ""
+    if (laughter_allowed is True or _inbound_invites_laughter(inbound)) and re.search(r"ㅋ{3,}", text):
+        text = _resample_laughter_runs(text)
     if _outbound_reaction_allows(
         text, inbound, laughter_allowed=laughter_allowed, awe_allowed=awe_allowed
     ) and _outbound_question_allows(text, inbound):
@@ -10602,6 +10675,46 @@ def _active_image_reply_model() -> str:
         pass
     return DEFAULT_IMAGE_REPLY_MODEL
 
+def _reply_fallback_candidates() -> list[str]:
+    """Ordered fallback models: the operator's saved list, else the built-ins.
+
+    An empty saved list is a real choice — "no fallback" — so a limit on the
+    primary model ends the turn instead of silently switching models. Only a
+    missing or unreadable file falls back to the built-ins (2026-09-15).
+    """
+
+    path = _operator_state_root() / REPLY_MODEL_FALLBACKS_NAME
+    models: list[str] = []
+    saved_empty = False
+    try:
+        if path.is_file() and not path.is_symlink() and 0 < path.stat().st_size <= 8192:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and payload.get("schema_version") == 1:
+                raw = payload.get("models")
+                if isinstance(raw, list):
+                    saved_empty = True
+                    for item in raw:
+                        model = str(item or "").strip()
+                        if (
+                            model
+                            and model not in models
+                            and _REPLY_MODEL_ID_RE.fullmatch(model)
+                        ):
+                            models.append(model)
+                        if len(models) >= MAX_REPLY_FALLBACK_MODELS:
+                            break
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        models = []
+        saved_empty = False
+    if saved_empty:
+        return models
+    return models or list(DEFAULT_REPLY_FALLBACK_MODELS)
+
+def _fallback_thinking_effort(model: str) -> str:
+    """Fallbacks answer at high effort, except the retired local runtime."""
+
+    return "medium" if str(model or "").startswith("omlx/") else "high"
+
 def _reply_model_sees_images(model: str) -> bool:
     folded = str(model or "").casefold()
     if not folded:
@@ -11131,20 +11244,28 @@ def generate_reply(
             if returncode != 0:
                 err_str = stderr_bytes.decode("utf-8", "replace").casefold()
                 if returncode == 429 or "usage limit" in err_str or "quota" in err_str:
-                    print(
-                        f"[reply-gen] OpenCodex limit on {active_model}; falling back to google-antigravity/gemini-3.8-flash",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    fb_rc, fb_stdout, fb_stderr = _run_opencodex_generation(
-                        "google-antigravity/gemini-3.8-flash",
-                        system_prompt,
-                        prompt_bytes,
-                        timeout=30.0,
-                    )
-                    if fb_rc == 0:
-                        returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
-                        active_model = "google-antigravity/gemini-3.8-flash"
+                    for fb_model in _reply_fallback_candidates():
+                        if fb_model == active_model:
+                            continue
+                        print(
+                            f"[reply-gen] OpenCodex limit on {active_model}; falling back to {fb_model}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        fb_rc, fb_stdout, fb_stderr = _run_opencodex_generation(
+                            fb_model,
+                            system_prompt,
+                            prompt_bytes,
+                            timeout=30.0,
+                        )
+                        if fb_rc == 0:
+                            returncode, stdout_bytes, stderr_bytes = (
+                                fb_rc,
+                                fb_stdout,
+                                fb_stderr,
+                            )
+                            active_model = fb_model
+                            break
         else:
             returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
                 command,
@@ -11195,41 +11316,47 @@ def generate_reply(
         is_limit = failure_class in {"quota_exhausted", "rate_limited", "runner_timeout"} or any(
             m in err_msg for m in ("usage limit", "weekly limit", "daily limit", "429", "timed out", "unauthorized", "missing api key")
         )
-        if is_opencode and is_limit and active_model != DEFAULT_IMAGE_REPLY_MODEL:
-            print(
-                f"[reply-gen] opencode_go_quota_fallback: {active_model} -> {DEFAULT_IMAGE_REPLY_MODEL} high",
-                file=sys.stderr,
-                flush=True,
-            )
-            fallback_command = list(command)
-            try:
-                m_idx = fallback_command.index("--model")
-                fallback_command[m_idx + 1] = DEFAULT_IMAGE_REPLY_MODEL
-            except ValueError:
-                fallback_command.extend(["--model", DEFAULT_IMAGE_REPLY_MODEL])
-            try:
-                t_idx = fallback_command.index("--thinking")
-                fallback_command[t_idx + 1] = "high"
-            except ValueError:
-                fallback_command.extend(["--thinking", "high"])
-
-            try:
-                fb_rc, fb_stdout, fb_stderr = _run_bounded_process(
-                    fallback_command,
-                    cwd=Path("/tmp"),
-                    env=env,
-                    timeout=45,
-                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-                    stderr_cap=MAX_MODEL_STDERR_BYTES,
-                    stdin_bytes=model_stdin_bytes,
-                    stdin_cap=MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None,
-                    isolate_group=True,
+        if is_opencode and is_limit:
+            for fb_model in _reply_fallback_candidates():
+                if fb_model == active_model:
+                    continue
+                fb_thinking = _fallback_thinking_effort(fb_model)
+                print(
+                    f"[reply-gen] opencode_go_quota_fallback: {active_model} -> {fb_model} {fb_thinking}",
+                    file=sys.stderr,
+                    flush=True,
                 )
+                fallback_command = list(command)
+                try:
+                    m_idx = fallback_command.index("--model")
+                    fallback_command[m_idx + 1] = fb_model
+                except ValueError:
+                    fallback_command.extend(["--model", fb_model])
+                try:
+                    t_idx = fallback_command.index("--thinking")
+                    fallback_command[t_idx + 1] = fb_thinking
+                except ValueError:
+                    fallback_command.extend(["--thinking", fb_thinking])
+
+                try:
+                    fb_rc, fb_stdout, fb_stderr = _run_bounded_process(
+                        fallback_command,
+                        cwd=Path("/tmp"),
+                        env=env,
+                        timeout=45,
+                        stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                        stderr_cap=MAX_MODEL_STDERR_BYTES,
+                        stdin_bytes=model_stdin_bytes,
+                        stdin_cap=MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None,
+                        isolate_group=True,
+                    )
+                except Exception as fb_exc:
+                    print(f"[reply-gen] fallback error: {fb_exc}", file=sys.stderr, flush=True)
+                    continue
                 if fb_rc == 0:
                     returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
-                    active_model = DEFAULT_IMAGE_REPLY_MODEL
-            except Exception as fb_exc:
-                print(f"[reply-gen] antigravity fallback error: {fb_exc}", file=sys.stderr, flush=True)
+                    active_model = fb_model
+                    break
 
     if returncode != 0:
         print(
@@ -12475,19 +12602,17 @@ def _media_unavailable_clarification_event(event: dict) -> bool:
     )
 
 
-def _same_author_recent_photo_event(event: dict) -> dict | None:
-    """Return the latest same-author photo in the inbound streak, if any."""
+def _same_author_recent_photo_events(event: dict, limit: int = 4) -> list[dict]:
     author_id = _fence_int(event.get("author_id"))
     current_log_id = _fence_int(event.get("log_id"))
     sent_at = event.get("sent_at")
     if not author_id or not current_log_id:
-        return None
+        return []
     try:
         current_sent_at = float(sent_at)
     except (TypeError, ValueError):
         current_sent_at = None
-    best: dict | None = None
-    best_log_id = 0
+    photos: list[tuple[int, dict]] = []
     for item in event.get("recent_messages") or []:
         if not isinstance(item, dict):
             continue
@@ -12511,17 +12636,21 @@ def _same_author_recent_photo_event(event: dict) -> dict | None:
                 item_sent_at = float(item.get("sent_at"))
             except (TypeError, ValueError):
                 continue
-            if abs(current_sent_at - item_sent_at) > PARTNER_STREAK_MAX_GAP_SECONDS:
+            if abs(current_sent_at - item_sent_at) > 300.0:
                 continue
-        if item_log_id > best_log_id:
-            best_log_id = item_log_id
-            best = dict(event)
-            best["log_id"] = item_log_id
-            best["author_id"] = item_author
-            best["message_type"] = item_type
-            best["message"] = str(item.get("message") or "사진")
-    return best
+        photo_evt = dict(event)
+        photo_evt["log_id"] = item_log_id
+        photo_evt["author_id"] = item_author
+        photo_evt["message_type"] = item_type
+        photo_evt["message"] = str(item.get("message") or "사진")
+        photos.append((item_log_id, photo_evt))
+    photos.sort(key=lambda pair: pair[0], reverse=True)
+    return [p[1] for p in photos[:limit]]
 
+
+def _same_author_recent_photo_event(event: dict) -> dict | None:
+    events = _same_author_recent_photo_events(event, limit=1)
+    return events[0] if events else None
 
 def _recover_local_media_bundle(event: dict) -> list[Path] | None:
     """Re-download an inbound photo whose enqueue-time fetch was fenced.
@@ -12761,12 +12890,17 @@ def analyze_event(event: dict) -> dict:
             image_paths, media_bundle_digest = validated
             db_owned_bundle = True
     if not image_paths:
-        recover_event = event if attachment == "image" else _same_author_recent_photo_event(event)
-        recovered_paths = (
-            _recover_local_media_bundle(recover_event)
-            if recover_event is not None
-            else None
-        )
+        if attachment == "image":
+            recovered_paths = _recover_local_media_bundle(event)
+        else:
+            recent_photo_events = _same_author_recent_photo_events(event, limit=2)
+            recovered_paths = []
+            for p_evt in recent_photo_events:
+                p_paths = _recover_local_media_bundle(p_evt)
+                if p_paths:
+                    recovered_paths.extend(p_paths)
+            if not recovered_paths:
+                recovered_paths = None
         if recovered_paths:
             image_paths = recovered_paths
             media_bundle_digest = hashlib.sha256(

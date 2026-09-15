@@ -473,7 +473,7 @@ pub fn validate_auto_reply_startup(
     }
     for (index, name) in target_names.iter().enumerate() {
         let chat_id = target_ids.get(index).copied();
-        let allowed = config.safety.allowed_send_chats.iter().any(|allowed| {
+        let mut allowed = config.safety.allowed_send_chats.iter().any(|allowed| {
             allowed == name
                 || chat_id.is_some_and(|id| {
                     *allowed == id.to_string()
@@ -481,6 +481,27 @@ pub fn validate_auto_reply_startup(
                         || allowed.starts_with(&format!("bind:{id}:"))
                 })
         });
+        if !allowed {
+            if let Some(ref root_str) = config.auto_reply.state_root {
+                let catalog_path = std::path::Path::new(root_str).join("menubar-room-catalog.json");
+                if let Ok(catalog_bytes) = std::fs::read(&catalog_path) {
+                    if let Ok(catalog_json) = serde_json::from_slice::<serde_json::Value>(&catalog_bytes) {
+                        if let Some(rooms) = catalog_json.get("rooms").and_then(|r| r.as_array()) {
+                            for room in rooms {
+                                let r_id = room.get("chat_id").and_then(|id| id.as_i64());
+                                let r_title = room.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                let enabled = room.get("auto_reply") == Some(&serde_json::Value::Bool(true))
+                                    || room.get("geeknews") == Some(&serde_json::Value::Bool(true));
+                                if enabled && (chat_id == r_id || (!r_title.is_empty() && r_title == name)) {
+                                    allowed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if !allowed {
             anyhow::bail!("chat \"{name}\" is not present in safety.allowed_send_chats");
         }

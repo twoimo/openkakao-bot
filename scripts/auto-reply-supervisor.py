@@ -42,9 +42,24 @@ def _default_state_root() -> Path:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = Path(
-    os.environ.get("OPENKAKAO_BINARY", str(ROOT / "target/release/openkakao-cli"))
-)
+
+def _find_cli_bin() -> Path:
+    env_bin = os.environ.get("OPENKAKAO_BINARY")
+    if env_bin and Path(env_bin).is_file():
+        return Path(env_bin)
+    p = Path(__file__).resolve()
+    bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
+    if bundle_bin.is_file():
+        return bundle_bin
+    repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
+    if repo_bin.is_file():
+        return repo_bin
+    app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
+    if app_bin.is_file():
+        return app_bin
+    return repo_bin
+
+BINARY = _find_cli_bin()
 PYTHON = os.environ.get("OPENKAKAO_PYTHON", "python3")
 PYTHON_ISOLATION_FLAGS = ("-E", "-B", "-S")
 LOG_DIR = Path(

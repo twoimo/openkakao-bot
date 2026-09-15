@@ -31,7 +31,24 @@ import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = Path(os.environ.get("OPENKAKAO_BINARY", str(ROOT / "target/release/openkakao-cli")))
+
+def _find_cli_bin() -> Path:
+    env_bin = os.environ.get("OPENKAKAO_BINARY")
+    if env_bin and Path(env_bin).is_file():
+        return Path(env_bin)
+    p = Path(__file__).resolve()
+    bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
+    if bundle_bin.is_file():
+        return bundle_bin
+    repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
+    if repo_bin.is_file():
+        return repo_bin
+    app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
+    if app_bin.is_file():
+        return app_bin
+    return repo_bin
+
+BINARY = _find_cli_bin()
 CHAT = os.environ.get("OPENKAKAO_TARGET_CHAT_NAME", "부자멘토멘티").strip() or "부자멘토멘티"
 TARGET_CHAT_ID_ENV = "OPENKAKAO_TARGET_CHAT_ID"
 STATE = Path(os.environ.get(
