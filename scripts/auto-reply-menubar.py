@@ -2111,7 +2111,13 @@ def _attach_fallback_state(snap: Any, state_root: Any) -> Any:
     return snap
 
 
-def _wrap_snapshot_owner(owner: Any, attr: str) -> bool:
+def _wrap_snapshot_owner(
+    owner: Any,
+    attr: str,
+    *,
+    flag: str = "_openkakao_fallbacks",
+    attach: Any = None,
+) -> bool:
     """Wrap one layer's snapshot builder.
 
     The runtime is the frozen wrapper plus overlay pyc, and the overlay builds
@@ -2121,15 +2127,17 @@ def _wrap_snapshot_owner(owner: Any, attr: str) -> bool:
     """
 
     original = owner.get(attr) if hasattr(owner, "get") else None
-    if not callable(original) or getattr(original, "_openkakao_fallbacks", False):
+    if not callable(original) or getattr(original, flag, False):
         return False
+
+    hook = attach if callable(attach) else _attach_fallback_state
 
     def wrapper(*args, **kwargs):
         snap = original(*args, **kwargs)
         state_root = args[0] if args else kwargs.get("state_root")
-        return _attach_fallback_state(snap, state_root)
+        return hook(snap, state_root)
 
-    wrapper._openkakao_fallbacks = True
+    setattr(wrapper, flag, True)
     try:
         owner[attr] = wrapper
     except Exception:
@@ -2192,6 +2200,170 @@ def _install_fallback_snapshot_hook() -> None:
 
 
 _install_fallback_snapshot_hook()
+
+
+_REPLY_RECEIPT_LIMIT = 30
+_REPLY_RECEIPT_CACHE: dict[str, Any] = {"key": None, "payload": None}
+
+
+def _reply_receipt_bin() -> Path | None:
+    """The CLI this process was started with, when it is a real file."""
+
+    raw = _argv_flag_value("--bin")
+    if not raw:
+        return None
+    path = Path(raw)
+    return path if path.is_file() else None
+
+
+def _room_ledgers(state_root: Path) -> list[Path]:
+    """Every room ledger on disk, so the window shows rooms that have turns."""
+
+    try:
+        return sorted((state_root / "rooms").glob("*/reply-evidence.jsonl"))
+    except Exception:
+        return []
+
+
+def _ledger_stamps(paths: list[Path]) -> tuple:
+    stamps = []
+    for path in paths:
+        try:
+            stat = path.stat()
+            stamps.append((str(path), stat.st_mtime_ns, stat.st_size))
+        except Exception:
+            stamps.append((str(path), 0, 0))
+    return tuple(stamps)
+
+
+def collect_reply_receipts(
+    state_root: Path | None,
+    *,
+    limit: int = _REPLY_RECEIPT_LIMIT,
+) -> dict[str, Any] | None:
+    """Turn receipts for every room that has a ledger.
+
+    The Rust command owns every Korean word and the judgement about whether a
+    turn was healthy, so this layer only moves JSON. The command runs again
+    only when a ledger file changed: the snapshot is rebuilt every couple of
+    seconds (2026-09-15).
+    """
+
+    if state_root is None:
+        return None
+    binary = _reply_receipt_bin()
+    if binary is None:
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    root = Path(state_root)
+    ledgers = _room_ledgers(root)
+    if not ledgers:
+        return {
+            "rooms": [],
+            "limit": limit,
+            "read_at": time.time(),
+            "missing": True,
+        }
+    key = (_ledger_stamps(ledgers), str(binary), limit)
+    if key == _REPLY_RECEIPT_CACHE.get("key"):
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    argv = [
+        str(binary),
+        "reply-receipt",
+        "--state-root",
+        str(root),
+        "--chat-id",
+        ",".join(path.parent.name for path in ledgers),
+        "-n",
+        str(limit),
+        "--json",
+    ]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    except Exception:
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    if proc.returncode != 0:
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    try:
+        rooms = json.loads(proc.stdout)
+    except Exception:
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    if isinstance(rooms, dict):
+        rooms = [rooms]
+    if not isinstance(rooms, list):
+        return _REPLY_RECEIPT_CACHE.get("payload")
+    payload = {
+        "rooms": rooms,
+        "limit": limit,
+        "read_at": time.time(),
+        "missing": False,
+    }
+    _REPLY_RECEIPT_CACHE["key"] = key
+    _REPLY_RECEIPT_CACHE["payload"] = payload
+    return payload
+
+
+def _attach_reply_receipts(snap: Any, state_root: Any) -> Any:
+    """Add the record window's turn receipts to a snapshot."""
+
+    if not isinstance(snap, dict) or state_root is None:
+        return snap
+    if "reply_receipts" in snap:
+        return snap
+    try:
+        payload = collect_reply_receipts(Path(state_root))
+    except Exception:
+        return snap
+    if payload is None:
+        return snap
+    snap = dict(snap)
+    snap["reply_receipts"] = payload
+    return snap
+
+
+def _patch_overlay_receipts(namespace: Any) -> bool:
+    """Wrap every snapshot builder the overlay namespace exposes."""
+
+    if not isinstance(namespace, dict):
+        return False
+    installed = False
+    for attr in _SNAPSHOT_ATTRS:
+        installed = (
+            _wrap_snapshot_owner(
+                namespace,
+                attr,
+                flag="_openkakao_receipts",
+                attach=_attach_reply_receipts,
+            )
+            or installed
+        )
+    return installed
+
+
+def _install_receipt_snapshot_hook() -> None:
+    """Put reply_receipts on every snapshot surface, after the fallback hook."""
+
+    ensure = globals().get("_ensure_overlay")
+    if callable(ensure) and not getattr(ensure, "_openkakao_receipt_hook", False):
+
+        def _ensure_overlay_with_receipts(*args, **kwargs):
+            namespace = ensure(*args, **kwargs)
+            try:
+                _patch_overlay_receipts(namespace)
+            except Exception:
+                pass
+            return namespace
+
+        _ensure_overlay_with_receipts._openkakao_receipt_hook = True
+        globals()["_ensure_overlay"] = _ensure_overlay_with_receipts
+        return
+    for name in ("collect_menubar_model", "collect_snapshot"):
+        fn = globals().get(name)
+        owner = getattr(fn, "__globals__", None)
+        if _patch_overlay_receipts(owner):
+            return
+
+
+_install_receipt_snapshot_hook()
 
 
 def _enrollment_room_ids(state_root: Path) -> set[int] | None:
