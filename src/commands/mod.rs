@@ -13,6 +13,7 @@ pub mod members;
 pub mod probe;
 pub mod profile;
 pub mod read;
+pub mod reply_receipt;
 pub mod rest;
 pub mod send;
 pub mod watch;

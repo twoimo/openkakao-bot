@@ -32,6 +32,7 @@ pub mod profile;
 pub mod rag_eval;
 pub mod relay;
 pub mod reply_policy;
+pub mod reply_receipt;
 pub mod room_catalog;
 pub mod safety;
 pub mod ui_shell;

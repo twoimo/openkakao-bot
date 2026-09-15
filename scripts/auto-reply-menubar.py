@@ -1393,12 +1393,18 @@ def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
 
 
 def reply_model_fallbacks_state(state_root: Path) -> dict[str, Any]:
-    models, source = read_reply_model_fallbacks(Path(state_root))
+    root = Path(state_root)
+    models, source = read_reply_model_fallbacks(root)
+    allowed = _fallback_allowed_model_ids(root)
     return {
         "models": models,
         "source": source,
         "defaults": list(DEFAULT_REPLY_FALLBACK_MODELS),
         "max": MAX_REPLY_FALLBACK_MODELS,
+        # 화면이 "목록에 없음"과 "지금 답변 모델"을 표시할 수 있게 코어가
+        # 판단 결과를 함께 보낸다(2026-09-15).
+        "unknown": [model for model in models if model not in allowed],
+        "primary": _current_reply_model_id(root) or "",
     }
 
 
@@ -1446,14 +1452,37 @@ def set_reply_model_fallbacks(
                 f"폴백 모델은 최대 {MAX_REPLY_FALLBACK_MODELS}개까지 저장할 수 있습니다."
             ],
         }
-    allowed = _fallback_allowed_model_ids(Path(state_root))
-    if any(model not in allowed for model in wanted):
+    root = Path(state_root)
+    allowed = _fallback_allowed_model_ids(root)
+    saved_now, _saved_source = read_reply_model_fallbacks(root)
+    # 이미 저장된 항목은 카탈로그에서 사라져도 계속 저장할 수 있다. 새로 넣는
+    # 미등록 ID만 막는다 — 목록이 바뀌었다고 기존 사슬을 고칠 수 없으면
+    # 사용자가 빠져나갈 수 없다(2026-09-15).
+    blocked = [
+        model for model in wanted if model not in allowed and model not in saved_now
+    ]
+    if blocked:
         return {
             "ok": False,
             "action": "fallback-models-set",
             "privacy": "content_redacted",
             "reason": "model_not_in_catalog",
-            "warnings": ["등록된 프로바이더 모델만 폴백으로 쓸 수 있습니다."],
+            "warnings": [
+                "등록되지 않은 모델은 폴백으로 쓸 수 없습니다: " + ", ".join(blocked)
+            ],
+        }
+    # 답변 모델과 같은 모델을 폴백에 넣으면 그 칸은 아무 일도 하지 않는다.
+    primary = _current_reply_model_id(root) or ""
+    if primary and primary in wanted and primary not in saved_now:
+        return {
+            "ok": False,
+            "action": "fallback-models-set",
+            "privacy": "content_redacted",
+            "reason": "primary_model_in_chain",
+            "warnings": [
+                f"지금 쓰는 답변 모델({primary})은 폴백에 넣을 수 없습니다. "
+                "먼저 답변 모델을 바꾸거나 다른 모델을 골라 주세요."
+            ],
         }
     stamp = time.time() if now is None else float(now)
     path = _reply_model_fallbacks_path(Path(state_root))

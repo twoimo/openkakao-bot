@@ -897,6 +897,22 @@ enum Commands {
         #[arg(long)]
         db: Option<String>,
     },
+    /// Render read-only turn receipts from a room's reply-evidence ledger
+    #[command(name = "reply-receipt")]
+    ReplyReceipt {
+        /// A single room's reply-evidence.jsonl
+        #[arg(long)]
+        ledger: Option<String>,
+        /// State root holding rooms/<chat_id>/reply-evidence.jsonl
+        #[arg(long = "state-root")]
+        state_root: Option<String>,
+        /// Room ids to read under --state-root
+        #[arg(long = "chat-id", value_delimiter = ',')]
+        chat_id: Vec<String>,
+        /// How many recent turns to describe
+        #[arg(short = 'n', long, default_value_t = openkakao_cli::reply_receipt::DEFAULT_RECEIPT_LIMIT)]
+        limit: usize,
+    },
     #[command(name = "context-reply-bundle", hide = true)]
     /// Retrieve one bounded, snapshot-consistent local context evidence bundle.
     ContextReplyBundle {
@@ -1153,6 +1169,7 @@ fn is_local_only_command(command: &Commands) -> bool {
             | Commands::ContextIndex { .. }
             | Commands::ContextSyncLocal { .. }
             | Commands::ContextSearch { .. }
+            | Commands::ReplyReceipt { .. }
             | Commands::ContextReplyBundle { .. }
             | Commands::ContextStyleSearch { .. }
             | Commands::ContextRecipientStyle { .. }
@@ -5752,6 +5769,23 @@ fn finish_worker_bound_local_send_setup<T>(
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // The record window's data source must work while the config is broken:
+    // "the config is invalid" is exactly one of the facts it has to report.
+    if let Commands::ReplyReceipt {
+        ledger,
+        state_root,
+        chat_id,
+        limit,
+    } = &cli.command
+    {
+        return commands::reply_receipt::run(
+            ledger.clone(),
+            state_root.clone(),
+            chat_id,
+            *limit,
+            cli.json,
+        );
+    }
     let service_bootstrap_status_path = validate_service_bootstrap_paths(&cli.command)?;
     let config = match load_config() {
         Ok(config) => config,
@@ -7381,6 +7415,10 @@ fn main() -> Result<()> {
                 version_b,
             } => commands::experiment::cmd_experiment_compare(version_a, version_b, json)?,
         },
+        // Handled before `load_config()` so a broken config cannot hide it.
+        Commands::ReplyReceipt { .. } => {
+            unreachable!("reply-receipt returns before the config is loaded")
+        }
     }
 
     if cli.completion_promise {
