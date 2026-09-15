@@ -871,6 +871,330 @@ final class PipelineView: NSView {
     }
 }
 
+/// One knowledge-graph node as the graph command reports it.
+struct KnowledgeNode: Decodable {
+    let id: String
+    let label: String
+    let category: String
+    let description: String
+    let facts: [String]
+    let importance: Int
+    let evidence: KnowledgeEvidence
+    let updated_at: Int
+}
+
+/// Where a node or edge came from. A seed node has no message behind it yet.
+struct KnowledgeEvidence: Decodable {
+    let kind: String
+    let source_event_ids: [String]
+    let chat_id: String
+    let confirmed_at: String?
+    let retracted: Bool
+
+    var grounded: Bool { kind == "ledger" }
+}
+
+struct KnowledgeEdge: Decodable {
+    let source: String
+    let relation: String
+    let target: String
+    let context: String
+    let weight: Int
+    let evidence: KnowledgeEvidence
+}
+
+struct KnowledgeGraphReport: Decodable {
+    let ok: Bool
+    let nodes: [KnowledgeNode]
+    let edges: [KnowledgeEdge]
+    let node_count: Int
+    let edge_count: Int
+    let grounded_nodes: Int
+}
+
+/// Draws the knowledge graph the way a brain scan shows neurons and synapses:
+/// a node is a cell body whose radius follows its importance, an edge is a
+/// synapse whose thickness follows its weight, and the whole thing settles
+/// with a small deterministic force simulation so the layout is stable across
+/// refreshes instead of jumping every poll.
+///
+/// Deterministic matters here: the window redraws on a timer, and a random
+/// layout would make every redraw look like a different graph.
+final class KnowledgeGraphView: NSView {
+    var nodes: [KnowledgeNode] = [] {
+        didSet { rebuildLayout() }
+    }
+    var edges: [KnowledgeEdge] = [] {
+        didSet { rebuildLayout() }
+    }
+    var selectedNodeId: String?
+    var onSelect: ((KnowledgeNode?) -> Void)?
+
+    /// Settled positions, keyed by node id, so the same node keeps its place.
+    private var positions: [String: CGPoint] = [:]
+    private var velocities: [String: CGPoint] = [:]
+    private var settled = false
+    private var trackingArea: NSTrackingArea?
+    private var hoveredId: String?
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = trackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    /// Radius from importance: an important concept is a bigger cell body.
+    private func radius(_ node: KnowledgeNode) -> CGFloat {
+        let scaled = 12.0 + CGFloat(max(0, min(100, node.importance))) * 0.16
+        return scaled
+    }
+
+    /// Place new nodes on a ring and keep known nodes where they were, then
+    /// relax the springs a bounded number of steps.
+    private func rebuildLayout() {
+        let width = max(bounds.width, 480)
+        let height = max(bounds.height, 320)
+        let center = CGPoint(x: width / 2, y: height / 2)
+        let known = Set(nodes.map { $0.id })
+        positions = positions.filter { known.contains($0.key) }
+        velocities = velocities.filter { known.contains($0.key) }
+        let missing = nodes.filter { positions[$0.id] == nil }
+        if !missing.isEmpty {
+            // Spread newcomers on a ring sized to the node count, ordered by
+            // importance so the biggest bodies land near the middle ring.
+            let ring = min(width, height) * 0.32
+            let count = max(missing.count, 1)
+            for (index, node) in missing.enumerated() {
+                let angle = (2 * Double.pi * Double(index)) / Double(count)
+                positions[node.id] = CGPoint(
+                    x: center.x + CGFloat(cos(angle)) * ring,
+                    y: center.y + CGFloat(sin(angle)) * ring
+                )
+                velocities[node.id] = .zero
+            }
+        }
+        settled = false
+        settle(width: width, height: height)
+        needsDisplay = true
+    }
+
+    /// A small force-directed relaxation. Repulsion between every pair is
+    /// O(n^2), which is fine for a hand-curated graph of tens of nodes; the
+    /// step count is capped so a refresh never blocks the main thread.
+    private func settle(width: CGFloat, height: CGFloat) {
+        guard !nodes.isEmpty, !settled else { return }
+        let index = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($0.element.id, $0.offset) })
+        let margin: CGFloat = 34
+        for _ in 0..<120 {
+            var forces = [String: CGPoint](minimumCapacity: nodes.count)
+            for node in nodes { forces[node.id] = .zero }
+            for (i, left) in nodes.enumerated() {
+                guard let leftPos = positions[left.id] else { continue }
+                for right in nodes[(i + 1)...] {
+                    guard let rightPos = positions[right.id] else { continue }
+                    var dx = leftPos.x - rightPos.x
+                    var dy = leftPos.y - rightPos.y
+                    var distance = sqrt(dx * dx + dy * dy)
+                    if distance < 0.01 {
+                        // Two nodes on the same spot would divide by zero.
+                        dx = CGFloat(i % 7) - 3
+                        dy = CGFloat(i % 5) - 2
+                        distance = sqrt(dx * dx + dy * dy)
+                    }
+                    let repulsion = 2600.0 / max(distance * distance, 1)
+                    let fx = (dx / distance) * repulsion
+                    let fy = (dy / distance) * repulsion
+                    forces[left.id]?.x += fx
+                    forces[left.id]?.y += fy
+                    forces[right.id]?.x -= fx
+                    forces[right.id]?.y -= fy
+                }
+            }
+            for edge in edges {
+                guard let a = positions[edge.source], let b = positions[edge.target] else { continue }
+                let dx = b.x - a.x
+                let dy = b.y - a.y
+                let distance = max(sqrt(dx * dx + dy * dy), 0.01)
+                // A heavier synapse pulls its two bodies closer.
+                let target: CGFloat = 130 - CGFloat(min(100, max(0, edge.weight))) * 0.5
+                let spring = (distance - target) * 0.010
+                let fx = (dx / distance) * spring
+                let fy = (dy / distance) * spring
+                forces[edge.source]?.x += fx
+                forces[edge.source]?.y += fy
+                forces[edge.target]?.x -= fx
+                forces[edge.target]?.y -= fy
+            }
+            let center = CGPoint(x: width / 2, y: height / 2)
+            var moved: CGFloat = 0
+            for node in nodes {
+                guard var pos = positions[node.id], var velocity = velocities[node.id] else { continue }
+                // Pull everything gently toward the middle so nothing drifts off.
+                let toCenterX = (center.x - pos.x) * 0.006
+                let toCenterY = (center.y - pos.y) * 0.006
+                velocity.x = (velocity.x + (forces[node.id]?.x ?? 0) + toCenterX) * 0.82
+                velocity.y = (velocity.y + (forces[node.id]?.y ?? 0) + toCenterY) * 0.82
+                // Cap the per-step speed: a runaway node never leaves the canvas.
+                let speed = sqrt(velocity.x * velocity.x + velocity.y * velocity.y)
+                let limit: CGFloat = 6
+                if speed > limit {
+                    velocity.x = velocity.x / speed * limit
+                    velocity.y = velocity.y / speed * limit
+                }
+                pos.x += velocity.x
+                pos.y += velocity.y
+                let bodyRadius = radius(node) + margin * 0.4
+                pos.x = min(max(pos.x, bodyRadius), max(width - bodyRadius, bodyRadius))
+                pos.y = min(max(pos.y, bodyRadius), max(height - bodyRadius, bodyRadius))
+                moved += abs(velocity.x) + abs(velocity.y)
+                positions[node.id] = pos
+                velocities[node.id] = velocity
+            }
+            if moved < 0.6 {
+                settled = true
+                break
+            }
+        }
+        _ = index
+    }
+
+    override func layout() {
+        super.layout()
+        // A resize re-runs the relaxation so nodes stay inside the new bounds.
+        settled = false
+        settle(width: max(bounds.width, 480), height: max(bounds.height, 320))
+    }
+
+    private func node(at point: CGPoint) -> KnowledgeNode? {
+        for node in nodes {
+            guard let pos = positions[node.id] else { continue }
+            let r = radius(node)
+            let dx = point.x - pos.x
+            let dy = point.y - pos.y
+            if dx * dx + dy * dy <= r * r {
+                return node
+            }
+        }
+        return nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let hit = node(at: point)
+        selectedNodeId = hit?.id
+        onSelect?(hit)
+        needsDisplay = true
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let hit = node(at: point)?.id
+        if hit != hoveredId {
+            hoveredId = hit
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredId != nil {
+            hoveredId = nil
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.clear.setFill()
+        bounds.fill()
+        let positions = self.positions
+        let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+
+        // Synapses first, so cell bodies sit on top of their own dendrites.
+        for edge in edges {
+            guard let a = positions[edge.source], let b = positions[edge.target] else { continue }
+            let grounded = edge.evidence.grounded
+            let strength = CGFloat(min(100, max(0, edge.weight))) / 100.0
+            let color = (grounded ? NSColor.systemTeal : NSColor.systemGray)
+                .withAlphaComponent(0.28 + 0.42 * strength)
+            let path = NSBezierPath()
+            path.move(to: a)
+            path.line(to: b)
+            path.lineWidth = 0.8 + 2.4 * strength
+            path.lineCapStyle = .round
+            color.setStroke()
+            path.stroke()
+            // A pulse bead at the midpoint reads as a firing synapse.
+            let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+            let bead = NSBezierPath(ovalIn: NSRect(x: mid.x - 2.2, y: mid.y - 2.2, width: 4.4, height: 4.4))
+            color.withAlphaComponent(0.85).setFill()
+            bead.fill()
+        }
+
+        for node in nodes {
+            guard let pos = positions[node.id] else { continue }
+            let r = radius(node)
+            let selected = node.id == selectedNodeId
+            let hovered = node.id == hoveredId
+            // A grounded neuron glows; an unverified seed stays dim.
+            let core = node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray
+            let halo = NSBezierPath(ovalIn: NSRect(x: pos.x - r * 1.7, y: pos.y - r * 1.7, width: r * 3.4, height: r * 3.4))
+            core.withAlphaComponent(selected ? 0.30 : (hovered ? 0.22 : 0.12)).setFill()
+            halo.fill()
+            let body = NSBezierPath(ovalIn: NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
+            core.withAlphaComponent(node.evidence.grounded ? 0.92 : 0.55).setFill()
+            body.fill()
+            if node.evidence.retracted {
+                NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+                body.lineWidth = 2
+                body.stroke()
+            }
+            NSColor.white.withAlphaComponent(selected ? 0.95 : 0.6).setStroke()
+            let ring = NSBezierPath(ovalIn: NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
+            ring.lineWidth = selected ? 2 : 1
+            ring.stroke()
+
+            let text = node.label as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .regular),
+                .foregroundColor: NSColor.labelColor,
+            ]
+            let size = text.size(withAttributes: attrs)
+            let labelRect = NSRect(
+                x: pos.x - size.width / 2,
+                y: pos.y + r + 3,
+                width: size.width,
+                height: size.height
+            )
+            // A soft plate keeps the name readable over a synapse.
+            let plate = labelRect.insetBy(dx: -3, dy: -1)
+            NSColor.windowBackgroundColor.withAlphaComponent(0.72).setFill()
+            NSBezierPath(roundedRect: plate, xRadius: 3, yRadius: 3).fill()
+            text.draw(in: labelRect, withAttributes: attrs)
+        }
+        _ = byId
+    }
+}
+
 final class MenuPanelView: NSView {
     var model: MenubarModel {
         didSet { sync() }
@@ -1412,6 +1736,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     let vectorSourceTitles = ["지식 그래프", "최연우 기억", "모든 대화", "주제별 지식", "설명 자료", "답장 기록", "말투·반응 통계", "탐색 프롬프트"]
     let vectorSourceKeys = ["knowledge_graph", "style", "messages", "topics", "references", "replies", "profiles", "prompts"]
     var vectorRestoreButton: NSButton?
+    // 신경망 보기(뉴런·시냅스). 지식 그래프를 고를 때만 보인다.
+    var vectorGraphView: KnowledgeGraphView?
+    var vectorGraphStack: NSStackView?
+    var vectorGraphHint: NSTextField?
+    var vectorGraphToken = 0
+    var lastVectorGraphReadAt = Date.distantPast
+    var lastVectorGraphSource = ""
     // 모델 설정 창 (답변 모델 + 이미지 모델 통합, R5)
     var modelWindow: NSWindow?
     var modelReplyPopup: NSPopUpButton?
@@ -5139,6 +5470,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorNextButton = nextButton
         let pager = Chrome.hstack([summary, Chrome.spacer(), prevButton, nextButton], spacing: 8)
 
+        // 신경망 보기: 노드가 뉴런, 관계가 시냅스다. 표와 같은 데이터를 쓰므로
+        // 두 보기가 서로 다른 말을 하지 않는다 (2026-09-16).
+        let graph = KnowledgeGraphView(frame: .zero)
+        graph.translatesAutoresizingMaskIntoConstraints = false
+        graph.isHidden = true
+        graph.onSelect = { [weak self] node in
+            self?.selectVectorRow(forKnowledgeNode: node)
+        }
+        vectorGraphView = graph
+        let graphHint = Chrome.hint(
+            "동그라미는 뉴런(개념), 선은 시냅스(관계)입니다. 크기는 중요도, 선 굵기는 관계 강도입니다. 밝은 뉴런은 원문 메시지로 확인된 것이고, 흐린 뉴런은 아직 근거가 없는 초기 개념입니다.",
+            size: 11
+        )
+        vectorGraphHint = graphHint
+        let graphStack = Chrome.vstack([graphHint, graph], spacing: 6)
+        vectorGraphStack = graphStack
+        graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
+
         let (scroll, table) = Chrome.table()
         table.delegate = self
         table.dataSource = self
@@ -5244,7 +5593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
         let editCard = Chrome.card(editContent, padding: 12)
 
-        let stack = Chrome.vstack([headerCard, scroll, editCard], spacing: 10)
+        let stack = Chrome.vstack([headerCard, scroll, graphStack, editCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -5256,6 +5605,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             findRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
             pager.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            graphStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            graphHint.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
+            graph.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
             editCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             editContent.widthAnchor.constraint(equalTo: editCard.widthAnchor, constant: -24),
             metaCard.widthAnchor.constraint(equalTo: editContent.widthAnchor),
@@ -5371,6 +5723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func refreshVectorList() {
         ensureVectorWindow()
+        updateVectorGraphVisibility()
         let query = (vectorSearchField?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         vectorSourceKind = currentVectorSource()
         vectorSourceStyle = vectorSourceKind == "style"
@@ -5438,6 +5791,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
         updateVectorEditorMode()
+    }
+
+    /// 그래프 보기는 표와 같은 새로고침에서 함께 갱신된다. 표를 다시 그릴 때
+    /// 매번 그래프를 새로 읽으면 2초마다 프로세스가 하나 더 뜨므로, 지식
+    /// 그래프를 보고 있을 때만 읽는다 (2026-09-16).
+    func refreshVectorGraphIfVisible() {
+        updateVectorGraphVisibility()
     }
 
     func applyVectorStatus(_ memory: VectorMemory?) {
@@ -5552,6 +5912,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         selectedVectorKey = ""
         vectorOffset = 0
         refreshVectorList()
+    }
+
+    /// 신경망 보기는 지식 그래프를 고를 때만 켠다. 다른 목록은 노드·관계가
+    /// 아니라서 같은 그림으로 그리면 없는 관계를 그리게 된다.
+    func updateVectorGraphVisibility() {
+        let shows = currentVectorSource() == "knowledge_graph"
+        vectorGraphStack?.isHidden = !shows
+        guard shows else { return }
+        // 창은 2초마다 새로 그려진다. 그때마다 그래프를 다시 읽으면 파이썬
+        // 프로세스가 계속 뜨고 힘 배치도 다시 흔들린다. 목록을 고른 직후와
+        // 30초가 지난 뒤에만 다시 읽는다 (2026-09-16).
+        let now = Date()
+        let stale = now.timeIntervalSince(lastVectorGraphReadAt) >= 30
+        if lastVectorGraphSource != vectorSourceKind || stale {
+            refreshKnowledgeGraph()
+        }
+    }
+
+    /// 그래프 전체를 한 번에 읽는다. 목록과 달리 쪽 나눔이 없어야 힘 배치가
+    /// 안정적이고, 읽는 동안에는 이전 그림을 그대로 둔다.
+    func refreshKnowledgeGraph() {
+        guard vectorGraphStack?.isHidden == false else { return }
+        lastVectorGraphReadAt = Date()
+        lastVectorGraphSource = vectorSourceKind
+        vectorGraphToken += 1
+        let token = vectorGraphToken
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let data = self.runPython(["--action", "knowledge-graph"], timeout: 25)
+            let report = data.flatMap { try? JSONDecoder().decode(KnowledgeGraphReport.self, from: $0) }
+            DispatchQueue.main.async {
+                guard token == self.vectorGraphToken else { return }
+                guard let report, report.ok else {
+                    self.vectorGraphHint?.stringValue = "지식 그래프를 읽지 못했습니다. 잠시 뒤 다시 열어 주세요."
+                    return
+                }
+                self.vectorGraphView?.nodes = report.nodes
+                self.vectorGraphView?.edges = report.edges
+                let total = report.node_count
+                let grounded = report.grounded_nodes
+                self.vectorGraphHint?.stringValue =
+                    "동그라미는 뉴런(개념), 선은 시냅스(관계)입니다. 크기는 중요도, 선 굵기는 관계 강도입니다. "
+                    + "뉴런 \(total)개 중 \(grounded)개가 원문 메시지로 확인되었습니다. 밝은 뉴런을 누르면 아래에 근거가 나옵니다."
+            }
+        }
+    }
+
+    /// 그래프에서 고른 뉴런과 같은 행을 표에서도 고른다. 두 보기가 같은
+    /// 데이터를 가리키므로, 표에 없으면 선택만 바꾸지 않고 그대로 둔다.
+    func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
+        guard let node else { return }
+        if let index = displayedVectors.firstIndex(where: { $0.row_key == node.id }) {
+            vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            vectorTable?.scrollRowToVisible(index)
+            return
+        }
+        // 표에 아직 없는 노드라도 아래 편집 칸에는 그대로 보여 준다.
+        vectorUserField?.stringValue = node.label
+        vectorTopicsField?.stringValue = node.category
+        let evidence = node.evidence
+        var lines = [node.description, ""]
+        if evidence.grounded {
+            lines.append("근거: 원문 메시지 \(evidence.source_event_ids.count)건 (방 \(evidence.chat_id))")
+            if let when = evidence.confirmed_at { lines.append("확인 시각: \(when)") }
+        } else {
+            lines.append("근거: 아직 원문 메시지에서 확인되지 않은 초기 노드")
+        }
+        if evidence.retracted { lines.append("상태: 철회됨") }
+        lines.append("")
+        lines.append(contentsOf: node.facts.map { "• \($0)" })
+        vectorMessageView?.string = lines.joined(separator: "\n")
+        vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
     }
 
     @objc func vectorTopicChanged() {

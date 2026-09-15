@@ -7328,6 +7328,34 @@ def record_delivery_ledger(
         "model": _active_reply_model(),
         "reasoning_effort": REPLY_REASONING_EFFORT,
     }
+    # Carry the retrieval half onto the delivery row as well. The scheduled row
+    # already holds it, but a turn that reaches "sent" is the one a reader
+    # judges, and without these counts the sent row cannot say whether the
+    # reply was written with context in hand (AHP: content_fit, 2026-09-16).
+    recorded_event: dict = {}
+    if isinstance(job, dict):
+        raw_event = job.get("event_json")
+        if isinstance(raw_event, str):
+            try:
+                parsed = json.loads(raw_event)
+                if isinstance(parsed, dict):
+                    recorded_event = parsed
+            except (TypeError, ValueError):
+                recorded_event = {}
+    for key in (
+        "context_match_count",
+        "style_match_count",
+        "best_context_score",
+        "best_style_score",
+        "retrieved_evidence_ids",
+        "prompt_evidence_ids",
+    ):
+        value = recorded_event.get(key)
+        if value is not None:
+            payload[key] = value
+    retrieval = recorded_event.get("retrieval")
+    if isinstance(retrieval, dict):
+        payload["retrieval"] = retrieval
     try:
         EVIDENCE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(payload, ensure_ascii=False) + "\n"

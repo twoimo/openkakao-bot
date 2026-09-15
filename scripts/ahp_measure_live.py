@@ -253,34 +253,46 @@ def measure_intervention_timing(
 def measure_content_fit(
     rows: list[dict[str, Any]], period: str, event_ids: list[str]
 ) -> dict[str, Any]:
-    """Sent replies were written with retrieved context available."""
-    sent = [row for row in rows if str(row.get("status") or "") == "sent"]
-    if not sent:
-        return criterion(
-            "content_fit", None, 0, 0, 0, period, event_ids,
-            "보낸 답변이 없어 맥락 사용 여부를 잴 수 없음",
-        )
+    """Sent replies were written with retrieved context available.
+
+    The retrieval counts live on the scheduled row and the send confirmation
+    lives on the sent row, so one turn spans two ledger lines with the same
+    event_id. Judging the sent row alone would report 0 for every turn that did
+    retrieve context, which is what the first version of this scorer did
+    (2026-09-16).
+    """
+    families: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        event_id = str(row.get("event_id") or "").strip()
+        if event_id:
+            families.setdefault(event_id, []).append(row)
+    considered = 0
     grounded = 0
-    for row in sent:
-        retrieval = row.get("retrieval")
-        matches = row.get("context_match_count")
-        if isinstance(matches, int) and matches > 0:
-            grounded += 1
+    for family in families.values():
+        if not any(str(row.get("status") or "") == "sent" for row in family):
             continue
-        if isinstance(retrieval, dict):
-            count = retrieval.get("context_matches")
-            if isinstance(count, int) and count > 0:
+        considered += 1
+        for row in family:
+            matches = row.get("context_match_count")
+            if isinstance(matches, int) and matches > 0:
                 grounded += 1
-    score = ratio(grounded, len(sent))
+                break
+            retrieval = row.get("retrieval")
+            if isinstance(retrieval, dict):
+                count = retrieval.get("context_matches")
+                if isinstance(count, int) and count > 0:
+                    grounded += 1
+                    break
+    score = ratio(grounded, considered)
     return criterion(
         "content_fit",
         score,
         grounded,
-        len(sent),
-        len(sent),
+        considered,
+        considered,
         period,
         event_ids,
-        "검색된 대화 맥락이 붙은 채로 보낸 답변 비율",
+        "검색된 대화 맥락이 붙은 채로 보낸 답변 비율(같은 이벤트의 예약·전송 행을 합쳐서 판단)",
     )
 
 

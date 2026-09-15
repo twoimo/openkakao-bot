@@ -18,6 +18,41 @@ from typing import Any
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
 
+# Provenance kinds. "seed" is a hand-written starting node that no message
+# backs yet; "ledger" means a real room message was found to mention the node.
+# The 6 Pro review rejected nodes that carried no source message id, room id,
+# confirmation time or retraction state, so every node and edge now reports
+# which of the two it is and what backs it (2026-09-16).
+PROVENANCE_SEED = "seed"
+PROVENANCE_LEDGER = "ledger"
+MAX_EVIDENCE_PER_NODE = 8
+
+
+def _seed_evidence() -> dict[str, Any]:
+    return {
+        "kind": PROVENANCE_SEED,
+        "source_event_ids": [],
+        "chat_id": "",
+        "confirmed_at": None,
+        "retracted": False,
+    }
+
+
+def _normalize_evidence(raw: Any) -> dict[str, Any]:
+    """Coerce whatever is on disk into the documented evidence shape."""
+    if not isinstance(raw, dict):
+        return _seed_evidence()
+    ids = raw.get("source_event_ids")
+    if not isinstance(ids, list):
+        ids = []
+    return {
+        "kind": PROVENANCE_LEDGER if raw.get("kind") == PROVENANCE_LEDGER else PROVENANCE_SEED,
+        "source_event_ids": [str(item) for item in ids if str(item).strip()][:MAX_EVIDENCE_PER_NODE],
+        "chat_id": str(raw.get("chat_id") or ""),
+        "confirmed_at": raw.get("confirmed_at") or None,
+        "retracted": bool(raw.get("retracted")),
+    }
+
 DEFAULT_ENTITIES = [
     {
         "entity_id": "ent:tech:alizonku",
@@ -129,6 +164,7 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
             description TEXT NOT NULL,
             key_facts_json TEXT NOT NULL,
             importance INTEGER DEFAULT 50,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL
         )
     """)
@@ -140,10 +176,25 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
             target_id TEXT NOT NULL,
             context TEXT NOT NULL,
             weight INTEGER DEFAULT 50,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL,
             UNIQUE(source_id, relation, target_id)
         )
     """)
+    # Existing graphs predate the evidence columns; add them in place so an
+    # installed graph keeps its rows instead of being rebuilt (2026-09-16).
+    for table in ("kg_entities", "kg_relations"):
+        try:
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            continue
+        if "evidence_json" not in columns:
+            try:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{{}}'"
+                )
+            except sqlite3.Error:
+                pass
     conn.commit()
     return conn
 
@@ -201,6 +252,209 @@ def ensure_seeded(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _room_ledgers(state_root: Path) -> list[Path]:
+    """Every room ledger, newest name last. Read-only, never creates."""
+    try:
+        rooms = state_root / "rooms"
+        if not rooms.is_dir():
+            return []
+        return sorted(rooms.glob("*/reply-evidence.jsonl"))
+    except OSError:
+        return []
+
+
+def attach_ledger_evidence(
+    conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    max_rows: int = 4000,
+) -> dict[str, int]:
+    """Point every node at the real messages that mention it.
+
+    The graph used to be a Python constant: no node knew which message or room
+    it came from, so a reviewer could not check it. This walks the room
+    ledgers, matches each entity's aliases against the message text, and stores
+    the matching event ids with the room and the time they were recorded. A
+    node with no match keeps the seed provenance and says so.
+    """
+    stats = {"scanned": 0, "matched": 0, "nodes_with_evidence": 0, "rooms": 0}
+    entities = list(
+        conn.execute("SELECT entity_id, name, aliases_json FROM kg_entities")
+    )
+    if not entities:
+        return stats
+    needles: dict[str, list[str]] = {}
+    for entity_id, name, aliases_json in entities:
+        try:
+            aliases = json.loads(aliases_json)
+        except (TypeError, ValueError):
+            aliases = []
+        if not isinstance(aliases, list):
+            aliases = []
+        terms = [str(name)] + [str(alias) for alias in aliases]
+        needles[entity_id] = [term.casefold() for term in terms if len(term) >= 3]
+
+    found: dict[str, list[dict[str, Any]]] = {key: [] for key in needles}
+    for ledger in _room_ledgers(state_root):
+        stats["rooms"] += 1
+        chat_id = ledger.parent.name
+        try:
+            text = ledger.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if stats["scanned"] >= max_rows:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            message = str(row.get("message") or "").casefold()
+            if not message:
+                continue
+            stats["scanned"] += 1
+            event_id = str(row.get("event_id") or "").strip()
+            if not event_id:
+                continue
+            recorded_at = str(row.get("recorded_at") or "")
+            for entity_id, terms in needles.items():
+                if not terms:
+                    continue
+                if any(term in message for term in terms):
+                    bucket = found[entity_id]
+                    if len(bucket) >= MAX_EVIDENCE_PER_NODE:
+                        continue
+                    bucket.append(
+                        {
+                            "event_id": event_id,
+                            "chat_id": chat_id,
+                            "recorded_at": recorded_at,
+                        }
+                    )
+                    stats["matched"] += 1
+
+    for entity_id, hits in found.items():
+        if not hits:
+            conn.execute(
+                "UPDATE kg_entities SET evidence_json = ? WHERE entity_id = ?",
+                (json.dumps(_seed_evidence(), ensure_ascii=False), entity_id),
+            )
+            continue
+        evidence = {
+            "kind": PROVENANCE_LEDGER,
+            "source_event_ids": [hit["event_id"] for hit in hits],
+            "chat_id": hits[0]["chat_id"],
+            "confirmed_at": hits[0]["recorded_at"] or None,
+            "retracted": False,
+        }
+        conn.execute(
+            "UPDATE kg_entities SET evidence_json = ? WHERE entity_id = ?",
+            (json.dumps(evidence, ensure_ascii=False), entity_id),
+        )
+        stats["nodes_with_evidence"] += 1
+
+    # An edge is only as grounded as its two endpoints.
+    conn.execute(
+        """
+        UPDATE kg_relations
+        SET evidence_json = COALESCE(
+            (SELECT e.evidence_json FROM kg_entities e WHERE e.entity_id = kg_relations.source_id),
+            '{}'
+        )
+        """
+    )
+    conn.commit()
+    return stats
+
+
+def collect_knowledge_graph(
+    db_path: Path,
+    *,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
+    """Return the whole graph as nodes and edges for a force-directed view.
+
+    Node ids stay stable across calls so a viewer can animate the same layout
+    instead of re-randomising every refresh.
+    """
+    kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
+    conn = _connect_kg(kg_path)
+    try:
+        ensure_seeded(conn)
+        if state_root is not None:
+            try:
+                attach_ledger_evidence(conn, state_root)
+            except (OSError, sqlite3.Error, ValueError):
+                pass
+        nodes: list[dict[str, Any]] = []
+        for row in conn.execute(
+            """
+            SELECT entity_id, name, category, description, key_facts_json,
+                   importance, evidence_json, updated_at
+            FROM kg_entities
+            ORDER BY importance DESC, entity_id ASC
+            """
+        ):
+            entity_id, name, category, description, facts_json, importance, evidence_json, updated_at = row
+            try:
+                facts = json.loads(facts_json)
+            except (TypeError, ValueError):
+                facts = []
+            evidence = _normalize_evidence(
+                json.loads(evidence_json) if evidence_json else None
+            )
+            nodes.append(
+                {
+                    "id": entity_id,
+                    "label": name,
+                    "category": category,
+                    "description": description,
+                    "facts": facts if isinstance(facts, list) else [],
+                    "importance": int(importance or 0),
+                    "evidence": evidence,
+                    "updated_at": int(updated_at or 0),
+                }
+            )
+        edges: list[dict[str, Any]] = []
+        for row in conn.execute(
+            """
+            SELECT source_id, relation, target_id, context, weight, evidence_json
+            FROM kg_relations
+            ORDER BY weight DESC, id ASC
+            """
+        ):
+            source_id, relation, target_id, context, weight, evidence_json = row
+            edges.append(
+                {
+                    "source": source_id,
+                    "relation": relation,
+                    "target": target_id,
+                    "context": context,
+                    "weight": int(weight or 0),
+                    "evidence": _normalize_evidence(
+                        json.loads(evidence_json) if evidence_json else None
+                    ),
+                }
+            )
+        return {
+            "ok": True,
+            "nodes": nodes,
+            "edges": edges,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "grounded_nodes": sum(
+                1 for node in nodes if node["evidence"]["kind"] == PROVENANCE_LEDGER
+            ),
+        }
+    finally:
+        conn.close()
+
+
 def collect_knowledge_graph_list(
     db_path: Path,
     *,
@@ -234,7 +488,7 @@ def collect_knowledge_graph_list(
 
         cursor.execute(
             f"""
-            SELECT entity_id, name, category, aliases_json, description, key_facts_json, importance, updated_at
+            SELECT entity_id, name, category, aliases_json, description, key_facts_json, importance, updated_at, evidence_json
             FROM kg_entities
             WHERE {where_sql}
             ORDER BY importance DESC, entity_id ASC
@@ -260,7 +514,14 @@ def collect_knowledge_graph_list(
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            eid, name, cat, aliases_str, desc, facts_str, imp, up_at = row
+            eid, name, cat, aliases_str, desc, facts_str, imp, up_at = row[:8]
+            raw_evidence = row[8] if len(row) > 8 else None
+            try:
+                evidence = _normalize_evidence(
+                    json.loads(raw_evidence) if raw_evidence else None
+                )
+            except (TypeError, ValueError):
+                evidence = _seed_evidence()
             aliases = json.loads(aliases_str)
             facts = json.loads(facts_str)
             connected = rel_map.get(eid, [])
@@ -276,6 +537,20 @@ def collect_knowledge_graph_list(
                 body_parts.append(f"연결 관계 ({len(connected)}개):")
                 for rel in connected:
                     body_parts.append(f"  ↔ {rel}")
+            # Say where the node came from, so a reader can check it instead of
+            # trusting the description (2026-09-16).
+            if evidence["kind"] == PROVENANCE_LEDGER:
+                body_parts.append(
+                    "근거: 원문 메시지 "
+                    + ", ".join(evidence["source_event_ids"][:3])
+                    + f" (방 {evidence['chat_id']}"
+                    + (f", {evidence['confirmed_at']}" if evidence["confirmed_at"] else "")
+                    + ")"
+                )
+            else:
+                body_parts.append("근거: 아직 원문 메시지에서 확인되지 않은 초기 노드")
+            if evidence["retracted"]:
+                body_parts.append("상태: 철회됨")
 
             formatted_message = "\n".join(body_parts)
             date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(up_at))
@@ -301,10 +576,15 @@ def collect_knowledge_graph_list(
                 "category": "knowledge_graph",
                 "category_label": "지식 그래프",
                 "status": "active",
-                "status_label": f"중요도 {imp}",
+                "status_label": (
+                    f"중요도 {imp} · 근거 {len(evidence['source_event_ids'])}건"
+                    if evidence["kind"] == PROVENANCE_LEDGER
+                    else f"중요도 {imp} · 초기 노드"
+                ),
                 "reply": "",
                 "reason_label": f"관계 {len(connected)}개",
                 "deletable": False,
+                "evidence": evidence,
             })
 
         return {
