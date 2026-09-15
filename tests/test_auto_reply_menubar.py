@@ -871,7 +871,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("auto-reply-now", source)
         self.assertIn("geeknews-now", source)
         self.assertNotIn("Reveal Logs", source)
-        self.assertIn('title: "자가 진단…"', source)
+        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 완전히 빠졌다.
+        # 창 코드는 남아 있지만 메뉴 항목은 없어야 한다 (2026-09-16).
+        self.assertNotIn('title: "자가 진단…"', source)
+        self.assertNotIn('title: "자가 점검…"', source)
         self.assertNotIn('title: "자가 개선…"', source)
         self.assertNotIn("showImproveWindow", source)
         self.assertIn("runImprovePipeline", source)
@@ -906,7 +909,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("문제 \(fail)", source)
         self.assertIn("전체", source)
         self.assertIn("자가 개선", source)
-        self.assertIn("자가 진단", source)
+        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 빠졌다. 창 코드와
+        # 파이프라인 문구는 남지만 메뉴 항목은 없어야 한다 (2026-09-16).
+        self.assertNotIn('title: "자가 진단…"', source)
+        self.assertNotIn('title: "자가 점검…"', source)
 
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
@@ -1146,7 +1152,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 encoding="utf-8",
             )
             app_dir = state / "gjc-agent"
-            app_dir.mkdir(mode=0o700)
+            # The snapshot already creates the agent dir, so a plain mkdir
+            # raced it and failed with FileExistsError (2026-09-16).
+            app_dir.mkdir(mode=0o700, exist_ok=True)
             (app_dir / "models.yml").write_text(
                 "providers:\n"
                 "  omlx:\n"
@@ -1539,8 +1547,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_swift_has_korean_vector_memory_window(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn('title: "대화 기억…"', source)
-        self.assertIn('window.title = "대화 기억"', source)
+        # 창 이름은 지식 그래프로 바뀌었고, 제목은 코어가 아니라 창이 정한다.
+        self.assertIn('title: "지식 그래프 (대화 기억)…"', source)
+        self.assertIn('window.title = "지식 그래프 (대화 기억)"', source)
         self.assertIn("showVectorWindow", source)
         self.assertIn("--vector-upsert", source)
         self.assertIn("--vector-delete", source)
@@ -1583,7 +1592,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("vectorEmbeddingField", source)
         self.assertIn("selectedVectorChat", source)
         self.assertIn('extra.contains("vector-list") ? (extra.contains("references") ? 45 : 20) : 8', source)
-        self.assertIn("원문과 128차원 해시 임베딩", source)
+        self.assertIn("원문에서 만든 128차원 해시 벡터", source)
+        self.assertIn("원문에서 128차원 해시 임베딩을 다시 만듭니다", source)
         self.assertNotIn(
             "vectorChatField?.stringValue = item.chat", source
         )
@@ -3247,6 +3257,72 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(result["geeknews"], 2)
             self.assertEqual(result["reply_rooms"], [11, 22, 55])
             self.assertEqual(result["geeknews_rooms"], [11, 33, 55])
+
+    def test_swift_draws_the_knowledge_graph_as_neurons_and_synapses(self):
+        """The graph window draws a force layout, not a table of constants."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("final class KnowledgeGraphView", source)
+        self.assertIn("struct KnowledgeNode", source)
+        self.assertIn("struct KnowledgeEdge", source)
+        self.assertIn("struct KnowledgeEvidence", source)
+        # A node is a cell body whose size follows importance, and a synapse
+        # is an edge whose thickness follows weight.
+        self.assertIn("private func radius(_ node: KnowledgeNode) -> CGFloat", source)
+        self.assertIn("path.lineWidth = 0.8 + 2.4 * strength", source)
+        # Grounded neurons glow and unverified seeds stay dim, so a reader can
+        # tell a checked concept from a placeholder.
+        self.assertIn("node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray", source)
+        # A retracted node is visibly different instead of silently stale.
+        self.assertIn("if node.evidence.retracted {", source)
+        # The layout has to be deterministic: the window redraws on a timer and
+        # a random layout would look like a different graph every poll.
+        self.assertNotIn("Int.random", source[source.find("final class KnowledgeGraphView"):])
+        self.assertNotIn("arc4random", source[source.find("final class KnowledgeGraphView"):])
+
+    def test_swift_graph_refresh_is_throttled(self):
+        """Re-reading the graph on every 2-second redraw would spawn a process
+        per tick, so the view only re-reads on a source change or after 30s."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("lastVectorGraphReadAt", source)
+        self.assertIn("timeIntervalSince(lastVectorGraphReadAt) >= 30", source)
+        self.assertIn("lastVectorGraphSource != vectorSourceKind", source)
+
+    def test_swift_graph_action_is_exposed(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn('"--action", "knowledge-graph"', source)
+        self.assertIn("refreshKnowledgeGraph", source)
+        self.assertIn("selectVectorRow(forKnowledgeNode:", source)
+
+    def test_menubar_exposes_the_knowledge_graph_action(self):
+        """The action has to be answered before the frozen vector dispatch."""
+        source = MENUBAR.read_text(encoding="utf-8")
+        self.assertIn('if action == "knowledge-graph":', source)
+        self.assertIn("collect_knowledge_graph", source)
+        graph_at = source.find('if action == "knowledge-graph":')
+        dispatch_at = source.find('args = type("Args", (), {"action": action})()')
+        self.assertGreater(graph_at, 0)
+        self.assertGreater(dispatch_at, 0)
+        self.assertLess(graph_at, dispatch_at, "the graph action must come first")
+
+    def test_knowledge_graph_action_survives_a_broken_state_root(self):
+        """A missing state root must return an empty graph, not crash the menu."""
+        spec = importlib.util.spec_from_file_location(
+            "kg_for_menubar_test", SCRIPTS / "auto_reply_knowledge_graph.py"
+        )
+        graph_module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = graph_module
+        spec.loader.exec_module(graph_module)
+        payload = graph_module.collect_knowledge_graph(
+            Path("/nonexistent/state/root/context.sqlite3"),
+            state_root=Path("/nonexistent/state/root"),
+        )
+        # An unreachable store reports the failure instead of raising, and the
+        # window then shows its own "읽지 못했습니다" line.
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["nodes"], [])
+        self.assertEqual(payload["node_count"], 0)
+        self.assertEqual(payload["grounded_nodes"], 0)
 
 
 if __name__ == "__main__":

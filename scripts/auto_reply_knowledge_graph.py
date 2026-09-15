@@ -383,7 +383,21 @@ def collect_knowledge_graph(
     instead of re-randomising every refresh.
     """
     kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
-    conn = _connect_kg(kg_path)
+    try:
+        kg_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = _connect_kg(kg_path)
+    except (OSError, sqlite3.Error) as error:
+        # A window that cannot reach its store must draw an empty graph and say
+        # why, not take the menu down with it (2026-09-16).
+        return {
+            "ok": False,
+            "nodes": [],
+            "edges": [],
+            "node_count": 0,
+            "edge_count": 0,
+            "grounded_nodes": 0,
+            "reason": str(error) or "knowledge_graph_unavailable",
+        }
     try:
         ensure_seeded(conn)
         if state_root is not None:
