@@ -10715,6 +10715,43 @@ def _fallback_thinking_effort(model: str) -> str:
 
     return "medium" if str(model or "").startswith("omlx/") else "high"
 
+def _open_fallback_lease(model: str) -> dict | None:
+    """Open a call lease for one fallback model, or None when it cannot run.
+
+    Leases are keyed by model, so a fallback needs its own. Without this the
+    success record is written against the first model's row: a fallback that
+    answered is then reported as circuit_unavailable and the turn is deferred
+    even though a valid decision came back (2026-09-15).
+    """
+
+    try:
+        slot = _acquire_model_call_slot(model=model)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return None
+    if not isinstance(slot, dict) or slot.get("allowed") is not True:
+        return None
+    token = slot.get("lease_token")
+    retry_at = slot.get("retry_at")
+    if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        return None
+    if isinstance(retry_at, bool) or not isinstance(retry_at, (int, float)):
+        return None
+    if not math.isfinite(float(retry_at)) or float(retry_at) <= 0.0:
+        return None
+    return {"lease_token": token, "retry_at": float(retry_at)}
+
+
+def _close_model_lease(lease_token: str, model: str, failure_class: str) -> None:
+    """Record one failed attempt so its lease never stays in_flight."""
+
+    if failure_class not in MODEL_CIRCUIT_FAILURE_CLASSES:
+        failure_class = "runner_failed"
+    try:
+        _finish_model_call_failure(str(lease_token or ""), failure_class, model=model)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        pass
+
+
 def _reply_model_sees_images(model: str) -> bool:
     folded = str(model or "").casefold()
     if not folded:
@@ -11247,6 +11284,9 @@ def generate_reply(
                     for fb_model in _reply_fallback_candidates():
                         if fb_model == active_model:
                             continue
+                        fb_slot = _open_fallback_lease(fb_model)
+                        if fb_slot is None:
+                            continue
                         print(
                             f"[reply-gen] OpenCodex limit on {active_model}; falling back to {fb_model}",
                             file=sys.stderr,
@@ -11258,14 +11298,31 @@ def generate_reply(
                             prompt_bytes,
                             timeout=30.0,
                         )
-                        if fb_rc == 0:
-                            returncode, stdout_bytes, stderr_bytes = (
+                        if fb_rc != 0:
+                            fb_class, _fb_retry = _classify_model_failure(
                                 fb_rc,
                                 fb_stdout,
                                 fb_stderr,
                             )
-                            active_model = fb_model
-                            break
+                            _close_model_lease(fb_slot["lease_token"], fb_model, fb_class)
+                            continue
+                        # The fallback answered. Close the first attempt, then run
+                        # the rest of the turn on the lease that generated it.
+                        first_class, _first_retry = _classify_model_failure(
+                            returncode,
+                            stdout_bytes,
+                            stderr_bytes,
+                        )
+                        _close_model_lease(lease_token, active_model, first_class)
+                        lease_token = fb_slot["lease_token"]
+                        lease_retry_at = fb_slot["retry_at"]
+                        returncode, stdout_bytes, stderr_bytes = (
+                            fb_rc,
+                            fb_stdout,
+                            fb_stderr,
+                        )
+                        active_model = fb_model
+                        break
         else:
             returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
                 command,
@@ -11320,6 +11377,9 @@ def generate_reply(
             for fb_model in _reply_fallback_candidates():
                 if fb_model == active_model:
                     continue
+                fb_slot = _open_fallback_lease(fb_model)
+                if fb_slot is None:
+                    continue
                 fb_thinking = _fallback_thinking_effort(fb_model)
                 print(
                     f"[reply-gen] opencode_go_quota_fallback: {active_model} -> {fb_model} {fb_thinking}",
@@ -11351,12 +11411,30 @@ def generate_reply(
                         isolate_group=True,
                     )
                 except Exception as fb_exc:
+                    _close_model_lease(fb_slot["lease_token"], fb_model, "runner_failed")
                     print(f"[reply-gen] fallback error: {fb_exc}", file=sys.stderr, flush=True)
                     continue
-                if fb_rc == 0:
-                    returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
-                    active_model = fb_model
-                    break
+                if fb_rc != 0:
+                    fb_class, _fb_retry = _classify_model_failure(
+                        fb_rc,
+                        fb_stdout,
+                        fb_stderr,
+                    )
+                    _close_model_lease(fb_slot["lease_token"], fb_model, fb_class)
+                    continue
+                # The fallback answered. Close the first attempt, then run the
+                # rest of the turn on the lease that generated it.
+                first_class, _first_retry = _classify_model_failure(
+                    returncode,
+                    stdout_bytes,
+                    stderr_bytes,
+                )
+                _close_model_lease(lease_token, active_model, first_class)
+                lease_token = fb_slot["lease_token"]
+                lease_retry_at = fb_slot["retry_at"]
+                returncode, stdout_bytes, stderr_bytes = fb_rc, fb_stdout, fb_stderr
+                active_model = fb_model
+                break
 
     if returncode != 0:
         print(
