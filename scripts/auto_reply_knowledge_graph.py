@@ -149,6 +149,10 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
 
 
 def ensure_seeded(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM kg_entities")
+    if cur.fetchone()[0] > 0:
+        return
     now = int(time.time())
     for e in DEFAULT_ENTITIES:
         conn.execute(
@@ -317,6 +321,7 @@ def query_knowledge_context(query_text: str, state_root: Path | None = None) -> 
     """Retrieve relevant Knowledge Graph context nodes for a given message."""
     if not query_text:
         return []
+    import re
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
     kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
     if not kg_path.exists():
@@ -330,7 +335,18 @@ def query_knowledge_context(query_text: str, state_root: Path | None = None) -> 
         hits = []
         for name, cat, aliases_str, desc, facts_str in cursor.fetchall():
             aliases = json.loads(aliases_str)
-            matched = any(alias.casefold() in q for alias in aliases)
+            matched = False
+            for alias in aliases:
+                al = alias.casefold()
+                if len(al) <= 2:
+                    # Short alias: require word boundary or whitespace/punctuation boundary to avoid false positives like '런타임' for '런'
+                    if re.search(r'(?:^|[\s.,!?~/_-])' + re.escape(al) + r'(?:$|[\s.,!?~/_-])', q):
+                        matched = True
+                        break
+                else:
+                    if al in q:
+                        matched = True
+                        break
             if matched or name.casefold() in q:
                 facts = json.loads(facts_str)
                 hits.append(f"[{cat}] {name}: {desc} (핵심 맥락: {'; '.join(facts)})")
@@ -339,4 +355,3 @@ def query_knowledge_context(query_text: str, state_root: Path | None = None) -> 
         return []
     finally:
         conn.close()
-

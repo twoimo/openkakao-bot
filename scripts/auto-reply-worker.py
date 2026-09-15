@@ -10862,6 +10862,7 @@ def _run_opencodex_generation(
     system_prompt: str,
     prompt_bytes: bytes,
     *,
+    image_paths: list[Path] | None = None,
     timeout: float = 30.0,
     base_url: str = "http://127.0.0.1:10100/v1",
 ) -> tuple[int, bytes, bytes]:
@@ -10892,6 +10893,23 @@ def _run_opencodex_generation(
             {"role": "user", "content": user_content},
         ],
     }
+    if image_paths:
+        import base64, mimetypes
+        user_parts = [{"type": "text", "text": user_content}]
+        for img_path in image_paths:
+            if isinstance(img_path, Path) and img_path.is_file():
+                mime, _ = mimetypes.guess_type(str(img_path))
+                mime = mime or "image/jpeg"
+                try:
+                    b64_data = base64.b64encode(img_path.read_bytes()).decode("ascii")
+                    user_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64_data}"}
+                    })
+                except Exception:
+                    pass
+        if len(user_parts) > 1:
+            payload["messages"][1]["content"] = user_parts
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     session_lane = "openkakao-bujamentor"
     session_digest = hashlib.sha256(
@@ -11308,6 +11326,53 @@ def generate_reply(
     if not slot["allowed"]:
         failure_class = str(slot["failure_class"])
         retry_at = float(slot["retry_at"])
+        if not _capacity_probe and failure_class not in {"call_in_flight", "circuit_state_invalid"}:
+            if REPLY_RUNNER_KIND == "opencodex":
+                winner = _model_fallback_chain(
+                    active_model,
+                    lambda candidate: _run_opencodex_generation(
+                        candidate,
+                        system_prompt,
+                        prompt_bytes,
+                        image_paths=normalized_image_paths,
+                        timeout=45.0,
+                    ),
+                )
+            else:
+                winner = _model_fallback_chain(
+                    active_model,
+                    lambda candidate: _run_bounded_process(
+                        _model_swap_in_command(command, candidate),
+                        cwd=Path("/tmp"),
+                        env=env,
+                        timeout=45,
+                        stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                        stderr_cap=MAX_MODEL_STDERR_BYTES,
+                        stdin_bytes=model_stdin_bytes,
+                        stdin_cap=(
+                            MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None
+                        ),
+                        isolate_group=True,
+                    ),
+                )
+            if winner is not None:
+                slot = {
+                    "allowed": True,
+                    "lease_token": winner["lease_token"],
+                    "retry_at": winner["retry_at"],
+                }
+                active_model = winner["model"]
+                returncode = winner["returncode"]
+                stdout_bytes = winner["stdout"]
+                stderr_bytes = winner["stderr"]
+                print(
+                    f"[reply-gen] cooldown fallback answered on {active_model}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    if not slot["allowed"]:
+        failure_class = str(slot["failure_class"])
+        retry_at = float(slot["retry_at"])
         if failure_class == "call_in_flight":
             model_state = "in_flight"
         elif failure_class in {"circuit_unavailable", "circuit_state_invalid"}:
@@ -11367,6 +11432,60 @@ def generate_reply(
 
     try:
         if REPLY_RUNNER_KIND == "opencodex":
+            if "returncode" in locals():
+                pass  # Already answered via cooldown fallback
+            else:
+                returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
+                    active_model,
+                    system_prompt,
+                    prompt_bytes,
+                    image_paths=normalized_image_paths,
+                    timeout=45.0,
+                )
+            if returncode != 0:
+                err_str = stderr_bytes.decode("utf-8", "replace").casefold()
+                failure_class, _ = _classify_model_failure(
+                    returncode,
+                    stdout_bytes,
+                    stderr_bytes,
+                )
+                if (
+                    returncode == 429
+                    or "usage limit" in err_str
+                    or "quota" in err_str
+                    or failure_class in MODEL_CIRCUIT_FAILURE_CLASSES
+                ):
+                    winner = _model_fallback_chain(
+                        active_model,
+                        lambda candidate: _run_opencodex_generation(
+                            candidate,
+                            system_prompt,
+                            prompt_bytes,
+                            image_paths=normalized_image_paths,
+                            timeout=45.0,
+                        ),
+                    )
+                    if winner is not None:
+                        # The fallback answered. Close the first attempt, then run
+                        # the rest of the turn on the lease that generated it.
+                        first_class, _first_retry = _classify_model_failure(
+                            returncode,
+                            stdout_bytes,
+                            stderr_bytes,
+                        )
+                        _close_model_lease(lease_token, active_model, first_class)
+                        lease_token = winner["lease_token"]
+                        lease_retry_at = winner["retry_at"]
+                        returncode = winner["returncode"]
+                        stdout_bytes = winner["stdout"]
+                        stderr_bytes = winner["stderr"]
+                        active_model = winner["model"]
+                        print(
+                            f"[reply-gen] fallback answered on {active_model}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+        else:
             returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
                 active_model,
                 system_prompt,
@@ -11518,7 +11637,7 @@ def generate_reply(
         } or any(
             m in err_msg for m in ("usage limit", "weekly limit", "daily limit", "429", "timed out", "unauthorized", "missing api key")
         )
-        if is_opencode and is_limit:
+        if is_opencode and is_limit and REPLY_RUNNER_KIND != "opencodex":
             def _run_candidate(candidate: str, _command: list[str] = command) -> tuple:
                 fallback_command = _model_swap_in_command(_command, candidate)
                 return _run_bounded_process(

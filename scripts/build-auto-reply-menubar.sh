@@ -75,10 +75,10 @@ if [ -x /usr/bin/codesign ]; then
   # signature is ad-hoc and derives an identifier from the code hash, which
   # changed on every rebuild (2026-09-15).
   if [ -f "$RES/bin/openkakao-cli" ]; then
-    /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier com.openkakao.cli "$RES/bin/openkakao-cli" >/dev/null 2>&1 || true
+    /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier com.openkakao.cli "$RES/bin/openkakao-cli"
   fi
-  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$BIN" >/dev/null 2>&1 || true
-  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$APP" >/dev/null 2>&1 || true
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$BIN"
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$APP"
 fi
 printf '%s
 ' "$APP"
