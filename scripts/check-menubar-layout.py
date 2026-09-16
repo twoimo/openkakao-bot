@@ -29,8 +29,6 @@ def load_audit():
 # Every window the menu extra can open, plus the two states of the dropdown
 # panel. The audit dumps one PNG per entry (2026-09-16).
 EXPECTED_WINDOWS = (
-    "doctor",
-    "doctor-dark",
     "jobs",
     "jobs-dark",
     "log",

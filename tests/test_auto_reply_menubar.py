@@ -823,7 +823,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         source = SWIFT.read_text(encoding="utf-8")
         self.assertIn("class PipelineView", source)
         self.assertIn("class MenuPanelView", source)
-        self.assertIn("class MiniPipelineView", source)
+        # 메뉴 패널의 주인공은 자비스 홀로그램 코어다. 예전에 이 자리를
+        # 차지하던 MiniPipelineView는 쓰는 곳이 없어 없앴다 (2026-09-17).
+        self.assertIn("class JarvisCoreView", source)
+        self.assertNotIn("class MiniPipelineView", source)
         self.assertNotIn("for line in model.menu_lines", source)
         self.assertIn("showRoomsWindow", source)
         self.assertIn("toggleRoomListClicked", source)
@@ -854,7 +857,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
             source,
         )
         self.assertIn("let size = NSSize(width: 18, height: 14)", source)
-        self.assertIn('title: "채팅방 관리…"', source)
+        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
+        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
+        self.assertIn("func presentGearMenu()", source)
         self.assertIn("available_chats", source)
         self.assertIn('"제목"', source)
         self.assertIn('title: "추가"', source)
@@ -877,13 +882,21 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn('title: "자가 점검…"', source)
         self.assertNotIn('title: "자가 개선…"', source)
         self.assertNotIn("showImproveWindow", source)
-        self.assertIn("runImprovePipeline", source)
-        self.assertIn("updateComponentLamps", source)
-        self.assertIn('("ax", "창")', source)
-        self.assertIn('("watchdog", "감시")', source)
-        self.assertIn("improve-prep", MENUBAR.read_text())
-        self.assertIn("improve-launch", MENUBAR.read_text())
-        self.assertIn("showDoctorWindow", source)
+        # 자가 개선 파이프라인은 사용자 요청으로 통째로 없앴다. 그 파이프라인이
+        # 쓰던 진행 문구·램프 갱신도 함께 사라졌다 (2026-09-17).
+        self.assertNotIn("runImprovePipeline", source)
+        self.assertNotIn("improve-prep", source)
+        self.assertNotIn("improve-launch", source)
+        self.assertNotIn("updateComponentLamps", source)
+        # 구성요소 램프는 메뉴 패널에 그대로 남아 있다. 자가 점검 창이
+        # 사라진 뒤로는 이 화면이 상태를 보여 주는 유일한 자리다.
+        self.assertIn('("창", health["ax"] ?? "off")', source)
+        self.assertIn('("감시", health["watchdog"] ?? "off")', source)
+        # 자가 개선 파이프라인은 파이썬 쪽에서도 함께 없앴다 (2026-09-17).
+        self.assertNotIn("improve-prep", MENUBAR.read_text())
+        self.assertNotIn("improve-launch", MENUBAR.read_text())
+        self.assertNotIn("showDoctorWindow", source)
+        self.assertNotIn("ensureDoctorWindow", source)
         self.assertNotIn("TUI 열기", source)
         self.assertNotIn("openTui", source)
         self.assertNotIn("Open TUI", source)
@@ -913,11 +926,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         # 목록에만 있고 아직 돌지 않는 방은 그 사실을 도움말로 말한다.
         self.assertIn("목록에만 있고 아직 돌지 않습니다", source)
         self.assertIn('"geeknews_rss": "긱뉴스"', MENUBAR.read_text())
-        self.assertIn("doctor-heal", source)
-        self.assertIn("doctorFilterChanged", source)
-        self.assertIn("문제 \(fail)", source)
-        self.assertIn("전체", source)
-        self.assertIn("자가 개선", source)
+        # 자가 점검 창은 사용자 요청으로 창째로 없앴다. 그 창이 쓰던
+        # 다시 점검·자가 개선 단추와 필터도 함께 사라졌다 (2026-09-17).
+        self.assertNotIn("doctor-heal", source)
+        self.assertNotIn("doctorFilterChanged", source)
+        self.assertNotIn("자가 개선", source)
+        self.assertNotIn("자가 점검", source)
         # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 빠졌다. 창 코드와
         # 파이프라인 문구는 남지만 메뉴 항목은 없어야 한다 (2026-09-16).
         self.assertNotIn('title: "자가 진단…"', source)
@@ -1064,66 +1078,31 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.assertNotIn(secret, completed.stdout)
             del helper, module, now
 
-    def test_improve_actions_heal_reconcile_and_launch_newest_bake(self):
+    def test_improve_actions_are_gone_from_the_core(self):
+        """자가 개선 파이프라인은 사용자 요청으로 통째로 없앴다.
+
+        예전에는 improve-prep이 남은 배달 불확실 작업을 정리하고
+        improve-launch가 최신 베이크 세션을 띄웠다. 그 두 동작은 자가 점검
+        창에서만 쓰였고, 그 창이 사라지면서 부를 곳이 없어졌다. 지금은
+        같은 일을 하는 명령이 남아 있으면 안 된다 (2026-09-17).
+        """
+        source = MENUBAR.read_text(encoding="utf-8")
+        self.assertNotIn("improve-prep", source)
+        self.assertNotIn("improve-launch", source)
+        self.assertNotIn("_improve_launch", source)
+        self.assertNotIn("doctor-heal", source)
         with tempfile.TemporaryDirectory() as temporary:
-            helper, module, state, room, queue, now, _model = self._model(
+            helper, _module, state, _room, _queue, _now, _model = self._model(
                 Path(temporary)
             )
-            connection = sqlite3.connect(queue)
-            try:
-                connection.execute("UPDATE reply_jobs SET status='skipped'")
-                connection.commit()
-            finally:
-                connection.close()
-            helper._private_json(
-                room / "reply-state.json",
-                {
-                    "last_event": "db:42:99",
-                    "delivery_state": "delivery_unknown",
-                },
-            )
-            prep = json.loads(
-                os.popen(
-                    f"{sys.executable} {MENUBAR} "
-                    f"--state-root '{state.resolve()}' --action improve-prep"
-                ).read()
-            )
-            self.assertTrue(prep["ok"])
-            self.assertIn("stale_leftover_sidecar", prep["healed"])
-            encoded = json.dumps(prep, ensure_ascii=False)
-            for secret in FORBIDDEN:
-                self.assertNotIn(secret, encoded)
-
-            (state / "aggregate-status.json").write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "privacy": "content_redacted",
-                        "state": "stopped",
-                        "readiness": "fenced",
-                        "ready_room_count": 0,
-                        "room_count": 1,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            runtime_dir = state / "runtime" / "20260824T000000Z-1"
-            runtime_dir.mkdir(parents=True, mode=0o700)
-            command = runtime_dir / "start-auto-reply-session.command"
-            command.write_text("#!/bin/sh\n", encoding="utf-8")
-            os.chmod(command, 0o500)
-            captured: list[Path] = []
-            payload = module._improve_launch(
-                state.resolve(), launcher=captured.append
-            )
-            self.assertTrue(payload["ok"])
-            self.assertTrue(payload["launched"])
-            self.assertEqual(payload["runtime"], "20260824T000000Z-1")
-            self.assertEqual(
-                Path(captured[0]).resolve(), command.resolve()
-            )
-
-            self.assertEqual(len(captured), 1)
+            # 없는 동작을 부르면 조용히 성공한 척하지 않는다. argparse가
+            # 알 수 없는 선택지를 거절하고, 출력에 ok=true가 남지 않는다.
+            output = os.popen(
+                f"{sys.executable} {MENUBAR} "
+                f"--state-root '{state.resolve()}' --action improve-prep 2>&1"
+            ).read()
+            self.assertNotIn('"ok": true', output)
+            self.assertIn("improve-prep", output)
             del helper
 
     def test_doctor_health_map_is_closed_vocab_for_five_components(self):
@@ -1447,7 +1426,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("tileClicked", source)
         self.assertIn("showJobsWindow", source)
         self.assertIn("--jobs-status", source)
-        self.assertIn('title: "채팅방 관리…"', source)
+        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
+        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
+        self.assertIn("func presentGearMenu()", source)
         self.assertIn("작업 목록", source)
         self.assertNotIn('title: "Rooms…"', source)
         self.assertIn("jobsSkipClicked", source)
@@ -1566,7 +1547,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def test_swift_has_korean_vector_memory_window(self):
         source = SWIFT.read_text(encoding="utf-8")
         # 창 이름은 지식 그래프로 바뀌었고, 제목은 코어가 아니라 창이 정한다.
-        self.assertIn('title: "지식 그래프 (대화 기억)…"', source)
+        # 메뉴 패널의 항목은 톱니바퀴 안으로 들어갔다 (2026-09-17).
+        self.assertIn('("지식 그래프…", #selector(showVectorWindow))', source)
         self.assertIn('window.title = "지식 그래프 (대화 기억)"', source)
         self.assertIn("showVectorWindow", source)
         self.assertIn("--vector-upsert", source)
@@ -2066,7 +2048,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("menuTracking", source)
         self.assertNotIn("let pythonLock = NSLock()", source)
         self.assertIn("applyJobs", source)
-        self.assertIn("applyDoctor", source)
+        # 자가 점검 창은 사용자 요청으로 완전히 없앴다. 그 창이 쓰던
+        # applyDoctor도 함께 사라졌다 (2026-09-17).
+        self.assertNotIn("applyDoctor", source)
+        self.assertNotIn("ensureDoctorWindow", source)
+        self.assertNotIn("showDoctorWindow", source)
 
     def test_vector_paths_skip_overlay_and_cache_status(self):
         module = load(f"auto_reply_menubar_lazy_{id(self)}")
@@ -3288,7 +3274,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
         # A node is a cell body whose size follows importance, and a synapse
         # is an edge whose thickness follows weight.
         self.assertIn("private func radius(_ node: KnowledgeNode) -> CGFloat", source)
-        self.assertIn("path.lineWidth = 0.8 + 2.4 * strength", source)
+        # 선 굵기는 관계 강도를 따르되, 고른 뉴런에 붙은 시냅스만 더 굵다.
+        # 예전에는 모든 시냅스에 중간 점을 찍어 341개 관계가 점밭이 되었다
+        # (2026-09-17, 6 Pro 지적).
+        self.assertIn("path.lineWidth = (touchesHighlight ? 1.6 : 0.8) + 2.0 * strength", source)
+        self.assertIn("guard touchesHighlight else { continue }", source)
         # Grounded neurons glow and unverified seeds stay dim, so a reader can
         # tell a checked concept from a placeholder.
         self.assertIn("node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray", source)
@@ -3360,13 +3350,19 @@ class AutoReplyMenubarTests(unittest.TestCase):
         pipeline_start = source.find("final class PipelineView: NSView")
         pipeline_body = source[pipeline_start : pipeline_start + 2000]
         self.assertNotIn("bounds.height * 0.40", pipeline_body)
-        # 점·이름이 차지하는 높이를 상수로 두고, 창은 그 높이에 맞춘 띠를 쓴다.
-        # 예전에는 56pt 고정이라 위아래로 12pt씩 빈 띠가 남았다 (2026-09-16).
+        # 점·이름이 차지하는 높이를 상수로 두고, 그리는 쪽이 그 값으로
+        # 세로 가운데를 잡는다. 예전에는 56pt 고정 띠라 위아래로 12pt씩
+        # 빈 띠가 남았다 (2026-09-16).
         self.assertIn("static let contentHeight: CGFloat = nodeRadius * 2 + 5 + nodeLabelHeight", pipeline_body)
-        self.assertIn("static let stripHeight: CGFloat = contentHeight + 8", pipeline_body)
         self.assertIn("bounds.height - contentHeight", pipeline_body)
         self.assertNotIn("heightAnchor.constraint(equalToConstant: 56)", source)
-        self.assertIn("PipelineView.stripHeight", source)
+        # 메뉴 패널은 더 이상 파이프라인 띠를 쓰지 않는다. 자비스 코어가 그
+        # 자리를 대신한다. 그래서 띠 높이 상수도 더 이상 참조되지 않아 함께
+        # 없앴다 (2026-09-17).
+        self.assertNotIn("PipelineView.stripHeight", source)
+        self.assertNotIn("static let stripHeight", pipeline_body)
+        # 단계 표는 남는다. 코어 아래 한 줄과 메뉴바 아이콘이 이 표를 쓴다.
+        self.assertIn("PipelineView.labels", source)
 
     def test_swift_has_a_layout_audit_mode(self):
         """The windows cannot be eyeballed from CI, so the app can dump the

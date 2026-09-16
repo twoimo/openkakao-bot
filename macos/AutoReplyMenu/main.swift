@@ -1406,14 +1406,15 @@ final class PipelineView: NSView {
     var stages: [PipelineStage] = []
     var level: String = "yellow"
 
-    /// 점과 이름이 실제로 차지하는 높이. 창이 이 높이보다 훨씬 크면 위아래에
-    /// 아무것도 없는 띠가 남는다 (2026-09-16).
+    /// 점과 이름이 실제로 차지하는 높이.
+    ///
+    /// 예전에는 이 높이로 띠 높이(stripHeight)까지 계산해 메뉴 패널에
+    /// 붙였다. 메뉴 패널이 자비스 코어로 바뀌면서 띠를 쓰는 창이 없어져
+    /// 그 상수는 없앴다. 지금은 그리는 쪽이 높이를 직접 계산한다
+    /// (2026-09-17).
     static let nodeRadius: CGFloat = 7
     static let nodeLabelHeight: CGFloat = 12
     static let contentHeight: CGFloat = nodeRadius * 2 + 5 + nodeLabelHeight
-    /// 내용 높이에 위아래 4pt만 더한 띠 높이. 예전에는 56pt 고정이라
-    /// 위아래로 12pt씩 빈 띠가 생겼다 (2026-09-16).
-    static let stripHeight: CGFloat = contentHeight + 8
 
     static let labels: [(id: String, title: String)] = [
         ("detect", "수신"),
@@ -1688,14 +1689,6 @@ final class KnowledgeGraphView: NSView {
         return CGPoint(x: point.x * fit.scaleX + fit.offsetX, y: point.y * fit.scaleY + fit.offsetY)
     }
 
-    /// 그린 자리를 되돌려 시뮬레이션 좌표로 만든다. 누른 자리와 뉴런을
-    /// 맞추려면 그릴 때 쓴 배율을 거꾸로 적용해야 한다 (2026-09-16).
-    private func unfitted(_ point: CGPoint) -> CGPoint {
-        let fit = fitTransform()
-        guard fit.scaleX != 0, fit.scaleY != 0 else { return point }
-        return CGPoint(x: (point.x - fit.offsetX) / fit.scaleX, y: (point.y - fit.offsetY) / fit.scaleY)
-    }
-
     /// A small force-directed relaxation. Repulsion between every pair is
     /// O(n^2), which is fine for a hand-curated graph of tens of nodes; the
     /// step count is capped so a refresh never blocks the main thread.
@@ -1783,17 +1776,31 @@ final class KnowledgeGraphView: NSView {
         settle(width: max(bounds.width, 480), height: max(bounds.height, 320))
     }
 
+    /// 눌린 자리에 있는 뉴런.
+    ///
+    /// 판정은 화면 좌표에서 한다. 시뮬레이션 좌표로 되돌려 놓고 비교하면
+    /// 안 된다: 반지름은 화면 좌표에서 정해지는데 위치만 되돌리면, 배율이
+    /// 1이 아닐 때 그려진 원과 눌리는 자리가 서로 어긋난다. 창을 넓게 펼친
+    /// 그래프에서 가운데를 눌러도 옆 뉴런이 잡히던 원인이다 (2026-09-17,
+    /// 6 Pro 지적).
     private func node(at point: CGPoint) -> KnowledgeNode? {
+        var best: KnowledgeNode?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
         for node in nodes {
-            guard let pos = positions[node.id] else { continue }
+            guard let raw = positions[node.id] else { continue }
+            let pos = fitted(raw)
             let r = radius(node)
             let dx = point.x - pos.x
             let dy = point.y - pos.y
-            if dx * dx + dy * dy <= r * r {
-                return node
+            let distance = dx * dx + dy * dy
+            // 겹쳐 있으면 가장 가까운 뉴런을 고른다. 먼저 만난 것을 집으면
+            // 큰 뉴런 뒤에 숨은 작은 뉴런을 영영 못 누른다.
+            if distance <= r * r, distance < bestDistance {
+                best = node
+                bestDistance = distance
             }
         }
-        return nil
+        return best
     }
 
     /// 그려진 뉴런이 실제로 차지하는 사각형. 감사가 이 값을 읽어 창이
@@ -1825,8 +1832,7 @@ final class KnowledgeGraphView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        // 그릴 때 늘린 좌표를 되돌려 뉴런과 맞춘다.
-        let hit = node(at: unfitted(point))
+        let hit = node(at: point)
         selectedNodeId = hit?.id
         onSelect?(hit)
         needsDisplay = true
@@ -1834,7 +1840,7 @@ final class KnowledgeGraphView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hit = node(at: unfitted(point))?.id
+        let hit = node(at: point)?.id
         if hit != hoveredId {
             hoveredId = hit
             needsDisplay = true
@@ -1855,22 +1861,35 @@ final class KnowledgeGraphView: NSView {
         let positions = self.positions
         let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
 
-        // Synapses first, so cell bodies sit on top of their own dendrites.
+        // 시냅스를 먼저 깔아 세포체가 그 위에 앉게 한다.
+        //
+        // 예전에는 모든 시냅스에 중간 점을 하나씩 찍었다. 관계가 341개면
+        // 점만 341개라, 그래프가 무엇을 말하는지보다 점이 많다는 사실만
+        // 보였다. 지금은 고른 뉴런에 붙은 시냅스에만 점을 찍는다
+        // (2026-09-17, 6 Pro 지적).
+        let highlight = selectedNodeId ?? hoveredId
         for edge in edges {
             guard let rawA = positions[edge.source], let rawB = positions[edge.target] else { continue }
             let a = fitted(rawA)
             let b = fitted(rawB)
             let grounded = edge.evidence.grounded
             let strength = CGFloat(min(100, max(0, edge.weight))) / 100.0
+            let touchesHighlight = highlight != nil
+                && (edge.source == highlight || edge.target == highlight)
+            // 고른 뉴런에 붙은 시냅스만 또렷하게. 나머지는 배경으로 물러난다.
+            let alpha = touchesHighlight
+                ? 0.55 + 0.35 * strength
+                : (highlight == nil ? 0.22 + 0.34 * strength : 0.06 + 0.10 * strength)
             let color = (grounded ? NSColor.systemTeal : NSColor.systemGray)
-                .withAlphaComponent(0.28 + 0.42 * strength)
+                .withAlphaComponent(alpha)
             let path = NSBezierPath()
             path.move(to: a)
             path.line(to: b)
-            path.lineWidth = 0.8 + 2.4 * strength
+            path.lineWidth = (touchesHighlight ? 1.6 : 0.8) + 2.0 * strength
             path.lineCapStyle = .round
             color.setStroke()
             path.stroke()
+            guard touchesHighlight else { continue }
             // A pulse bead at the midpoint reads as a firing synapse.
             let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             let bead = NSBezierPath(ovalIn: NSRect(x: mid.x - 2.2, y: mid.y - 2.2, width: 4.4, height: 4.4))
@@ -1884,13 +1903,23 @@ final class KnowledgeGraphView: NSView {
             let r = radius(node)
             let selected = node.id == selectedNodeId
             let hovered = node.id == hoveredId
-            // A grounded neuron glows; an unverified seed stays dim.
+            // 근거가 있는 뉴런은 빛나고, 아직 확인되지 않은 씨앗은 흐리다.
+            //
+            // 예전에는 모든 뉴런에 1.7배 광륜을 깔았다. 뉴런 50개가 서로
+            // 겹치면서 가운데가 뿌연 얼룩이 되었다. 지금은 고르거나 마우스를
+            // 올린 뉴런에만 광륜을 준다 (2026-09-17, 6 Pro 지적).
             let core = node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray
-            let halo = NSBezierPath(ovalIn: NSRect(x: pos.x - r * 1.7, y: pos.y - r * 1.7, width: r * 3.4, height: r * 3.4))
-            core.withAlphaComponent(selected ? 0.30 : (hovered ? 0.22 : 0.12)).setFill()
-            halo.fill()
+            let emphasized = selected || hovered
+            if emphasized {
+                let halo = NSBezierPath(
+                    ovalIn: NSRect(x: pos.x - r * 1.7, y: pos.y - r * 1.7, width: r * 3.4, height: r * 3.4)
+                )
+                core.withAlphaComponent(selected ? 0.30 : 0.20).setFill()
+                halo.fill()
+            }
             let body = NSBezierPath(ovalIn: NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
-            core.withAlphaComponent(node.evidence.grounded ? 0.92 : 0.55).setFill()
+            let bodyAlpha: CGFloat = emphasized ? 1.0 : (node.evidence.grounded ? 0.82 : 0.48)
+            core.withAlphaComponent(bodyAlpha).setFill()
             body.fill()
             if node.evidence.retracted {
                 NSColor.systemRed.withAlphaComponent(0.9).setStroke()
