@@ -2107,6 +2107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsSkipButton: NSButton?
     var jobsAckButton: NSButton?
     var jobsHint: NSTextField?
+    var jobsEmptyLabel: NSTextField?
+    var jobsTableScroll: NSScrollView?
     var jobsTrace: NSTextView?
     var jobsFilterControl: NSSegmentedControl?
     var selectedJobEventId = ""
@@ -2116,6 +2118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorTable: NSTableView?
     var vectorSummary: NSTextField?
     var vectorHint: NSTextField?
+    var vectorEmptyLabel: NSTextField?
+    var vectorTableScroll: NSScrollView?
     var vectorSearchField: NSTextField?
     var vectorChatField: NSTextField?
     var vectorUserField: NSTextField?
@@ -4756,6 +4760,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsTable?.reloadData()
         restoreJobsSelection(eventId: selected)
         updateJobsActions()
+        updateJobsEmptyState()
+    }
+
+    /// 표가 비면 회색 띠 대신 이유를 적는다. 자리를 미리 차지하지 않도록
+    /// AutoHidingLabel을 쓰므로, 채워지면 스스로 사라진다 (2026-09-16).
+    func updateJobsEmptyState() {
+        guard let label = jobsEmptyLabel else { return }
+        label.stringValue = displayedJobs.isEmpty
+            ? "이 목록에 지금 보여 줄 작업이 없습니다. 다른 상태를 눌러 보세요."
+            : ""
+        jobsTableScroll?.isHidden = displayedJobs.isEmpty
     }
 
     func restoreJobsSelection(eventId: String) {
@@ -4851,6 +4866,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let hint = Chrome.hint("시간 순서로 보여 줍니다. 미확인은 건너뛰거나, 이미 보낸 경우에만 확인으로 기록합니다. 다시 보내지는 않습니다.")
         jobsHint = hint
 
+        // 표가 비면 회색 띠만 남아 창 아래가 통째로 비어 보인다. 표 대신
+        // 이유를 적어 준다. 자리는 보통 라벨처럼 15pt를 미리 차지하지
+        // 않도록 AutoHidingLabel을 쓴다 (2026-09-16).
+        let jobsEmpty = Chrome.statusLabel(size: 12, lines: 3)
+        jobsEmptyLabel = jobsEmpty
+
         let skip = Chrome.roundedButton("미확인 건너뛰기", target: self, action: #selector(jobsSkipClicked))
         skip.isEnabled = false
         jobsSkipButton = skip
@@ -4878,6 +4899,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             table.addTableColumn(column)
         }
         jobsTable = table
+        jobsTableScroll = scroll
 
         let traceScroll = NSScrollView()
         traceScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -4911,7 +4933,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let traceContent = Chrome.vstack([traceTitle, traceScroll], spacing: 6)
         let traceCard = Chrome.card(traceContent, padding: 10)
 
-        let stack = Chrome.vstack([headerCard, filterRow, scroll, traceCard, actions], spacing: 10)
+        let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, scroll, traceCard, actions], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -4920,6 +4942,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             filterRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
+            jobsEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
@@ -6121,6 +6144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let hint = Chrome.hint("안드레 카파시 LLM Wiki 개념을 적용한 결정적 지식 그래프입니다. 대화에서 정립된 고유 개념(알쫀쿠, 러닝, 멤버별 특징)과 관계망을 추적하여 일관된 맥락의 답변을 보장합니다.")
         vectorHint = hint
 
+        let vectorEmpty = Chrome.statusLabel(size: 12, lines: 3)
+        vectorEmptyLabel = vectorEmpty
+
         let chatLabel = Chrome.label("보기", size: 11, color: .secondaryLabelColor, lines: 1)
         chatLabel.setContentHuggingPriority(.required, for: .horizontal)
         let source = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -6220,6 +6246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             table.addTableColumn(column)
         }
         vectorTable = table
+        vectorTableScroll = scroll
 
         let userLabel = Chrome.label("이름", size: 11, color: .secondaryLabelColor, lines: 1)
         let user = NSTextField()
@@ -6303,7 +6330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
         let editCard = Chrome.card(editContent, padding: 12)
 
-        let stack = Chrome.vstack([headerCard, scroll, graphStack, editCard], spacing: 10)
+        let stack = Chrome.vstack([headerCard, vectorEmpty, scroll, graphStack, editCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -6314,6 +6341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             pickRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
             findRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
             pager.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            vectorEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             graphStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             graphHint.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
@@ -6470,6 +6498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorNextButton?.isEnabled = false
             vectorTable?.reloadData()
             updateVectorEditorMode()
+            updateVectorEmptyState()
             return
         }
         displayedVectors = report.rows
@@ -6501,6 +6530,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
         updateVectorEditorMode()
+        updateVectorEmptyState()
+    }
+
+    /// 표가 비면 회색 띠 대신 이유를 적는다 (2026-09-16).
+    func updateVectorEmptyState() {
+        guard let label = vectorEmptyLabel else { return }
+        label.stringValue = displayedVectors.isEmpty
+            ? "이 조건에 보여 줄 기억이 없습니다. 다른 보기나 주제를 골라 보세요."
+            : ""
+        vectorTableScroll?.isHidden = displayedVectors.isEmpty
     }
 
     /// 그래프 보기는 표와 같은 새로고침에서 함께 갱신된다. 표를 다시 그릴 때
