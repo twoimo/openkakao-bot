@@ -437,7 +437,7 @@ def _enrich_doctor_report(report: dict, state_root: Path) -> dict:
                 "session_unenrolled",
                 "fail",
                 "세션 등록",
-                "세션 등록 파일이 없거나 방이 비어 있습니다. 메뉴바는 세션을 다시 시작하지 않습니다.",
+                "세션 등록 파일이 없거나 방이 비어 있습니다.",
             )
         )
     newest_runtime = ""
@@ -462,7 +462,7 @@ def _enrich_doctor_report(report: dict, state_root: Path) -> dict:
                 "session_bake_stale",
                 "warn",
                 "런타임",
-                f"라이브 {runtime} · 최신 베이크 {newest_runtime}. 세션을 완전히 끈 다음 켜야 최신 워커가 붙습니다.",
+                f"라이브 {runtime} ≠ 베이크 {newest_runtime}. 세션 재시작 필요.",
             )
         )
     elif newest_runtime and runtime not in {"", "none"}:
@@ -501,7 +501,7 @@ def _enrich_doctor_report(report: dict, state_root: Path) -> dict:
                 "session_not_ready",
                 "fail" if readiness in {"fenced", "blocked"} else "warn",
                 "세션 준비",
-                f"준비된 방 {ready}/{rooms} · {agg_state}/{readiness}. 메뉴바는 자동 실행을 재시작하지 않습니다.",
+                f"준비된 방 {ready}/{rooms} · {agg_state}/{readiness}",
             )
         )
 
@@ -580,7 +580,7 @@ def _enrich_doctor_report(report: dict, state_root: Path) -> dict:
                     f"worker_warn_{child.name[-4:]}",
                     "fail" if state in {"fenced", "exited", "dead"} else "warn",
                     "워커",
-                    f"방 {child.name[-4:]} · {state}/{phase}. 메뉴바는 워커를 재시작하지 않습니다.",
+                    f"방 {child.name[-4:]} · {state}/{phase}",
                 )
             )
 

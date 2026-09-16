@@ -3816,7 +3816,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let replyId = reply?.id ?? ""
         let replyLabel = (reply?.label ?? replyId).trimmingCharacters(in: .whitespacesAndNewlines)
         // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
-        modelReplySummary?.stringValue = "메시지에 답할 때 사용합니다."
+        modelReplySummary?.stringValue = "메시지에 답할 때 씁니다."
         modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty
             ? (catalogLoading ? "모델 목록 불러오는 중…" : "모델을 선택하세요.")
             : "적용됨 · 다음 턴부터 적용")
@@ -3829,7 +3829,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let imageEnabled = image?.enabled ?? true
         let imageId = image?.id ?? ""
         let imageLabel = (image?.label ?? imageId).trimmingCharacters(in: .whitespacesAndNewlines)
-        modelImageSummary?.stringValue = "이미지가 포함된 메시지에 답할 때 사용합니다."
+        modelImageSummary?.stringValue = "사진이 있으면 이 모델이 답합니다."
         // 코어가 알려 준 명시적 상태를 먼저 쓰고, 없을 때만 예전 추정을 쓴다.
         let autoSelected = imageEnabled
             && (image?.auto_selected
@@ -3937,7 +3937,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let content = NSView()
         window.contentView = content
 
-        let hint = Chrome.hint("선택한 모델은 자동 저장되며, 다음 턴부터 적용됩니다.", size: 12)
+        // 각 줄의 상태 표시가 "적용됨 · 다음 턴부터 적용"을 이미 말한다.
+        // 창 머리말은 고르면 저장된다는 것만 남긴다 (2026-09-16).
+        let hint = Chrome.hint("고른 모델은 다음 턴부터 적용됩니다.", size: 12)
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
         let replySummary = Chrome.hint("현재 모델을 불러오는 중…", size: 12)
@@ -3968,7 +3970,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 폴백 사슬: 앞 모델이 사용량 한도에 걸렸을 때 이어서 시도할 순서.
         let fallbackTitle = Chrome.label("폴백 모델", size: 13, weight: .semibold, lines: 1)
         let fallbackSummary = Chrome.hint(
-            "앞 모델이 사용량 한도에 걸리면 위에서부터 이 순서대로 다시 시도합니다.",
+            "앞 모델이 막히면 위에서부터 다시 시도합니다.",
             size: 12
         )
         let fallbackRows = NSStackView()
@@ -5181,13 +5183,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsAckButton?.isEnabled = unknown || (job?.can_ack ?? false)
         switch jobsStatus {
         case "sent":
-            jobsHint?.stringValue = "이미 보낸 기록입니다. 다시 보내지는 않습니다."
+            jobsHint?.stringValue = "이미 보낸 기록입니다. 다시 보내지 않습니다."
         case "skipped":
-            jobsHint?.stringValue = "건너뛴 작업입니다. 다시 보내지는 않습니다."
+            jobsHint?.stringValue = "건너뛴 작업입니다. 다시 보내지 않습니다."
         case "unknown":
-            jobsHint?.stringValue = "미확인은 입력칸에만 들어갔거나 결과를 모를 때입니다. 건너뛰기는 다시 보내지 않습니다. 확인은 카카오톡에 이미 올라간 경우만 기록합니다."
+            jobsHint?.stringValue = "결과를 모르는 작업입니다. 확인은 카카오톡에 이미 올라간 경우만 기록합니다."
         default:
-            jobsHint?.stringValue = "시간 순서로 보여 줍니다. 미확인은 건너뛰거나, 이미 보낸 경우에만 확인으로 기록합니다. 다시 보내지는 않습니다."
+            jobsHint?.stringValue = "시간 순서입니다. 어느 쪽을 눌러도 다시 보내지 않습니다."
         }
         if let view = jobsTrace {
             if let job {
@@ -5260,7 +5262,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         filter.selectedSegment = 0
         jobsFilterControl = filter
 
-        let hint = Chrome.hint("시간 순서로 보여 줍니다. 미확인은 건너뛰거나, 이미 보낸 경우에만 확인으로 기록합니다. 다시 보내지는 않습니다.")
+        // 창의 규칙을 길게 설명하던 자리다. 운영자가 알아야 하는 것은 표가
+        // 시간 순서라는 것과 두 단추가 다시 보내지 않는다는 것뿐이라 한
+        // 줄로 줄인다 (2026-09-16).
+        let hint = Chrome.hint("시간 순서입니다. 어느 쪽을 눌러도 다시 보내지 않습니다.")
         jobsHint = hint
 
         // 표가 비면 회색 띠만 남아 창 아래가 통째로 비어 보인다. 표 대신
@@ -5598,7 +5603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         self.componentLamps = componentLamps
         let lampsRow = Chrome.hstack(componentLamps.map { $0.label } + [Chrome.spacer()])
-        let progress = Chrome.hint("자가 개선을 누르면 진행 상황이 여기 표시됩니다.")
+        let progress = Chrome.hint("자가 개선 진행 상황이 여기 표시됩니다.")
         progressField = progress
         // 일곱 덩어리가 각자 한 줄씩 차지하면 창을 키워도 빈 줄만 늘어난다.
         // 요약·안내·램프를 한 카드로, 필터와 진행 문구를 한 줄로 묶는다
@@ -5652,7 +5657,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let summary = Chrome.summary("상태를 읽는 중")
         logSummary = summary
-        let hint = Chrome.hint("턴마다 무슨 일이 있었는지 한 줄로 보여 줍니다. 답변은 앞부분만 잘린 채로 나오고, 대화 원문은 나오지 않습니다.")
+        // 표가 무엇을 보여 주지 않는지만 한 줄로 남긴다. 원문이 나오지
+        // 않는다는 사실은 운영자가 오해하면 안 되는 부분이라 지우지 않는다
+        // (2026-09-16).
+        let hint = Chrome.hint("턴마다 한 줄입니다. 원문은 나오지 않습니다.")
         logHint = hint
 
         let scope = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -6107,7 +6115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         pipeline.heightAnchor.constraint(equalToConstant: PipelineView.stripHeight).isActive = true
         roomsPipeline = pipeline
 
-        let hint = Chrome.hint("동작·답변·긱뉴스·추가됨 칸의 상태를 눌러 켜고 끕니다. 답변이나 긱뉴스를 켜면 동작과 추가됨도 같이 켜집니다.")
+        // 켜고 끄는 규칙은 두 문장이면 끝난다. 어느 칸을 눌러야 하는지까지
+        // 나열하던 문장은 표의 칸 제목이 이미 말한다 (2026-09-16).
+        let hint = Chrome.hint("칸을 눌러 켜고 끕니다. 답변·긱뉴스를 켜면 동작도 함께 켜집니다.")
 
         let filter = Chrome.searchField(
             placeholder: "단체 채팅방 검색",
@@ -6635,7 +6645,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let content = NSView()
         window.contentView = content
 
-        let hint = Chrome.hint("안드레 카파시 LLM Wiki 개념을 적용한 결정적 지식 그래프입니다. 대화에서 정립된 고유 개념(알쫀쿠, 러닝, 멤버별 특징)과 관계망을 추적하여 일관된 맥락의 답변을 보장합니다.")
+        // 창이 무엇을 하는지 한 줄. 개념 이름을 나열하던 문장은 아래 표에
+        // 같은 이름이 이미 있고, 답변 보장은 여기서 약속할 일이 아니다
+        // (2026-09-16).
+        let hint = Chrome.hint("대화에서 정립된 개념과 관계를 모아 둡니다. 답변은 여기서 검색합니다.")
         vectorHint = hint
 
         let vectorEmpty = Chrome.statusLabel(size: 12, lines: 3)
@@ -6713,7 +6726,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         vectorGraphView = graph
         let graphHint = Chrome.hint(
-            "동그라미는 뉴런(개념), 선은 시냅스(관계)입니다. 크기는 중요도, 선 굵기는 관계 강도입니다. 밝은 뉴런은 원문 메시지로 확인된 것이고, 흐린 뉴런은 아직 근거가 없는 초기 개념입니다.",
+            "크기는 중요도, 선 굵기는 관계 강도입니다. 흐린 뉴런은 아직 근거가 없습니다.",
             size: 11
         )
         vectorGraphHint = graphHint
@@ -7234,8 +7247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self.hideEmptyKnowledgeGraph()
                 guard !report.nodes.isEmpty else { return }
                 self.vectorGraphHint?.stringValue =
-                    "동그라미는 뉴런(개념), 선은 시냅스(관계)입니다. 크기는 중요도, 선 굵기는 관계 강도입니다. "
-                    + "뉴런 \(total)개 중 \(grounded)개가 원문 메시지로 확인되었습니다. 밝은 뉴런을 누르면 아래에 근거가 나옵니다."
+                    "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다. "
+                    + "크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
             }
         }
     }

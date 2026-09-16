@@ -897,8 +897,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("roomsTableClicked", source)
         self.assertIn("toggleRoomCatalog", source)
         self.assertIn("upsertRoomFlags", source)
-        self.assertIn("동작·답변·긱뉴스·추가됨 칸의 상태를 눌러 켜고 끕니다", source)
-        self.assertIn("답변이나 긱뉴스를 켜면 동작과 추가됨도 같이 켜집니다", source)
+        # The hint has to keep saying which switches drag the others along;
+        # everything else about it was cut as explanation clutter
+        # (2026-09-16).
+        self.assertIn("칸을 눌러 켜고 끕니다", source)
+        self.assertIn("답변·긱뉴스를 켜면 동작도 함께 켜집니다", source)
         self.assertIn("func reusedLamp", source)
         self.assertIn("final class LampCell", source)
         self.assertIn("toggleRoomLive", source)
