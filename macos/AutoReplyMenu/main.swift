@@ -2071,6 +2071,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelFallbackRows: NSStackView?
     /// 내용 높이에 맞춰 창을 줄일 때, 같은 값으로 반복해서 흔들지 않도록 기억한다.
     var lastModelContentHeight: CGFloat = 0
+    /// 모델 창이 넘지 않을 높이. 폴백을 최대치까지 넣어도 화면 안에 남는다.
+    static let modelWindowHeightLimit: CGFloat = 760
     var modelSettingsStack: NSStackView?
     var modelSettingsScroll: NSScrollView?
     /// 사용자가 창 크기를 직접 만졌으면 자동 축소를 하지 않는다.
@@ -3413,15 +3415,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let contentHeight = stack.fittingSize.height
         guard contentHeight > 1 else { return }
         // 창이 담아야 할 높이는 내용 + 스크롤 여백(위 16 + 아래 16)이다.
-        let desired = contentHeight + 32
+        // 화면보다 커질 수는 없으므로 남는 높이까지만 키운다.
+        let desired = min(contentHeight + 32, Self.modelWindowHeightLimit)
         let current = content.bounds.height
-        guard current - desired > 12 else { return }
+        // 줄일 때만 보던 것을 늘릴 때도 본다. 폴백을 추가해 내용이 길어지면
+        // 창은 작은 채로 남아 아래 조작 단추가 스크롤 뒤로 숨었다
+        // (2026-09-16).
+        guard abs(current - desired) > 12 else { return }
         // 배치가 한 번에 수렴하지 않으므로, 줄어든 뒤 다시 재서 맞춘다.
         guard abs(current - lastModelContentHeight) > 1 else { return }
         lastModelContentHeight = current
         var frame = window.frame
         let delta = current - desired
         frame.size.height -= delta
+        // 위쪽 모서리를 고정한다. 아래에서 자라면 창이 화면 밖으로 밀린다.
         frame.origin.y += delta
         window.setFrame(frame, display: true, animate: false)
         DispatchQueue.main.async { [weak self] in
@@ -3443,9 +3450,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             stack.layoutSubtreeIfNeeded()
             let contentHeight = stack.fittingSize.height
             guard contentHeight > 1 else { return }
-            let desired = contentHeight + 32
+            let desired = min(contentHeight + 32, Self.modelWindowHeightLimit)
             let current = content.bounds.height
-            guard current - desired > 12 else { return }
+            guard abs(current - desired) > 12 else { return }
             var frame = window.frame
             let delta = current - desired
             frame.size.height -= delta
