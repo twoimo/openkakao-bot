@@ -1811,6 +1811,9 @@ final class MenuPanelView: NSView {
         }
     }
     var roomRowButtons: [NSButton] = []
+    /// 방 목록이 넘칠 때 굴리는 스크롤 뷰. 방이 적으면 만들지 않는다.
+    private var roomGridScroll: NSScrollView?
+    private var roomGridContent: NSView?
     var tileButtons: [NSButton] = []
     let autoButton = NSButton(title: "즉시 답장 보내기", target: nil, action: #selector(AppDelegate.instantAutoReplyClicked))
     let geekButton = NSButton(title: "긱뉴스 바로 전송", target: nil, action: #selector(AppDelegate.instantGeekNewsClicked))
@@ -1861,9 +1864,22 @@ final class MenuPanelView: NSView {
 
     static func roomGridExtra(count: Int, expanded: Bool) -> CGFloat {
         guard expanded else { return 0 }
+        return min(roomGridHeight(count: count), roomGridSpan(rows: maxRoomGridRows))
+            + afterRoomGridGap
+    }
+
+    /// 방 목록이 차지할 수 있는 최대 줄 수.
+    ///
+    /// 방이 늘어날수록 패널이 그만큼 길어져 화면 아래로 넘어갔다. 넘어간
+    /// 부분은 클릭할 수도 없어, 방을 여러 개 등록한 사람은 아래쪽 방을 아예
+    /// 고를 수 없었다. 여섯 줄로 묶고 나머지는 스크롤로 본다 (2026-09-16).
+    static let maxRoomGridRows = 6
+
+    /// 방 목록 격자가 실제로 차지하는 높이.
+    static func roomGridHeight(count: Int) -> CGFloat {
         let rooms = max(count, 1)
-        let rows = (rooms + roomGridColumns - 1) / roomGridColumns
-        return roomGridSpan(rows: rows) + afterRoomGridGap
+        let rows = min((rooms + roomGridColumns - 1) / roomGridColumns, maxRoomGridRows)
+        return roomGridSpan(rows: rows)
     }
 
     /// 방 목록 격자 자체의 높이(배경 카드 여백은 뺀 값).
@@ -1911,7 +1927,34 @@ final class MenuPanelView: NSView {
             button.removeFromSuperview()
         }
         roomRowButtons.removeAll()
+        roomGridScroll?.removeFromSuperview()
+        roomGridScroll = nil
+        roomGridContent = nil
         guard roomsExpanded else { return }
+        // 방이 한 화면에 다 들어가면 스크롤 뷰를 만들지 않는다. 늘 스크롤
+        // 뷰를 두면 방 두 개짜리 패널에도 스크롤 틀이 생겨 지저분하다
+        // (2026-09-16).
+        let needed = Self.roomGridHeight(count: rooms.count)
+        let visible = Self.roomGridHeight(count: min(rooms.count, Self.maxRoomGridRows * Self.roomGridColumns))
+        let scrolls = needed > visible + 0.5
+        let gridHost: NSView
+        if scrolls {
+            let scroll = NSScrollView()
+            scroll.translatesAutoresizingMaskIntoConstraints = true
+            scroll.hasVerticalScroller = true
+            scroll.hasHorizontalScroller = false
+            scroll.autohidesScrollers = true
+            scroll.drawsBackground = false
+            scroll.borderType = .noBorder
+            let content = FlippedContainerView(frame: NSRect(x: 0, y: 0, width: layoutWidth(), height: needed))
+            scroll.documentView = content
+            addSubview(scroll)
+            roomGridScroll = scroll
+            roomGridContent = content
+            gridHost = content
+        } else {
+            gridHost = self
+        }
         for room in rooms {
             let selected = room.chat_id == selectedRoomId
             let button = NSButton(
@@ -1931,7 +1974,7 @@ final class MenuPanelView: NSView {
                 cell.lineBreakMode = .byTruncatingTail
             }
             button.isHidden = true
-            addSubview(button)
+            gridHost.addSubview(button)
             roomRowButtons.append(button)
         }
         layoutRoomGrid()
@@ -1960,12 +2003,33 @@ final class MenuPanelView: NSView {
         let gap = Self.roomGridGap
         let cellH = Self.roomCellHeight
         let cellW = max(80, (width - 32 - gap) / CGFloat(columns))
+        // 방 목록이 넘치면 스크롤 뷰가 그 자리를 차지하고, 단추들은 그 안쪽
+        // 문서 좌표계에 놓인다. 스크롤 뷰 자체는 늘 보이는 만큼만 차지한다
+        // (2026-09-16).
+        let gridHeight = Self.roomGridHeight(count: max(roomRowButtons.count, 1))
+        let visibleHeight = min(gridHeight, Self.roomGridSpan(rows: Self.maxRoomGridRows))
+        if let scroll = roomGridScroll {
+            scroll.frame = NSRect(
+                x: Self.sideInset,
+                y: Self.roomGridTop,
+                width: width - Self.sideInset * 2,
+                height: visibleHeight
+            )
+            roomGridContent?.frame = NSRect(
+                x: 0,
+                y: 0,
+                width: width - Self.sideInset * 2,
+                height: gridHeight
+            )
+        }
+        let gridOriginX = roomGridScroll == nil ? Self.sideInset : 0
+        let gridOriginY = roomGridScroll == nil ? Self.roomGridTop : 0
         for (index, button) in roomRowButtons.enumerated() {
             let col = index % columns
             let row = index / columns
             button.frame = NSRect(
-                x: Self.sideInset + CGFloat(col) * (cellW + gap),
-                y: Self.roomGridTop + CGFloat(row) * (cellH + gap),
+                x: gridOriginX + CGFloat(col) * (cellW + gap),
+                y: gridOriginY + CGFloat(row) * (cellH + gap),
                 width: cellW,
                 height: cellH
             )
