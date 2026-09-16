@@ -11207,6 +11207,13 @@ def generate_reply(
     prompt_bytes = _encode_json_bounded(prompt, prompt_budget)
     generation_started = time.monotonic()
     gen_elapsed = None
+    # A cooldown fallback that already answered fills returncode/stdout and
+    # adopts its lease. The turn must then continue on that answer instead of
+    # calling the primary model again: the old code only checked this on the
+    # opencodex path, so the default runner re-ran the primary command and threw
+    # the successful answer away, spending the provider quota twice
+    # (2026-09-16).
+    cooldown_fallback_answered = False
     if prompt_bytes is None:
         approx = len(json.dumps(prompt, ensure_ascii=False).encode("utf-8", "replace"))
         return {**empty, "reason": "model_prompt_overflow", "prompt_bytes": approx}
@@ -11393,6 +11400,7 @@ def generate_reply(
                 returncode = winner["returncode"]
                 stdout_bytes = winner["stdout"]
                 stderr_bytes = winner["stderr"]
+                cooldown_fallback_answered = True
                 print(
                     f"[reply-gen] cooldown fallback answered on {active_model}",
                     file=sys.stderr,
@@ -11460,9 +11468,7 @@ def generate_reply(
 
     try:
         if REPLY_RUNNER_KIND == "opencodex":
-            if "returncode" in locals():
-                pass  # Already answered via cooldown fallback
-            else:
+            if not cooldown_fallback_answered:
                 returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
                     active_model,
                     system_prompt,
@@ -11514,29 +11520,33 @@ def generate_reply(
                             flush=True,
                         )
         else:
-            returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
-                command,
-                cwd=Path("/tmp"),
-            env=env,
-            timeout=(
-                120
-                if REPLY_RUNNER_KIND == "codex" and normalized_image_paths
-                else 90
-                if REPLY_RUNNER_KIND == "codex"
-                else 90
-                if str(active_model).startswith("omlx/")
-                else 45
-                if require_web_search or normalized_image_paths
-                else 30
-            ),
-            stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-            stderr_cap=MAX_MODEL_STDERR_BYTES,
-            stdin_bytes=model_stdin_bytes,
-            stdin_cap=(
-                MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None
-            ),
-            isolate_group=True,
-        )
+            # 같은 이유로 기본 실행기도 건너뛴다. 쿨다운 폴백이 이미 답한
+            # 턴에서 주 모델을 다시 부르면 성공한 답이 버려지고 토큰이 두 번
+            # 나간다 (2026-09-16).
+            if not cooldown_fallback_answered:
+                returncode, stdout_bytes, stderr_bytes = _run_bounded_process(
+                    command,
+                    cwd=Path("/tmp"),
+                    env=env,
+                    timeout=(
+                        120
+                        if REPLY_RUNNER_KIND == "codex" and normalized_image_paths
+                        else 90
+                        if REPLY_RUNNER_KIND == "codex"
+                        else 90
+                        if str(active_model).startswith("omlx/")
+                        else 45
+                        if require_web_search or normalized_image_paths
+                        else 30
+                    ),
+                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+                    stderr_cap=MAX_MODEL_STDERR_BYTES,
+                    stdin_bytes=model_stdin_bytes,
+                    stdin_cap=(
+                        MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None
+                    ),
+                    isolate_group=True,
+                )
         gen_elapsed = round(time.monotonic() - generation_started, 2)
         print(
             f"[reply-gen] prompt_bytes={len(prompt_bytes)} "
