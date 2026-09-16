@@ -1672,7 +1672,11 @@ final class KnowledgeGraphView: NSView {
             if pos.y > maxCy { maxCy = pos.y; bottomEdge = bottom }
         }
         guard maxCx >= minCx, maxCy >= minCy else { return identity }
-        let pad: CGFloat = 8
+        // 캔버스 가장자리에 남기는 숨. 창 자체가 16pt 여백을 두므로 여기서
+        // 크게 잡을 필요가 없다. 8pt로 두면 그려진 그림이 캔버스 아래
+        // 12pt를 비워 두고, 창 여백까지 더해 27pt짜리 빈 띠가 생겼다
+        // (2026-09-16).
+        let pad: CGFloat = 2
         let spanX = max(maxCx - minCx, 0.001)
         let spanY = max(maxCy - minCy, 0.001)
         // 한 줄로 늘어선 뉴런은 폭이 0에 가깝다. 배율을 그대로 두면 한 없이
@@ -2789,6 +2793,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var oauthLoading = false
     let logLock = NSLock()
     static let jobKinds = ["open", "sent", "skipped", "unknown"]
+    /// 목록이 찼을 때 지키는 최소 높이. 표가 다섯 줄은 보여야 한다.
+    static let jobsWindowMinimum = NSSize(width: 620, height: 400)
+    /// 목록이 비었을 때의 최소 높이. 안내 한 줄과 단추만 남으므로 하한을
+    /// 낮춘다. 낮추지 않으면 빈 안내 판이 263pt로 늘어난다 (2026-09-16).
+    static let jobsWindowEmptyFloor = NSSize(width: 620, height: 240)
 
     init(config: Config) {
         self.config = config
@@ -5428,6 +5437,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let content = window.contentView else { return }
         jobsFitting = true
         defer { jobsFitting = false }
+        // 목록이 비면 창이 표 높이에 묶여 있던 하한을 풀어 준다.
+        //
+        // 이 창의 최소 높이 400pt는 표가 다섯 줄은 보이게 하려고 정한 값이다.
+        // 그런데 목록이 비면 그 높이가 그대로 남아, 안내 한 줄이 263pt짜리
+        // 빈 판으로 늘어났다. 보여 줄 것이 없을 때는 하한도 필요 없다. 다시
+        // 목록이 차면 원래 하한으로 되돌린다 (2026-09-16, 6 Pro 지적).
+        let floor = Self.jobsWindowMinimum
+        let wantsFloor = !displayedJobs.isEmpty
+        if wantsFloor, window.minSize.height < floor.height {
+            window.minSize = floor
+        } else if !wantsFloor, window.minSize.height != Self.jobsWindowEmptyFloor.height {
+            window.minSize = Self.jobsWindowEmptyFloor
+        }
         for _ in 0..<3 {
             content.layoutSubtreeIfNeeded()
             stack.layoutSubtreeIfNeeded()
@@ -5539,7 +5561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             title: "작업 목록",
             size: NSSize(width: 720, height: 540),
             autosave: "AutoReplyJobs",
-            minimum: NSSize(width: 620, height: 400)
+            minimum: Self.jobsWindowMinimum
         )
         let content = NSView()
         window.contentView = content
