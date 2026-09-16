@@ -640,6 +640,11 @@ enum Chrome {
             table.style = .inset
         }
         scroll.documentView = table
+        // 카드와 같은 둥근 모서리를 쓴다. 표의 줄무늬가 각진 사각형으로
+        // 창 끝까지 차면 카드 사이에서 혼자 튄다 (2026-09-16).
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = 8
+        scroll.layer?.masksToBounds = true
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         return (scroll, table)
@@ -651,13 +656,15 @@ enum Chrome {
         title: String,
         width: CGFloat,
         minWidth: CGFloat = 48,
-        alignment: NSTextAlignment = .center
+        alignment: NSTextAlignment = .left
     ) {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
         column.title = title
         column.width = width
         column.minWidth = minWidth
         column.resizingMask = [.autoresizingMask, .userResizingMask]
+        // 머리글은 본문과 같은 쪽에 붙는다. 머리글만 가운데로 두면 왼쪽
+        // 정렬된 본문 위에서 제목이 칸 가운데에 떠 보인다 (2026-09-16).
         column.headerCell.alignment = alignment
         if let cell = column.dataCell as? NSTextFieldCell {
             cell.alignment = alignment
@@ -688,6 +695,24 @@ enum Chrome {
         stack.alignment = .centerY
         stack.spacing = spacing
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // 가로 줄은 세로로 늘어나지 않는다. 기본 허깅(250)으로 두면 바깥
+        // 세로 스택이 남는 높이를 이 줄에 몰아 주어, 작업 목록 창의 필터
+        // 줄이 216pt로 늘어나고 그 아래 96pt가 빈 띠로 남았다. 남는 높이는
+        // 표(스크롤)가 먹어야 한다 (2026-09-16).
+        stack.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        return stack
+    }
+
+    /// 창 아래 동작 단추 줄. 단추 몇 개가 왼쪽에만 몰려 오른쪽 절반이 빈
+    /// 자리로 남던 것을, 같은 폭으로 나눠 창 끝까지 채운다. 숨은 단추는
+    /// 스택이 스스로 빼므로 자리도 함께 사라진다 (2026-09-16).
+    static func actionRow(_ views: [NSView], spacing: CGFloat = 8) -> NSStackView {
+        for view in views {
+            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        let stack = hstack(views, spacing: spacing)
+        stack.distribution = .fillEqually
         return stack
     }
 
@@ -770,6 +795,85 @@ final class AutoHidingLabel: NSTextField {
             isHidden = empty
             superview?.needsLayout = true
         }
+    }
+}
+
+/// 목록이 비었을 때 표 자리를 대신 채우는 판. 표를 숨기기만 하면 그 자리가
+/// 빈 띠로 남아 창 아래가 통째로 비어 보인다. 같은 자리를 같은 높이로
+/// 차지하면서 왜 비었는지와 무엇을 하면 되는지 적는다 (2026-09-16).
+final class EmptyStateView: NSView {
+    private let symbol = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+
+    var titleText: String {
+        get { title.stringValue }
+        set { title.stringValue = newValue }
+    }
+
+    var detailText: String {
+        get { detail.stringValue }
+        set {
+            detail.stringValue = newValue
+            detail.isHidden = newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    init(symbolName: String) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        applyColors()
+
+        symbol.translatesAutoresizingMaskIntoConstraints = false
+        symbol.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        symbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .regular)
+        symbol.contentTintColor = NSColor.tertiaryLabelColor
+        symbol.imageScaling = .scaleProportionallyUpOrDown
+
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = NSColor.secondaryLabelColor
+        title.alignment = .center
+        title.maximumNumberOfLines = 2
+        title.lineBreakMode = .byWordWrapping
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.textColor = NSColor.tertiaryLabelColor
+        detail.alignment = .center
+        detail.maximumNumberOfLines = 3
+        detail.lineBreakMode = .byWordWrapping
+        detail.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = NSStackView(views: [symbol, title, detail])
+        column.orientation = .vertical
+        column.alignment = .centerX
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.centerXAnchor.constraint(equalTo: centerXAnchor),
+            column.centerYAnchor.constraint(equalTo: centerYAnchor),
+            column.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            symbol.heightAnchor.constraint(equalToConstant: 30),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    private func applyColors() {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
     }
 }
 
@@ -2066,6 +2170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var logRoomButton: NSPopUpButton?
     var logStatusField: NSTextField?
     var logEmptyLabel: NSTextField?
+    var logEmptyState: EmptyStateView?
     var logDetailView: NSTextView?
     var receiptRows: [ReceiptRow] = []
     var displayedReceipts: [ReceiptRow] = []
@@ -2108,6 +2213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsAckButton: NSButton?
     var jobsHint: NSTextField?
     var jobsEmptyLabel: NSTextField?
+    var jobsEmptyState: EmptyStateView?
     var jobsTableScroll: NSScrollView?
     var jobsTrace: NSTextView?
     var jobsFilterControl: NSSegmentedControl?
@@ -2119,6 +2225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorSummary: NSTextField?
     var vectorHint: NSTextField?
     var vectorEmptyLabel: NSTextField?
+    var vectorEmptyState: EmptyStateView?
     var vectorTableScroll: NSScrollView?
     var vectorSearchField: NSTextField?
     var vectorChatField: NSTextField?
@@ -3648,7 +3755,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let revertButton = Chrome.roundedButton("이전 모델로 되돌리기", target: self, action: #selector(modelRevertClicked(_:)))
         revertButton.isEnabled = false
         modelRevertButton = revertButton
-        let actions = Chrome.hstack([registerButton, reloadButton, revertButton, Chrome.spacer()])
+        // 단추 셋이 왼쪽에 몰려 오른쪽 절반이 빈 자리로 남던 것을, 같은
+        // 폭으로 나눠 창 끝까지 채운다 (2026-09-16).
+        let actions = Chrome.actionRow([registerButton, reloadButton, revertButton])
 
         // 섹션 1: 주요 모델 설정 카드 (카드 레이아웃으로 불필요한 공백 제거)
         replyTitle.setContentHuggingPriority(.required, for: .horizontal)
@@ -4767,10 +4876,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// AutoHidingLabel을 쓰므로, 채워지면 스스로 사라진다 (2026-09-16).
     func updateJobsEmptyState() {
         guard let label = jobsEmptyLabel else { return }
-        label.stringValue = displayedJobs.isEmpty
-            ? "이 목록에 지금 보여 줄 작업이 없습니다. 다른 상태를 눌러 보세요."
-            : ""
-        jobsTableScroll?.isHidden = displayedJobs.isEmpty
+        let empty = displayedJobs.isEmpty
+        // 표를 숨기면 그 자리가 빈 띠로 남는다. 같은 자리를 빈 상태 판이
+        // 대신 차지하고 이유를 적는다 (2026-09-16).
+        label.stringValue = ""
+        jobsTableScroll?.isHidden = empty
+        jobsEmptyState?.isHidden = !empty
+        jobsEmptyState?.titleText = "이 목록에 지금 보여 줄 작업이 없습니다"
+        jobsEmptyState?.detailText = "위에서 다른 상태를 눌러 보세요. 목록은 시간 순서로 쌓입니다."
     }
 
     func restoreJobsSelection(eventId: String) {
@@ -4871,6 +4984,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 않도록 AutoHidingLabel을 쓴다 (2026-09-16).
         let jobsEmpty = Chrome.statusLabel(size: 12, lines: 3)
         jobsEmptyLabel = jobsEmpty
+        // 표 자리를 그대로 물려받는 빈 상태 판. 표를 숨겨도 자리는 남으므로
+        // 같은 자리에 이유를 적어야 창 아래가 비지 않는다 (2026-09-16).
+        let jobsEmptyState = EmptyStateView(symbolName: "tray")
+        jobsEmptyState.isHidden = true
+        self.jobsEmptyState = jobsEmptyState
 
         let skip = Chrome.roundedButton("미확인 건너뛰기", target: self, action: #selector(jobsSkipClicked))
         skip.isEnabled = false
@@ -4878,7 +4996,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let ack = Chrome.roundedButton("전송된 것으로 확인", target: self, action: #selector(jobsAckClicked))
         ack.isEnabled = false
         jobsAckButton = ack
-        let actions = Chrome.hstack([skip, ack, Chrome.spacer()])
+        // 단추 둘이 왼쪽에 몰려 오른쪽 절반이 빈 자리로 남던 것을, 같은
+        // 폭으로 나눠 창 끝까지 채운다 (2026-09-16).
+        let actions = Chrome.actionRow([skip, ack])
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -4888,15 +5008,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("status", "상태", 88.0),
             ("reason", "구분", 340.0),
         ] as [(String, String, CGFloat)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.0))
-            column.title = spec.1
-            column.width = spec.2
-            column.minWidth = 72
-            column.headerCell.alignment = .center
-            if let cell = column.dataCell as? NSTextFieldCell {
-                cell.alignment = .center
-            }
-            table.addTableColumn(column)
+            // 머리글은 본문과 같은 쪽에 붙는다. 예전에는 본문이 왼쪽인
+            // "구분" 열의 머리글만 가운데라 제목이 칸 가운데에 떠 보였다
+            // (2026-09-16).
+            Chrome.addColumn(
+                table,
+                id: spec.0,
+                title: spec.1,
+                width: spec.2,
+                minWidth: 72,
+                alignment: spec.0 == "reason" ? .left : .center
+            )
         }
         jobsTable = table
         jobsTableScroll = scroll
@@ -4933,7 +5055,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let traceContent = Chrome.vstack([traceTitle, traceScroll], spacing: 6)
         let traceCard = Chrome.card(traceContent, padding: 10)
 
-        let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, scroll, traceCard, actions], spacing: 10)
+        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
+        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
+        let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, jobsEmptyState, scroll, traceCard, actions], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -4943,6 +5067,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             filterRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
             jobsEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            jobsEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
+            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
+            jobsEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
@@ -5136,7 +5264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let recheck = recheckButton
         let heal = Chrome.roundedButton("자가 개선", target: self, action: #selector(doctorHealClicked))
         doctorHealButton = heal
-        let actions = Chrome.hstack([recheck, heal, Chrome.spacer()])
+        let actions = Chrome.actionRow([recheck, heal])
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -5151,15 +5279,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("advice", "설명", 448.0),
             ("heal", "조치", 78.0),
         ] as [(String, String, CGFloat)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.0))
-            column.title = spec.1
-            column.width = spec.2
-            column.minWidth = 56
-            column.headerCell.alignment = .center
-            if let cell = column.dataCell as? NSTextFieldCell {
-                cell.alignment = .center
-            }
-            table.addTableColumn(column)
+            // 항목·설명은 본문이 왼쪽이므로 머리글도 왼쪽에 붙인다
+            // (2026-09-16).
+            Chrome.addColumn(
+                table,
+                id: spec.0,
+                title: spec.1,
+                width: spec.2,
+                minWidth: 56,
+                alignment: (spec.0 == "title" || spec.0 == "advice") ? .left : .center
+            )
         }
         doctorTable = table
 
@@ -5251,6 +5380,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 가운데에 아무것도 없는 띠가 생긴다 (2026-09-16).
         let empty = Chrome.statusLabel(size: 12, lines: 3)
         logEmptyLabel = empty
+        let emptyState = EmptyStateView(symbolName: "clock.arrow.circlepath")
+        emptyState.isHidden = true
+        self.logEmptyState = emptyState
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -5295,7 +5427,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let detailContent = Chrome.vstack([detailTitle, detailScroll], spacing: 6)
         let detailCard = Chrome.card(detailContent, padding: 10)
 
-        let stack = Chrome.vstack([pipeline, headerCard, empty, scroll, detailCard], spacing: 10)
+        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
+        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
+        let stack = Chrome.vstack([pipeline, headerCard, empty, emptyState, scroll, detailCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -5306,6 +5440,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             toolbarCard.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             toolbar.widthAnchor.constraint(equalTo: toolbarCard.widthAnchor, constant: -20),
             empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
+            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
+            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailContent.widthAnchor.constraint(equalTo: detailCard.widthAnchor, constant: -20),
@@ -5486,10 +5624,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             logTable?.reloadData()
         }
         restoreLogSelection()
-        // 안내 글자는 기록이 있을 때만 숨긴다. 없을 때는 안내가 곧 내용이라
-        // 자리를 차지해야 한다 (2026-09-16).
-        logEmptyLabel?.stringValue = logEmptyMessage()
-        logTableScroll?.isHidden = receiptRows.isEmpty
+        // 표를 숨기면 그 자리가 빈 띠로 남는다. 같은 자리를 빈 상태 판이
+        // 대신 차지하고 왜 비었는지 적는다. 예전에는 걸러지기 전의 전체
+        // 기록(receiptRows)을 보고 판단해서, 결과 필터로 모든 줄이 빠진
+        // 뒤에도 안내가 뜨지 않고 빈 표만 남았다 (2026-09-16).
+        let empty = displayedReceipts.isEmpty
+        logEmptyLabel?.stringValue = ""
+        logTableScroll?.isHidden = empty
+        logEmptyState?.isHidden = !empty
+        logEmptyState?.titleText = logEmptyTitle()
+        logEmptyState?.detailText = logEmptyDetail()
         applyLogDetail()
         updateLogStatus()
     }
@@ -5565,6 +5709,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return "아직 기록된 턴이 없습니다. 답변을 시도하면 한 줄씩 쌓입니다."
         }
         return "고른 조건에 맞는 기록이 없습니다."
+    }
+
+    /// 빈 상태 판의 제목. 표 자리를 대신 차지하는 만큼 한 줄로 짧게 적는다.
+    func logEmptyTitle() -> String {
+        if logPageMissing {
+            return "설치된 앱이 턴 기록을 아직 보내지 않습니다"
+        }
+        if receiptRows.isEmpty || logPageUnread {
+            return "아직 기록된 턴이 없습니다"
+        }
+        return "고른 조건에 맞는 기록이 없습니다"
+    }
+
+    /// 빈 상태 판의 두 번째 줄: 지금 무엇을 하면 되는지.
+    func logEmptyDetail() -> String {
+        if logPageMissing {
+            return "앱과 CLI를 다시 설치하면 여기에 채워집니다."
+        }
+        if receiptRows.isEmpty || logPageUnread {
+            return "답변을 시도하면 한 줄씩 쌓입니다."
+        }
+        return "위에서 결과나 채팅방을 바꿔 보세요. 기록은 (receiptRows.count)건 있습니다."
     }
 
     /// 결과 필터에 넣는 순서. 항목 낱말은 코어가 준 outcome_text를 그대로 쓴다.
@@ -5655,15 +5821,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("geek", "긱뉴스", 72.0),
             ("catalog", "추가됨", 64.0),
         ] as [(String, String, CGFloat)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.0))
-            column.title = spec.1
-            column.width = spec.2
-            column.minWidth = 48
-            column.headerCell.alignment = .center
-            if let cell = column.dataCell as? NSTextFieldCell {
-                cell.alignment = .center
-            }
-            table.addTableColumn(column)
+            // 제목 열의 본문은 왼쪽이다. 머리글만 가운데면 방 이름 위에서
+            // 제목이 칸 가운데에 떠 보인다 (2026-09-16).
+            Chrome.addColumn(
+                table,
+                id: spec.0,
+                title: spec.1,
+                width: spec.2,
+                minWidth: 48,
+                alignment: spec.0 == "title" ? .left : .center
+            )
         }
         roomsTable = table
 
@@ -6146,6 +6313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let vectorEmpty = Chrome.statusLabel(size: 12, lines: 3)
         vectorEmptyLabel = vectorEmpty
+        let vectorEmptyState = EmptyStateView(symbolName: "brain")
+        vectorEmptyState.isHidden = true
+        self.vectorEmptyState = vectorEmptyState
 
         let chatLabel = Chrome.label("보기", size: 11, color: .secondaryLabelColor, lines: 1)
         chatLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -6235,15 +6405,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("topics", "주제", 120.0),
             ("origin", "출처", 88.0),
         ] as [(String, String, CGFloat)] {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.0))
-            column.title = spec.1
-            column.width = spec.2
-            column.minWidth = 72
-            column.headerCell.alignment = .center
-            if let cell = column.dataCell as? NSTextFieldCell {
-                cell.alignment = .center
-            }
-            table.addTableColumn(column)
+            // 글자 열의 머리글은 본문과 같이 왼쪽에 붙인다 (2026-09-16).
+            let textColumn = spec.0 == "chat" || spec.0 == "user" || spec.0 == "preview" || spec.0 == "topics"
+            Chrome.addColumn(
+                table,
+                id: spec.0,
+                title: spec.1,
+                width: spec.2,
+                minWidth: 72,
+                alignment: textColumn ? .left : .center
+            )
         }
         vectorTable = table
         vectorTableScroll = scroll
@@ -6319,7 +6490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         deleteButton.bezelStyle = .rounded
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         vectorDeleteButton = deleteButton
-        let formActions = Chrome.hstack([addButton, saveButton, deleteButton, restoreButton, Chrome.spacer()], spacing: 8)
+        // 지식 그래프 창의 편집 단추. 숨은 "기본값 복원"은 스택이 빼므로
+        // 보이는 단추 셋이 창 폭을 나눠 갖는다 (2026-09-16).
+        let formActions = Chrome.actionRow([addButton, saveButton, deleteButton, restoreButton], spacing: 8)
 
         // 머리말(설명+도구+쪽수)을 한 카드, 편집 묶음(값·내용·버튼)을 다른 카드로
         // 묶어 사이 여백만 남긴다. 예전에는 일곱 덩어리가 각자 한 줄씩이라
@@ -6330,7 +6503,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
         let editCard = Chrome.card(editContent, padding: 12)
 
-        let stack = Chrome.vstack([headerCard, vectorEmpty, scroll, graphStack, editCard], spacing: 10)
+        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
+        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
+        let stack = Chrome.vstack([headerCard, vectorEmpty, vectorEmptyState, scroll, graphStack, editCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -6342,6 +6517,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             findRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
             pager.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             vectorEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            vectorEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
+            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
+            vectorEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             graphStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             graphHint.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
@@ -6536,10 +6715,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 표가 비면 회색 띠 대신 이유를 적는다 (2026-09-16).
     func updateVectorEmptyState() {
         guard let label = vectorEmptyLabel else { return }
-        label.stringValue = displayedVectors.isEmpty
-            ? "이 조건에 보여 줄 기억이 없습니다. 다른 보기나 주제를 골라 보세요."
-            : ""
-        vectorTableScroll?.isHidden = displayedVectors.isEmpty
+        let empty = displayedVectors.isEmpty
+        label.stringValue = ""
+        vectorTableScroll?.isHidden = empty
+        vectorEmptyState?.isHidden = !empty
+        vectorEmptyState?.titleText = vectorSourceKind == "knowledge_graph"
+            ? "아직 그릴 뉴런이 없습니다"
+            : "이 조건에 보여 줄 기억이 없습니다"
+        vectorEmptyState?.detailText = vectorSourceKind == "knowledge_graph"
+            ? "대화가 쌓이면 개념이 뉴런으로, 관계가 시냅스로 이어집니다."
+            : "위에서 다른 보기나 주제를 골라 보세요."
     }
 
     /// 그래프 보기는 표와 같은 새로고침에서 함께 갱신된다. 표를 다시 그릴 때

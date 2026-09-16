@@ -1443,7 +1443,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn('title: "Rooms…"', source)
         self.assertIn("jobsSkipClicked", source)
         self.assertIn("restoreRoomsSelection", source)
-        self.assertIn("headerCell.alignment = .center", source)
+        # 머리글은 본문과 같은 쪽에 붙는다. 열마다 정렬이 다르므로 창 하나를
+        # 통째로 보고 판단하지 않고, 열을 만드는 한 곳에서 정하게 한다
+        # (2026-09-16).
+        self.assertIn("column.headerCell.alignment = alignment", source)
+        self.assertIn("alignment: spec.0 == \"title\" ? .left : .center", source)
         self.assertIn("roomsTableClicked", source)
         self.assertIn("lamp.interactive = interactive", source)
         self.assertIn("final class CenteredLabelCell", source)
@@ -1605,7 +1609,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
         date_at = source.find('("date", "시각"')
         self.assertGreater(date_at, 0)
         date_cols = source[date_at : date_at + 700]
-        self.assertIn("headerCell.alignment = .center", date_cols)
+        # 시각은 숫자라 가운데, 글자 열은 왼쪽이다. 두 정렬이 같은 호출에서
+        # 정해지는지 본다 (2026-09-16).
+        self.assertIn("alignment: textColumn ? .left : .center", date_cols)
 
     def test_vector_list_all_chats_and_offset(self):
         with tempfile.TemporaryDirectory() as temporary:
