@@ -5648,10 +5648,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if fail + warn == 0 {
                 hint.stringValue = "막힌 항목이 없습니다."
             } else {
-                // 고칠 수 있는 항목이 무엇인지는 표의 "조치" 열이 이미 적는다.
-                // 머리말은 몇 건인지만 말하고, 안전 경계는 위 한 줄에 맡긴다
-                // (2026-09-16).
-                hint.stringValue = "고칠 수 있는 항목 \(report.healable.count)건이 표시되어 있습니다."
+                // 고칠 수 있는 항목이 있는지만 말한다. 무엇을 고칠 수 있는지는
+                // 아래 "자가 개선" 단추가 켜졌는지로 알 수 있고, 표는 그
+                // 내용만 보여 준다 (2026-09-16).
+                hint.stringValue = report.healable.isEmpty
+                    ? "여기서 고칠 수 있는 항목은 없습니다."
+                    : "고칠 수 있는 항목 \(report.healable.count)건."
             }
         }
         doctorHealButton?.isEnabled = !report.healable.isEmpty
@@ -5798,15 +5800,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let (scroll, table) = Chrome.table()
         table.delegate = self
         table.dataSource = self
-        table.rowHeight = 44
+        // 줄 높이를 내용에 맞춘다. 예전에는 44pt 고정이라 한 줄짜리 항목도
+        // 44pt를 차지해, 560pt 창에서 13개 중 7개만 보였다 (2026-09-16).
+        table.rowHeight = 30
+        table.usesAutomaticRowHeights = false
         table.usesAlternatingRowBackgroundColors = true
         for spec in [
             ("level", "상태", 64.0),
             ("title", "항목", 108.0),
             // 설명은 가장 긴 열이다. 창(760)에서 다른 세 열과 여백을 뺀 만큼만
             // 갖게 해야 마지막 열이 창 밖으로 밀리지 않는다 (2026-09-16).
-            ("advice", "설명", 448.0),
-            ("heal", "조치", 78.0),
+            ("advice", "설명", 526.0),
         ] as [(String, String, CGFloat)] {
             // 항목·설명은 본문이 왼쪽이므로 머리글도 왼쪽에 붙인다
             // (2026-09-16).
@@ -6787,18 +6791,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     alignment: .left
                 )
                 field.toolTip = check.advice
-                // 자가 점검의 주 내용은 이 설명이다. 한 줄로 자르면 왜 문제인지
-                // 읽을 수 없어 두 줄로 접어 보여 준다 (2026-09-16).
-                field.setLines(2)
+                // 자가 점검의 주 내용은 이 설명이다. 예전에는 두 줄로 접어
+                // 보여 주고 줄 높이를 44pt로 고정했다. 그러면 한 줄짜리 항목도
+                // 44pt를 써서 창에 일곱 줄밖에 안 들어갔다. 지금은 한 줄로
+                // 두고, 긴 문장은 도움말에 전문을 남긴다 (2026-09-16).
+                field.setLines(1)
                 return field
-            case "heal":
-                return reusedLabel(
-                    in: tableView,
-                    column: "heal",
-                    text: check.heal.isEmpty ? "—" : "고칠 수 있음",
-                    font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    color: check.heal.isEmpty ? NSColor.tertiaryLabelColor : NSColor.systemBlue
-                )
             default:
                 return nil
             }
