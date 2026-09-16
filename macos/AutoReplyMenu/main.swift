@@ -5806,7 +5806,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// (2026-09-17).
     @objc func gearClicked(_ sender: NSButton) {
         _ = sender
-        presentGearMenu()
+        // 메뉴 안의 단추를 누르면 AppKit이 먼저 메뉴를 닫는다. 그 닫는
+        // 동작이 끝나기 전에 새 메뉴를 열면 곧바로 닫혀 버리므로, 한 바퀴
+        // 돌린 뒤에 연다 (2026-09-17).
+        DispatchQueue.main.async { [weak self] in
+            self?.presentGearMenu()
+        }
     }
 
     /// 톱니바퀴를 누르면 열리는 목록. 창을 여는 유일한 입구다.
