@@ -213,6 +213,12 @@ def tables_past_their_clip(rows: list[dict]) -> list[dict]:
     right edge of the 답변 column was cut off. The cause was that nothing made
     the table follow its clip view, which no amount of column maths would
     reveal - the frames themselves have to be compared (2026-09-16).
+
+    A table being wider than its clip view is not by itself a defect: the table
+    keeps a margin at each side that the clip view trims. What matters is
+    whether the last column fits, so that is what gets measured when the audit
+    reports where the columns end. Older audits without that field fall back to
+    the frame comparison.
     """
     found: list[dict] = []
     by_path = {row["path"]: row for row in rows}
@@ -222,7 +228,11 @@ def tables_past_their_clip(rows: list[dict]) -> list[dict]:
         clip = by_path.get(row["path"].rsplit("/", 1)[0])
         if clip is None or clip["kind"] != "NSClipView":
             continue
-        table_right = float(row.get("winLeft") or 0.0) + float(row["w"])
+        if "columnsRight" in row:
+            # 열이 실제로 끝나는 자리. 표가 스스로 넓어진 여백은 빼고 본다.
+            table_right = float(row.get("winLeft") or 0.0) + float(row["columnsRight"])
+        else:
+            table_right = float(row.get("winLeft") or 0.0) + float(row["w"])
         clip_right = float(clip.get("winLeft") or 0.0) + float(clip["w"])
         over = table_right - clip_right
         if over > 1:

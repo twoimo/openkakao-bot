@@ -3532,7 +3532,9 @@ class LayoutGateTests(unittest.TestCase):
     def setUp(self):
         self.check = load_layout_check()
 
-    def scroll_stack(self, table_width, clip_width, h_scroller=False, window="log-min"):
+    def scroll_stack(
+        self, table_width, clip_width, h_scroller=False, window="log-min", columns_right=None
+    ):
         """A table inside a clip view inside a scroll view, as AppKit builds it."""
         scroll = {
             "window": window,
@@ -3562,6 +3564,9 @@ class LayoutGateTests(unittest.TestCase):
             "h": 260.0,
             "winLeft": 16.0,
             "intercellSpacing": 8.0,
+            # 열이 끝나는 자리. 표 프레임과 다르다: 표는 좌우에 자기 여백을
+            # 두고, 그 여백은 클립 뷰가 잘라 낸다 (2026-09-16).
+            "columnsRight": columns_right if columns_right is not None else table_width,
             "columns": [
                 {"id": name, "width": 92.0, "minWidth": minimum}
                 for name, minimum in (
@@ -3596,6 +3601,27 @@ class LayoutGateTests(unittest.TestCase):
     def test_a_rounding_difference_is_not_reported(self):
         scroll, clip, table = self.scroll_stack(table_width=951.4, clip_width=951.0)
         self.assertEqual(self.check.tables_past_their_clip([scroll, clip, table]), [])
+
+    def test_a_table_wider_than_its_clip_view_is_fine_when_the_columns_fit(self):
+        """The table keeps a margin the clip view trims; that is not a defect.
+
+        AppKit's inset table style gives the table 20pt at each side. The frame
+        is therefore wider than the clip view even when every column is fully
+        visible, and the frame alone cannot tell the two apart (2026-09-16).
+        """
+        scroll, clip, table = self.scroll_stack(
+            table_width=976.0, clip_width=951.0, columns_right=940.0
+        )
+        self.assertEqual(self.check.tables_past_their_clip([scroll, clip, table]), [])
+
+    def test_columns_ending_past_the_clip_view_are_reported(self):
+        """This is the shipped receipts-window bug: 답변 ran off the edge."""
+        scroll, clip, table = self.scroll_stack(
+            table_width=976.0, clip_width=951.0, columns_right=976.0
+        )
+        found = self.check.tables_past_their_clip([scroll, clip, table])
+        self.assertEqual(len(found), 1)
+        self.assertAlmostEqual(found[0]["over"], 25.0, places=1)
 
     def test_columns_that_do_not_fit_are_reported(self):
         """624pt of column minimums in a 600pt clip view is unreachable."""

@@ -845,10 +845,11 @@ final class TableScrollView: NSScrollView {
         let columns = table.tableColumns.compactMap { $0 as? DesignedColumn }
         guard !columns.isEmpty, columns.count == table.tableColumns.count else { return }
         let spacing = table.intercellSpacing.width * CGFloat(max(columns.count - 1, 0))
-        // 표는 열 폭과 별개로 좌우에 자기 여백을 둔다. 이 값을 빼지 않으면
-        // 열을 표 폭에 꽉 채울 때마다 표가 그만큼 넓어진다. 표에게 첫 열이
-        // 어디서 시작하는지 물어보면 정확하다: 프레임 폭으로 역산하면 그때의
-        // 폭이 클립 뷰 값이라 여백이 엉뚱하게 잡힌다 (2026-09-16).
+        // 표는 열 폭과 별개로 좌우에 자기 여백을 둔다(현재 macOS의 inset
+        // 양식에서 20pt). 이 값을 빼지 않으면 열을 표 폭에 꽉 채울 때마다
+        // 표가 그만큼 넓어져 클립 뷰 밖으로 나간다. 여백은 첫 열이 시작하는
+        // 자리에서 읽는다: 열 폭이 아니라 표 양식이 정하는 값이라 언제 재도
+        // 같다 (2026-09-16).
         let padding = max(table.rect(ofColumn: 0).minX, 0) * 2
         let designed = columns.map { max($0.designedWidth, $0.minWidth, 1) }
         let minimums = columns.map { max($0.minWidth, 1) }
@@ -880,12 +881,47 @@ final class TableScrollView: NSScrollView {
         for (column, value) in zip(columns, widths) where abs(column.width - value) > 0.5 {
             column.width = value
         }
+        trimColumnOverflow(of: table, columns: columns, minimums: minimums, to: width)
         // 열 폭을 바꾸면 표가 열 합에 맞춰 다시 자라난다. 클립 뷰 폭은 창이
         // 정한 값이므로 마지막에 되돌린다 (2026-09-16).
         if abs(table.frame.width - width) > 0.5 {
             var frame = table.frame
             frame.size.width = width
             table.frame = frame
+        }
+    }
+
+    /// 열이 표의 오른쪽 끝을 넘어간 만큼을 덜어 낸다.
+    ///
+    /// 폭을 계산으로 정해도 표는 그대로 그리지 않는다: AppKit이 열마다 시작
+    /// 자리를 픽셀에 맞춰 반올림해서, 여섯 열이면 마지막 열이 3pt까지 오른쪽
+    /// 으로 밀린다. 클립 뷰가 그만큼 잘라 내므로 "답변" 열의 오른쪽 끝이
+    /// 조금씩 사라졌다. 표에게 마지막 열이 어디서 끝나는지 물어보고 넘친
+    /// 만큼을 덜어 내면, 열 수가 달라져도 계산이 아니라 실제 눈금으로 맞춘
+    /// 셈이 된다 (2026-09-16).
+    private func trimColumnOverflow(
+        of table: NSTableView,
+        columns: [DesignedColumn],
+        minimums: [CGFloat],
+        to width: CGFloat
+    ) {
+        guard columns.count == minimums.count, let lastIndex = columns.indices.last else { return }
+        // 반올림은 열마다 다시 일어나므로 한 번 덜어 내고 끝내지 않고 확인한다.
+        for _ in 0..<2 {
+            let overshoot = table.rect(ofColumn: lastIndex).maxX - width
+            if overshoot <= 0.5 { return }
+            var left = overshoot
+            // 마지막 열부터 덜어 내고, 거기서 더 못 덜면 여유가 있는 열에서
+            // 가져온다. 어느 열도 최소 폭 아래로는 내려가지 않는다.
+            for index in columns.indices.reversed() {
+                if left <= 0.5 { break }
+                let slack = columns[index].width - minimums[index]
+                if slack <= 0.5 { continue }
+                let taken = min(slack, left)
+                columns[index].width -= taken
+                left -= taken
+            }
+            if left > 0.5 { return }
         }
     }
 }
@@ -1152,6 +1188,16 @@ enum LayoutAudit {
                     ]
                 }
                 entry["intercellSpacing"] = table.intercellSpacing.width
+                // 마지막 열의 오른쪽 끝. 표의 프레임은 열을 다 담고도 남는
+                // 여백이 있어 클립 뷰보다 넓을 수 있다. 넓다는 것 자체는
+                // 결함이 아니다(스크롤 뷰가 잘라 낸다). 결함은 열이 잘리는
+                // 것이므로, 정말 잘리는지는 이 값으로 판단해야 한다
+                // (2026-09-16).
+                if let last = table.tableColumns.last {
+                    entry["columnsLeft"] = round(table.rect(ofColumn: 0).minX * 100) / 100
+                    entry["columnsRight"] = round(table.rect(ofColumn: table.tableColumns.count - 1).maxX * 100) / 100
+                    entry["lastColumn"] = last.identifier.rawValue
+                }
             }
             // 스크롤 뷰가 가로로 굴러가는지 담는다. 열 최소 너비의 합이 표에
             // 주어진 폭보다 클 때, 가로 스크롤이 있으면 마지막 열까지 볼 수
@@ -5368,9 +5414,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         if let hint = doctorHint {
             if fail + warn == 0 {
-                hint.stringValue = "지금은 막힌 항목이 없습니다. 메시지를 보내거나 세션을 재시작하지는 않습니다."
+                hint.stringValue = "막힌 항목이 없습니다."
             } else {
-                hint.stringValue = "문제와 주의가 위에 있습니다. 고칠 수 있는 항목만 표시를 지우거나 이미 예약된 답변을 프로그램에 알립니다. 세션을 재시작하거나 카카오톡을 앞으로 가져오지는 않습니다."
+                // 고칠 수 있는 항목이 무엇인지는 표의 "조치" 열이 이미 적는다.
+                // 머리말은 몇 건인지만 말하고, 안전 경계는 위 한 줄에 맡긴다
+                // (2026-09-16).
+                hint.stringValue = "고칠 수 있는 항목 \(report.healable.count)건이 표시되어 있습니다."
             }
         }
         doctorHealButton?.isEnabled = !report.healable.isEmpty
@@ -5497,7 +5546,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let summary = Chrome.summary("점검 중")
         doctorSummary = summary
-        let hint = Chrome.hint("자가 점검은 보기만 합니다. 자가 개선은 고칠 수 있는 항목만 적용합니다. 메시지를 보내거나 세션을 재시작하거나 카카오톡을 앞으로 가져오지는 않습니다.")
+        // 안전 경계는 한 줄로 적는다. 표의 "런타임" 줄이 이미 세션 재시작과
+        // 카카오톡 포커스 이야기를 하므로, 머리말이 같은 말을 되풀이하면
+        // 창 위쪽 두 줄이 같은 내용으로 채워진다 (2026-09-16).
+        let hint = Chrome.hint("보기만 합니다. 자가 개선은 고칠 수 있는 항목만 적용합니다.")
         doctorHint = hint
         let filter = NSSegmentedControl(labels: ["전체", "문제", "정상"], trackingMode: .selectOne, target: self, action: #selector(doctorFilterChanged(_:)))
         filter.selectedSegment = 0
@@ -5985,7 +6037,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if receiptRows.isEmpty || logPageUnread {
             return "답변을 시도하면 한 줄씩 쌓입니다."
         }
-        return "위에서 결과나 채팅방을 바꿔 보세요. 기록은 (receiptRows.count)건 있습니다."
+        return "위에서 결과나 채팅방을 바꿔 보세요. 기록은 \(receiptRows.count)건 있습니다."
     }
 
     /// 결과 필터에 넣는 순서. 항목 낱말은 코어가 준 outcome_text를 그대로 쓴다.
