@@ -41,6 +41,42 @@ def write_ledger(state_root: Path, chat_id: str, rows: list) -> None:
     (room / "reply-evidence.jsonl").write_text(body + "\n", encoding="utf-8")
 
 
+def write_jobs(state_root: Path, chat_id: str, jobs: list) -> None:
+    """Build the worker's job table the way the worker leaves it."""
+    import sqlite3
+
+    room = state_root / "rooms" / chat_id
+    room.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(room / "reply-queue.sqlite3")
+    try:
+        connection.execute(
+            "create table reply_jobs ("
+            "event_id text, status text, decision text, reason text,"
+            " error_class text, created_at real, updated_at real, attempt_no integer)"
+        )
+        for job in jobs:
+            connection.execute(
+                "insert into reply_jobs values (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    job.get("event_id"),
+                    job.get("status"),
+                    job.get("decision"),
+                    job.get("reason"),
+                    job.get("error_class"),
+                    job.get("created_at"),
+                    job.get("updated_at"),
+                    job.get("attempt_no", 1),
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def now() -> float:
+    return dt.datetime.now(dt.timezone.utc).timestamp()
+
+
 def stamp(days_ago: float = 0.0) -> str:
     when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_ago)
     return when.isoformat()
@@ -148,8 +184,15 @@ class CriterionTests(unittest.TestCase):
         self.assertEqual(item["numerator"], 1)
 
     def test_intervention_timing_penalises_stale_and_duplicate(self):
+        """Skipping an old message is the timing behaviour, not a defect.
+
+        The first version of this criterion failed every row the policy
+        dropped for staleness, so being quiet scored worse than answering
+        late. This pins the other reading: the sends are what get judged
+        (2026-09-16).
+        """
         rows = [
-            {"recorded_at": stamp(), "event_id": "a", "status": "sent", "reason": None},
+            {"recorded_at": stamp(0.5), "event_id": "a", "status": "sent", "send_delay_seconds": 30},
             {"recorded_at": stamp(), "event_id": "b", "status": "skipped", "reason": "stale_backlog"},
             {"recorded_at": stamp(), "event_id": "c", "status": "skipped", "reason": "already_commented"},
         ]
@@ -157,8 +200,80 @@ class CriterionTests(unittest.TestCase):
             root = Path(tmp)
             write_ledger(root, "1", rows)
             item = SCORER.measure(root, "1", 7)["criteria"]["intervention_timing"]
-        self.assertEqual(item["denominator"], 3)
+        self.assertEqual(item["denominator"], 1)
         self.assertEqual(item["numerator"], 1)
+        self.assertAlmostEqual(item["score"], 1.0, places=4)
+
+    def test_intervention_timing_flags_a_late_reply(self):
+        rows = [
+            {"recorded_at": stamp(0.4), "event_id": "a", "status": "sent", "send_delay_seconds": 40},
+            {"recorded_at": stamp(), "event_id": "b", "status": "sent", "send_delay_seconds": 900},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["intervention_timing"]
+        self.assertEqual(item["denominator"], 2)
+        self.assertEqual(item["numerator"], 1)
+        self.assertIn("600초 초과 1", item["note"])
+
+    def test_intervention_timing_flags_a_second_reply_in_one_burst(self):
+        """Two sends 96 seconds apart is the double reply the room noticed."""
+        first = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=200)
+        rows = [
+            {
+                "recorded_at": (first).isoformat(),
+                "event_id": "a",
+                "status": "sent",
+                "send_delay_seconds": 20,
+            },
+            {
+                "recorded_at": (first + dt.timedelta(seconds=96)).isoformat(),
+                "event_id": "b",
+                "status": "sent",
+                "send_delay_seconds": 25,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["intervention_timing"]
+        self.assertEqual(item["denominator"], 2)
+        self.assertEqual(item["numerator"], 1)
+        self.assertIn("중복 1", item["note"])
+
+    def test_intervention_timing_skips_sends_without_a_reading(self):
+        """A send with no recorded delay cannot be judged either way."""
+        rows = [
+            {"recorded_at": stamp(), "event_id": "a", "status": "sent", "reply": "답"},
+            {
+                "recorded_at": stamp(),
+                "event_id": "b",
+                "status": "sent",
+                "send_delay_seconds": 12,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["intervention_timing"]
+        self.assertEqual(item["denominator"], 1)
+        self.assertIn("시각 없는 전송 1건 제외", item["note"])
+
+    def test_intervention_timing_uses_the_detect_delay_when_the_send_delay_is_absent(self):
+        rows = [
+            {
+                "recorded_at": stamp(),
+                "event_id": "a",
+                "status": "sent",
+                "detect_delay_seconds": 3600,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["intervention_timing"]
+        self.assertEqual(item["numerator"], 0)
 
     def test_content_fit_joins_the_scheduled_and_sent_rows(self):
         """The retrieval counts sit on one row and the send on another.
@@ -220,6 +335,13 @@ class CriterionTests(unittest.TestCase):
         self.assertEqual(item["state"], "insufficient_data")
 
     def test_reliability_counts_model_outages(self):
+        """The ledger fallback judges a turn, not a row.
+
+        One turn spans several rows: it is planned, deferred while the model
+        warms, and finally sent. Counting the deferral as a failure is what
+        made this criterion read 0.432 while every reply decision of the same
+        week was delivered (2026-09-16).
+        """
         rows = [
             {"recorded_at": stamp(), "event_id": "a", "status": "sent", "reason": None},
             {
@@ -228,13 +350,92 @@ class CriterionTests(unittest.TestCase):
                 "status": "deferred",
                 "reason": "model_temporarily_unavailable",
             },
+            {"recorded_at": stamp(), "event_id": "b", "status": "sent", "reply": "답"},
         ]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_ledger(root, "1", rows)
             item = SCORER.measure(root, "1", 7)["criteria"]["reliability"]
         self.assertEqual(item["denominator"], 2)
+        self.assertEqual(item["numerator"], 2)
+        self.assertAlmostEqual(item["score"], 1.0, places=4)
+
+    def test_reliability_fallback_reports_pending_separately(self):
+        rows = [
+            {"recorded_at": stamp(), "event_id": "a", "status": "sent"},
+            {"recorded_at": stamp(), "event_id": "b", "status": "scheduled"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["reliability"]
+        self.assertEqual(item["denominator"], 1)
+        self.assertIn("대기 1", item["note"])
+
+    def test_reliability_reads_the_job_table_when_it_exists(self):
+        rows = [
+            {"recorded_at": stamp(), "event_id": "a", "status": "scheduled"},
+            {"recorded_at": stamp(), "event_id": "b", "status": "scheduled"},
+            {"recorded_at": stamp(), "event_id": "c", "status": "scheduled"},
+        ]
+        jobs = [
+            {"event_id": "a", "decision": "reply", "status": "sent", "created_at": now(), "updated_at": now()},
+            {"event_id": "b", "decision": "reply", "status": "deferred", "created_at": now(), "updated_at": now()},
+            {
+                "event_id": "c",
+                "decision": "reply",
+                "status": "skipped",
+                "reason": "pre_send_unavailable",
+                "error_class": "pre_send_unavailable",
+                "created_at": now(),
+                "updated_at": now(),
+            },
+            {"event_id": "d", "decision": "skip", "status": "skipped", "created_at": now(), "updated_at": now()},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            write_jobs(root, "1", jobs)
+            item = SCORER.measure(root, "1", 7)["criteria"]["reliability"]
+        # The deferred turn is not an outcome yet, and the policy's own skip is
+        # not a reply decision, so only one delivered and one lost are judged.
+        self.assertEqual(item["denominator"], 2)
         self.assertEqual(item["numerator"], 1)
+        self.assertAlmostEqual(item["score"], 0.5, places=4)
+        self.assertIn("대기 1", item["note"])
+
+    def test_reliability_ignores_a_turn_the_operator_dismissed(self):
+        rows = [{"recorded_at": stamp(), "event_id": "a", "status": "scheduled"}]
+        jobs = [
+            {
+                "event_id": "a",
+                "decision": "reply",
+                "status": "skipped",
+                "reason": "operator_dismissed",
+                "created_at": now(),
+                "updated_at": now(),
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            write_jobs(root, "1", jobs)
+            item = SCORER.measure(root, "1", 7)["criteria"]["reliability"]
+        self.assertEqual(item["state"], "insufficient_data")
+        self.assertIn("운영자 취소 1", item["note"])
+
+    def test_reliability_ignores_jobs_outside_the_window(self):
+        rows = [{"recorded_at": stamp(), "event_id": "a", "status": "scheduled"}]
+        old = dt.datetime.now(dt.timezone.utc).timestamp() - 30 * 86400
+        jobs = [
+            {"event_id": "old", "decision": "reply", "status": "skipped", "created_at": old, "updated_at": old},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            write_jobs(root, "1", jobs)
+            item = SCORER.measure(root, "1", 7)["criteria"]["reliability"]
+        self.assertEqual(item["state"], "insufficient_data")
 
     def test_observability_needs_event_id_status_and_time(self):
         rows = [
