@@ -1025,8 +1025,17 @@ def collect_vector_list(
     # Source audit: list path uses m.vector / , vector columns only.
     if source == "knowledge_graph":
         from auto_reply_knowledge_graph import collect_knowledge_graph_list
+
+        # 목록도 그래프와 같은 저장소를 읽어야 한다.
+        #
+        # 그래프 명령은 --state-root 아래의 knowledge-graph.sqlite3에 색인
+        # 결과를 쓴다. 그런데 목록은 호출자가 넘긴 db_path를 그대로 써서
+        # 다른 파일을 열었다. 그 파일에는 손으로 적은 다섯 노드만 있어,
+        # 74개 뉴런이 있는데도 표에는 5줄만 나왔다 (2026-09-16).
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
         return collect_knowledge_graph_list(
-            db_path,
+            state_root / "context.sqlite3",
             query=query,
             chat=chat,
             limit=limit,

@@ -1919,25 +1919,77 @@ final class KnowledgeGraphView: NSView {
             ring.lineWidth = selected ? 2 : 1
             ring.stroke()
 
+        }
+        // 이름표는 세포체를 다 그린 뒤에 붙인다.
+        //
+        // 예전에는 뉴런마다 제자리에 바로 그렸다. 그래프가 촘촘해지자
+        // 가운데 이름들이 서로 겹쳐 무엇이 무엇인지 읽을 수 없는 얼룩이
+        // 되었다. 지금은 중요한 뉴런부터 자리를 잡고, 이미 놓인 이름표나
+        // 남의 몸통과 겹치면 위·아래·옆으로 비켜 본다. 어디에도 들어가지
+        // 않으면 이름을 접고, 고른 뉴런과 마우스를 올린 뉴런은 언제나
+        // 보여 준다 (2026-09-16, 6 Pro 지적).
+        drawLabels()
+        _ = byId
+    }
+
+    /// 이름표를 겹치지 않게 배치한다. 중요한 뉴런이 먼저 자리를 갖는다.
+    private func drawLabels() {
+        var placed: [NSRect] = []
+        // 세포체도 자리를 차지한다. 이름표가 남의 몸통을 덮으면 읽기 어렵다.
+        for node in nodes {
+            guard let raw = positions[node.id] else { continue }
+            let pos = fitted(raw)
+            let r = radius(node)
+            placed.append(NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
+        }
+        let ordered = nodes.sorted { left, right in
+            if left.importance != right.importance { return left.importance > right.importance }
+            return left.id < right.id
+        }
+        for node in ordered {
+            guard let raw = positions[node.id] else { continue }
+            let pos = fitted(raw)
+            let r = radius(node)
+            let selected = node.id == selectedNodeId
+            let hovered = node.id == hoveredId
             let text = node.label as NSString
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .regular),
                 .foregroundColor: NSColor.labelColor,
             ]
             let size = text.size(withAttributes: attrs)
-            let labelRect = NSRect(
-                x: pos.x - size.width / 2,
-                y: pos.y + r + 3,
-                width: size.width,
-                height: size.height
-            )
+            // 이름 뒤에 까는 판이 좌우로 3pt씩 넓다 (labelExtent 참고).
+            let width = size.width + 6
+            let height = size.height + 2
+            // 아래, 위, 오른쪽, 왼쪽 순으로 비켜 본다.
+            let candidates = [
+                NSPoint(x: pos.x - width / 2, y: pos.y + r + 2),
+                NSPoint(x: pos.x - width / 2, y: pos.y - r - height - 2),
+                NSPoint(x: pos.x + r + 3, y: pos.y - height / 2),
+                NSPoint(x: pos.x - r - width - 3, y: pos.y - height / 2),
+            ]
+            var chosen: NSRect?
+            for origin in candidates {
+                let rect = NSRect(x: origin.x, y: origin.y, width: width, height: height)
+                if placed.contains(where: { $0.intersects(rect) }) { continue }
+                chosen = rect
+                break
+            }
+            // 눌러 놓고도 이름이 사라지면 무엇을 골랐는지 알 수 없다.
+            if chosen == nil, !selected, !hovered { continue }
+            let rect = chosen ?? NSRect(x: pos.x - width / 2, y: pos.y + r + 2, width: width, height: height)
+            placed.append(rect)
             // A soft plate keeps the name readable over a synapse.
-            let plate = labelRect.insetBy(dx: -3, dy: -1)
             NSColor.windowBackgroundColor.withAlphaComponent(0.72).setFill()
-            NSBezierPath(roundedRect: plate, xRadius: 3, yRadius: 3).fill()
-            text.draw(in: labelRect, withAttributes: attrs)
+            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+            let inner = NSRect(
+                x: rect.minX + 3,
+                y: rect.minY + 1,
+                width: rect.width - 6,
+                height: rect.height - 2
+            )
+            text.draw(in: inner, withAttributes: attrs)
         }
-        _ = byId
     }
 }
 
@@ -7440,8 +7492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             guard needed > 1 else { return }
             // 그래프 보기에서는 캔버스가 정사각형에 가까워야 뉴런이 골고루
             // 퍼진다. 창 폭에서 여백을 뺀 만큼을 캔버스 높이로 잡는다.
+            //
+            // 다만 실제로 그릴 뉴런이 있을 때만 그렇다. 보기만 지식
+            // 그래프이고 그릴 것이 없으면, 이 높이가 그대로 남아 빈 상태
+            // 판이 704pt짜리 빈 카드가 되었다 (2026-09-16).
             let graphCanvas = max(content.bounds.width - 40, Self.vectorWindowFloor.height)
             let showsGraph = currentVectorSource() == "knowledge_graph"
+                && !(vectorGraphView?.nodes.isEmpty ?? true)
             let desired = min(
                 max(needed, showsGraph ? graphCanvas : 0) + 32,
                 Self.vectorWindowHeightLimit

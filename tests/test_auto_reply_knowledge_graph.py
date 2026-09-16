@@ -249,6 +249,196 @@ class MigrationTests(unittest.TestCase):
                 )
 
 
+class ListEnvelopeTests(unittest.TestCase):
+    """목록은 창이 읽는 봉투로 돌려주어야 한다.
+
+    예전에는 items·has_more로 돌려주어 디코딩이 통째로 실패했고, 뉴런이
+    수십 개 있는데도 창에는 "기록 없음"만 떴다 (2026-09-16).
+    """
+
+    def test_list_returns_the_vector_list_envelope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            report = KG.collect_knowledge_graph_list(
+                root / "context.sqlite3", limit=50, offset=0
+            )
+        for key in ("ok", "action", "count", "total", "rows", "truncated", "topics"):
+            with self.subTest(key=key):
+                self.assertIn(key, report)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["count"], len(report["rows"]))
+        self.assertIsInstance(report["truncated"], bool)
+
+    def test_row_ids_are_stable_across_calls(self):
+        """창은 이 번호로 고른 줄을 기억한다.
+
+        프로세스마다 달라지면 새로고침할 때마다 선택이 풀린다. 예전에는
+        파이썬 hash()를 써서 매번 값이 바뀌었다 (2026-09-16).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            first = KG.collect_knowledge_graph_list(root / "context.sqlite3", limit=50)
+            second = KG.collect_knowledge_graph_list(root / "context.sqlite3", limit=50)
+        self.assertEqual(
+            [row["id"] for row in first["rows"]],
+            [row["id"] for row in second["rows"]],
+        )
+        self.assertEqual(
+            [row["row_key"] for row in first["rows"]],
+            [row["row_key"] for row in second["rows"]],
+        )
+
+    def test_an_empty_query_still_returns_the_envelope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = KG.collect_knowledge_graph_list(
+                root / "context.sqlite3", query="없는말", limit=10
+            )
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["rows"], [])
+        self.assertEqual(report["count"], 0)
+
+
+class DeduplicationTests(unittest.TestCase):
+    """같은 방이 두 이름으로 서지 않게 한다."""
+
+    def test_room_key_maps_a_number_to_its_catalog_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "menubar-room-catalog.json").write_text(
+                json.dumps(
+                    {"rooms": [{"chat_id": 325472527151234, "title": "NIMDA 방"}]},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(KG._room_key(root, "그룹:325472527151234"), "NIMDA 방")
+            self.assertEqual(KG._room_key(root, "325472527151234"), "NIMDA 방")
+
+    def test_room_key_keeps_an_unknown_room_as_is(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(KG._room_key(root, "그룹:999"), "그룹:999")
+            self.assertEqual(KG._room_key(root, ""), "")
+
+    def test_room_titles_survives_a_broken_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "menubar-room-catalog.json").write_text("not json", encoding="utf-8")
+            self.assertEqual(KG._room_titles(root), {})
+
+    def test_a_person_named_like_the_room_is_not_a_separate_neuron(self):
+        """알림 계정은 방 이름과 같은 이름으로 말한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "context.sqlite3"
+            conn = sqlite3.connect(index)
+            conn.execute(
+                "CREATE TABLE context_messages (id INTEGER PRIMARY KEY, chat TEXT,"
+                " user_name TEXT, message TEXT, date TEXT)"
+            )
+            for i in range(60):
+                conn.execute(
+                    "INSERT INTO context_messages (chat, user_name, message, date)"
+                    " VALUES ('커리어톡', '커리어톡', ?, '2026-09-01 10:00:00')",
+                    (f"채용 공고 알림 {i}",),
+                )
+            conn.commit()
+            conn.close()
+            kg = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(kg)
+                KG.index_chat_entities(kg, root)
+                KG.index_person_entities(kg, root)
+                people = [
+                    row[0]
+                    for row in kg.execute(
+                        "SELECT entity_id FROM kg_entities WHERE entity_id LIKE 'person:%'"
+                    )
+                ]
+            finally:
+                kg.close()
+        self.assertEqual(people, [])
+
+
+class PruneTests(unittest.TestCase):
+    """색인에서 빠진 뉴런은 지운다. 단, 색인이 고장 나면 지우지 않는다."""
+
+    def _seed(self, conn):
+        conn.execute(
+            "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+            " description, key_facts_json, importance, updated_at)"
+            " VALUES ('chat:옛방', '옛방', '대화방', '[]', '', '[]', 50, 1)"
+        )
+        conn.execute(
+            "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+            " description, key_facts_json, importance, updated_at)"
+            " VALUES ('chat:새방', '새방', '대화방', '[]', '', '[]', 50, 9999999999)"
+        )
+        conn.execute(
+            "INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)"
+            " VALUES ('chat:옛방', 'DISCUSSED', 'topic:코인', '옛 연결', 50, 1)"
+        )
+        conn.commit()
+
+    def test_a_stale_node_and_its_synapses_are_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                self._seed(conn)
+                result = KG.prune_indexed_entities(conn, cycle_started_at=1000)
+                left = {
+                    row[0]
+                    for row in conn.execute("SELECT entity_id FROM kg_entities")
+                }
+                relations = conn.execute(
+                    "SELECT COUNT(*) FROM kg_relations WHERE source_id = 'chat:옛방'"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+        self.assertEqual(result["nodes"], 1)
+        self.assertNotIn("chat:옛방", left)
+        self.assertIn("chat:새방", left)
+        self.assertEqual(relations, 0)
+
+    def test_a_mostly_stale_graph_is_left_alone(self):
+        """색인을 못 읽은 주기에 그래프가 비면 안 된다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                for i in range(10):
+                    conn.execute(
+                        "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                        " description, key_facts_json, importance, updated_at)"
+                        " VALUES (?, ?, '대화방', '[]', '', '[]', 50, 1)",
+                        (f"chat:방{i}", f"방{i}"),
+                    )
+                conn.commit()
+                result = KG.prune_indexed_entities(conn, cycle_started_at=1000)
+                remaining = conn.execute(
+                    "SELECT COUNT(*) FROM kg_entities WHERE entity_id LIKE 'chat:%'"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+        self.assertEqual(result["nodes"], 0)
+        self.assertEqual(remaining, 10)
+
+    def test_nothing_stale_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                result = KG.prune_indexed_entities(conn, cycle_started_at=1000)
+            finally:
+                conn.close()
+        self.assertEqual(result, {"nodes": 0, "relations": 0})
+
+
 class NormalizeTests(unittest.TestCase):
     def test_normalize_rejects_a_non_dict(self):
         self.assertEqual(KG._normalize_evidence(None)["kind"], "seed")
