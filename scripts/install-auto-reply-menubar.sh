@@ -44,3 +44,25 @@ if ! launchctl kickstart -k "gui/$UID_NOW/$LABEL" 2>/dev/null; then
   fi
 fi
 echo "installed: $TARGET"
+
+# Point the LaunchAgent at the stable CLI, not the copy inside the bundle.
+#
+# macOS keys an automation (Apple Events) approval on the binary's path and
+# code identity. The bundle path changes identity on every build and had no
+# approval row at all, so every send asked the operator again; the log holds
+# 86 separate approval rows, one per path this app has ever run from. The
+# session runtime already stages one signed copy at a fixed path for exactly
+# this reason, so the menu uses that one (2026-09-16).
+#
+# Only the --bin value is rewritten. Everything else in the plist belongs to
+# whoever installed it, and the operator may have edited it deliberately.
+STABLE_BIN="$HOME/Library/Application Support/openkakao/bin/openkakao-cli"
+if [ -f "$PLIST" ] && [ -x "$STABLE_BIN" ]; then
+  if /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:8' "$PLIST" 2>/dev/null |
+    grep -q "AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli"; then
+    cp "$PLIST" "$PLIST.bak-$(date +%Y%m%dT%H%M%S)"
+    /usr/libexec/PlistBuddy -c "Set :ProgramArguments:8 $STABLE_BIN" "$PLIST" 2>/dev/null &&
+      echo "menu LaunchAgent now runs the approved CLI: $STABLE_BIN" ||
+      echo "could not repoint $LABEL at the stable CLI; it will ask for access again" >&2
+  fi
+fi
