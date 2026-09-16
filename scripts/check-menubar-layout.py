@@ -30,13 +30,21 @@ def load_audit():
 # panel. The audit dumps one PNG per entry (2026-09-16).
 EXPECTED_WINDOWS = (
     "doctor",
+    "doctor-dark",
     "jobs",
+    "jobs-dark",
     "log",
+    "log-dark",
     "menu-panel",
+    "menu-panel-dark",
     "menu-panel-rooms",
+    "menu-panel-rooms-dark",
     "model",
+    "model-dark",
     "rooms",
+    "rooms-dark",
     "vector",
+    "vector-dark",
 )
 
 

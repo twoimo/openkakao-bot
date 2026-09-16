@@ -4418,6 +4418,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             window.orderOut(nil)
         }
+        // 다크 모드에서도 같은 그림이 나오는지 잰다. 캡처는 화면에 실제로
+        // 그리는 색을 담으므로, 라이트에서만 통과하면 어두운 배경에서
+        // 글자가 사라지는 결함을 놓친다 (2026-09-16).
+        if let appearance = NSAppearance(named: .darkAqua) {
+            for entry in windows + layoutAuditPanels.map({ ($0.0, Optional($0.1)) }) {
+                guard let window = entry.1, let content = window.contentView else { continue }
+                let previous = content.appearance
+                content.appearance = appearance
+                window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+                window.orderFrontRegardless()
+                window.layoutIfNeeded()
+                content.layoutSubtreeIfNeeded()
+                LayoutAudit.collect(
+                    from: content,
+                    window: entry.0 + "-dark",
+                    path: entry.0 + "-dark",
+                    windowSize: content.bounds.size,
+                    into: &rows
+                )
+                if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    if let data = rep.representation(using: .png, properties: [:]) {
+                        let url = directory.appendingPathComponent(entry.0 + "-dark.png")
+                        try? data.write(to: url)
+                        images.append(url.path)
+                    }
+                }
+                content.appearance = previous
+                window.orderOut(nil)
+            }
+        }
         let payload: [String: Any] = ["windows": rows, "images": images]
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("layout.json"))
