@@ -1542,6 +1542,15 @@ final class KnowledgeGraphView: NSView {
     var selectedNodeId: String?
     var onSelect: ((KnowledgeNode?) -> Void)?
 
+    /// 뉴런마다 그릴 시냅스의 개수.
+    ///
+    /// 관계를 전부 그리면 가운데가 선밭이 되어 무엇이 무엇과 이어졌는지
+    /// 읽을 수 없다. 자비스 코어가 뉴런마다 가까운 시냅스 셋만 그리는 것과
+    /// 같은 이유다. 고른 뉴런에 붙은 시냅스는 하나도 빠뜨리지 않는다 —
+    /// 눌러 놓고 이어진 것을 못 보면 그래프를 볼 이유가 없다
+    /// (2026-09-17, 6 Pro 지적).
+    static let synapsesPerNeuron = 4
+
     /// Settled positions, keyed by node id, so the same node keeps its place.
     private var positions: [String: CGPoint] = [:]
     private var velocities: [String: CGPoint] = [:]
@@ -1854,6 +1863,37 @@ final class KnowledgeGraphView: NSView {
         }
     }
 
+    /// 배경에 깔 시냅스의 자리.
+    ///
+    /// 관계를 전부 그리면 341개 선이 가운데에서 서로 엉겨, 그래프가 무엇을
+    /// 말하는지보다 선이 많다는 사실만 보인다. 뉴런마다 굵은 시냅스 몇 개만
+    /// 남기면 이웃 관계가 읽히고, 뉴런이 하나도 외톨이로 남지 않는다.
+    /// 계산은 한 번만 하고, 뉴런이나 관계가 바뀔 때만 다시 한다
+    /// (2026-09-17, 6 Pro 지적).
+    private var keptSynapses: Set<Int> = []
+    private var keptSynapsesKey = ""
+
+    private func backgroundSynapses() -> Set<Int> {
+        let key = "\(nodes.count):\(edges.count):\(edges.first?.source ?? "")"
+        if key == keptSynapsesKey { return keptSynapses }
+        keptSynapsesKey = key
+        // 뉴런마다 굵은 순으로 몇 개를 남긴다. 양쪽 끝에서 세므로 한 뉴런이
+        // 여러 이웃과 이어져도 그중 굵은 것만 남는다.
+        var perNode: [String: [(weight: Int, index: Int)]] = [:]
+        for (index, edge) in edges.enumerated() {
+            perNode[edge.source, default: []].append((edge.weight, index))
+            perNode[edge.target, default: []].append((edge.weight, index))
+        }
+        var kept: Set<Int> = []
+        for (_, list) in perNode {
+            for entry in list.sorted(by: { $0.weight > $1.weight }).prefix(Self.synapsesPerNeuron) {
+                kept.insert(entry.index)
+            }
+        }
+        keptSynapses = kept
+        return kept
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         NSColor.clear.setFill()
@@ -1868,7 +1908,10 @@ final class KnowledgeGraphView: NSView {
         // 보였다. 지금은 고른 뉴런에 붙은 시냅스에만 점을 찍는다
         // (2026-09-17, 6 Pro 지적).
         let highlight = selectedNodeId ?? hoveredId
-        for edge in edges {
+        // 배경에 깔 시냅스를 먼저 고른다. 뉴런마다 굵은 것 몇 개만 남기고,
+        // 고른 뉴런에 붙은 것은 하나도 빠뜨리지 않는다 (2026-09-17).
+        let kept = backgroundSynapses()
+        for (index, edge) in edges.enumerated() {
             guard let rawA = positions[edge.source], let rawB = positions[edge.target] else { continue }
             let a = fitted(rawA)
             let b = fitted(rawB)
@@ -1876,6 +1919,7 @@ final class KnowledgeGraphView: NSView {
             let strength = CGFloat(min(100, max(0, edge.weight))) / 100.0
             let touchesHighlight = highlight != nil
                 && (edge.source == highlight || edge.target == highlight)
+            guard touchesHighlight || kept.contains(index) else { continue }
             // 고른 뉴런에 붙은 시냅스만 또렷하게. 나머지는 배경으로 물러난다.
             let alpha = touchesHighlight
                 ? 0.55 + 0.35 * strength
