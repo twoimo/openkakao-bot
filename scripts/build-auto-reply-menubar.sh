@@ -71,21 +71,19 @@ SIGN_IDENTITY=${OPENKAKAO_SIGN_IDENTITY:-"Apple Development: twoimo@dgu.ac.kr (2
 APP_IDENTIFIER=com.openkakao.auto-reply.menu
 # A CI runner has no developer certificate. OPENKAKAO_SIGN_IDENTITY=- asks
 # codesign for an ad-hoc signature instead, which is enough to run the layout
-# audit there (2026-09-16).
-SIGN_ARGS="--sign ${SIGN_IDENTITY}"
-if [ "${SIGN_IDENTITY}" = "-" ]; then
-  SIGN_ARGS="--sign -"
-fi
+# audit there (2026-09-16). The identity is passed as one quoted argument:
+# collecting it into a string and letting the shell split it back apart broke
+# every local build, because the certificate name contains spaces.
 if [ -x /usr/bin/codesign ]; then
   # The bundled CLI runs from Resources/bin and reads inside KakaoTalk's
   # container, so it needs its own stable identity as well; cargo's linker
   # signature is ad-hoc and derives an identifier from the code hash, which
   # changed on every rebuild (2026-09-15).
   if [ -f "$RES/bin/openkakao-cli" ]; then
-    /usr/bin/codesign --force $SIGN_ARGS --identifier com.openkakao.cli "$RES/bin/openkakao-cli"
+    /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier com.openkakao.cli "$RES/bin/openkakao-cli"
   fi
-  /usr/bin/codesign --force $SIGN_ARGS --identifier "$APP_IDENTIFIER" "$BIN"
-  /usr/bin/codesign --force $SIGN_ARGS --identifier "$APP_IDENTIFIER" "$APP"
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$BIN"
+  /usr/bin/codesign --force --sign "$SIGN_IDENTITY" --identifier "$APP_IDENTIFIER" "$APP"
 fi
 printf '%s
 ' "$APP"

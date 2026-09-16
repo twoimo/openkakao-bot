@@ -83,6 +83,39 @@ CONTROL_CHILDREN = (
     "_NSKeyboardFocusClipView",
 )
 
+# AppKit draws a control's bezel and title itself. macOS 14 builds a button
+# from NSButtonBezelView plus NSButtonTextField, and those two share the
+# button's box on purpose; macOS 26 uses SwiftUI-hosted views instead. Both
+# are the control working, so nothing under a control is layout to judge
+# (2026-09-16).
+CONTROL_KINDS = (
+    "NSButton",
+    "NSSegmentedControl",
+    "NSPopUpButton",
+    "NSSearchField",
+    "NSComboBox",
+    "NSMenuItem",
+)
+
+
+def inside_control(row: dict) -> bool:
+    """Whether the view is one of a control's own subviews."""
+    parts = row["path"].split("/")
+    return any(part.split("#")[0] in CONTROL_KINDS for part in parts[:-1])
+
+
+def box(row: dict) -> tuple[float, float, float, float]:
+    """Where AppKit actually puts the view: left, top, width, height.
+
+    A control is laid out by its alignment rect, and a bezel makes that
+    smaller than its frame. Comparing frames reported every pair of buttons
+    in a row as overlapping by the bezel inset, and every button in a stack
+    as sticking 7pt out of it, on the macOS 14 runner only (2026-09-16).
+    """
+    if "alignLeft" in row:
+        return (row["alignLeft"], row["alignTop"], row["alignW"], row["alignH"])
+    return (row["winLeft"], row["winTop"], row["w"], row["h"])
+
 
 def draws_something(row: dict) -> bool:
     """Whether the view puts visible content on screen by itself."""
@@ -340,7 +373,8 @@ def overlaps_in(rows: list[dict]) -> list[dict]:
     found: list[dict] = []
     by_parent: dict[str, list[dict]] = {}
     for row in rows:
-        if row["hidden"] or not row["path"].count("/"):
+        # A control's own bezel and title share its box by design.
+        if row["hidden"] or not row["path"].count("/") or inside_control(row):
             continue
         by_parent.setdefault(row["path"].rsplit("/", 1)[0], []).append(row)
     for siblings in by_parent.values():
@@ -359,8 +393,10 @@ def overlaps_in(rows: list[dict]) -> list[dict]:
                 # A table cell sits on top of its row by design.
                 if in_table_row(a) and in_table_row(b):
                     continue
-                ox = min(a["winLeft"] + a["w"], b["winLeft"] + b["w"]) - max(a["winLeft"], b["winLeft"])
-                oy = min(a["winTop"] + a["h"], b["winTop"] + b["h"]) - max(a["winTop"], b["winTop"])
+                aleft, atop, aw, ah = box(a)
+                bleft, btop, bw, bh = box(b)
+                ox = min(aleft + aw, bleft + bw) - max(aleft, bleft)
+                oy = min(atop + ah, btop + bh) - max(atop, btop)
                 if ox > 4 and oy > 4:
                     found.append({
                         "window": a["window"],
@@ -383,7 +419,11 @@ def spills_in(rows: list[dict]) -> list[dict]:
     by_path = {row["path"]: row for row in rows}
     found: list[dict] = []
     for row in rows:
-        if row["hidden"] or not row["path"].count("/"):
+        # A control's bezel sits outside its alignment rect, so a button in a
+        # stack reports a frame that is 7pt taller than the slot the stack
+        # gave it. That is the control drawing its own edge, not content
+        # escaping (2026-09-16).
+        if row["hidden"] or not row["path"].count("/") or inside_control(row):
             continue
         parent = by_path.get(row["path"].rsplit("/", 1)[0])
         if parent is None or is_internal(parent) or is_internal(row):
@@ -392,10 +432,12 @@ def spills_in(rows: list[dict]) -> list[dict]:
             continue
         if row["kind"].startswith(CONTROL_CHILDREN) or parent["kind"].startswith("NSButton"):
             continue
-        left = parent["winLeft"] - row["winLeft"]
-        right = (row["winLeft"] + row["w"]) - (parent["winLeft"] + parent["w"])
-        top = parent["winTop"] - row["winTop"]
-        bottom = (row["winTop"] + row["h"]) - (parent["winTop"] + parent["h"])
+        pleft, ptop, pw, ph = box(parent)
+        cleft, ctop, cw, ch = box(row)
+        left = pleft - cleft
+        right = (cleft + cw) - (pleft + pw)
+        top = ptop - ctop
+        bottom = (ctop + ch) - (ptop + ph)
         worst = max(left, right, top, bottom)
         if worst > 2:
             found.append({
@@ -403,8 +445,8 @@ def spills_in(rows: list[dict]) -> list[dict]:
                 "parent": parent["kind"],
                 "child": row["kind"],
                 "out": round(worst, 1),
-                "parentBox": [parent["winLeft"], parent["winTop"], parent["w"], parent["h"]],
-                "childBox": [row["winLeft"], row["winTop"], row["w"], row["h"]],
+                "parentBox": [pleft, ptop, pw, ph],
+                "childBox": [cleft, ctop, cw, ch],
             })
     return found
 

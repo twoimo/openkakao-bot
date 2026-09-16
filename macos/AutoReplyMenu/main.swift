@@ -852,6 +852,17 @@ enum LayoutAudit {
             let inWindow = child.convert(child.bounds, to: nil)
             entry["winTop"] = round((windowSize.height - inWindow.maxY) * 100) / 100
             entry["winLeft"] = round(inWindow.minX * 100) / 100
+            // 정렬 사각형도 함께 담는다. AppKit은 스택 안에서 프레임이 아니라
+            // 정렬 사각형으로 자리를 잡는다. 프레임끼리 비교하면 단추가 옆
+            // 단추와 6pt 겹치고 스택 밖으로 7pt 나간 것처럼 보인다. macOS 14
+            // 러너에서만 나오던 그 오탐이 이것이었다 (2026-09-16).
+            if let parent = child.superview {
+                let align = parent.convert(child.alignmentRect(forFrame: frame), to: nil)
+                entry["alignLeft"] = round(align.minX * 100) / 100
+                entry["alignTop"] = round((windowSize.height - align.maxY) * 100) / 100
+                entry["alignW"] = round(align.width * 100) / 100
+                entry["alignH"] = round(align.height * 100) / 100
+            }
             // 오른쪽·아래로 창을 넘는지, 좌상단이 창 밖인지 표시한다.
             // 부모 기준 frame을 창 크기와 비교하면 중첩 뷰에서 오탐이 난다.
             // 창 기준 사각형 하나만 써서 네 방향을 모두 판단한다.
@@ -887,6 +898,10 @@ enum LayoutAudit {
                 }
             }
             if let button = child as? NSButton {
+                // 어떤 단추가 잘렸는지 로그만 보고 알 수 있도록 제목을
+                // 함께 담는다. 예전에는 빈 문자열만 남아 어느 단추인지
+                // 구분할 수 없었다 (2026-09-16).
+                entry["text"] = String(button.title.prefix(visibleTextLimit))
                 let needed = button.attributedTitle.size().width + 24
                 entry["needW"] = round(needed * 100) / 100
                 if !button.title.isEmpty, frame.width < needed {
@@ -1518,6 +1533,17 @@ final class MenuPanelView: NSView {
         max(bounds.width, Self.panelWidth)
     }
 
+    /// 방 고르기 단추가 차지하는 폭.
+    ///
+    /// 예전에는 100pt로 박아 두어 "▸ 부자멘토멘티" 같은 제목이 56pt 잘렸다.
+    /// 제목이 필요로 하는 만큼 주되, 설명 줄을 남겨 두고 패널 밖으로는
+    /// 나가지 않게 한다 (2026-09-16).
+    func roomButtonWidth() -> CGFloat {
+        let needed = roomButton.attributedTitle.size().width + 24
+        let room = max(96, layoutWidth() - Self.sideInset * 2 - 168)
+        return min(max(needed, 96), room)
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: Self.panelWidth, height: Self.panelBaseHeight + roomGridExtra())
     }
@@ -1571,10 +1597,11 @@ final class MenuPanelView: NSView {
     func layoutRoomGrid() {
         let extra = roomGridExtra()
         let width = layoutWidth()
+        let pickerWidth = roomButtonWidth()
         roomButton.frame = NSRect(
-            x: width - 116,
+            x: width - Self.sideInset - pickerWidth,
             y: Self.panelTop,
-            width: 100,
+            width: pickerWidth,
             height: Self.statusPillHeight
         )
         pipelineView.frame = NSRect(
@@ -1683,8 +1710,13 @@ final class MenuPanelView: NSView {
             withAttributes: titleAttrs
         )
         let captionX = statusPill.maxX + 8
-        let captionMax = max(40, width - 126 - captionX)
-        let caption = NSString(string: "\(roomTitle) · \(Palette.caption(code: room?.codes.first ?? model.primary_code))")
+        // 방 고르기 단추가 방 이름을 이미 보여 주므로 설명 줄에서는 뺀다.
+        // 예전에는 같은 이름이 "▸ 부자멘토멘티"와 "부자멘토멘티 · …"로 두 번
+        // 나와서 한 줄을 두 번 읽어야 했다 (2026-09-16).
+        let pickerWidth = roomButton.isHidden ? 0 : roomButtonWidth() + 8
+        let captionMax = max(40, width - Self.sideInset - pickerWidth - captionX)
+        let status = Palette.caption(code: room?.codes.first ?? model.primary_code)
+        let caption = NSString(string: roomButton.isHidden ? "\(roomTitle) · \(status)" : status)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         paragraph.alignment = .left
