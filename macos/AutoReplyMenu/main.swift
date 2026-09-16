@@ -727,16 +727,23 @@ enum Chrome {
         return stack
     }
 
-    /// 창 아래 동작 단추 줄. 단추 몇 개가 왼쪽에만 몰려 오른쪽 절반이 빈
-    /// 자리로 남던 것을, 같은 폭으로 나눠 창 끝까지 채운다. 숨은 단추는
-    /// 스택이 스스로 빼므로 자리도 함께 사라진다 (2026-09-16).
+    /// 창 아래 동작 단추 줄.
+    ///
+    /// 한때 이 줄은 단추를 같은 폭으로 나눠 창 끝까지 채웠다. 왼쪽 절반만
+    /// 차지하던 시절을 고치려던 것인데, 그러면 드물게 쓰는 관리 단추가
+    /// 자주 쓰는 단추와 같은 무게로 보인다. 지금은 단추가 제 글자만큼만
+    /// 차지하고 줄은 왼쪽 정렬한다. 뒤의 늘어나는 칸이 남은 폭을 먹어
+    /// 줄 자체는 창 폭을 그대로 쓴다 (2026-09-16, 6 Pro 지적).
+    ///
+    /// 압축 저항은 낮게 둔다. 창을 최소 크기까지 줄였을 때 단추가 잘리는
+    /// 대신 글자가 줄어드는 편이 낫다.
     static func actionRow(_ views: [NSView], spacing: CGFloat = 8) -> NSStackView {
         for view in views {
-            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            view.setContentHuggingPriority(.defaultHigh, for: .horizontal)
             view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
-        let stack = hstack(views, spacing: spacing)
-        stack.distribution = .fillEqually
+        let stack = hstack(views + [spacer()], spacing: spacing)
+        stack.distribution = .fill
         return stack
     }
 
@@ -1085,6 +1092,66 @@ enum LayoutAudit {
     /// 들고 있어, 열이 넘치는지 아닌지를 잘못 재게 된다 (2026-09-16).
     static func settle(_ seconds: TimeInterval = 0.05) {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    /// 캡처를 불투명 배경 위에 합성해 저장한다.
+    ///
+    /// cacheDisplay는 뷰가 스스로 그리지 않은 자리를 투명하게 남긴다. 그대로
+    /// 저장하면 창 여백과 스택 사이가 알파 0이 되어, 여는 프로그램에 따라
+    /// 흰 판이나 검은 판으로 보인다. 그러면 글자 대비와 색을 판단할 수 없어
+    /// 정상 UI를 결함으로 오해한다 (2026-09-16, 6 Pro 지적).
+    ///
+    /// 배경색은 인자로 받은 appearance로 해석한다. 라이트 캡처에 어두운
+    /// 배경을 깔면 대비를 잘못 재게 된다.
+    @discardableResult
+    static func writeCapture(
+        _ view: NSView,
+        appearance: NSAppearance,
+        to url: URL
+    ) -> Bool {
+        let bounds = view.bounds
+        guard bounds.width > 1, bounds.height > 1 else { return false }
+        view.appearance = appearance
+        view.layoutSubtreeIfNeeded()
+        settle()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else {
+            return false
+        }
+        view.cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.lockFocus()
+        appearance.performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            NSRect(origin: .zero, size: bounds.size).fill()
+        }
+        rep.draw(in: NSRect(origin: .zero, size: bounds.size))
+        image.unlockFocus()
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let data = bitmap.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        return (try? data.write(to: url)) != nil
+    }
+
+    /// 이 모드에서 창 배경이 실제로 어떤 색으로 풀리는지 잰다.
+    ///
+    /// 라이트와 다크가 같은 픽셀로 저장되면 감사가 두 모드를 재지 못한
+    /// 것이다. 그 사실을 JSON이 스스로 말하게 한다 (2026-09-16).
+    static func mode(name: String, appearance: NSAppearance?) -> [String: Any] {
+        guard let appearance else { return ["requested": name, "resolved": "없음"] }
+        var rgb = "?"
+        appearance.performAsCurrentDrawingAppearance {
+            if let color = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) {
+                rgb = String(
+                    format: "#%02X%02X%02X",
+                    Int((color.redComponent * 255).rounded()),
+                    Int((color.greenComponent * 255).rounded()),
+                    Int((color.blueComponent * 255).rounded())
+                )
+            }
+        }
+        return ["requested": name, "resolved": rgb]
     }
 
     static func collect(
@@ -2471,6 +2538,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsEmptyState: EmptyStateView?
     var jobsTableScroll: NSScrollView?
     var jobsTrace: NSTextView?
+    /// 목록 조회가 실패했는지. 실패를 "0건"으로 보여 주면 운영자가 일이
+    /// 없다고 믿는다 (2026-09-16).
+    var jobsReadFailed = false
+    var jobsTraceCard: NSView?
+    var jobsActions: NSView?
     var jobsFilterControl: NSSegmentedControl?
     var selectedJobEventId = ""
     var roomsSelectedChatId = 0
@@ -2513,6 +2585,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // 신경망 보기(뉴런·시냅스). 지식 그래프를 고를 때만 보인다.
     var vectorGraphView: KnowledgeGraphView?
     var vectorGraphStack: NSStackView?
+    var vectorEditCard: NSView?
+    var vectorPager: NSView?
+    var vectorStack: NSStackView?
+    /// 사용자가 직접 크기를 바꾼 창은 자동으로 줄이지 않는다.
+    var vectorWindowUserResized = false
+    /// 자동 축소가 스스로를 다시 부르지 않게 막는다.
+    var vectorFitting = false
     var vectorGraphHint: NSTextField?
     var vectorGraphToken = 0
     var lastVectorGraphReadAt = Date.distantPast
@@ -2536,6 +2615,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var lastModelContentHeight: CGFloat = 0
     /// 모델 창이 넘지 않을 높이. 폴백을 최대치까지 넣어도 화면 안에 남는다.
     static let modelWindowHeightLimit: CGFloat = 760
+    /// 지식 그래프 창이 넘지 않을 높이. 화면보다 커지면 아래 조작이 화면 밖으로
+    /// 나가므로 24인치 화면에서도 남는 값으로 잡는다 (2026-09-16).
+    static let vectorWindowHeightLimit: CGFloat = 900
+    /// 이 창이 어떤 보기에서도 내려가지 않는 크기. 그래프가 뭉개지지 않을
+    /// 만큼은 남긴다.
+    static let vectorWindowFloor = NSSize(width: 700, height: 560)
     var modelSettingsStack: NSStackView?
     var modelSettingsScroll: NSScrollView?
     /// 사용자가 창 크기를 직접 만졌으면 자동 축소를 하지 않는다.
@@ -4700,15 +4785,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ]
         var rows: [[String: Any]] = []
         var images: [String] = []
+        var modes: [[String: Any]] = []
         // 실제 데이터를 채운 뒤에 재야 빈 목록으로 인한 거짓 여백을 보지 않는다.
         if let model = loadModel() {
             lastModel = model
             updateModelSettingsWindow()
             updateRoomsWindow(model)
-            applyLogReceipts(model)
+            // 창을 열 때 실제로 타는 경로를 그대로 쓴다. 예전에는
+            // applyLogReceipts만 불러서, 기록 창의 머리말이 초기 문구인
+            // "상태를 읽는 중"에 머문 채로 찍혔다. 그 그림을 근거로 창이
+            // 고장 났다고 판단하면 멀쩡한 곳을 고치게 된다 (2026-09-16).
+            updateLogWindow(model)
         }
         if let report = loadJobs(status: jobsStatus) {
+            jobsReadFailed = false
             applyJobs(report)
+        } else {
+            // 감사에서도 실패를 빈 목록으로 보지 않는다. 그래야 실제 운영
+            // 화면과 같은 상태를 재게 된다 (2026-09-16).
+            jobsReadFailed = true
+            applyJobs(JobReport(
+                ok: false,
+                action: "jobs",
+                privacy: "content_redacted",
+                status: jobsStatus,
+                title: "목록",
+                count: 0,
+                truncated: false,
+                jobs: []
+            ))
         }
         if let report = loadDoctor(heal: false) {
             applyDoctor(report)
@@ -4738,6 +4843,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 창 크기 조정은 원래 다음 런루프에서 끝난다. 감사는 그 전에 재므로
         // 여기서 한 번에 맞춘다.
         shrinkModelSettingsWindowNow()
+        fitVectorWindow()
         for entry in windows {
             guard let window = entry.1, let content = window.contentView else { continue }
             // 창을 옮기고 크기를 바꾸면 AppKit이 그 프레임을 autosave 이름에
@@ -4779,13 +4885,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 windowSize: content.bounds.size,
                 into: &rows
             )
-            if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
-                content.cacheDisplay(in: content.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = directory.appendingPathComponent(entry.0 + ".png")
-                    try? data.write(to: url)
-                    images.append(url.path)
-                }
+            // 라이트를 분명히 밝히고 찍는다. 밝히지 않으면 이 Mac이 다크
+            // 모드일 때 "라이트" 캡처까지 어둡게 나와 두 장이 같은 파일이
+            // 되고, 다크 대비 검증이 통째로 무의미해진다 (2026-09-16).
+            if let aqua = NSAppearance(named: .aqua),
+               LayoutAudit.writeCapture(content, appearance: aqua, to: directory.appendingPathComponent(entry.0 + ".png")) {
+                images.append(entry.0 + ".png")
             }
             window.orderOut(nil)
         }
@@ -4800,13 +4905,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 windowSize: view.bounds.size,
                 into: &rows
             )
-            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                view.cacheDisplay(in: view.bounds, to: rep)
-                if let data = rep.representation(using: .png, properties: [:]) {
-                    let url = directory.appendingPathComponent(name + ".png")
-                    try? data.write(to: url)
-                    images.append(url.path)
-                }
+            if let aqua = NSAppearance(named: .aqua),
+               LayoutAudit.writeCapture(view, appearance: aqua, to: directory.appendingPathComponent(name + ".png")) {
+                images.append(name + ".png")
             }
             window.orderOut(nil)
         }
@@ -4814,6 +4915,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 그리는 색을 담으므로, 라이트에서만 통과하면 어두운 배경에서
         // 글자가 사라지는 결함을 놓친다 (2026-09-16).
         if let appearance = NSAppearance(named: .darkAqua) {
+            modes.append(LayoutAudit.mode(name: "aqua", appearance: NSAppearance(named: .aqua)))
+            modes.append(LayoutAudit.mode(name: "darkAqua", appearance: appearance))
             for entry in windows + layoutAuditPanels.map({ ($0.0, Optional($0.1)) }) {
                 guard let window = entry.1, let content = window.contentView else { continue }
                 let previous = content.appearance
@@ -4829,19 +4932,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     windowSize: content.bounds.size,
                     into: &rows
                 )
-                if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
-                    content.cacheDisplay(in: content.bounds, to: rep)
-                    if let data = rep.representation(using: .png, properties: [:]) {
-                        let url = directory.appendingPathComponent(entry.0 + "-dark.png")
-                        try? data.write(to: url)
-                        images.append(url.path)
-                    }
+                if LayoutAudit.writeCapture(content, appearance: appearance, to: directory.appendingPathComponent(entry.0 + "-dark.png")) {
+                    images.append(entry.0 + "-dark.png")
                 }
                 content.appearance = previous
                 window.orderOut(nil)
             }
         }
-        let payload: [String: Any] = ["windows": rows, "images": images]
+        let payload: [String: Any] = ["windows": rows, "images": images, "modes": modes]
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: directory.appendingPathComponent("layout.json"))
         }
@@ -5078,8 +5176,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 사용자가 크기를 직접 바꾼 창은 자동으로 줄이지 않는다. 자동 축소가
     /// 방금 한 조절을 되돌리면 창이 제멋대로 움직이는 것처럼 보인다.
     func windowDidEndLiveResize(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === modelWindow else { return }
-        modelWindowUserResized = true
+        guard let window = notification.object as? NSWindow else { return }
+        if window === modelWindow {
+            modelWindowUserResized = true
+        } else if window === vectorWindow {
+            vectorWindowUserResized = true
+        }
     }
 
     @objc func tileClicked(_ sender: NSButton) {
@@ -5111,7 +5213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func loadJobs(status: String) -> JobReport? {
-        guard let data = runPython(["--action", "jobs", "--jobs-status", status]) else { return nil }
+        // 작업 목록은 원장과 큐를 함께 읽는다. 기본 8초는 호스트가 큐를 쓰는
+        // 동안 자주 넘겨, 목록이 조용히 빈 채로 돌아왔다 (2026-09-16).
+        guard let data = runPython(["--action", "jobs", "--jobs-status", status], timeout: 20) else { return nil }
         return try? JSONDecoder().decode(JobReport.self, from: data)
     }
 
@@ -5120,7 +5224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsSummary?.stringValue = "목록을 읽는 중"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let report = self.loadJobs(status: status) ?? JobReport(
+            // 읽지 못한 것과 일이 없는 것은 다르다. 예전에는 실패를 빈 목록으로
+            // 바꿔 넣어서, 조회가 넘긴 순간에도 화면은 "0건"이라고 단언했다
+            // (2026-09-16, 6 Pro 지적).
+            let loaded = self.loadJobs(status: status)
+            let report = loaded ?? JobReport(
                 ok: false,
                 action: "jobs",
                 privacy: "content_redacted",
@@ -5132,6 +5240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             )
             DispatchQueue.main.async {
                 guard self.jobsStatus == status else { return }
+                self.jobsReadFailed = (loaded == nil)
                 self.applyJobs(report)
             }
         }
@@ -5143,7 +5252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         displayedJobs = roomId == 0 ? report.jobs : report.jobs.filter { $0.chat_id == roomId }
         if let summary = jobsSummary {
             let extra = report.truncated ? " · 최근만 표시" : ""
-            summary.stringValue = "\(report.title) \(report.count)건\(extra)"
+            summary.stringValue = report.ok
+                ? "\(report.title) \(report.count)건\(extra)"
+                : "목록을 읽지 못했습니다"
         }
         jobsTable?.reloadData()
         restoreJobsSelection(eventId: selected)
@@ -5161,8 +5272,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         label.stringValue = ""
         jobsTableScroll?.isHidden = empty
         jobsEmptyState?.isHidden = !empty
-        jobsEmptyState?.titleText = "이 목록에 지금 보여 줄 작업이 없습니다"
-        jobsEmptyState?.detailText = "위에서 다른 상태를 눌러 보세요. 목록은 시간 순서로 쌓입니다."
+        if jobsReadFailed {
+            // 조회가 넘겼을 때 "0건"이라고 적으면 운영자는 할 일이 없다고
+            // 믿고 창을 닫는다. 다시 눌러 볼 수 있게 사실대로 적는다
+            // (2026-09-16).
+            jobsEmptyState?.titleText = "목록을 읽지 못했습니다"
+            jobsEmptyState?.detailText = "원장을 읽는 데 시간이 걸렸습니다. 잠시 뒤 상태를 다시 눌러 주세요."
+        } else {
+            jobsEmptyState?.titleText = "이 목록에 지금 보여 줄 작업이 없습니다"
+            jobsEmptyState?.detailText = "위에서 다른 상태를 눌러 보세요. 목록은 시간 순서로 쌓입니다."
+        }
     }
 
     func restoreJobsSelection(eventId: String) {
@@ -5181,6 +5300,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let unknown = job?.status == "delivery_unknown"
         jobsSkipButton?.isEnabled = unknown || (job?.can_skip ?? false)
         jobsAckButton?.isEnabled = unknown || (job?.can_ack ?? false)
+        // 고른 줄이 없으면 과정 카드와 조치 단추를 접는다. 접힌 뷰는 스택이
+        // 자리째 빼므로 목록이 그만큼 넓어진다 (2026-09-16, 6 Pro 지적).
+        jobsTraceCard?.isHidden = job == nil
+        jobsActions?.isHidden = job == nil
         switch jobsStatus {
         case "sent":
             jobsHint?.stringValue = "이미 보낸 기록입니다. 다시 보내지 않습니다."
@@ -5343,6 +5466,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let traceTitle = Chrome.label("선택한 작업의 과정", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
         let traceContent = Chrome.vstack([traceTitle, traceScroll], spacing: 6)
         let traceCard = Chrome.card(traceContent, padding: 10)
+
+        // 과정 카드와 조치 단추는 고른 작업이 있을 때만 나온다.
+        //
+        // 예전에는 둘 다 늘 자리를 차지했다. 목록이 비었거나 아무것도 고르지
+        // 않았을 때 화면의 절반이 "작업을 선택하면…" 한 줄과 누를 수 없는
+        // 단추로 채워졌다. 고르면 그때 펼친다 (2026-09-16, 6 Pro 지적).
+        traceCard.isHidden = true
+        actions.isHidden = true
+        jobsTraceCard = traceCard
+        jobsActions = actions
 
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
@@ -5603,7 +5736,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         self.componentLamps = componentLamps
         let lampsRow = Chrome.hstack(componentLamps.map { $0.label } + [Chrome.spacer()])
-        let progress = Chrome.hint("자가 개선 진행 상황이 여기 표시됩니다.")
+        // 실행 전에는 빈 자리로 둔다. 예전에는 "…여기 표시됩니다"라는 안내가
+        // 늘 떠 있었는데, 하지도 않은 일의 설명이 화면 한 줄을 차지했다.
+        // 자가 개선을 누르면 그 자리에 바로 진행 상황이 들어간다
+        // (2026-09-16, 6 Pro 지적).
+        let progress = Chrome.statusLabel(size: 11, lines: 1)
         progressField = progress
         // 일곱 덩어리가 각자 한 줄씩 차지하면 창을 키워도 빈 줄만 늘어난다.
         // 요약·안내·램프를 한 카드로, 필터와 진행 문구를 한 줄로 묶는다
@@ -5780,11 +5917,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         logPipeline?.level = inspected?.level ?? model.level
         logPipeline?.needsDisplay = true
         let summary = model.log_summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if summary.isEmpty {
-            logSummary?.stringValue = "\(Palette.title(level: model.level)) — \(Palette.caption(code: model.primary_code))"
-        } else {
-            logSummary?.stringValue = summary
-        }
+        // 이 창의 머리말은 이 창의 목록을 설명한다.
+        //
+        // 코어의 시스템 요약은 한 상태를 여러 문장으로 늘어놓을 때가 있다.
+        // 그대로 넣으면 창을 최소 크기로 줄였을 때 세 줄을 넘겨 뒷문장이
+        // 화면에서 사라지고, 정작 목록은 그만큼 아래로 밀린다. 잠금 사유
+        // 같은 문장은 메뉴 패널과 자가 점검 창에 이미 있다
+        // (2026-09-16, 6 Pro 지적).
+        let levelTitle = Palette.title(level: model.level)
+        let scope = Self.logScopeSummary(summary)
+        logSummary?.stringValue = scope.isEmpty
+            ? "\(levelTitle) — \(Palette.caption(code: model.primary_code))"
+            : "\(levelTitle) — \(scope)"
+        // 잘라낸 뒷문장은 여기 남는다. 머리말은 한 줄로 두되, 왜 그런지가
+        // 궁금할 때 마우스를 올리면 전문을 읽을 수 있다 (2026-09-16).
+        logSummary?.toolTip = summary.isEmpty ? nil : summary
         applyLogReceipts(model)
     }
 
@@ -5792,6 +5939,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let index = sender.indexOfSelectedItem
         logScopeValue = index >= 0 && index < logScopes.count ? logScopes[index].code : ""
         applyLogFilter()
+    }
+
+    /// 코어의 상태 요약에서 머리말에 쓸 첫 문장만 남긴다.
+    ///
+    /// 요약은 "주의 — 감독 프로그램이 정상이 아닙니다. 안전을 위해 자동
+    /// 답변을 멈춘 상태입니다. …"처럼 한 상태를 여러 문장으로 설명한다.
+    /// 창 머리말은 한 줄이어야 하고, 뒤 문장들은 같은 사실을 풀어 쓴 것이라
+    /// 창을 최소 크기로 줄이면 화면에서 잘려 나간다. 전문은 머리말의
+    /// 도움말에 그대로 남겨 두어 필요할 때 읽을 수 있게 한다 (2026-09-16).
+    static func logScopeSummary(_ summary: String) -> String {
+        let raw = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "" }
+        // 머리말은 "상태 — 내용" 꼴이라, 코어가 붙인 상태 머리말은 떼고
+        // 우리가 다시 붙인다. 두 번 붙으면 "주의 — 주의 — …"가 된다.
+        var body = raw
+        if let separator = body.range(of: "—") {
+            body = String(body[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        for terminator in ["다.", ".", "!"] {
+            if let end = body.range(of: terminator) {
+                body = String(body[..<end.upperBound])
+                break
+            }
+        }
+        body = body.trimmingCharacters(in: .whitespaces)
+        // 첫 문장이 길어도 한 줄을 넘지 않게 막는다. 창을 최소 크기로 줄여도
+        // 남아야 하므로 폭을 재는 대신 글자 수로 자른다.
+        let limit = 60
+        if body.count > limit {
+            body = String(body.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return body
     }
 
     @objc func logRoomChanged(_ sender: NSPopUpButton) {
@@ -6133,7 +6312,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         deleteButton.bezelStyle = .rounded
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         let toolbar = Chrome.hstack([filter, addButton, deleteButton], spacing: 8)
-        let toolbarCard = Chrome.card(toolbar, padding: 10)
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -6161,7 +6339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         roomsTable = table
 
-        let headerContent = Chrome.vstack([hint, toolbarCard], spacing: 8)
+        // 검색과 추가·삭제는 안내 한 줄과 같은 카드에 둔다. 예전에는 이
+        // 도구줄이 카드 안의 또 다른 카드라, "방을 찾고 설정한다"는 한 가지
+        // 일에 테두리가 두 겹이었다 (2026-09-16, 6 Pro 지적).
+        let headerContent = Chrome.vstack([hint, toolbar], spacing: 8)
         let headerCard = Chrome.card(headerContent, padding: 12)
 
         let stack = Chrome.vstack([pipeline, headerCard, scroll], spacing: 10)
@@ -6171,8 +6352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
             hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            toolbarCard.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: toolbarCard.widthAnchor, constant: -20),
+            toolbar.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             filter.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
@@ -6546,16 +6726,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 column: "members",
                 text: chat.members > 0 ? String(chat.members) : "—",
                 font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
-                color: NSColor.secondaryLabelColor
+                color: NSColor.secondaryLabelColor,
+                // 자릿수가 다른 숫자를 가운데에 두면 오른쪽 끝이 어긋나
+                // 1429와 5를 눈으로 비교할 수 없다. 오른쪽 정렬하면 같은
+                // 자리의 숫자끼리 세로로 맞는다 (2026-09-16, 6 Pro 지적).
+                alignment: .right
             )
         case "live":
             return reusedLamp(
                 in: tableView,
                 column: "live",
-                on: chat.live || chat.catalog,
+                // 등록과 실행을 한 색으로 뭉치면, 목록에만 넣어 둔 방과 지금
+                // 실제로 도는 방이 똑같이 초록으로 보인다. 등록 여부는 오른쪽
+                // "추가됨" 칸이 이미 말하므로, 여기는 실제 동작만 보여 준다
+                // (2026-09-16, 6 Pro 지적).
+                on: chat.live,
                 color: NSColor.systemGreen,
                 interactive: true,
-                toolTip: "눌러서 이 방 동작을 켜거나 끕니다"
+                toolTip: chat.live
+                    ? "지금 동작 중입니다. 끄려면 답변·긱뉴스를 끄세요"
+                    : (chat.catalog
+                        ? "목록에만 있고 아직 돌지 않습니다. 누르면 목록에서 뺍니다"
+                        : "답변 대상이 아닙니다. 누르면 켭니다")
             )
         case "reply":
             return reusedLamp(
@@ -6713,6 +6905,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorPrevButton = prevButton
         vectorNextButton = nextButton
         let pager = Chrome.hstack([summary, Chrome.spacer(), prevButton, nextButton], spacing: 8)
+        vectorPager = pager
 
         // 신경망 보기: 노드가 뉴런, 관계가 시냅스다. 표와 같은 데이터를 쓰므로
         // 두 보기가 서로 다른 말을 하지 않는다 (2026-09-16).
@@ -6842,10 +7035,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
         let editCard = Chrome.card(editContent, padding: 12)
+        // 편집 폼은 고른 줄이 있을 때만 펼친다. 예전에는 아무것도 고르지
+        // 않았는데도 이름·시각·주제·벡터·내용과 저장·삭제가 늘 자리를
+        // 차지해, 창에서 가장 큰 덩어리가 "아직 아무것도 아닌 것"이었다
+        // (2026-09-16, 6 Pro 지적).
+        editCard.isHidden = true
+        vectorEditCard = editCard
 
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
         let stack = Chrome.vstack([headerCard, vectorEmpty, vectorEmptyState, scroll, graphStack, editCard], spacing: 10)
+        vectorStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -6970,6 +7170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorDateField?.placeholderString = "2026-08-20 20:30:00"
             vectorTopicsField?.placeholderString = "코인, 주식"
         }
+        applyVectorLayout()
     }
 
     func loadVectorReport(_ extra: [String]) -> VectorReport? {
@@ -7057,14 +7258,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let label = vectorEmptyLabel else { return }
         let empty = displayedVectors.isEmpty
         label.stringValue = ""
-        vectorTableScroll?.isHidden = empty
-        vectorEmptyState?.isHidden = !empty
         vectorEmptyState?.titleText = vectorSourceKind == "knowledge_graph"
             ? "아직 그릴 뉴런이 없습니다"
             : "이 조건에 보여 줄 기억이 없습니다"
         vectorEmptyState?.detailText = vectorSourceKind == "knowledge_graph"
             ? "대화가 쌓이면 개념이 뉴런으로, 관계가 시냅스로 이어집니다."
             : "위에서 다른 보기나 주제를 골라 보세요."
+        applyVectorLayout()
+    }
+
+    /// 이 창에 무엇을 보여 줄지 한 곳에서 정한다.
+    ///
+    /// 예전에는 표·그래프·편집 폼이 한 화면에 겹쳐 있었다. 셋은 같은 자료를
+    /// 보는 세 가지 방법이라, 다 펼치면 각자 좁아지고 무엇을 해야 하는지도
+    /// 흐려진다. 지금은 보기 선택이 주 화면을 정하고, 편집 폼은 고른 줄이
+    /// 있을 때만 따라 나온다 (2026-09-16, 6 Pro 지적).
+    func applyVectorLayout() {
+        let graphMode = currentVectorSource() == "knowledge_graph"
+        let graphHasNodes = !(vectorGraphView?.nodes.isEmpty ?? true)
+        // 그래프 보기에서 뉴런이 없으면 표의 빈 상태 판이 대신 이유를 적는다.
+        let showsGraph = graphMode && graphHasNodes
+        let showsTable = !showsGraph
+
+        vectorGraphStack?.isHidden = !showsGraph
+        vectorTableScroll?.isHidden = !showsTable || displayedVectors.isEmpty
+        vectorEmptyState?.isHidden = !showsTable || !displayedVectors.isEmpty
+        // 쪽수 넘김은 목록에만 뜻이 있다. 그래프는 한 번에 다 그리므로
+        // "기록 없음" 옆에 이전·다음이 놓이면 무엇을 넘기는지 알 수 없다
+        // (2026-09-16, 6 Pro 지적).
+        vectorPager?.isHidden = !showsTable
+
+        let selectedRow = vectorTable?.selectedRow ?? -1
+        let hasSelection = showsTable && selectedRow >= 0 && selectedRow < displayedVectors.count
+        vectorEditCard?.isHidden = !hasSelection
+        fitVectorWindow()
+    }
+
+    /// 이 창은 무엇을 보여 주느냐에 따라 필요한 높이가 크게 달라진다.
+    ///
+    /// 표·그래프·편집 폼이 모두 펼쳐지던 시절에 맞춰 둔 1006pt를 그대로
+    /// 두면, 하나만 보여 줄 때는 남는 높이가 그래프 캔버스로 흘러 들어가
+    /// 뉴런이 위아래로 흩어지고 빈 띠가 생긴다. 내용에 맞춰 줄이되, 사용자가
+    /// 직접 늘린 창은 건드리지 않는다 (2026-09-16).
+    func fitVectorWindow() {
+        guard !vectorFitting,
+              !vectorWindowUserResized,
+              let window = vectorWindow,
+              let stack = vectorStack,
+              let content = window.contentView else { return }
+        vectorFitting = true
+        defer { vectorFitting = false }
+        // 배치가 한 번에 수렴하지 않는다. 줄인 뒤 다시 재서 맞춘다.
+        for _ in 0..<3 {
+            content.layoutSubtreeIfNeeded()
+            stack.layoutSubtreeIfNeeded()
+            let needed = stack.fittingSize.height
+            guard needed > 1 else { return }
+            // 그래프 보기에서는 캔버스가 정사각형에 가까워야 뉴런이 골고루
+            // 퍼진다. 창 폭에서 여백을 뺀 만큼을 캔버스 높이로 잡는다.
+            let graphCanvas = max(content.bounds.width - 40, Self.vectorWindowFloor.height)
+            let showsGraph = currentVectorSource() == "knowledge_graph"
+            let desired = min(
+                max(needed, showsGraph ? graphCanvas : 0) + 32,
+                Self.vectorWindowHeightLimit
+            )
+            let current = content.bounds.height
+            guard abs(current - desired) > 12 else { return }
+            var frame = window.frame
+            let delta = current - desired
+            if delta > 0 {
+                // 줄일 때는 위쪽 모서리를 고정한다. 아래에서 줄이면 창이 화면
+                // 밖으로 밀린다.
+                frame.size.height -= delta
+                frame.origin.y += delta
+            } else {
+                // 늘릴 때는 화면 위쪽을 넘지 않게 막는다.
+                let grown = min(-delta, frame.origin.y)
+                guard grown > 0 else { return }
+                frame.size.height += grown
+                frame.origin.y -= grown
+            }
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
+        }
     }
 
     /// 그래프 보기는 표와 같은 새로고침에서 함께 갱신된다. 표를 다시 그릴 때
@@ -7192,8 +7468,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 아니라서 같은 그림으로 그리면 없는 관계를 그리게 된다.
     func updateVectorGraphVisibility() {
         let shows = currentVectorSource() == "knowledge_graph"
-        vectorGraphStack?.isHidden = !shows
-        guard shows else { return }
+        guard shows else {
+            applyVectorLayout()
+            return
+        }
+        applyVectorLayout()
         // 창은 2초마다 새로 그려진다. 그때마다 그래프를 다시 읽으면 파이썬
         // 프로세스가 계속 뜨고 힘 배치도 다시 흔들린다. 목록을 고른 직후와
         // 30초가 지난 뒤에만 다시 읽는다 (2026-09-16).
@@ -7212,16 +7491,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func hideEmptyKnowledgeGraph() {
         guard let graph = vectorGraphView else { return }
         let empty = graph.nodes.isEmpty
-        vectorGraphStack?.isHidden = empty || currentVectorSource() != "knowledge_graph"
         if empty, currentVectorSource() == "knowledge_graph" {
             vectorGraphHint?.stringValue = "아직 그릴 뉴런이 없습니다. 메시지를 읽어 지식 그래프를 채우면 여기에 신경망으로 나타납니다."
         }
+        applyVectorLayout()
     }
 
     /// 그래프 전체를 한 번에 읽는다. 목록과 달리 쪽 나눔이 없어야 힘 배치가
     /// 안정적이고, 읽는 동안에는 이전 그림을 그대로 둔다.
     func refreshKnowledgeGraph() {
-        guard vectorGraphStack?.isHidden == false else { return }
+        // 이 가드는 보기 선택만 본다. 스택의 숨김 여부를 보면, 뉴런이 하나도
+        // 없어 그래프를 감춘 상태에서 다시 읽으려는 순간 영영 돌아오지
+        // 못한다 (2026-09-16).
+        guard currentVectorSource() == "knowledge_graph" else { return }
         lastVectorGraphReadAt = Date()
         lastVectorGraphSource = vectorSourceKind
         vectorGraphToken += 1

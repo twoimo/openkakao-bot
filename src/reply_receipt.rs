@@ -263,6 +263,12 @@ impl TurnReceipt {
             format!("① 결과 · {}", self.outcome_text),
             format!("   사유 · {}", self.reason_text),
         ];
+        // 목록은 한국어 문구만 보여 준다. 이 빌드가 모르는 코드일 때만 원래
+        // 식별자를 여기서 밝혀, 화면을 읽기 쉽게 두면서도 새 사유가 생겼다는
+        // 사실은 잃지 않는다 (2026-09-16).
+        if !self.reason_code.is_empty() && reason_code_unknown(&self.reason_code) {
+            lines.push(format!("   기록 이름 · {}", self.reason_code));
+        }
         if !self.decision.is_empty() {
             lines.push(format!("   판단 · {}", decision_text(&self.decision)));
         }
@@ -393,8 +399,22 @@ pub fn reason_text(code: &str) -> String {
     }
     match known_reason(code) {
         Some(text) => text.to_string(),
-        None => format!("기록된 사유({code})"),
+        // Codes this build does not know still have to read as Korean in the
+        // list, because the column is a sentence fragment next to 전송 완료 and
+        // 건너뜀, not a debug field. The raw code is not lost: reason_code
+        // travels beside this text and the detail pane prints it under
+        // "기록 이름" (2026-09-16, 6 Pro 지적).
+        None => "기록된 사유".to_string(),
     }
+}
+
+/// True when this build has no Korean phrase for the code, so the detail pane
+/// knows to print the raw identifier somewhere the operator can copy it.
+pub fn reason_code_unknown(code: &str) -> bool {
+    let head = split_explained_reason(code)
+        .map(|(head, _)| head)
+        .unwrap_or(code);
+    known_reason(head).is_none()
 }
 
 /// Writers append a free-text explanation after the code, separated by either a
@@ -432,6 +452,43 @@ fn known_reason(code: &str) -> Option<&'static str> {
         "sidecar_crash" => Some("재정렬 도구 중단"),
         "timeout" => Some("재정렬 시간 초과"),
         "delivery_unknown" => Some("전송 결과 미확인"),
+        // 실운영 원장과 작업 큐에 실제로 남는 코드. 2026-09-16에 큐 4177행과
+        // 원장 999행을 세어 2건 이상 나오는 것만 골라 넣었다. 여기 없는
+        // 코드는 위의 폴백을 타므로 목록에 영어 식별자가 새지 않는다.
+        "reply_laughter_policy_violation" => Some("웃음만 있어 넘어감"),
+        "conversation_advanced" => Some("대화가 이미 진행됨"),
+        "reconcile_gave_up" => Some("전송 확인 포기"),
+        "style_evidence_empty" => Some("말투 근거 없음"),
+        "recipient_style_profile_malformed" => Some("말투 정보 깨짐"),
+        "burst_superseded" => Some("뒤 메시지로 대체됨"),
+        "uncertain" => Some("판단 보류"),
+        "retrieval_command_failed" => Some("검색 명령 실행 실패"),
+        "operator_dismissed" => Some("운영자가 넘김"),
+        "link_unavailable" => Some("링크를 못 읽음"),
+        "similar_recent_self" => Some("비슷한 답변을 이미 보냄"),
+        "identity_question" => Some("정체 확인 질문"),
+        "identity_question_requires_owner" => Some("정체 확인은 운영자 몫"),
+        "low_information" => Some("알맹이 없음"),
+        "low_information_reaction" => Some("알맹이 없는 반응"),
+        "image_input_unavailable" => Some("이미지를 못 읽음"),
+        "unparsed_model_decision" => Some("모델 판단을 못 읽음"),
+        "self_message" => Some("내가 보낸 메시지"),
+        "duplicate_message" => Some("중복 메시지"),
+        "acknowledgement" => Some("맞장구만 있음"),
+        "acknowledgement_only" => Some("맞장구만 있음"),
+        "directed_at_other_bot" => Some("다른 봇에게 한 말"),
+        "not_directed_at_self" => Some("나에게 한 말이 아님"),
+        "no_directed_to_self" => Some("나에게 한 말이 아님"),
+        "author_not_allowlisted" => Some("답변 대상이 아님"),
+        "owner_already_replied" => Some("운영자가 이미 답함"),
+        "already_covered" => Some("이미 다룬 내용"),
+        "context_evidence_empty" => Some("맥락 근거 없음"),
+        "policy_register_mismatch" => Some("말투 기준과 어긋남"),
+        "policy_reaction_mismatch" => Some("반응 기준과 어긋남"),
+        "pre_send_unavailable" => Some("보내기 직전 중단"),
+        "media_unavailable" => Some("사진을 못 읽음"),
+        "image_unavailable" => Some("이미지를 못 읽음"),
+        "incomplete_burst" => Some("연속 메시지가 덜 끝남"),
         _ => Option::None,
     }
 }
@@ -1395,15 +1452,68 @@ mod tests {
     }
 
     #[test]
-    fn unknown_reason_codes_stay_visible() {
-        assert_eq!(
-            reason_text("brand_new_reason"),
-            "기록된 사유(brand_new_reason)"
-        );
-        assert_eq!(
-            reason_text("brand_new_reason: 왜 그런지"),
-            "기록된 사유(brand_new_reason: 왜 그런지)"
-        );
+    fn unknown_reason_codes_stay_readable_and_traceable() {
+        // 목록에는 영어 식별자가 새지 않는다. 대신 원래 코드는 여전히
+        // 추적할 수 있어야 한다 (2026-09-16).
+        assert_eq!(reason_text("brand_new_reason"), "기록된 사유");
+        assert_eq!(reason_text("brand_new_reason: 왜 그런지"), "기록된 사유");
         assert_eq!(reason_text("social_reply:"), "대화 참여");
+        assert!(reason_code_unknown("brand_new_reason"));
+        assert!(reason_code_unknown("brand_new_reason: 왜 그런지"));
+        assert!(!reason_code_unknown("social_reply"));
+        assert!(!reason_code_unknown("social_reply: 설명"));
+        assert!(!reason_code_unknown("reply_laughter_policy_violation"));
+    }
+
+    #[test]
+    fn operational_reason_codes_have_korean_words() {
+        // 큐와 원장에 실제로 남는 코드. 목록 열은 한국어 문장 조각이어야 하고,
+        // detail은 이 빌드가 코드를 안다는 사실을 밝히지 않아야 한다.
+        let receipts = build_receipts(
+            &[generation(
+                "evt-18",
+                json!({
+                    "outcome": "skipped",
+                    "decision": "skip",
+                    "reason": "conversation_advanced",
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.reason_text, "대화가 이미 진행됨");
+        assert!(
+            !receipt
+                .detail_lines()
+                .iter()
+                .any(|line| line.contains("기록 이름")),
+            "아는 코드는 원래 이름을 밝히지 않는다: {:?}",
+            receipt.detail_lines()
+        );
+    }
+
+    #[test]
+    fn unknown_code_keeps_its_name_in_the_detail_pane() {
+        let receipts = build_receipts(
+            &[generation(
+                "evt-19",
+                json!({
+                    "outcome": "skipped",
+                    "decision": "skip",
+                    "reason": "some_future_code",
+                }),
+            )],
+            10,
+        );
+        let receipt = &receipts[0];
+        assert_eq!(receipt.reason_text, "기록된 사유");
+        assert!(
+            receipt
+                .detail_lines()
+                .iter()
+                .any(|line| line.contains("기록 이름 · some_future_code")),
+            "새 코드는 상세에서 원래 이름을 남긴다: {:?}",
+            receipt.detail_lines()
+        );
     }
 }

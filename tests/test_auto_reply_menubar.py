@@ -905,7 +905,13 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("func reusedLamp", source)
         self.assertIn("final class LampCell", source)
         self.assertIn("toggleRoomLive", source)
-        self.assertIn("chat.live || chat.catalog", source)
+        # 등록과 실행은 다른 사실이라 다른 표시를 가져야 한다. 예전에는
+        # live || catalog를 한 초록 점으로 그려서, 목록에만 넣어 둔 방과
+        # 지금 도는 방이 똑같이 보였다 (2026-09-16, 6 Pro 지적).
+        self.assertNotIn("chat.live || chat.catalog", source)
+        self.assertIn("on: chat.live,", source)
+        # 목록에만 있고 아직 돌지 않는 방은 그 사실을 도움말로 말한다.
+        self.assertIn("목록에만 있고 아직 돌지 않습니다", source)
         self.assertIn('"geeknews_rss": "긱뉴스"', MENUBAR.read_text())
         self.assertIn("doctor-heal", source)
         self.assertIn("doctorFilterChanged", source)
