@@ -954,8 +954,13 @@ final class AutoHidingLabel: NSTextField {
 }
 
 /// 목록이 비었을 때 표 자리를 대신 채우는 판. 표를 숨기기만 하면 그 자리가
-/// 빈 띠로 남아 창 아래가 통째로 비어 보인다. 같은 자리를 같은 높이로
-/// 차지하면서 왜 비었는지와 무엇을 하면 되는지 적는다 (2026-09-16).
+/// 빈 띠로 남아 창 아래가 통째로 비어 보인다. 같은 자리를 차지하면서 왜
+/// 비었는지 적는다 (2026-09-16).
+///
+/// ``compact``는 아이콘 없이 한 줄만 두는 모양이다. 540pt 창에서 아이콘과
+/// 설명까지 갖춘 판이 403pt, 창 높이의 4분의 3을 차지해 화면이 통째로
+/// 안내문이 되었다. 목록이 비었다는 사실은 한 줄이면 충분하다
+/// (2026-09-16, 6 Pro 지적).
 final class EmptyStateView: NSView {
     private let symbol = NSImageView()
     private let title = NSTextField(labelWithString: "")
@@ -974,7 +979,7 @@ final class EmptyStateView: NSView {
         }
     }
 
-    init(symbolName: String) {
+    init(symbolName: String, compact: Bool = false) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -983,9 +988,13 @@ final class EmptyStateView: NSView {
 
         symbol.translatesAutoresizingMaskIntoConstraints = false
         symbol.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        symbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .regular)
+        symbol.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: compact ? 15 : 26,
+            weight: .regular
+        )
         symbol.contentTintColor = NSColor.tertiaryLabelColor
         symbol.imageScaling = .scaleProportionallyUpOrDown
+        symbol.isHidden = compact
 
         title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         title.textColor = NSColor.secondaryLabelColor
@@ -1004,7 +1013,7 @@ final class EmptyStateView: NSView {
         let column = NSStackView(views: [symbol, title, detail])
         column.orientation = .vertical
         column.alignment = .centerX
-        column.spacing = 8
+        column.spacing = compact ? 4 : 8
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
@@ -1012,8 +1021,17 @@ final class EmptyStateView: NSView {
             column.centerYAnchor.constraint(equalTo: centerYAnchor),
             column.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
             column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
-            symbol.heightAnchor.constraint(equalToConstant: 30),
+            symbol.heightAnchor.constraint(equalToConstant: compact ? 0 : 30),
+            // 한 줄짜리 판은 내용 높이만 차지한다. 늘리면 아이콘을 뺀 자리가
+            // 그대로 빈 여백으로 남아 없앤 것과 같아진다 (2026-09-16).
+            heightAnchor.constraint(
+                greaterThanOrEqualToConstant: compact ? 0 : 120
+            ),
         ])
+        if compact {
+            // 세로 스택이 남는 높이를 이 판에 몰아 주지 않게 한다.
+            setContentHuggingPriority(.defaultHigh, for: .vertical)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -2504,7 +2522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var lastSignature = ""
     var lastModel: MenubarModel?
     var logWindow: NSWindow?
-    var logPipeline: PipelineView?
     var logSummary: NSTextField?
     var logHint: NSTextField?
     var logTable: NSTableView?
@@ -2532,7 +2549,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var roomsWindow: NSWindow?
     var roomsTable: NSTableView?
     var roomsFilterField: NSTextField?
-    var roomsPipeline: PipelineView?
     var displayedChats: [AvailableChat] = []
     var allChats: [AvailableChat] = []
     var doctorWindow: NSWindow?
@@ -2558,6 +2574,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsHint: NSTextField?
     var jobsEmptyLabel: NSTextField?
     var jobsEmptyState: EmptyStateView?
+    /// 작업 목록 창의 세로 스택. 내용에 맞춰 창을 줄일 때 쓴다.
+    var jobsStack: NSStackView?
+    /// 사용자가 직접 크기를 바꾼 창은 자동으로 줄이지 않는다.
+    var jobsWindowUserResized = false
+    var jobsFitting = false
     var jobsTableScroll: NSScrollView?
     var jobsTrace: NSTextView?
     /// 목록 조회가 실패했는지. 실패를 "0건"으로 보여 주면 운영자가 일이
@@ -3280,7 +3301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: label, source: "override"),
                             rowMessage: nil,
-                            status: "저장됨 · 다음 턴부터 적용"
+                            status: "저장됨"
                         )
                     } else if readBack == id && recoveredPrepared {
                         self.finishModelChange(
@@ -3289,7 +3310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: label, source: "override"),
                             rowMessage: nil,
-                            status: target == .reply ? "적용됨 · 다음 턴부터 적용" : "저장됨 · 다음 턴부터 적용"
+                            status: target == .reply ? "적용됨" : "저장됨"
                         )
                     } else {
                         let message = "적용 결과를 확인하지 못했습니다. 현재 설정을 다시 확인하고 있습니다."
@@ -3364,7 +3385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     previous: previous,
                     applied: self.replyModelSelection(id: id, label: label, source: "override"),
                     rowMessage: nil,
-                    status: target == .reply ? "적용됨 · 다음 턴부터 적용" : "저장됨 · 다음 턴부터 적용"
+                    status: target == .reply ? "적용됨" : "저장됨"
                 )
             }
         }
@@ -3397,7 +3418,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     lastImageSelection = previous
                 }
             }
-            modelStatusField?.stringValue = "\(label)을(를) 바꿨어요. 다음 턴부터 적용됩니다."
+            // 창 머리말이 "다음 턴부터 적용됩니다"를 이미 말한다. 여기서는
+            // 무엇을 바꿨는지만 적는다 (2026-09-16).
+            modelStatusField?.stringValue = "\(label)을(를) 바꿨어요."
         case .failed:
             if let previous { setTargetSelection(target, previous) }
             modelStatusField?.stringValue = "\(label)을(를) 바꾸지 못했어요. 값을 확인한 뒤 다시 골라 주세요."
@@ -3463,7 +3486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: id, source: "override"),
                             rowMessage: nil,
-                            status: "저장됨 · 다음 턴부터 적용"
+                            status: "저장됨"
                         )
                     } else if readBack == id && retryPrepared {
                         self.finishModelChange(
@@ -3472,7 +3495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             previous: previous,
                             applied: self.replyModelSelection(id: id, label: id, source: "override"),
                             rowMessage: nil,
-                            status: target == .reply ? "적용됨 · 다음 턴부터 적용" : "저장됨 · 다음 턴부터 적용"
+                            status: target == .reply ? "적용됨" : "저장됨"
                         )
                     } else if attempt < 3 {
                         self.scheduleVerificationRetry(
@@ -3583,7 +3606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard modelFallbackChain.count < modelFallbackMax else { return }
         var next = modelFallbackChain
         next.append(id)
-        saveFallbackChain(next, note: "폴백을 추가했어요 · 다음 턴부터 적용")
+        saveFallbackChain(next, note: "폴백을 추가했어요")
     }
 
     @objc func modelFallbackMoveUp(_ sender: NSButton) {
@@ -3591,7 +3614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard index > 0, index < modelFallbackChain.count else { return }
         var next = modelFallbackChain
         next.swapAt(index, index - 1)
-        saveFallbackChain(next, note: "폴백 순서를 바꿨어요 · 다음 턴부터 적용")
+        saveFallbackChain(next, note: "폴백 순서를 바꿨어요")
     }
 
     @objc func modelFallbackMoveDown(_ sender: NSButton) {
@@ -3599,7 +3622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard index >= 0, index < modelFallbackChain.count - 1 else { return }
         var next = modelFallbackChain
         next.swapAt(index, index + 1)
-        saveFallbackChain(next, note: "폴백 순서를 바꿨어요 · 다음 턴부터 적용")
+        saveFallbackChain(next, note: "폴백 순서를 바꿨어요")
     }
 
     @objc func modelFallbackRemove(_ sender: NSButton) {
@@ -3611,7 +3634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             next,
             note: next.isEmpty
                 ? "폴백을 모두 비웠어요 · 앞 모델이 한도에 걸리면 답변을 건너뜁니다"
-                : "폴백을 뺐어요 · 다음 턴부터 적용"
+                : "폴백을 뺐어요"
         )
     }
 
@@ -3630,7 +3653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc func modelFallbackResetClicked(_ sender: Any?) {
         saveFallbackChain(
             [],
-            note: "내장 기본값으로 복원했어요 · 다음 턴부터 적용",
+            note: "내장 기본값으로 복원했어요",
             clear: true
         )
     }
@@ -3695,7 +3718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         let count = "\(modelFallbackChain.count)/\(modelFallbackMax)개"
         let head = modelFallbackSource == "override"
-            ? "사용자 지정 \(count) · 다음 턴부터 적용"
+            ? "사용자 지정 \(count)"
             : "내장 기본값 \(count) · 바꾸려면 아래에서 추가하세요"
         // 순서와 이름은 바로 위 행 목록이 보여 준다. 상태 줄은 머리말과
         // 손봐야 할 문제만 말한다.
@@ -3926,7 +3949,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         modelReplySummary?.stringValue = "메시지에 답할 때 씁니다."
         modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty
             ? (catalogLoading ? "모델 목록 불러오는 중…" : "모델을 선택하세요.")
-            : "적용됨 · 다음 턴부터 적용")
+            : "적용됨")
         modelReplyPopup?.toolTip = replyId.isEmpty ? nil : "현재 모델 ID: \(replyId)"
         if let popup = modelReplyPopup {
             populateModelPopup(popup, providers: providers, currentId: replyId, enabled: !modelChangeInFlight)
@@ -3951,7 +3974,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else if imageLabel.isEmpty {
             modelImageStatus?.stringValue = "이미지 모델 선택… — 이미지 메시지에 답하려면 모델을 선택하세요."
         } else {
-            modelImageStatus?.stringValue = "적용됨 · 다음 턴부터 적용"
+            modelImageStatus?.stringValue = "적용됨"
         }
         modelImagePopup?.toolTip = imageId.isEmpty ? nil : "현재 모델 ID: \(imageId)"
         if let popup = modelImagePopup {
@@ -4044,8 +4067,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let content = NSView()
         window.contentView = content
 
-        // 각 줄의 상태 표시가 "적용됨 · 다음 턴부터 적용"을 이미 말한다.
-        // 창 머리말은 고르면 저장된다는 것만 남긴다 (2026-09-16).
+        // 창 머리말 한 줄만 남긴다. 예전에는 이 문장이 창 머리말·답변 모델
+        // 줄·이미지 모델 줄·폴백 상태·되돌리기 안내까지 다섯 번 나왔다. 같은
+        // 말을 다섯 번 읽을 이유가 없어 여기 한 번만 남긴다 (2026-09-16,
+        // 6 Pro 지적).
         let hint = Chrome.hint("고른 모델은 다음 턴부터 적용됩니다.", size: 12)
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
@@ -4214,7 +4239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     // 복구가 확인된 뒤에만 이력을 지운다.
                     self.lastModelChange = nil
                     self.setRowState(target, ModelRowState(phase: .applied, message: nil, targetId: nil))
-                    self.modelStatusField?.stringValue = "이전 모델로 되돌렸어요. 다음 턴부터 적용됩니다."
+                    self.modelStatusField?.stringValue = "이전 모델로 되돌렸어요."
                     self.modelRevertButton?.isEnabled = false
                     self.modelRevertButton?.title = "되돌리기"
                 } else {
@@ -5203,6 +5228,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             modelWindowUserResized = true
         } else if window === vectorWindow {
             vectorWindowUserResized = true
+        } else if window === jobsWindow {
+            jobsWindowUserResized = true
         }
     }
 
@@ -5289,20 +5316,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func updateJobsEmptyState() {
         guard let label = jobsEmptyLabel else { return }
         let empty = displayedJobs.isEmpty
-        // 표를 숨기면 그 자리가 빈 띠로 남는다. 같은 자리를 빈 상태 판이
-        // 대신 차지하고 이유를 적는다 (2026-09-16).
         label.stringValue = ""
         jobsTableScroll?.isHidden = empty
         jobsEmptyState?.isHidden = !empty
+        guard empty else { return }
         if jobsReadFailed {
             // 조회가 넘겼을 때 "0건"이라고 적으면 운영자는 할 일이 없다고
             // 믿고 창을 닫는다. 다시 눌러 볼 수 있게 사실대로 적는다
             // (2026-09-16).
             jobsEmptyState?.titleText = "목록을 읽지 못했습니다"
-            jobsEmptyState?.detailText = "원장을 읽는 데 시간이 걸렸습니다. 잠시 뒤 상태를 다시 눌러 주세요."
+            jobsEmptyState?.detailText = "잠시 뒤 상태를 다시 눌러 주세요."
         } else {
             jobsEmptyState?.titleText = "이 목록에 지금 보여 줄 작업이 없습니다"
-            jobsEmptyState?.detailText = "위에서 다른 상태를 눌러 보세요. 목록은 시간 순서로 쌓입니다."
+            jobsEmptyState?.detailText = ""
+        }
+        fitJobsWindow()
+    }
+
+    /// 목록이 비면 창을 머리말과 안내 한 줄 높이로 줄인다.
+    ///
+    /// 표가 비었을 때 표가 차지하던 200pt를 그대로 두면, 창 아래 3분의 2가
+    /// 아무 내용 없는 판으로 남아 화면이 통째로 안내문이 된다. 할 일이 없을
+    /// 때는 창도 그만큼 작아야 한다. 사용자가 직접 키운 창은 건드리지 않는다
+    /// (2026-09-16, 6 Pro 지적).
+    func fitJobsWindow() {
+        guard !jobsFitting,
+              !jobsWindowUserResized,
+              let window = jobsWindow,
+              let stack = jobsStack,
+              let content = window.contentView else { return }
+        jobsFitting = true
+        defer { jobsFitting = false }
+        for _ in 0..<3 {
+            content.layoutSubtreeIfNeeded()
+            stack.layoutSubtreeIfNeeded()
+            let needed = stack.fittingSize.height
+            guard needed > 1 else { return }
+            let desired = max(needed + 32, window.minSize.height)
+            let current = content.bounds.height
+            guard abs(current - desired) > 12 else { return }
+            var frame = window.frame
+            let delta = current - desired
+            if delta > 0 {
+                // 줄일 때는 위쪽 모서리를 고정한다. 아래에서 줄이면 창이 화면
+                // 밖으로 밀린다.
+                frame.size.height -= delta
+                frame.origin.y += delta
+            } else {
+                // 늘릴 때는 화면 위쪽을 넘지 않게 막는다.
+                let grown = min(-delta, frame.origin.y)
+                guard grown > 0 else { return }
+                frame.size.height += grown
+                frame.origin.y -= grown
+            }
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
         }
     }
 
@@ -5382,13 +5450,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if jobsWindow != nil {
             return
         }
-        // 표 200 + 과정 152 + 머리말에 단추 줄까지 더하면 508pt가 필요하다
+        // 표 200 + 머리말에 단추 줄까지 더하면 400pt가 필요하다. 예전에는
+        // 과정 카드 152pt까지 미리 잡아 508pt로 두었는데, 그 카드는 고른
+        // 작업이 있을 때만 나오므로 목록만 볼 때는 필요 없는 높이였다
         // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "작업 목록",
             size: NSSize(width: 720, height: 540),
             autosave: "AutoReplyJobs",
-            minimum: NSSize(width: 620, height: 520)
+            minimum: NSSize(width: 620, height: 400)
         )
         let content = NSView()
         window.contentView = content
@@ -5418,12 +5488,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 않도록 AutoHidingLabel을 쓴다 (2026-09-16).
         let jobsEmpty = Chrome.statusLabel(size: 12, lines: 3)
         jobsEmptyLabel = jobsEmpty
-        // 표 자리를 그대로 물려받는 빈 상태 판. 표를 숨겨도 자리는 남으므로
-        // 같은 자리에 이유를 적어야 창 아래가 비지 않는다 (2026-09-16).
-        let jobsEmptyState = EmptyStateView(symbolName: "tray")
+        // 표가 빈 자리를 이유 한 줄로 대신한다.
+        //
+        // 표를 그대로 두고 위에 한 줄만 얹으면 빈 표의 교차 줄무늬가 창
+        // 아래까지 늘어선다. 실제로 그렇게 만들어 보니 회색 줄이 다섯 줄
+        // 남아, 목록이 비었다는 한 줄보다 그 줄무늬가 먼저 눈에 들어왔다.
+        // 표를 숨기고 같은 자리에 이유를 적되, 판은 한 줄 높이로 둔다
+        // (2026-09-16).
+        let jobsEmptyState = EmptyStateView(symbolName: "tray", compact: true)
         jobsEmptyState.isHidden = true
         self.jobsEmptyState = jobsEmptyState
-
         let skip = Chrome.roundedButton("미확인 건너뛰기", target: self, action: #selector(jobsSkipClicked))
         skip.isEnabled = false
         jobsSkipButton = skip
@@ -5502,6 +5576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
         let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, jobsEmptyState, scroll, traceCard, actions], spacing: 10)
+        jobsStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -5512,9 +5587,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
             jobsEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             jobsEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
-            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
-            jobsEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
@@ -5797,22 +5869,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         // 여섯 열의 최소 너비 합(624pt)에 창 여백을 더한 값보다 좁아지면
         // 마지막 "답변" 열이 표 밖으로 밀려나고 가로 스크롤이 없어 읽을 수
-        // 없다. 세로는 파이프라인 39 + 머리말 117 + 스크롤 260 + 상세 208에
-        // 사이 여백을 더해 690pt가 필요하다. 처음 여는 크기도 그보다 커야
-        // 표가 눌리지 않는다 (2026-09-16).
+        // 없다. 세로는 머리말 117 + 스크롤 260 + 상세 208에 사이 여백을
+        // 더해 650pt가 필요하다. 처음 여는 크기도 그보다 커야 표가 눌리지
+        // 않는다 (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "답변 기록",
             size: NSSize(width: 1000, height: 756),
             autosave: "AutoReplyReceipts",
-            minimum: NSSize(width: 704, height: 690)
+            minimum: NSSize(width: 704, height: 650)
         )
         let content = NSView()
         window.contentView = content
-
-        let pipeline = PipelineView(frame: .zero)
-        pipeline.translatesAutoresizingMaskIntoConstraints = false
-        pipeline.heightAnchor.constraint(equalToConstant: PipelineView.stripHeight).isActive = true
-        logPipeline = pipeline
 
         let summary = Chrome.summary("상태를 읽는 중")
         logSummary = summary
@@ -5904,10 +5971,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
-        let stack = Chrome.vstack([pipeline, headerCard, empty, emptyState, scroll, detailCard], spacing: 10)
+        let stack = Chrome.vstack([headerCard, empty, emptyState, scroll, detailCard], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
             summary.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
@@ -5936,9 +6002,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func updateLogWindow(_ model: MenubarModel) {
         let inspected = Self.selectedRoom(in: model, preferred: inspectedRoomId)
-        logPipeline?.stages = inspected?.pipeline.stages ?? model.pipeline?.stages ?? []
-        logPipeline?.level = inspected?.level ?? model.level
-        logPipeline?.needsDisplay = true
+        // 이 창은 기록 목록을 보여 주는 곳이다. 예전에는 창 맨 위에 방의
+        // 8단계 파이프라인 띠를 늘 붙여 두었다. 그 띠는 지금 고른 방의
+        // 진행 상황인데 목록은 결과·채팅방 필터로 따로 걸러, 같은 화면에서
+        // 두 가지 다른 기준이 섞였다. 파이프라인은 메뉴 패널에 이미 있고,
+        // 여기서는 목록이 곧 답이다 (2026-09-16, 6 Pro 지적).
+        _ = inspected
         let summary = model.log_summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // 이 창의 머리말은 이 창의 목록을 설명한다.
         //
@@ -6310,23 +6379,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         // 표 최소 높이가 300pt라 380pt까지 줄이면 머리말만 남고 목록이
-        // 사라진다. 감사에서 스택이 544pt를 차지하므로 576pt 아래로는
-        // 줄이지 않는다 (2026-09-16).
+        // 사라진다. 머리말 105 + 표 300에 사이 여백을 더해 470pt가 필요하다
+        // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "단체 채팅방",
-            // 스택이 544pt를 차지하는데 창을 560으로 열면 표가 눌린다. 처음
-            // 여는 크기부터 필요한 만큼 준다 (2026-09-16).
-            size: NSSize(width: 760, height: 608),
+            // 머리말과 표를 합친 만큼만 준다. 예전에는 창 위 파이프라인 띠
+            // 39pt와 그 여백까지 더해 608pt로 열었다 (2026-09-16).
+            size: NSSize(width: 760, height: 470),
             autosave: "AutoReplyRooms",
-            minimum: NSSize(width: 620, height: 576)
+            minimum: NSSize(width: 620, height: 440)
         )
         let content = NSView()
         window.contentView = content
-
-        let pipeline = PipelineView(frame: .zero)
-        pipeline.translatesAutoresizingMaskIntoConstraints = false
-        pipeline.heightAnchor.constraint(equalToConstant: PipelineView.stripHeight).isActive = true
-        roomsPipeline = pipeline
 
         // 켜고 끄는 규칙은 두 문장이면 끝난다. 어느 칸을 눌러야 하는지까지
         // 나열하던 문장은 표의 칸 제목이 이미 말한다 (2026-09-16).
@@ -6379,10 +6443,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let headerContent = Chrome.vstack([hint, toolbar], spacing: 8)
         let headerCard = Chrome.card(headerContent, padding: 12)
 
-        let stack = Chrome.vstack([pipeline, headerCard, scroll], spacing: 10)
+        let stack = Chrome.vstack([headerCard, scroll], spacing: 10)
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            pipeline.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
             hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
@@ -6434,10 +6497,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let chats = model.available_chats ?? []
         let fingerprint = roomsFingerprint(chats)
         allChats = chats
-        let inspected = Self.selectedRoom(in: model, preferred: roomsSelectedChatId != 0 ? roomsSelectedChatId : inspectedRoomId)
-        roomsPipeline?.stages = inspected?.pipeline.stages ?? model.pipeline?.stages ?? []
-        roomsPipeline?.level = inspected?.level ?? model.level
-        roomsPipeline?.needsDisplay = true
+        // 이 창의 주 내용은 방 목록이다. 창 맨 위에 붙어 있던 8단계 파이프라인
+        // 띠는 지금 고른 방의 진행 상황이라 목록과 다른 기준이었다. 방이 지금
+        // 도는지는 표의 "동작" 칸이 이미 말하므로 띠는 뺀다 (2026-09-16,
+        // 6 Pro 지적).
         if fingerprint != lastRoomsFingerprint {
             lastRoomsFingerprint = fingerprint
             applyRoomsFilter()
