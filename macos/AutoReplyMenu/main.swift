@@ -1118,17 +1118,38 @@ enum LayoutAudit {
             return false
         }
         view.cacheDisplay(in: bounds, to: rep)
-        let image = NSImage(size: bounds.size)
-        image.lockFocus()
+        // 배경을 먼저 깔고 그 위에 그리면 안 된다. cacheDisplay가 만든
+        // 비트맵은 뷰가 스스로 그리지 않은 자리가 알파 0이라, 그리는 순간
+        // 깔아 둔 배경까지 지워진다. 그러면 캡처가 통째로 투명해져 여는
+        // 프로그램에 따라 흰 판으로 보이고, 감사가 정상 UI를 결함으로
+        // 읽는다. 그래서 뷰를 먼저 그리고 배경을 destinationOver로 덮는다.
+        // 이 합성은 이미 칠해진 픽셀은 그대로 두고 빈 자리만 채운다
+        // (2026-09-16, 6 Pro 지적).
+        guard let out = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: rep.pixelsWide,
+            pixelsHigh: rep.pixelsHigh,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .calibratedRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return false }
+        out.size = bounds.size
+        guard let context = NSGraphicsContext(bitmapImageRep: out) else { return false }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        rep.draw(in: NSRect(origin: .zero, size: bounds.size))
+        context.compositingOperation = .destinationOver
         appearance.performAsCurrentDrawingAppearance {
             NSColor.windowBackgroundColor.setFill()
             NSRect(origin: .zero, size: bounds.size).fill()
         }
-        rep.draw(in: NSRect(origin: .zero, size: bounds.size))
-        image.unlockFocus()
-        guard let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let data = bitmap.representation(using: .png, properties: [:]) else {
+        context.compositingOperation = .sourceOver
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = out.representation(using: .png, properties: [:]) else {
             return false
         }
         return (try? data.write(to: url)) != nil
