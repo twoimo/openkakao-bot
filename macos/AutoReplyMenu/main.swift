@@ -1645,30 +1645,59 @@ final class KnowledgeGraphView: NSView {
         let height = bounds.height
         let identity = (scaleX: CGFloat(1), scaleY: CGFloat(1), offsetX: CGFloat(0), offsetY: CGFloat(0))
         guard nodes.count > 1, width > 1, height > 1 else { return identity }
-        var minX = CGFloat.greatestFiniteMagnitude
-        var maxX = -CGFloat.greatestFiniteMagnitude
-        var minY = CGFloat.greatestFiniteMagnitude
-        var maxY = -CGFloat.greatestFiniteMagnitude
+        // 그려지는 것은 중심이 아니라 그 둘레의 장식이다. 세포체 둘레에
+        // 1.7배 광륜이 깔리고 이름표가 아래에 붙는데, 둘 다 화면 좌표에서
+        // 고정 크기라 배율을 타지 않는다. 그래서 배율은 "장식을 뺀 나머지
+        // 폭"으로 정하고, 장식은 노드마다 제 값을 따로 뺀다.
+        //
+        // 예전에는 가장자리 노드의 반지름만 세었다. 이름표와 광륜이 빠져
+        // 가장자리 이름표가 잘렸고, 모든 노드의 장식 중 가장 큰 값 하나를
+        // 공통으로 빼던 때는 위아래에 25~29pt짜리 빈 띠가 남았다
+        // (2026-09-16, 6 Pro 지적).
+        var minCx = CGFloat.greatestFiniteMagnitude
+        var maxCx = -CGFloat.greatestFiniteMagnitude
+        var minCy = CGFloat.greatestFiniteMagnitude
+        var maxCy = -CGFloat.greatestFiniteMagnitude
+        var leftEdge = 0.0, rightEdge = 0.0, topEdge = 0.0, bottomEdge = 0.0
         for node in nodes {
             guard let pos = positions[node.id] else { continue }
             let r = radius(node)
-            minX = min(minX, pos.x - r)
-            maxX = max(maxX, pos.x + r)
-            minY = min(minY, pos.y - r)
-            maxY = max(maxY, pos.y + r)
+            let glow = r * 1.7
+            let label = labelExtent(node)
+            let left = max(glow, label.width / 2)
+            let bottom = max(glow, r + 3 + label.height)
+            if pos.x < minCx { minCx = pos.x; leftEdge = left }
+            if pos.x > maxCx { maxCx = pos.x; rightEdge = left }
+            if pos.y < minCy { minCy = pos.y; topEdge = glow }
+            if pos.y > maxCy { maxCy = pos.y; bottomEdge = bottom }
         }
-        guard maxX > minX, maxY > minY else { return identity }
-        let pad: CGFloat = 6
-        let spanX = maxX - minX
-        let spanY = maxY - minY
-        let scaleX = max(width - pad * 2, 40) / spanX
-        let scaleY = max(height - pad * 2, 40) / spanY
+        guard maxCx >= minCx, maxCy >= minCy else { return identity }
+        let pad: CGFloat = 8
+        let spanX = max(maxCx - minCx, 0.001)
+        let spanY = max(maxCy - minCy, 0.001)
+        // 한 줄로 늘어선 뉴런은 폭이 0에 가깝다. 배율을 그대로 두면 한 없이
+        // 커지므로 상한을 두고, 남는 자리는 가운데로 민다.
+        let scaleX = min(max(width - pad * 2 - leftEdge - rightEdge, 40) / spanX, 6)
+        let scaleY = min(max(height - pad * 2 - topEdge - bottomEdge, 40) / spanY, 6)
+        let usedX = spanX * scaleX + leftEdge + rightEdge
+        let usedY = spanY * scaleY + topEdge + bottomEdge
         return (
             scaleX: scaleX,
             scaleY: scaleY,
-            offsetX: (width - spanX * scaleX) / 2 - minX * scaleX,
-            offsetY: (height - spanY * scaleY) / 2 - minY * scaleY
+            offsetX: (width - usedX) / 2 + leftEdge - minCx * scaleX,
+            offsetY: (height - usedY) / 2 + topEdge - minCy * scaleY
         )
+    }
+
+    /// 이름표가 차지하는 크기. 그리는 쪽과 같은 글꼴로 재야 배율이 맞는다.
+    private func labelExtent(_ node: KnowledgeNode) -> CGSize {
+        let text = node.label as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: node.id == selectedNodeId ? .semibold : .regular),
+        ]
+        let size = text.size(withAttributes: attrs)
+        // 이름 뒤에 까는 판이 좌우로 3pt씩 넓다 (draw 참고).
+        return CGSize(width: size.width + 6, height: size.height + 2)
     }
 
     private func fitted(_ point: CGPoint) -> CGPoint {
