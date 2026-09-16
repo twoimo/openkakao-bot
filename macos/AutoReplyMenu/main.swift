@@ -2494,6 +2494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var logEmptyLabel: NSTextField?
     var logEmptyState: EmptyStateView?
     var logDetailView: NSTextView?
+    var logDetailCard: NSView?
     var receiptRows: [ReceiptRow] = []
     var displayedReceipts: [ReceiptRow] = []
     var receiptTitles: [(id: String, title: String)] = []
@@ -5878,6 +5879,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let detailTitle = Chrome.label("선택한 턴의 자세한 기록", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
         let detailContent = Chrome.vstack([detailTitle, detailScroll], spacing: 6)
         let detailCard = Chrome.card(detailContent, padding: 10)
+        logDetailCard = detailCard
 
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
@@ -6165,13 +6167,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let view = logDetailView else { return }
         let row = logTable?.selectedRow ?? -1
         var lines: [String] = []
-        if row >= 0, row < displayedReceipts.count {
+        let hasSelection = row >= 0 && row < displayedReceipts.count
+        if hasSelection {
             lines = displayedReceipts[row].detail
             if lines.isEmpty, !displayedReceipts[row].summary.isEmpty {
                 lines = [displayedReceipts[row].summary]
             }
-        } else {
-            lines = logFriendlyLines()
+        }
+        // 고른 턴이 없으면 이 카드는 접는다.
+        //
+        // 예전에는 그 자리에 코어의 시스템 로그 줄을 대신 채웠다. 제목은
+        // "선택한 턴의 자세한 기록"인데 내용은 감독·감시·세션 이야기라,
+        // 운영자는 한 턴의 기록과 시스템 상태를 같은 칸에서 읽어야 했다.
+        // 시스템 상태는 자가 점검 창과 메뉴 패널에 이미 있다 (2026-09-16,
+        // 6 Pro 지적).
+        logDetailCard?.isHidden = !hasSelection
+        guard hasSelection else {
+            lastLogDetailKey = ""
+            return
         }
         let text = lines.isEmpty ? "이 턴에 대한 자세한 기록이 없습니다." : lines.joined(separator: "\n")
         if text == lastLogDetailKey, (view.textStorage?.length ?? 0) > 0 {
