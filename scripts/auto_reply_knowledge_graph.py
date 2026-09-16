@@ -10,6 +10,8 @@ Inspired by Andrej Karpathy's LLM Wiki & Algorithmic Knowledge Graph concepts:
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -263,6 +265,350 @@ def _room_ledgers(state_root: Path) -> list[Path]:
         return []
 
 
+# The context index already holds the room's history with a topic per message.
+# The graph used to be five hand-written nodes, so it could not answer anything
+# the author had not thought of in advance: the room discussed Alibaba Cloud
+# for an hour and the graph still had nothing to say about it. These rows turn
+# the index into neurons and synapses (2026-09-16).
+INDEX_TOPIC_LABELS = {
+    "coins": "코인",
+    "stocks": "주식",
+    "ai": "AI",
+    "business": "사업/창업",
+    "llm_tools": "LLM 도구",
+    "investing": "투자",
+    "real_estate": "부동산",
+    "contact": "연락/인맥",
+    "auction": "경매",
+    "computer_use": "컴퓨터 유즈",
+    "news": "뉴스",
+    "infra": "인프라/클라우드",
+    "kakao_auto": "카카오 자동화",
+    "identity": "정체성",
+    "ax_macos": "macOS 자동화",
+}
+
+# A topic needs this many messages before it earns a neuron. Below it the
+# graph fills with one-off words that tell the reader nothing.
+INDEX_TOPIC_MIN_MESSAGES = 20
+# How many recent messages to read per topic to write its description and the
+# facts the answer will lean on.
+INDEX_TOPIC_SAMPLE_MESSAGES = 60
+
+# A neuron's facts should quote the people in the room, not the bots that post
+# into it. Without this every 인프라 fact was a GeekNews digest line and the
+# node said nothing about what the members actually discussed (2026-09-16).
+INDEX_SAMPLE_SKIP_AUTHORS = (
+    "드리고",
+    "드리고봇",
+    "뉴스봇",
+    "채팅봇",
+    "주식봇",
+    "날씨날씨",
+    "인아웃",
+    "chatgpt",
+    "(알 수 없음)",
+)
+# Long digests and link dumps are not conversation either.
+INDEX_SAMPLE_MAX_LENGTH = 200
+
+
+def _sample_is_conversation(user: str, message: str) -> bool:
+    """Whether one indexed line is worth quoting as a neuron's evidence."""
+    folded = (user or "").strip().casefold()
+    if not folded or folded.endswith("봇"):
+        return False
+    if any(folded == skip.casefold() for skip in INDEX_SAMPLE_SKIP_AUTHORS):
+        return False
+    line = " ".join((message or "").split())
+    if len(line) < 6 or len(line) > INDEX_SAMPLE_MAX_LENGTH:
+        return False
+    # GeekNews digests and other auto-posted link lists arrive on the persona's
+    # own account. They read as the room talking when they are a broadcast.
+    if line.startswith("GeekNews") or line.count("http") >= 2:
+        return False
+    return True
+
+
+def _index_db_path(state_root: Path) -> Path:
+    """The shared context index. Sibling of the state root's parent."""
+    return state_root.parent / "context.sqlite3"
+
+
+def _index_topic_rows(conn: sqlite3.Connection, *, chat: str = "") -> list[tuple[str, int]]:
+    """Topics with enough messages to be worth a neuron."""
+    if chat:
+        cursor = conn.execute(
+            "SELECT topic, SUM(message_count) FROM context_topic_stats"
+            " WHERE chat = ? GROUP BY topic HAVING SUM(message_count) >= ?"
+            " ORDER BY SUM(message_count) DESC",
+            (chat, INDEX_TOPIC_MIN_MESSAGES),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT topic, SUM(message_count) FROM context_topic_stats"
+            " GROUP BY topic HAVING SUM(message_count) >= ?"
+            " ORDER BY SUM(message_count) DESC",
+            (INDEX_TOPIC_MIN_MESSAGES,),
+        )
+    return [(str(topic), int(count or 0)) for topic, count in cursor.fetchall() if topic]
+
+
+def _index_topic_samples(
+    conn: sqlite3.Connection,
+    topic: str,
+    *,
+    chat: str = "",
+    limit: int = INDEX_TOPIC_SAMPLE_MESSAGES,
+) -> list[tuple[str, str, str]]:
+    """Recent (date, user, message) rows for one topic, newest last."""
+    # The obvious join with ORDER BY m.date DESC makes SQLite build a temp
+    # B-tree over every message the topic ever had, which cost 6.7s for 13
+    # topics. The topic index is keyed (topic, message_id), so walking it
+    # backwards yields the newest ids directly and any sorting happens in
+    # Python on at most `want` rows (2026-09-16).
+    want = max(int(limit), 1)
+    try:
+        row = conn.execute(
+            "SELECT MAX(message_id) FROM context_message_topics WHERE topic = ?",
+            (topic,),
+        ).fetchone()
+    except sqlite3.Error:
+        return []
+    highest = row[0] if row else None
+    if highest is None:
+        return []
+    # Two probes: most topics fit in the first slice, and a busy room whose
+    # recent slice is filtered out by the chat clause needs the older one.
+    ceiling = int(highest)
+    for _attempt in range(2):
+        try:
+            ids = [
+                int(value)
+                for (value,) in conn.execute(
+                    "SELECT message_id FROM context_message_topics"
+                    " WHERE topic = ? AND message_id <= ?"
+                    " ORDER BY message_id DESC LIMIT ?",
+                    (topic, ceiling, want),
+                ).fetchall()
+            ]
+        except sqlite3.Error:
+            return []
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        sql = (
+            "SELECT id, date, user_name, message FROM context_messages"
+            f" WHERE id IN ({placeholders})"
+        )
+        params: list[Any] = list(ids)
+        if chat:
+            sql += " AND chat = ?"
+            params.append(chat)
+        try:
+            found = {
+                int(i): (str(d or ""), str(u or ""), str(m or ""))
+                for i, d, u, m in conn.execute(sql, params)
+            }
+        except sqlite3.Error:
+            return []
+        if found:
+            return [found[i] for i in sorted(found)]
+        ceiling = min(ids) - 1
+        if ceiling <= 0:
+            break
+    return []
+
+
+def _synapse_weight(count: int) -> int:
+    """Map a co-occurrence count onto 30..99 without flattening the top.
+
+    ``30 + count`` pushed every busy pair to the ceiling: 코인-주식 and
+    연락-주식 both drew at 99, so the picture showed no difference between the
+    strongest and the weakest link. A log curve keeps them apart (2026-09-16).
+    """
+    count = max(int(count), 1)
+    return max(30, min(99, 30 + int(round(20 * math.log10(count + 1)))))
+
+
+def _topic_terms(topic: str, samples: list[tuple[str, str, str]]) -> list[str]:
+    """Aliases that let a later turn find this neuron.
+
+    The topic key is an English slug, so matching it against Korean chat would
+    find nothing. The label is the reliable alias; the slug is kept for turns
+    that do use it.
+    """
+    label = INDEX_TOPIC_LABELS.get(topic, topic)
+    terms = [label, topic]
+    for part in label.replace("/", " ").split():
+        if len(part) >= 2 and part not in terms:
+            terms.append(part)
+    return terms
+
+
+def index_topic_entities(
+    conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    chat: str = "",
+    limit: int = 40,
+) -> dict[str, int]:
+    """Turn indexed topics into neurons, with a sample of real messages.
+
+    Each neuron carries the message count, the span of dates it covers, and up
+    to three recent lines so the model sees what the room actually said rather
+    than a summary someone typed once (2026-09-16).
+    """
+    stats = {"topics": 0, "written": 0, "with_samples": 0}
+    index_path = _index_db_path(state_root)
+    if not index_path.exists():
+        return stats
+    try:
+        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return stats
+    try:
+        index_conn.execute("PRAGMA query_only = ON")
+        topics = _index_topic_rows(index_conn, chat=chat)[: max(int(limit), 1)]
+        stats["topics"] = len(topics)
+        now = int(time.time())
+        for topic, count in topics:
+            samples = _index_topic_samples(index_conn, topic, chat=chat)
+            label = INDEX_TOPIC_LABELS.get(topic, topic)
+            dates = [date for date, _user, _message in samples if date]
+            span = ""
+            if dates:
+                span = f"{dates[0][:10]} ~ {dates[-1][:10]}"
+            facts: list[str] = []
+            if count:
+                facts.append(f"이 방에서 {count}건의 메시지가 이 주제로 묶였습니다")
+            if span:
+                facts.append(f"기록된 기간: {span}")
+            # Recent lines, newest first, deduplicated, and short enough to
+            # keep the prompt small.
+            seen: set[str] = set()
+            for _date, user, message in reversed(samples):
+                line = " ".join(message.split())
+                if not _sample_is_conversation(user, line) or line in seen:
+                    continue
+                seen.add(line)
+                facts.append(f"{user or '누군가'}: {line[:90]}")
+                if len(facts) >= 6:
+                    break
+            if samples:
+                stats["with_samples"] += 1
+            conn.execute(
+                """
+                INSERT INTO kg_entities
+                    (entity_id, name, category, aliases_json, description,
+                     key_facts_json, importance, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entity_id) DO UPDATE SET
+                    name=excluded.name,
+                    category=excluded.category,
+                    aliases_json=excluded.aliases_json,
+                    description=excluded.description,
+                    key_facts_json=excluded.key_facts_json,
+                    importance=excluded.importance,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    f"topic:{topic}",
+                    f"{label} (대화 주제)",
+                    "대화 주제",
+                    json.dumps(_topic_terms(topic, samples), ensure_ascii=False),
+                    f"색인된 대화에서 {count}건이 묶인 주제입니다. 최근 대화가 이 주제 위에 있습니다.",
+                    json.dumps(facts, ensure_ascii=False),
+                    min(99, 40 + count // 200),
+                    now,
+                ),
+            )
+            stats["written"] += 1
+        conn.commit()
+    except (sqlite3.Error, OSError, ValueError):
+        return stats
+    finally:
+        index_conn.close()
+    return stats
+
+
+def index_topic_relations(
+    conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    chat: str = "",
+    limit: int = 40,
+) -> dict[str, int]:
+    """Draw a synapse between two topics that share messages.
+
+    Two topics mentioned in the same message are related, and the number of
+    such messages is the weight. That is what makes the picture a network
+    rather than a list of separate circles (2026-09-16).
+    """
+    stats = {"pairs": 0, "written": 0}
+    index_path = _index_db_path(state_root)
+    if not index_path.exists():
+        return stats
+    known = {
+        row[0]
+        for row in conn.execute(
+            "SELECT entity_id FROM kg_entities WHERE entity_id LIKE 'topic:%'"
+        )
+    }
+    if not known:
+        return stats
+    try:
+        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return stats
+    try:
+        index_conn.execute("PRAGMA query_only = ON")
+        sql = (
+            "SELECT a.topic, b.topic, COUNT(*) FROM context_message_topics a"
+            " JOIN context_message_topics b"
+            "   ON a.message_id = b.message_id AND a.topic < b.topic"
+        )
+        params: list[Any] = []
+        if chat:
+            sql += " JOIN context_messages m ON m.id = a.message_id WHERE m.chat = ?"
+            params.append(chat)
+        sql += " GROUP BY a.topic, b.topic ORDER BY COUNT(*) DESC LIMIT ?"
+        params.append(max(int(limit), 1))
+        rows = index_conn.execute(sql, params).fetchall()
+    except sqlite3.Error:
+        return stats
+    finally:
+        index_conn.close()
+    now = int(time.time())
+    for left, right, count in rows:
+        left_id, right_id = f"topic:{left}", f"topic:{right}"
+        if left_id not in known or right_id not in known:
+            continue
+        stats["pairs"] += 1
+        conn.execute(
+            """
+            INSERT INTO kg_relations
+                (source_id, relation, target_id, context, weight, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+                context=excluded.context,
+                weight=excluded.weight,
+                updated_at=excluded.updated_at
+            """,
+            (
+                left_id,
+                "CO_OCCURS",
+                right_id,
+                f"같은 메시지에서 {int(count)}번 함께 언급됨",
+                _synapse_weight(count),
+                now,
+            ),
+        )
+        stats["written"] += 1
+    conn.commit()
+    return stats
+
+
 def attach_ledger_evidence(
     conn: sqlite3.Connection,
     state_root: Path,
@@ -376,11 +722,13 @@ def collect_knowledge_graph(
     db_path: Path,
     *,
     state_root: Path | None = None,
+    chat: str = "",
 ) -> dict[str, Any]:
     """Return the whole graph as nodes and edges for a force-directed view.
 
     Node ids stay stable across calls so a viewer can animate the same layout
-    instead of re-randomising every refresh.
+    instead of re-randomising every refresh. ``chat`` limits the indexed topics
+    to one room; empty means every room the index covers.
     """
     kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
     try:
@@ -400,6 +748,15 @@ def collect_knowledge_graph(
         }
     try:
         ensure_seeded(conn)
+        # 색인된 대화에서 뉴런과 시냅스를 다시 만든다. 손으로 적은 다섯 개만
+        # 있으면 방에서 한 시간 동안 이야기한 주제도 그래프에 없어, 답변이
+        # 그 맥락을 모른 채 나간다 (2026-09-16).
+        if state_root is not None:
+            try:
+                index_topic_entities(conn, state_root, chat=chat)
+                index_topic_relations(conn, state_root, chat=chat)
+            except (OSError, sqlite3.Error, ValueError):
+                pass
         if state_root is not None:
             try:
                 attach_ledger_evidence(conn, state_root)
@@ -611,11 +968,51 @@ def collect_knowledge_graph_list(
         conn.close()
 
 
-def query_knowledge_context(query_text: str, state_root: Path | None = None) -> list[str]:
-    """Retrieve relevant Knowledge Graph context nodes for a given message."""
-    if not query_text:
+def _alias_matches(alias: str, haystack: str) -> bool:
+    """Whether one alias appears in the text.
+
+    Korean attaches particles straight to the noun ("알쫀쿠는", "러닝도"), so a
+    plain substring test is right for anything longer than two characters. A
+    one or two character alias is too easy to hit inside another word, so it
+    needs a boundary on both sides ("런" must not match "런타임").
+    """
+    folded = alias.casefold().strip()
+    if not folded:
+        return False
+    if len(folded) <= 2:
+        return re.search(
+            r"(?:^|[\s.,!?~/_-])" + re.escape(folded) + r"(?:$|[\s.,!?~/_-])",
+            haystack,
+        ) is not None
+    return folded in haystack
+
+
+def query_knowledge_context(
+    query_text: str,
+    state_root: Path | None = None,
+    *,
+    also: "list[str] | tuple[str, ...] | None" = None,
+) -> list[str]:
+    """Retrieve relevant Knowledge Graph context nodes for a turn.
+
+    ``query_text`` is the incoming message. ``also`` adds more text the turn is
+    really about, and it matters more than it looks: a room discussed Alibaba
+    Cloud pricing and then sent a bare photo. Matching only the incoming
+    "사진" retrieved nothing, so the answer that followed had no idea the
+    conversation was about cloud subscriptions, even though the graph held
+    that fact (2026-09-16). The caller passes the recent conversation here.
+
+    Every additional source is matched at lower precedence than the incoming
+    message, and the returned lines keep their category and name so the model
+    can tell which concept is being invoked.
+    """
+    haystacks = [query_text.casefold()]
+    for extra in also or ():
+        folded = str(extra or "").casefold().strip()
+        if folded:
+            haystacks.append(folded)
+    if not any(haystacks):
         return []
-    import re
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
     kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
     if not kg_path.exists():
@@ -624,26 +1021,33 @@ def query_knowledge_context(query_text: str, state_root: Path | None = None) -> 
     try:
         ensure_seeded(conn)
         cursor = conn.cursor()
-        q = query_text.casefold()
-        cursor.execute("SELECT name, category, aliases_json, description, key_facts_json FROM kg_entities")
-        hits = []
+        cursor.execute(
+            "SELECT name, category, aliases_json, description, key_facts_json"
+            " FROM kg_entities ORDER BY importance DESC, entity_id ASC"
+        )
+        hits: list[str] = []
         for name, cat, aliases_str, desc, facts_str in cursor.fetchall():
-            aliases = json.loads(aliases_str)
-            matched = False
-            for alias in aliases:
-                al = alias.casefold()
-                if len(al) <= 2:
-                    # Short alias: require word boundary or whitespace/punctuation boundary to avoid false positives like '런타임' for '런'
-                    if re.search(r'(?:^|[\s.,!?~/_-])' + re.escape(al) + r'(?:$|[\s.,!?~/_-])', q):
-                        matched = True
-                        break
-                else:
-                    if al in q:
-                        matched = True
-                        break
-            if matched or name.casefold() in q:
+            try:
+                aliases = json.loads(aliases_str)
+            except (TypeError, ValueError):
+                aliases = []
+            if not isinstance(aliases, list):
+                aliases = []
+            terms = [str(alias) for alias in aliases] + [str(name)]
+            matched = any(
+                _alias_matches(term, haystack)
+                for haystack in haystacks
+                for term in terms
+            )
+            if not matched:
+                continue
+            try:
                 facts = json.loads(facts_str)
-                hits.append(f"[{cat}] {name}: {desc} (핵심 맥락: {'; '.join(facts)})")
+            except (TypeError, ValueError):
+                facts = []
+            if not isinstance(facts, list):
+                facts = []
+            hits.append(f"[{cat}] {name}: {desc} (핵심 맥락: {'; '.join(str(f) for f in facts)})")
         return hits
     except Exception:
         return []
