@@ -913,6 +913,18 @@ enum LayoutAudit {
                 entry["orientation"] = stack.orientation == .horizontal ? "h" : "v"
                 entry["arranged"] = stack.arrangedSubviews.count
             }
+            // 신경망 보기가 실제로 뉴런을 그렸는지 잰다. 힘 배치가 뭉치면
+            // 창이 비어 보이는데, 프레임만 봐서는 알 수 없다 (2026-09-16).
+            if let graph = child as? KnowledgeGraphView {
+                entry["graphNodes"] = graph.nodes.count
+                entry["graphEdges"] = graph.edges.count
+                if let spread = graph.drawnSpread {
+                    entry["graphInk"] = [
+                        "w": round(spread.width * 100) / 100,
+                        "h": round(spread.height * 100) / 100,
+                    ]
+                }
+            }
             if let box = child as? NSBox {
                 entry["boxType"] = box.boxType.rawValue
                 entry["corner"] = box.cornerRadius
@@ -1217,6 +1229,60 @@ final class KnowledgeGraphView: NSView {
         needsDisplay = true
     }
 
+    /// 결과를 캔버스에 펼친다.
+    ///
+    /// 힘 배치는 동그랗게 뭉치려는 성질이 있어, 넓고 낮은 캔버스에서는
+    /// 가운데 작은 원만 그리고 좌우가 텅 빈 채로 남았다(잉크가 948pt 중
+    /// 202pt). 시뮬레이션 좌표는 그대로 두고 그릴 때만 늘린다. 좌표를 직접
+    /// 고치면 배치가 다시 돌 때마다 배율이 겹곱해져 뉴런이 창 밖으로 밀려난다
+    /// (2026-09-16).
+    private func fitTransform() -> (scaleX: CGFloat, scaleY: CGFloat, offsetX: CGFloat, offsetY: CGFloat) {
+        // 실제 크기를 쓴다. 시뮬레이션의 최소 크기(480x320)를 그대로 쓰면
+        // 260pt 높이의 창에서 배율이 그만큼 커져 뉴런이 창 밖으로 밀려난다
+        // (2026-09-16).
+        let width = bounds.width
+        let height = bounds.height
+        let identity = (scaleX: CGFloat(1), scaleY: CGFloat(1), offsetX: CGFloat(0), offsetY: CGFloat(0))
+        guard nodes.count > 1, width > 1, height > 1 else { return identity }
+        var minX = CGFloat.greatestFiniteMagnitude
+        var maxX = -CGFloat.greatestFiniteMagnitude
+        var minY = CGFloat.greatestFiniteMagnitude
+        var maxY = -CGFloat.greatestFiniteMagnitude
+        for node in nodes {
+            guard let pos = positions[node.id] else { continue }
+            let r = radius(node)
+            minX = min(minX, pos.x - r)
+            maxX = max(maxX, pos.x + r)
+            minY = min(minY, pos.y - r)
+            maxY = max(maxY, pos.y + r)
+        }
+        guard maxX > minX, maxY > minY else { return identity }
+        let pad: CGFloat = 6
+        let spanX = maxX - minX
+        let spanY = maxY - minY
+        let scaleX = max(width - pad * 2, 40) / spanX
+        let scaleY = max(height - pad * 2, 40) / spanY
+        return (
+            scaleX: scaleX,
+            scaleY: scaleY,
+            offsetX: (width - spanX * scaleX) / 2 - minX * scaleX,
+            offsetY: (height - spanY * scaleY) / 2 - minY * scaleY
+        )
+    }
+
+    private func fitted(_ point: CGPoint) -> CGPoint {
+        let fit = fitTransform()
+        return CGPoint(x: point.x * fit.scaleX + fit.offsetX, y: point.y * fit.scaleY + fit.offsetY)
+    }
+
+    /// 그린 자리를 되돌려 시뮬레이션 좌표로 만든다. 누른 자리와 뉴런을
+    /// 맞추려면 그릴 때 쓴 배율을 거꾸로 적용해야 한다 (2026-09-16).
+    private func unfitted(_ point: CGPoint) -> CGPoint {
+        let fit = fitTransform()
+        guard fit.scaleX != 0, fit.scaleY != 0 else { return point }
+        return CGPoint(x: (point.x - fit.offsetX) / fit.scaleX, y: (point.y - fit.offsetY) / fit.scaleY)
+    }
+
     /// A small force-directed relaxation. Repulsion between every pair is
     /// O(n^2), which is fine for a hand-curated graph of tens of nodes; the
     /// step count is capped so a refresh never blocks the main thread.
@@ -1317,9 +1383,37 @@ final class KnowledgeGraphView: NSView {
         return nil
     }
 
+    /// 그려진 뉴런이 실제로 차지하는 사각형. 감사가 이 값을 읽어 창이
+    /// 비어 있는지 판단한다 (2026-09-16).
+    var drawnSpread: NSRect? {
+        var minX = CGFloat.greatestFiniteMagnitude
+        var maxX = -CGFloat.greatestFiniteMagnitude
+        var minY = CGFloat.greatestFiniteMagnitude
+        var maxY = -CGFloat.greatestFiniteMagnitude
+        for node in nodes {
+            guard let pos = positions[node.id] else { continue }
+            let r = radius(node)
+            minX = min(minX, pos.x - r)
+            maxX = max(maxX, pos.x + r)
+            minY = min(minY, pos.y - r)
+            maxY = max(maxY, pos.y + r)
+        }
+        guard maxX > minX else { return nil }
+        // 그리는 좌표로 돌려준다. 감사는 화면에 보이는 자리를 재야 한다.
+        let topLeft = fitted(CGPoint(x: minX, y: minY))
+        let bottomRight = fitted(CGPoint(x: maxX, y: maxY))
+        return NSRect(
+            x: topLeft.x,
+            y: topLeft.y,
+            width: bottomRight.x - topLeft.x,
+            height: bottomRight.y - topLeft.y
+        )
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hit = node(at: point)
+        // 그릴 때 늘린 좌표를 되돌려 뉴런과 맞춘다.
+        let hit = node(at: unfitted(point))
         selectedNodeId = hit?.id
         onSelect?(hit)
         needsDisplay = true
@@ -1327,7 +1421,7 @@ final class KnowledgeGraphView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let hit = node(at: point)?.id
+        let hit = node(at: unfitted(point))?.id
         if hit != hoveredId {
             hoveredId = hit
             needsDisplay = true
@@ -1350,7 +1444,9 @@ final class KnowledgeGraphView: NSView {
 
         // Synapses first, so cell bodies sit on top of their own dendrites.
         for edge in edges {
-            guard let a = positions[edge.source], let b = positions[edge.target] else { continue }
+            guard let rawA = positions[edge.source], let rawB = positions[edge.target] else { continue }
+            let a = fitted(rawA)
+            let b = fitted(rawB)
             let grounded = edge.evidence.grounded
             let strength = CGFloat(min(100, max(0, edge.weight))) / 100.0
             let color = (grounded ? NSColor.systemTeal : NSColor.systemGray)
@@ -1370,7 +1466,8 @@ final class KnowledgeGraphView: NSView {
         }
 
         for node in nodes {
-            guard let pos = positions[node.id] else { continue }
+            guard let raw = positions[node.id] else { continue }
+            let pos = fitted(raw)
             let r = radius(node)
             let selected = node.id == selectedNodeId
             let hovered = node.id == hoveredId
@@ -4253,6 +4350,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ]) {
             applyVectorReport(report)
         }
+        // 신경망 보기는 평소 백그라운드에서 읽는다. 감사는 그 결과를 기다릴
+        // 수 없어 뉴런이 하나도 없는 260pt 빈 띠를 재게 된다. 여기서는 한 번
+        // 동기로 읽어 실제로 그려지는 그림을 잰다 (2026-09-16).
+        if vectorSourceKind == "knowledge_graph",
+           let data = runPython(["--action", "knowledge-graph"], timeout: 25),
+           let report = try? JSONDecoder().decode(KnowledgeGraphReport.self, from: data),
+           report.ok {
+            vectorGraphView?.nodes = report.nodes
+            vectorGraphView?.edges = report.edges
+            vectorGraphView?.layoutSubtreeIfNeeded()
+            vectorGraphView?.displayIfNeeded()
+        }
+        // 읽을 자료가 없으면 신경망 보기도 감춘다. 빈 캔버스 260pt를 그대로
+        // 두면 창 아래가 통째로 비어 보인다 (2026-09-16).
+        hideEmptyKnowledgeGraph()
         // 창 크기 조정은 원래 다음 런루프에서 끝난다. 감사는 그 전에 재므로
         // 여기서 한 번에 맞춘다.
         shrinkModelSettingsWindowNow()
@@ -6039,7 +6151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 두 보기가 서로 다른 말을 하지 않는다 (2026-09-16).
         let graph = KnowledgeGraphView(frame: .zero)
         graph.translatesAutoresizingMaskIntoConstraints = false
-        graph.isHidden = true
+        // 처음에는 그래프를 그리지 않지만 숨기지는 않는다. 숨김은 부모
+        // 스택이 혼자 관리하는데, 예전에는 여기서 자식만 숨겨 두어 스택을
+        // 보여 준 뒤에도 그래프가 영영 나타나지 않았다 (2026-09-16).
         graph.onSelect = { [weak self] node in
             self?.selectVectorRow(forKnowledgeNode: node)
         }
@@ -6495,6 +6609,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// 뉴런이 하나도 없으면 신경망 보기를 감춘다.
+    ///
+    /// 보기를 켜 두고 그래프가 비어 있으면 260pt짜리 빈 캔버스만 남아 창
+    /// 아래가 통째로 비어 보인다. 표와 편집기는 그대로 두고 그래프만
+    /// 감추며, 감출 때는 힌트 줄에 왜 안 보이는지 적는다 (2026-09-16).
+    func hideEmptyKnowledgeGraph() {
+        guard let graph = vectorGraphView else { return }
+        let empty = graph.nodes.isEmpty
+        vectorGraphStack?.isHidden = empty || currentVectorSource() != "knowledge_graph"
+        if empty, currentVectorSource() == "knowledge_graph" {
+            vectorGraphHint?.stringValue = "아직 그릴 뉴런이 없습니다. 메시지를 읽어 지식 그래프를 채우면 여기에 신경망으로 나타납니다."
+        }
+    }
+
     /// 그래프 전체를 한 번에 읽는다. 목록과 달리 쪽 나눔이 없어야 힘 배치가
     /// 안정적이고, 읽는 동안에는 이전 그림을 그대로 둔다.
     func refreshKnowledgeGraph() {
@@ -6511,12 +6639,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 guard token == self.vectorGraphToken else { return }
                 guard let report, report.ok else {
                     self.vectorGraphHint?.stringValue = "지식 그래프를 읽지 못했습니다. 잠시 뒤 다시 열어 주세요."
+                    self.vectorGraphView?.nodes = []
+                    self.vectorGraphView?.edges = []
+                    self.hideEmptyKnowledgeGraph()
                     return
                 }
                 self.vectorGraphView?.nodes = report.nodes
                 self.vectorGraphView?.edges = report.edges
                 let total = report.node_count
                 let grounded = report.grounded_nodes
+                // 뉴런이 없으면 빈 캔버스를 남기지 않는다.
+                self.hideEmptyKnowledgeGraph()
+                guard !report.nodes.isEmpty else { return }
                 self.vectorGraphHint?.stringValue =
                     "동그라미는 뉴런(개념), 선은 시냅스(관계)입니다. 크기는 중요도, 선 굵기는 관계 강도입니다. "
                     + "뉴런 \(total)개 중 \(grounded)개가 원문 메시지로 확인되었습니다. 밝은 뉴런을 누르면 아래에 근거가 나옵니다."
