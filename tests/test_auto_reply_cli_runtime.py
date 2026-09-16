@@ -17403,6 +17403,125 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
         self.assertIn("football tactics board", preview["text"])
         self.assertTrue(module._inbound_asks_question("리드미 요약해줘"))
 
+    def test_unreadable_image_is_named_and_never_answered_blind(self):
+        """A photo the worker cannot read must not be dropped in silence.
+
+        The old code swallowed the read error, so a question about a photo was
+        sent as plain text and answered as if no photo had been attached
+        (2026-09-16).
+        """
+
+        module = self._load_auto_reply_module("image_unreadable_payload")
+        captured: dict = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response()
+
+        missing = Path(tempfile.gettempdir()) / "openkakao-not-here-20260916.png"
+        with mock.patch.object(module.urllib.request, "urlopen", fake_urlopen):
+            code, _stdout, _stderr = module._run_opencodex_generation(
+                "opencode-go-session/deepseek-v4.1-flash",
+                "시스템",
+                '{"inbound":"얼마나 먹는 거임"}'.encode("utf-8"),
+                image_paths=[missing],
+                timeout=5.0,
+            )
+        self.assertEqual(code, 0)
+        content = captured["body"]["messages"][1]["content"]
+        # The text is still sent, but with an explicit note that the photo was
+        # not readable, so the model cannot guess at a picture it never saw.
+        self.assertIsInstance(content, str)
+        self.assertIn("사진을 읽지 못했습니다", content)
+        self.assertIn("추측하지 말고", content)
+
+    def test_readable_image_is_still_attached_as_a_data_url(self):
+        """The failure path must not disturb the working path."""
+
+        module = self._load_auto_reply_module("image_readable_payload")
+        captured: dict = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "photo.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload")
+            with mock.patch.object(module.urllib.request, "urlopen", fake_urlopen):
+                code, _stdout, _stderr = module._run_opencodex_generation(
+                    "opencode-go-session/deepseek-v4.1-flash",
+                    "시스템",
+                    '{"inbound":"얼마나 먹는 거임"}'.encode("utf-8"),
+                    image_paths=[image],
+                    timeout=5.0,
+                )
+        self.assertEqual(code, 0)
+        content = captured["body"]["messages"][1]["content"]
+        self.assertIsInstance(content, list)
+        urls = [part.get("image_url", {}).get("url", "") for part in content]
+        self.assertTrue(any(url.startswith("data:image/") for url in urls), urls)
+
+    def test_empty_image_list_leaves_the_text_message_alone(self):
+        """No images means no note about images."""
+
+        module = self._load_auto_reply_module("image_none_payload")
+        captured: dict = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Response()
+
+        for images in ([], None):
+            with mock.patch.object(module.urllib.request, "urlopen", fake_urlopen):
+                code, _stdout, _stderr = module._run_opencodex_generation(
+                    "opencode-go-session/deepseek-v4.1-flash",
+                    "시스템",
+                    '{"inbound":"안녕"}'.encode("utf-8"),
+                    image_paths=images,
+                    timeout=5.0,
+                )
+            self.assertEqual(code, 0)
+            content = captured["body"]["messages"][1]["content"]
+            self.assertIsInstance(content, str)
+            self.assertNotIn("사진을 읽지 못했습니다", content)
+
     def test_rerank_client_consumes_late_sidecar_greeting(self):
         module = self._load_auto_reply_module("rerank_late_greeting")
         client = module._RerankClient()

@@ -10924,20 +10924,44 @@ def _run_opencodex_generation(
     if image_paths:
         import base64, mimetypes
         user_parts = [{"type": "text", "text": user_content}]
+        skipped_images: list[str] = []
         for img_path in image_paths:
-            if isinstance(img_path, Path) and img_path.is_file():
-                mime, _ = mimetypes.guess_type(str(img_path))
-                mime = mime or "image/jpeg"
-                try:
-                    b64_data = base64.b64encode(img_path.read_bytes()).decode("ascii")
-                    user_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64_data}"}
-                    })
-                except Exception:
-                    pass
+            if not isinstance(img_path, Path) or not img_path.is_file():
+                # The caller asked for this image to be shown to the model, so
+                # dropping it silently is how a photo question ends up answered
+                # as if there were no photo at all (2026-09-16).
+                skipped_images.append(str(img_path))
+                continue
+            mime, _ = mimetypes.guess_type(str(img_path))
+            mime = mime or "image/jpeg"
+            try:
+                b64_data = base64.b64encode(img_path.read_bytes()).decode("ascii")
+                user_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64_data}"}
+                })
+            except Exception as exc:
+                skipped_images.append(f"{img_path} ({type(exc).__name__})")
+        if skipped_images:
+            # Name them in the log. Nothing about the image itself is written:
+            # only the path the caller passed and the exception class.
+            print(
+                "[reply-gen] image_unreadable count=%d %s"
+                % (len(skipped_images), ", ".join(skipped_images[:4])),
+                file=sys.stderr,
+                flush=True,
+            )
         if len(user_parts) > 1:
             payload["messages"][1]["content"] = user_parts
+        elif image_paths:
+            # Every image failed to load. Sending the text alone would answer a
+            # question about a photo without the photo, so say so in the prompt
+            # instead of pretending the message had no attachment.
+            payload["messages"][1]["content"] = (
+                user_content
+                + "\n\n[첨부한 사진을 읽지 못했습니다. 사진 내용을 모르는 상태이므로,"
+                + " 사진에 대해 추측하지 말고 사진을 다시 보내 달라고 답하세요.]"
+            )
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     session_lane = "openkakao-bujamentor"
     session_digest = hashlib.sha256(
@@ -11077,7 +11101,20 @@ def generate_reply(
             ]
         try:
             from auto_reply_knowledge_graph import query_knowledge_context
-            kg_contexts = query_knowledge_context(message)
+            # The incoming message alone is often a caption ("사진") or a
+            # two-character reply, and matching only it retrieved nothing even
+            # when the room had spent the last hour on one topic. The recent
+            # conversation and the quoted message say what the turn is about,
+            # so the graph is searched for those too (2026-09-16).
+            kg_contexts = query_knowledge_context(
+                message,
+                also=[
+                    str(item.get("message") or "")
+                    for item in bounded_recent_conversation
+                    if isinstance(item, dict)
+                ]
+                + [str((bounded_conversation_target or {}).get("message") or "")],
+            )
             if kg_contexts:
                 instructions = list(instructions) + [
                     "Authoritative Knowledge Graph Context (established background facts; adhere strictly): "
