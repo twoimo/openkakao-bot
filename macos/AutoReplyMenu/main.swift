@@ -7530,8 +7530,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let headerContent = Chrome.vstack([hint, toolbarCard, pager], spacing: 8)
         let headerCard = Chrome.card(headerContent, padding: 12)
 
-        let editContent = Chrome.vstack([metaCard, editorCard, formActions], spacing: 8)
-        let editCard = Chrome.card(editContent, padding: 12)
+        // 이 카드가 지금 무엇을 보여 주는지 한 줄로 말한다. 그래프에서 뉴런을
+        // 고르면 편집할 것이 아니라 근거를 보는 자리라, 제목이 같은 카드를
+        // 두 가지 뜻으로 읽히게 두면 무엇을 하는 화면인지 알 수 없다
+        // (2026-09-17).
+        let editTitle = Chrome.label("고른 기억", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
+        vectorEditCardTitle = editTitle
+        let editBody = Chrome.vstack([editTitle, metaCard, editorCard, formActions], spacing: 8)
+        let editCard = Chrome.card(editBody, padding: 12)
         // 편집 폼은 고른 줄이 있을 때만 펼친다. 예전에는 아무것도 고르지
         // 않았는데도 이름·시각·주제·벡터·내용과 저장·삭제가 늘 자리를
         // 차지해, 창에서 가장 큰 덩어리가 "아직 아무것도 아닌 것"이었다
@@ -7563,14 +7569,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             graphHint.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
             graph.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
             editCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            editContent.widthAnchor.constraint(equalTo: editCard.widthAnchor, constant: -24),
-            metaCard.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            editBody.widthAnchor.constraint(equalTo: editCard.widthAnchor, constant: -24),
+            editTitle.widthAnchor.constraint(equalTo: editBody.widthAnchor),
+            metaCard.widthAnchor.constraint(equalTo: editBody.widthAnchor),
             metaContent.widthAnchor.constraint(equalTo: metaCard.widthAnchor, constant: -20),
             metaTop.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
             metaBottom.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
-            editorCard.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            editorCard.widthAnchor.constraint(equalTo: editBody.widthAnchor),
             editor.widthAnchor.constraint(equalTo: editorCard.widthAnchor, constant: -20),
-            formActions.widthAnchor.constraint(equalTo: editContent.widthAnchor),
+            formActions.widthAnchor.constraint(equalTo: editBody.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
             search.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
         ])
@@ -7787,7 +7794,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let selectedRow = vectorTable?.selectedRow ?? -1
         let hasSelection = showsTable && selectedRow >= 0 && selectedRow < displayedVectors.count
-        vectorEditCard?.isHidden = !hasSelection
+        // 그래프에서도 고른 뉴런의 근거를 펼친다.
+        //
+        // 예전에는 표에서 고른 줄이 있을 때만 편집 카드를 열었다. 그래서
+        // 그래프에서 뉴런을 눌러도 아무 일도 일어나지 않아, 눌러 보라고
+        // 적어 둔 안내와 화면이 서로 다른 말을 했다 (2026-09-17).
+        let hasGraphSelection = showsGraph && vectorGraphView?.selectedNodeId != nil
+        vectorEditCard?.isHidden = !(hasSelection || hasGraphSelection)
+        // 그래프 보기에서 이 카드는 "편집"이 아니라 "근거"다. 무엇을 보는
+        // 중인지에 따라 제목이 달라야 같은 카드가 두 가지로 읽히지 않는다.
+        vectorEditCardTitle?.stringValue = hasGraphSelection
+            ? "고른 뉴런의 근거"
+            : "고른 기억"
         fitVectorWindow()
     }
 
@@ -8438,3 +8456,6 @@ let delegate = AppDelegate(config: config)
 app.setActivationPolicy(.accessory)
 app.delegate = delegate
 app.run()
+    /// 편집 카드의 제목. 표에서 고른 기억인지 그래프에서 고른 뉴런인지에
+    /// 따라 달라진다 (2026-09-17).
+    var vectorEditCardTitle: NSTextField?
