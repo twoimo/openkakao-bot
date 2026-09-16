@@ -655,7 +655,10 @@ enum Chrome {
         table.gridStyleMask = []
         table.intercellSpacing = NSSize(width: 8, height: 2)
         table.headerView = NSTableHeaderView()
-        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // 열 폭은 TableScrollView가 창 폭에 맞춰 정한다. AppKit의 자동 배분을
+        // 켜 두면 둘이 서로 다른 값을 밀어 넣어 열이 매번 조금씩 달라진다
+        // (2026-09-16).
+        table.columnAutoresizingStyle = .noColumnAutoresizing
         if #available(macOS 11.0, *) {
             table.style = .inset
         }
@@ -678,10 +681,11 @@ enum Chrome {
         minWidth: CGFloat = 48,
         alignment: NSTextAlignment = .left
     ) {
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+        let column = DesignedColumn(identifier: NSUserInterfaceItemIdentifier(id))
         column.title = title
         column.width = width
         column.minWidth = minWidth
+        column.designedWidth = width
         column.resizingMask = [.autoresizingMask, .userResizingMask]
         // 머리글은 본문과 같은 쪽에 붙는다. 머리글만 가운데로 두면 왼쪽
         // 정렬된 본문 위에서 제목이 칸 가운데에 떠 보인다 (2026-09-16).
@@ -798,6 +802,15 @@ final class FlippedContainerView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// 설계할 때 정한 폭을 기억하는 열.
+///
+/// 창 폭이 바뀔 때마다 이 값에서 비율을 다시 계산한다. 지금 폭을 기준으로
+/// 삼으면 이미 줄어든 폭을 또 기준으로 삼아 열이 매번 조금씩 더 줄어들고,
+/// 결국 모두 최소 폭에 붙어 버린다 (2026-09-16).
+final class DesignedColumn: NSTableColumn {
+    var designedWidth: CGFloat = 0
+}
+
 /// 표를 담는 스크롤 뷰. 문서 뷰(표)의 폭을 자기 폭에 맞춘다.
 ///
 /// AppKit은 문서 뷰가 "폭을 따라가겠다"고 말했을 때만 폭을 맞춰 준다. 그
@@ -810,10 +823,70 @@ final class TableScrollView: NSScrollView {
         super.tile()
         guard !hasHorizontalScroller, let table = documentView as? NSTableView else { return }
         let width = contentView.bounds.width
-        guard width > 0, abs(table.frame.width - width) > 0.5 else { return }
-        var frame = table.frame
-        frame.size.width = width
-        table.frame = frame
+        guard width > 0 else { return }
+        if abs(table.frame.width - width) > 0.5 {
+            var frame = table.frame
+            frame.size.width = width
+            table.frame = frame
+        }
+        fitColumns(of: table, to: width)
+    }
+
+    /// 열 폭을 창 폭에 맞춘다.
+    ///
+    /// 표가 넓어지거나 좁아져도 열은 처음 정한 폭에 머물러 있었다. 그래서
+    /// 창을 넓히면 오른쪽에 아무것도 없는 자리가 남고, 창을 좁히면 마지막
+    /// 열이 클립 뷰 밖으로 밀려나 잘렸다(기록 창의 "답변" 열).
+    ///
+    /// AppKit의 균등 자동 배분은 표의 폭이 바뀔 때만 도는데, 문서 뷰의
+    /// 폭을 바꾸는 것은 우리쪽이라 여기서 직접 나눈다. 열의 최소 폭은 지키고
+    /// 남는 폭은 정한 비율대로 나눈다 (2026-09-16).
+    private func fitColumns(of table: NSTableView, to width: CGFloat) {
+        let columns = table.tableColumns.compactMap { $0 as? DesignedColumn }
+        guard !columns.isEmpty, columns.count == table.tableColumns.count else { return }
+        let spacing = table.intercellSpacing.width * CGFloat(max(columns.count - 1, 0))
+        // 표는 열 폭과 별개로 좌우에 자기 여백을 둔다. 이 값을 빼지 않으면
+        // 열을 표 폭에 꽉 채울 때마다 표가 그만큼 넓어진다. 표에게 첫 열이
+        // 어디서 시작하는지 물어보면 정확하다: 프레임 폭으로 역산하면 그때의
+        // 폭이 클립 뷰 값이라 여백이 엉뚱하게 잡힌다 (2026-09-16).
+        let padding = max(table.rect(ofColumn: 0).minX, 0) * 2
+        let designed = columns.map { max($0.designedWidth, $0.minWidth, 1) }
+        let minimums = columns.map { max($0.minWidth, 1) }
+        let floor = minimums.reduce(0, +)
+        let room = max(width - spacing - padding, floor)
+        let natural = designed.reduce(0, +)
+        var widths = designed.map { max($0 / natural * room, 0) }
+        // 최소 폭보다 작아진 열은 최소 폭으로 올리고, 올린 만큼을 나머지
+        // 열에서 덜어 낸다. 한 번에 안 맞으면 몇 번 더 돈다.
+        for _ in 0..<4 {
+            for index in widths.indices {
+                widths[index] = max(widths[index], minimums[index])
+            }
+            let extra = widths.reduce(0, +) - room
+            if extra <= 0.5 { break }
+            let pool = zip(widths, minimums).reduce(0) { $0 + max($1.0 - $1.1, 0) }
+            if pool <= 0 { break }
+            for index in widths.indices {
+                widths[index] -= extra * max(widths[index] - minimums[index], 0) / pool
+            }
+        }
+        for index in widths.indices {
+            widths[index] = max(widths[index], minimums[index])
+        }
+        if let last = widths.indices.last {
+            widths[last] = max(minimums[last], widths[last] + (room - widths.reduce(0, +)))
+        }
+        guard widths.reduce(0, +) <= room + 1 else { return }
+        for (column, value) in zip(columns, widths) where abs(column.width - value) > 0.5 {
+            column.width = value
+        }
+        // 열 폭을 바꾸면 표가 열 합에 맞춰 다시 자라난다. 클립 뷰 폭은 창이
+        // 정한 값이므로 마지막에 되돌린다 (2026-09-16).
+        if abs(table.frame.width - width) > 0.5 {
+            var frame = table.frame
+            frame.size.width = width
+            table.frame = frame
+        }
     }
 }
 
