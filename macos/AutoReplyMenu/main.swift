@@ -75,27 +75,6 @@ struct AvailableChat: Decodable {
 }
 
 
-struct DoctorCheck: Decodable {
-    let code: String
-    let level: String
-    let title: String
-    let detail: String
-    let advice: String
-    let heal: String
-}
-
-struct DoctorReport: Decodable {
-    let ok: Bool
-    let action: String
-    let privacy: String
-    let level: String
-    let primary_code: String
-    let healable: [String]
-    let healed: [String]
-    let checks: [DoctorCheck]
-    let health: [String: String]?
-}
-
 struct JobRow: Decodable {
     let event_id: String
     let status: String
@@ -1997,13 +1976,537 @@ final class KnowledgeGraphView: NSView {
     }
 }
 
+/// 자비스 홀로그램 코어.
+///
+/// 메뉴 패널의 주인공 화면이다. 주황·금색 톤의 입체 구형 뉴런 시냅스가
+/// 천천히 돌고, 백그라운드 작업(자동 답변 생성·긱뉴스 전송·DB 동기화)이
+/// 돌 때는 회전이 빨라지고 파동이 퍼지며 입자가 시냅스를 타고 흐른다.
+///
+/// 그리는 일은 전부 Canvas 2D(NSBezierPath)로만 한다. 구면 위의 점과
+/// 시냅스는 처음 한 번만 만들어 두고, 매 프레임 회전시켜 투영한다.
+/// 뉴런 수와 프레임 상한을 고정해 두어 메뉴가 열려 있는 동안 CPU를 계속
+/// 붙잡지 않게 했다 (2026-09-17).
+final class JarvisCoreView: NSView {
+
+    /// 구면 위 뉴런의 개수. 늘리면 밀도가 올라가고 그리는 비용도 함께 는다.
+    static let neuronCount = 96
+    /// 뉴런마다 이어 붙일 이웃 시냅스 수.
+    static let synapseNeighbors = 3
+    /// 동시에 떠 있는 입자 수.
+    static let particleCount = 30
+    /// 초당 프레임 상한. 60fps로 두면 메뉴가 열려 있는 동안 CPU를 계속 쓴다.
+    static let framesPerSecond: Double = 30
+    /// 가만히 있을 때의 회전 속도(라디안/초).
+    static let idleSpeed: Double = 0.34
+    /// 작업이 돌 때 더해지는 회전 속도.
+    static let activeSpeed: Double = 2.1
+    /// 파동 하나가 살아 있는 시간(초).
+    static let pulseLife: Double = 1.5
+
+    private struct Point3 {
+        var x: Double
+        var y: Double
+        var z: Double
+    }
+
+    private struct Projected {
+        var x: Double
+        var y: Double
+        /// -1이 멀고 1이 가깝다. 크기·밝기·굵기가 모두 이 값에 붙는다.
+        var depth: Double
+    }
+
+    private struct Particle {
+        var edge: Int
+        var progress: Double
+        var speed: Double
+    }
+
+    private struct Pulse {
+        var start: Double
+        var strength: Double
+    }
+
+    /// 입자와 파동의 자리를 정하는 작은 난수기. 같은 씨앗이면 같은 그림이
+    /// 나와, 감사가 찍는 한 장도 매번 같다.
+    private struct SeededRandom {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed | 1
+        }
+
+        mutating func next() -> Double {
+            state ^= state << 13
+            state ^= state >> 7
+            state ^= state << 17
+            return Double(state % 1_000_000) / 1_000_000.0
+        }
+
+        mutating func next(in range: Range<Double>) -> Double {
+            range.lowerBound + next() * (range.upperBound - range.lowerBound)
+        }
+    }
+
+    /// 구면 위의 점. 한 번만 만든다.
+    private static let basePoints: [Point3] = JarvisCoreView.makeSphere(neuronCount)
+    /// 이웃끼리 이은 시냅스. 회전해도 이웃 관계는 그대로라 한 번만 만든다.
+    private static let synapseEdges: [(Int, Int)] = JarvisCoreView.makeSynapses(
+        basePoints,
+        neighbors: synapseNeighbors
+    )
+
+    /// 지금 돌고 있는 백그라운드 작업의 세기(0..1). 회전 속도와 파동, 입자
+    /// 흐름이 모두 이 값에 반응한다.
+    var activity: Double {
+        get { currentActivity }
+        set {
+            let clamped = min(max(newValue, 0), 1)
+            if clamped > currentActivity + 0.01 {
+                spawnPulse(strength: max(clamped, 0.45))
+            }
+            currentActivity = clamped
+        }
+    }
+    /// 지금 고른 방의 상태(green/yellow/red). 코어 자체는 늘 주황·금색이고,
+    /// 이 값은 바깥 고리 하나에만 쓴다.
+    var level: String = "green" {
+        didSet { if level != oldValue { needsDisplay = true } }
+    }
+
+    private var currentActivity: Double = 0
+    private var phase: Double = 0
+    private var lastTick: Double = 0
+    private var timer: Timer?
+    private var pulses: [Pulse] = []
+    private var particles: [Particle] = []
+    private var random = SeededRandom(seed: 0x5A17C0DE)
+    /// 매 프레임 새로 만들지 않고 재사용한다.
+    private var projectedBuffer: [Projected] = []
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    deinit {
+        timer?.invalidate()
+    }
+
+    // MARK: - 백그라운드 작업 접기
+
+    /// 지금 백그라운드에서 무슨 일이 도는지 한 값으로 접는다.
+    ///
+    /// 진행 중인 단계가 있으면 그 자체로 세고, 대기 중인 작업이 남아 있어도
+    /// 조금 빨라진다. 판단은 코어(파이썬)가 보낸 상태만 보고 한다.
+    static func activity(
+        pipeline: PipelineModel?,
+        openJobs: Int,
+        level: String
+    ) -> Double {
+        var value = 0.0
+        for stage in pipeline?.stages ?? [] {
+            switch stage.state {
+            case "active": value = max(value, 0.9)
+            case "failed", "blocked": value = max(value, 0.55)
+            default: break
+            }
+        }
+        if openJobs > 0 { value = max(value, 0.35) }
+        switch level {
+        case "red": value = max(value, 0.5)
+        case "yellow": value = max(value, 0.25)
+        default: break
+        }
+        return value
+    }
+
+    /// 코어 아래 한 줄로 지금 무슨 일이 도는지 말한다.
+    ///
+    /// 예전에는 8단계 파이프라인 띠가 그 일을 했다. 단계 이름 여덟 개를
+    /// 읽어야 지금 상태를 알 수 있었고, 모두 초록이면 지금 도는 것인지
+    /// 방금 끝난 것인지도 구분되지 않았다. 지금은 코어가 그 자리를 대신하고,
+    /// 이 한 줄이 말로 확인해 준다 (2026-09-17).
+    static func caption(pipeline: PipelineModel?, openJobs: Int) -> String {
+        let stages = pipeline?.stages ?? []
+        if let active = stages.first(where: { $0.state == "active" }) {
+            let name = stageTitles[active.id] ?? active.id
+            return "\(name) 진행 중"
+        }
+        if let failed = stages.first(where: { $0.state == "failed" || $0.state == "blocked" }) {
+            let name = stageTitles[failed.id] ?? failed.id
+            return "\(name)에서 멈춤"
+        }
+        if openJobs > 0 {
+            return "대기 \(openJobs)건"
+        }
+        if pipeline?.outcome == "sent" {
+            return "마지막 답변 전송 완료"
+        }
+        return "대기 중"
+    }
+
+    /// 단계 id를 사람이 읽는 이름으로. PipelineView와 같은 표를 쓴다.
+    private static let stageTitles: [String: String] = Dictionary(
+        uniqueKeysWithValues: PipelineView.labels.map { ($0.id, $0.title) }
+    )
+
+    // MARK: - 도형 만들기
+
+    private static func makeSphere(_ count: Int) -> [Point3] {
+        var points: [Point3] = []
+        points.reserveCapacity(count)
+        guard count > 1 else { return [Point3(x: 0, y: 0, z: 0)] }
+        // 황금각으로 나눠야 점이 띠로 몰리지 않고 고르게 퍼진다.
+        let golden = Double.pi * (3.0 - 5.0.squareRoot())
+        for index in 0..<count {
+            let y = 1.0 - (Double(index) / Double(count - 1)) * 2.0
+            let ring = max(0.0, 1.0 - y * y).squareRoot()
+            let theta = golden * Double(index)
+            points.append(Point3(x: cos(theta) * ring, y: y, z: sin(theta) * ring))
+        }
+        return points
+    }
+
+    private static func makeSynapses(_ points: [Point3], neighbors: Int) -> [(Int, Int)] {
+        guard points.count > 1, neighbors > 0 else { return [] }
+        var edges: [(Int, Int)] = []
+        var seen = Set<Int>()
+        for i in 0..<points.count {
+            var scored: [(Double, Int)] = []
+            scored.reserveCapacity(points.count - 1)
+            for j in 0..<points.count where j != i {
+                let dx = points[i].x - points[j].x
+                let dy = points[i].y - points[j].y
+                let dz = points[i].z - points[j].z
+                scored.append((dx * dx + dy * dy + dz * dz, j))
+            }
+            scored.sort { $0.0 < $1.0 }
+            for k in 0..<min(neighbors, scored.count) {
+                let j = scored[k].1
+                let low = min(i, j)
+                let high = max(i, j)
+                if seen.insert(low * 1_000 + high).inserted {
+                    edges.append((low, high))
+                }
+            }
+        }
+        return edges
+    }
+
+    // MARK: - 애니메이션
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            stopAnimation()
+        } else {
+            startAnimation()
+        }
+    }
+
+    private func startAnimation() {
+        guard timer == nil else { return }
+        lastTick = Date.timeIntervalSinceReferenceDate
+        let timer = Timer(
+            timeInterval: 1.0 / Self.framesPerSecond,
+            repeats: true
+        ) { [weak self] _ in
+            self?.tick()
+        }
+        // 메뉴가 열려 있는 동안은 이벤트 추적 모드라 common에 넣어야 돈다.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func stopAnimation() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        let now = Date.timeIntervalSinceReferenceDate
+        // 창을 오래 닫아 두었다 열면 dt가 커진다. 한 프레임에 구가 반 바퀴
+        // 돌지 않도록 상한을 둔다.
+        let dt = min(max(now - lastTick, 0), 0.25)
+        lastTick = now
+        let speed = Self.idleSpeed + Self.activeSpeed * currentActivity
+        phase = (phase + speed * dt).truncatingRemainder(dividingBy: 2 * Double.pi)
+        advanceParticles(dt: dt)
+        pulses.removeAll { now - $0.start > Self.pulseLife }
+        needsDisplay = true
+    }
+
+    private func spawnPulse(strength: Double) {
+        // 파동이 우수수 겹치면 화면이 시끄럽다. 살아 있는 것이 셋을 넘으면
+        // 가장 오래된 것을 버린다.
+        if pulses.count >= 3 { pulses.removeFirst() }
+        pulses.append(Pulse(start: Date.timeIntervalSinceReferenceDate, strength: strength))
+    }
+
+    private func advanceParticles(dt: Double) {
+        guard !Self.synapseEdges.isEmpty else { return }
+        if particles.isEmpty {
+            particles.reserveCapacity(Self.particleCount)
+            for _ in 0..<Self.particleCount {
+                particles.append(newParticle())
+            }
+        }
+        let boost = 1.0 + currentActivity * 1.7
+        for index in particles.indices {
+            particles[index].progress += particles[index].speed * boost * dt
+            if particles[index].progress >= 1 {
+                particles[index] = newParticle()
+            }
+        }
+    }
+
+    private func newParticle() -> Particle {
+        let count = max(Self.synapseEdges.count, 1)
+        let edge = min(Int(random.next() * Double(count)), count - 1)
+        return Particle(
+            edge: edge,
+            // 가장자리에서 갑자기 나타나지 않게 앞쪽에서 시작한다.
+            progress: random.next() * 0.25,
+            speed: random.next(in: 0.35..<0.9)
+        )
+    }
+
+    // MARK: - 그리기
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.clear.setFill()
+        bounds.fill()
+        let radius = min(bounds.width, bounds.height) * 0.5 - 4
+        guard radius > 8 else { return }
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        drawBackdrop(center: center, radius: radius)
+        drawSphereRings(center: center, radius: radius)
+        let projected = project(center: center, radius: Double(radius))
+        drawSynapses(projected)
+        drawNeurons(projected)
+        drawParticles(projected)
+        drawPulses(center: center, radius: Double(radius))
+        drawLevelRing(center: center, radius: Double(radius))
+    }
+
+    /// 구의 중심에서 새어 나오는 빛. 작업이 셀수록 밝아진다.
+    private func drawBackdrop(center: CGPoint, radius: CGFloat) {
+        let inner = NSColor(
+            calibratedRed: 1.0,
+            green: 0.52,
+            blue: 0.08,
+            alpha: 0.20 + 0.16 * currentActivity
+        )
+        let outer = NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.06, alpha: 0.0)
+        let rect = NSRect(
+            x: center.x - radius,
+            y: center.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+        if let gradient = NSGradient(starting: inner, ending: outer) {
+            gradient.draw(in: NSBezierPath(ovalIn: rect), relativeCenterPosition: .zero)
+        }
+    }
+
+    /// 위도선 몇 개와 바깥 테두리. 이것만으로도 납작한 원이 아니라 구로 읽힌다.
+    /// 코어를 감싸는 궤도 고리.
+    ///
+    /// 예전에는 위도선 다섯 개를 그렸다. 그러면 구가 아니라 줄무늬 공처럼
+    /// 보였다. 지금은 기울어진 궤도 고리 세 개를 서로 다른 속도로 돌린다.
+    /// 홀로그램처럼 보이면서, 구가 돌고 있다는 사실도 함께 읽힌다
+    /// (2026-09-17).
+    private func drawSphereRings(center: CGPoint, radius: CGFloat) {
+        // 고리마다 기울기와 반지름, 도는 속도를 다르게 준다.
+        let orbits: [(tilt: Double, squash: CGFloat, speed: Double, alpha: CGFloat)] = [
+            (0.0, 0.30, 0.6, 0.30),
+            (1.05, 0.42, -0.9, 0.22),
+            (-0.75, 0.36, 1.4, 0.18),
+        ]
+        for orbit in orbits {
+            let angle = phase * orbit.speed
+            // 고리의 긴 지름은 코어보다 조금 크다. 궤도가 코어를 감싼다.
+            let span = radius * (1.06 + 0.05 * CGFloat(abs(sin(angle))))
+            let rect = NSRect(
+                x: center.x - span,
+                y: center.y - span * orbit.squash,
+                width: span * 2,
+                height: span * 2 * orbit.squash
+            )
+            let path = NSBezierPath(ovalIn: rect)
+            path.lineWidth = 1
+            NSColor(
+                calibratedRed: 1.0,
+                green: 0.70,
+                blue: 0.26,
+                alpha: orbit.alpha
+            ).setStroke()
+            path.stroke()
+        }
+        // 코어 자체의 둘레. 이것 하나만 또렷하게 둔다.
+        let outer = NSBezierPath(
+            ovalIn: NSRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+        )
+        outer.lineWidth = 1
+        NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.30, alpha: 0.30).setStroke()
+        outer.stroke()
+    }
+
+    /// 구면 위의 점을 회전시켜 화면 좌표로 옮긴다. 결과 배열은 재사용한다.
+    private func project(center: CGPoint, radius: Double) -> [Projected] {
+        projectedBuffer.removeAll(keepingCapacity: true)
+        let cosPhase = cos(phase)
+        let sinPhase = sin(phase)
+        // 위아래로 조금 기울여야 도는 것이 눈에 보인다.
+        let tilt = 0.42
+        let cosTilt = cos(tilt)
+        let sinTilt = sin(tilt)
+        for point in Self.basePoints {
+            let x1 = point.x * cosPhase - point.z * sinPhase
+            let z1 = point.x * sinPhase + point.z * cosPhase
+            let y2 = point.y * cosTilt - z1 * sinTilt
+            let z2 = point.y * sinTilt + z1 * cosTilt
+            // 가까운 점은 조금 크게, 먼 점은 조금 작게. 원근이 없으면
+            // 회전해도 납작한 무늬로 보인다.
+            let perspective = 1.0 / (1.0 + z2 * 0.22)
+            projectedBuffer.append(
+                Projected(
+                    x: Double(center.x) + x1 * radius * perspective,
+                    y: Double(center.y) + y2 * radius * perspective,
+                    depth: z2
+                )
+            )
+        }
+        return projectedBuffer
+    }
+
+    private func drawSynapses(_ projected: [Projected]) {
+        guard projected.count == Self.basePoints.count else { return }
+        for edge in Self.synapseEdges {
+            let a = projected[edge.0]
+            let b = projected[edge.1]
+            let near = (a.depth + b.depth) * 0.25 + 0.5
+            let alpha = 0.10 + 0.34 * near + 0.22 * currentActivity * near
+            let path = NSBezierPath()
+            path.move(to: CGPoint(x: a.x, y: a.y))
+            path.line(to: CGPoint(x: b.x, y: b.y))
+            path.lineWidth = 0.5 + 1.1 * near
+            NSColor(calibratedRed: 1.0, green: 0.62, blue: 0.18, alpha: alpha).setStroke()
+            path.stroke()
+        }
+    }
+
+    private func drawNeurons(_ projected: [Projected]) {
+        for point in projected {
+            let near = (point.depth + 1) * 0.5
+            let size = 0.9 + 2.3 * near
+            let alpha = 0.34 + 0.62 * near
+            let color = near > 0.74
+                ? NSColor(calibratedRed: 1.0, green: 0.93, blue: 0.68, alpha: alpha)
+                : NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.26, alpha: alpha)
+            color.setFill()
+            NSBezierPath(
+                ovalIn: NSRect(
+                    x: point.x - size,
+                    y: point.y - size,
+                    width: size * 2,
+                    height: size * 2
+                )
+            ).fill()
+        }
+    }
+
+    private func drawParticles(_ projected: [Projected]) {
+        guard projected.count == Self.basePoints.count else { return }
+        for particle in particles {
+            guard particle.edge >= 0, particle.edge < Self.synapseEdges.count else { continue }
+            let edge = Self.synapseEdges[particle.edge]
+            let a = projected[edge.0]
+            let b = projected[edge.1]
+            let t = min(max(particle.progress, 0), 1)
+            let x = a.x + (b.x - a.x) * t
+            let y = a.y + (b.y - a.y) * t
+            let depth = a.depth + (b.depth - a.depth) * t
+            let near = (depth + 1) * 0.5
+            let size = 0.8 + 1.7 * near
+            NSColor(
+                calibratedRed: 1.0,
+                green: 0.97,
+                blue: 0.85,
+                alpha: 0.22 + 0.7 * near
+            ).setFill()
+            NSBezierPath(
+                ovalIn: NSRect(x: x - size, y: y - size, width: size * 2, height: size * 2)
+            ).fill()
+        }
+    }
+
+    private func drawPulses(center: CGPoint, radius: Double) {
+        let now = Date.timeIntervalSinceReferenceDate
+        for pulse in pulses {
+            let age = now - pulse.start
+            guard age >= 0, age <= Self.pulseLife else { continue }
+            let t = age / Self.pulseLife
+            let ringRadius = radius * (0.22 + 0.95 * t)
+            let alpha = (1.0 - t) * 0.5 * pulse.strength
+            let path = NSBezierPath(
+                ovalIn: NSRect(
+                    x: center.x - ringRadius,
+                    y: center.y - ringRadius,
+                    width: ringRadius * 2,
+                    height: ringRadius * 2
+                )
+            )
+            path.lineWidth = 1.6
+            NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: alpha).setStroke()
+            path.stroke()
+        }
+    }
+
+    /// 고른 방의 상태를 코어 바깥 고리 하나로만 알린다. 코어 자체는 늘
+    /// 주황·금색이라 상태에 따라 색이 바뀌지 않는다.
+    private func drawLevelRing(center: CGPoint, radius: Double) {
+        let path = NSBezierPath(
+            ovalIn: NSRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+        )
+        path.lineWidth = 1.5
+        Palette.level(level).withAlphaComponent(0.5).setStroke()
+        path.stroke()
+    }
+}
+
+
 final class MenuPanelView: NSView {
     var model: MenubarModel {
         didSet { sync() }
     }
-    let pipelineView = PipelineView(frame: .zero)
+    let coreView = JarvisCoreView(frame: .zero)
+    /// 코어 아래 한 줄. 지금 코어가 무엇을 하고 있는지 말로 알려 준다.
+    private let coreCaption = NSTextField(labelWithString: "")
     weak var tileTarget: AnyObject?
     weak var hamburgerTarget: AnyObject?
+    /// 우측 상단 톱니바퀴. 모든 제어와 설정은 이 단추 하나로 연다.
+    let gearButton = NSButton(title: "", target: nil, action: #selector(AppDelegate.gearClicked(_:)))
     let roomButton = NSButton(title: "방", target: nil, action: #selector(AppDelegate.roomPickerClicked(_:)))
     var roomTitle = ""
     var selectedRoomId = 0
@@ -2021,7 +2524,14 @@ final class MenuPanelView: NSView {
     static let sideInset: CGFloat = 16
     static let statusPillHeight: CGFloat = 22
     static let afterStatusGap: CGFloat = gap
-    static let afterPipelineGap: CGFloat = gap
+    /// 자비스 홀로그램 코어가 차지하는 정사각형의 한 변.
+    ///
+    /// 이 코어가 이 화면의 주인공이다. 예전에는 여기에 8단계 파이프라인
+    /// 띠가 들어 있었는데, 단계 이름 여덟 개를 읽어야 현재 상태를 알 수
+    /// 있어 한눈에 들어오지 않았다. 지금은 코어 하나가 상태를 대신하고,
+    /// 단계는 창에서 본다 (2026-09-17).
+    static let coreSize: CGFloat = 148
+    static let afterCoreGap: CGFloat = gap
     static let afterRoomGridGap: CGFloat = gap
     static let tileHeight: CGFloat = 52
     static let afterTileGap: CGFloat = gap
@@ -2029,15 +2539,17 @@ final class MenuPanelView: NSView {
     static let afterLampGap: CGFloat = gap
     static let actionHeight: CGFloat = 28
     static let bottomInset: CGFloat = gap
-    /// 파이프라인 띠의 위쪽 좌표(패널 위에서부터).
-    static let pipelineTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
-    /// 방 목록 격자가 시작하는 위쪽 좌표. 파이프라인 띠 바로 아래에 붙는다.
-    static let roomGridTop: CGFloat = pipelineTop + PipelineView.stripHeight + afterPipelineGap
+    /// 코어가 놓이는 위쪽 좌표(패널 위에서부터).
+    static let coreTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
+    /// 코어 아래 한 줄이 차지하는 높이.
+    static let coreCaptionHeight: CGFloat = 15
+    /// 방 목록 격자가 시작하는 위쪽 좌표. 코어와 그 아래 한 줄에 붙는다.
+    static let roomGridTop: CGFloat = coreTop + coreSize + coreCaptionHeight + afterCoreGap
     /// 지표 타일은 방 목록이 접혀 있을 때 격자 자리에서 바로 시작한다.
     static let tileTop: CGFloat = roomGridTop
     static let lampTop: CGFloat = tileTop + tileHeight + afterTileGap
     static let actionTop: CGFloat = lampTop + lampHeight + afterLampGap
-    /// 상태 알약 + 파이프라인 띠 + 지표 타일 + 램프 줄 + 동작 버튼 + 아래 여백.
+    /// 상태 알약 + 홀로그램 코어 + 지표 타일 + 램프 줄 + 동작 버튼 + 아래 여백.
     static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset
     var roomsExpanded = false {
         didSet {
@@ -2058,11 +2570,37 @@ final class MenuPanelView: NSView {
     init(model: MenubarModel, frame: NSRect) {
         self.model = model
         super.init(frame: frame)
-        pipelineView.frame = NSRect(x: 0, y: 26, width: frame.width, height: 54)
-        pipelineView.autoresizingMask = [.width]
-        pipelineView.stages = model.pipeline?.stages ?? []
-        pipelineView.level = model.level
-        addSubview(pipelineView)
+        coreView.frame = NSRect(
+            x: (frame.width - Self.coreSize) / 2,
+            y: Self.coreTop,
+            width: Self.coreSize,
+            height: Self.coreSize
+        )
+        coreView.autoresizingMask = [.minXMargin, .maxXMargin]
+        coreView.level = model.level
+        coreView.activity = JarvisCoreView.activity(
+            pipeline: model.pipeline,
+            openJobs: model.open_jobs,
+            level: model.level
+        )
+        addSubview(coreView)
+        coreCaption.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        coreCaption.textColor = NSColor.secondaryLabelColor
+        coreCaption.alignment = .center
+        coreCaption.lineBreakMode = .byTruncatingTail
+        addSubview(coreCaption)
+        gearButton.bezelStyle = .inline
+        gearButton.isBordered = false
+        gearButton.controlSize = .regular
+        gearButton.image = NSImage(
+            systemSymbolName: "gearshape.fill",
+            accessibilityDescription: "설정"
+        )
+        gearButton.imagePosition = .imageOnly
+        gearButton.contentTintColor = NSColor.secondaryLabelColor
+        gearButton.toolTip = "모든 설정과 제어를 엽니다"
+        gearButton.identifier = NSUserInterfaceItemIdentifier("gear")
+        addSubview(gearButton)
         roomButton.bezelStyle = .inline
         roomButton.controlSize = .small
         roomButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
@@ -2132,6 +2670,9 @@ final class MenuPanelView: NSView {
         max(bounds.width, Self.panelWidth)
     }
 
+    /// 톱니바퀴가 차지하는 폭. 상태 알약 오른쪽 끝에 붙는다.
+    static let gearWidth: CGFloat = 26
+
     /// 방 고르기 단추가 차지하는 폭.
     ///
     /// 예전에는 100pt로 박아 두어 "▸ 부자멘토멘티" 같은 제목이 56pt 잘렸다.
@@ -2139,7 +2680,7 @@ final class MenuPanelView: NSView {
     /// 나가지 않게 한다 (2026-09-16).
     func roomButtonWidth() -> CGFloat {
         let needed = roomButton.attributedTitle.size().width + 24
-        let room = max(96, layoutWidth() - Self.sideInset * 2 - 168)
+        let room = max(96, layoutWidth() - Self.sideInset * 2 - 168 - Self.gearWidth)
         return min(max(needed, 96), room)
     }
 
@@ -2224,17 +2765,29 @@ final class MenuPanelView: NSView {
         let extra = roomGridExtra()
         let width = layoutWidth()
         let pickerWidth = roomButtonWidth()
+        gearButton.frame = NSRect(
+            x: width - Self.sideInset - Self.gearWidth,
+            y: Self.panelTop,
+            width: Self.gearWidth,
+            height: Self.statusPillHeight
+        )
         roomButton.frame = NSRect(
-            x: width - Self.sideInset - pickerWidth,
+            x: width - Self.sideInset - Self.gearWidth - 6 - pickerWidth,
             y: Self.panelTop,
             width: pickerWidth,
             height: Self.statusPillHeight
         )
-        pipelineView.frame = NSRect(
-            x: 8,
-            y: Self.pipelineTop,
-            width: width - 16,
-            height: PipelineView.stripHeight
+        coreView.frame = NSRect(
+            x: (width - Self.coreSize) / 2,
+            y: Self.coreTop,
+            width: Self.coreSize,
+            height: Self.coreSize
+        )
+        coreCaption.frame = NSRect(
+            x: Self.sideInset,
+            y: Self.coreTop + Self.coreSize,
+            width: width - Self.sideInset * 2,
+            height: Self.coreCaptionHeight
         )
         let columns = Self.roomGridColumns
         let gap = Self.roomGridGap
@@ -2299,9 +2852,15 @@ final class MenuPanelView: NSView {
         let room = AppDelegate.selectedRoom(in: model, preferred: selectedRoomId)
         selectedRoomId = room?.chat_id ?? 0
         roomTitle = room?.title ?? "전체"
-        pipelineView.stages = room?.pipeline.stages ?? model.pipeline?.stages ?? []
-        pipelineView.level = room?.level ?? model.level
-        pipelineView.needsDisplay = true
+        let pipeline = room?.pipeline ?? model.pipeline
+        coreView.level = room?.level ?? model.level
+        let openJobs = room?.open_jobs ?? model.open_jobs
+        coreView.activity = JarvisCoreView.activity(
+            pipeline: pipeline,
+            openJobs: openJobs,
+            level: room?.level ?? model.level
+        )
+        coreCaption.stringValue = JarvisCoreView.caption(pipeline: pipeline, openJobs: openJobs)
         rebuildRoomPopup()
         let selectedLive = room.map { choice in
             (model.rooms ?? []).contains { $0.chat_id == choice.chat_id && $0.live && $0.auto_reply }
@@ -2360,7 +2919,9 @@ final class MenuPanelView: NSView {
         // 방 고르기 단추가 방 이름을 이미 보여 주므로 설명 줄에서는 뺀다.
         // 예전에는 같은 이름이 "▸ 부자멘토멘티"와 "부자멘토멘티 · …"로 두 번
         // 나와서 한 줄을 두 번 읽어야 했다 (2026-09-16).
-        let pickerWidth = roomButton.isHidden ? 0 : roomButtonWidth() + 8
+        let pickerWidth = roomButton.isHidden
+            ? Self.gearWidth
+            : roomButtonWidth() + 6 + Self.gearWidth
         let captionMax = max(40, width - Self.sideInset - pickerWidth - captionX)
         let status = Palette.caption(code: room?.codes.first ?? model.primary_code)
         let caption = NSString(string: roomButton.isHidden ? "\(roomTitle) · \(status)" : status)
@@ -2489,35 +3050,12 @@ final class MenuPanelView: NSView {
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 }
-
-final class MiniPipelineView: NSView {
-    var stages: [PipelineStage] = []
-    override var isFlipped: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        NSColor.clear.setFill()
-        bounds.fill()
-        let count = PipelineView.labels.count
-        guard count > 0 else { return }
-        let states = Dictionary(uniqueKeysWithValues: stages.map { ($0.id, $0.state) })
-        let pad: CGFloat = 2
-        let usable = bounds.width - pad * 2
-        let step = usable / CGFloat(count)
-        for (index, spec) in PipelineView.labels.enumerated() {
-            let x = pad + CGFloat(index) * step
-            let rect = NSRect(x: x, y: (bounds.height - 8) / 2, width: max(step - 2, 2), height: 8)
-            Palette.stage(states[spec.id] ?? "idle").setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
-        }
-    }
-}
-
 final class CenteredLabelCell: NSTableCellView {
     let label: NSTextField
 
     /// 한 줄짜리 열은 끝을 자르고 전체 글자를 툴팁에 둔다. 설명처럼 긴 글이
-    /// 창의 주 내용인 열은 두 줄로 접어 보여 준다. 예전에는 자가 점검의
-    /// 설명이 118pt 잘린 채로 나왔다 (2026-09-16).
+    /// 창의 주 내용인 열은 두 줄로 접어 보여 준다. 한 줄로 고정하면 긴
+    /// 설명이 잘린 채로 나온다 (2026-09-16).
     func setLines(_ lines: Int) {
         label.maximumNumberOfLines = lines
         label.usesSingleLineMode = lines <= 1
@@ -2636,19 +3174,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var roomsFilterField: NSTextField?
     var displayedChats: [AvailableChat] = []
     var allChats: [AvailableChat] = []
-    var doctorWindow: NSWindow?
-    var doctorTable: NSTableView?
-    var doctorSummary: NSTextField?
-    var doctorHealButton: NSButton?
-    var doctorHint: NSTextField?
-    var doctorFilter = "all"
-    var doctorFilterControl: NSSegmentedControl?
-    var improveRunning = false
-    var progressField: NSTextField?
-    var recheckButton: NSButton?
-    var componentLamps: [(key: String, label: NSTextField)] = []
-    var displayedChecks: [DoctorCheck] = []
-    var lastDoctor: DoctorReport?
     var jobsWindow: NSWindow?
     var jobsTable: NSTableView?
     var jobsSummary: NSTextField?
@@ -3110,30 +3635,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         graphic.isEnabled = true
         menu.addItem(graphic)
         menuPanel = panel
-        menu.addItem(.separator())
-        // 주요 기능은 모두 "클릭하면 창"으로 엽니다 — 마우스를 올려 두는 드롭다운이
-        // 아니라 클릭 한 번으로 별도의 창이 열립니다 (R1.2, R5.2, R6.1, R8.1).
-        // 답변 모델과 이미지 모델은 하나의 "모델 설정" 창으로 합쳤습니다 (R5.1).
-        // 새로고침 메뉴는 없앴습니다 (R9.1). 화면은 스스로 갱신됩니다.
-        let logsItem = NSMenuItem(title: "답변 기록 보기…", action: #selector(showLogWindow), keyEquivalent: "l")
-        logsItem.target = self
-        logsItem.isEnabled = true
-        menu.addItem(logsItem)
-        let modelItem = NSMenuItem(title: "AI 모델 설정…", action: #selector(showModelSettingsWindow), keyEquivalent: ",")
-        modelItem.target = self
-        modelItem.isEnabled = true
-        menu.addItem(modelItem)
-        let roomsItem = NSMenuItem(title: "채팅방 관리…", action: #selector(showRoomsWindow), keyEquivalent: "m")
-        roomsItem.target = self
-        roomsItem.isEnabled = true
-        menu.addItem(roomsItem)
-        let vectorItem = NSMenuItem(title: "지식 그래프 (대화 기억)…", action: #selector(showVectorWindow), keyEquivalent: "k")
-        vectorItem.target = self
-        vectorItem.isEnabled = true
-        menu.addItem(vectorItem)
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "메뉴 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quitItem)
+        // 이 메뉴에는 패널 하나만 들어갑니다.
+        //
+        // 예전에는 패널 아래에 "답변 기록 보기…", "AI 모델 설정…", "채팅방
+        // 관리…", "지식 그래프 (대화 기억)…", "메뉴 종료"가 줄줄이 늘어서
+        // 있었습니다. 메뉴를 열 때마다 이 다섯 줄을 다시 읽어야 했고, 무엇을
+        // 먼저 눌러야 하는지도 알 수 없었습니다. 지금은 패널 우측 상단
+        // 톱니바퀴 하나가 그 창들을 모두 엽니다 (2026-09-17).
         return menu
     }
 
@@ -4881,7 +5389,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ensureLogWindow()
         ensureRoomsWindow()
         ensureVectorWindow()
-        ensureDoctorWindow()
         // 메뉴를 눌렀을 때 가장 먼저 보이는 화면도 같은 기준으로 잰다.
         // 메뉴를 눌렀을 때 보이는 패널은 접힌 상태와 펼친 상태의 높이가
         // 다르다. 둘 다 재야 어느 쪽에 빈 띠가 생기는지 알 수 있다.
@@ -4918,7 +5425,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("log", logWindow),
             ("rooms", roomsWindow),
             ("vector", vectorWindow),
-            ("doctor", doctorWindow),
         ]
         var rows: [[String: Any]] = []
         var images: [String] = []
@@ -4951,9 +5457,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 truncated: false,
                 jobs: []
             ))
-        }
-        if let report = loadDoctor(heal: false) {
-            applyDoctor(report)
         }
         if let report = loadVectorReport([
             "--action", "vector-list",
@@ -5265,6 +5768,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    /// 우측 상단 톱니바퀴 하나로 모든 제어와 설정을 연다.
+    ///
+    /// 예전에는 메뉴 아래에 "답변 기록 보기…", "AI 모델 설정…", "채팅방
+    /// 관리…", "지식 그래프 (대화 기억)…" 네 줄이 따로 늘어서 있었다.
+    /// 무엇을 먼저 눌러야 하는지 알 수 없었고, 같은 설정이 두 곳에 나뉘어
+    /// 있기도 했다. 지금은 톱니바퀴 하나가 그 네 창을 모두 연다
+    /// (2026-09-17).
+    @objc func gearClicked(_ sender: NSButton) {
+        _ = sender
+        presentGearMenu()
+    }
+
+    /// 톱니바퀴를 누르면 열리는 목록. 창을 여는 유일한 입구다.
+    func presentGearMenu() {
+        statusItem.button?.highlight(false)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let entries: [(String, Selector)] = [
+            ("AI 모델 설정…", #selector(showModelSettingsWindow)),
+            ("채팅방 관리…", #selector(showRoomsWindow)),
+            ("답변 기록 보기…", #selector(showLogWindow)),
+            ("지식 그래프…", #selector(showVectorWindow)),
+        ]
+        for (title, action) in entries {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = true
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let quit = NSMenuItem(
+            title: "메뉴 종료",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        quit.isEnabled = true
+        menu.addItem(quit)
+        guard let button = statusItem.button, button.window != nil else { return }
+        let origin = NSPoint(x: 0, y: button.bounds.height + 4)
+        menu.popUp(positioning: nil, at: origin, in: button)
+    }
+
+
     @objc func showRoomsWindow() {
         ensureRoomsWindow()
         presentOperatorWindow(roomsWindow)
@@ -5273,14 +5819,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if let model = self.lastModel {
                 self.updateRoomsWindow(model)
             }
-        }
-    }
-
-    @objc func showDoctorWindow() {
-        ensureDoctorWindow()
-        presentOperatorWindow(doctorWindow)
-        DispatchQueue.main.async { [weak self] in
-            self?.refreshDoctor(heal: false)
         }
     }
 
@@ -5702,274 +6240,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsWindow = window
     }
 
-    func loadDoctor(heal: Bool) -> DoctorReport? {
-        let action = heal ? "doctor-heal" : "doctor"
-        guard let data = runPython(["--action", action]) else { return nil }
-        return try? JSONDecoder().decode(DoctorReport.self, from: data)
-    }
-
-    func refreshDoctor(heal: Bool) {
-        doctorSummary?.stringValue = "점검 중"
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let report = self.loadDoctor(heal: heal) ?? Self.unavailableDoctor()
-            DispatchQueue.main.async {
-                self.applyDoctor(report)
-            }
-        }
-    }
-
-    func applyDoctor(_ report: DoctorReport) {
-        lastDoctor = report
-        let filtered: [DoctorCheck]
-        switch doctorFilter {
-        case "problem":
-            filtered = report.checks.filter { $0.level == "fail" || $0.level == "warn" }
-        case "ok":
-            filtered = report.checks.filter { $0.level == "ok" }
-        default:
-            filtered = report.checks
-        }
-        displayedChecks = filtered.sorted { lhs, rhs in
-            let rank: [String: Int] = ["fail": 0, "warn": 1, "off": 2, "ok": 3]
-            let left = rank[lhs.level] ?? 4
-            let right = rank[rhs.level] ?? 4
-            if left != right { return left < right }
-            return lhs.title < rhs.title
-        }
-        let fail = report.checks.filter { $0.level == "fail" }.count
-        let warn = report.checks.filter { $0.level == "warn" }.count
-        let ok = report.checks.filter { $0.level == "ok" }.count
-        if let summary = doctorSummary {
-            let title = Palette.title(level: report.level)
-            let caption = Palette.caption(code: report.primary_code)
-            let healed = report.healed.isEmpty ? "" : " · 고침 \(report.healed.count)"
-            summary.stringValue = "\(title) · \(caption) · 문제 \(fail) · 주의 \(warn) · 정상 \(ok)\(healed)"
-            summary.textColor = Palette.level(report.level)
-        }
-        if let hint = doctorHint {
-            if fail + warn == 0 {
-                hint.stringValue = "막힌 항목이 없습니다."
-            } else {
-                // 고칠 수 있는 항목이 있는지만 말한다. 무엇을 고칠 수 있는지는
-                // 아래 "자가 개선" 단추가 켜졌는지로 알 수 있고, 표는 그
-                // 내용만 보여 준다 (2026-09-16).
-                hint.stringValue = report.healable.isEmpty
-                    ? "여기서 고칠 수 있는 항목은 없습니다."
-                    : "고칠 수 있는 항목 \(report.healable.count)건."
-            }
-        }
-        doctorHealButton?.isEnabled = !report.healable.isEmpty
-        if improveRunning {
-            doctorHealButton?.isEnabled = false
-        } else {
-            doctorHealButton?.isEnabled = !report.healable.isEmpty
-        }
-        updateComponentLamps(report.health ?? [:])
-        doctorTable?.reloadData()
-    }
-
-    func updateComponentLamps(_ health: [String: String]) {
-        let color: (String) -> NSColor = { value in
-            switch value {
-            case "ok": return NSColor.systemGreen
-            case "warn": return NSColor.systemYellow
-            case "err": return NSColor.systemRed
-            default: return NSColor.systemGray
-            }
-        }
-        for (key, label) in componentLamps {
-            let state = health[key] ?? "off"
-            let name = ["watchdog": "감시", "supervisor": "감독", "ax": "창",
-                        "worker": "워커", "model": "모델"][key] ?? key
-            label.attributedStringValue = NSAttributedString(
-                string: "● \(name)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: color(state),
-                ]
-            )
-            label.toolTip = "\(name): \(state)"
-        }
-    }
-
-    @objc func doctorRecheckClicked() {
-        refreshDoctor(heal: false)
-        refresh()
-    }
-
-    @objc func doctorHealClicked() {
-        runImprovePipeline()
-    }
-
-    /// 자가 개선 파이프라인: 잔여 정리 → 재조화 → 세션 기동 → 구성요소 램프가
-    /// 전부 초록이 될 때까지 2초 간격 폴링. 메시지를 보내거나 카카오톡을
-    /// 앞으로 가져오지는 않습니다.
-    func runImprovePipeline() {
-        guard !improveRunning else { return }
-        improveRunning = true
-        doctorHealButton?.isEnabled = false
-        progressField?.stringValue = "① 잔여 정리·재조화…"
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            _ = self.runPython(["--action", "improve-prep"], timeout: 20)
-            DispatchQueue.main.async {
-                self.progressField?.stringValue = "② 세션 기동 확인…"
-            }
-            _ = self.runPython(["--action", "improve-launch"], timeout: 25)
-            var finalReport: DoctorReport?
-            for step in 0..<30 {
-                if !self.improveRunning { break }
-                DispatchQueue.main.async {
-                    self.progressField?.stringValue =
-                        "③ 상태 확인 중… (\(step + 1)/30) — 감시·감독·창·워커·모델"
-                }
-                if let data = self.runPython(["--action", "doctor"], timeout: 15),
-                   let report = try? JSONDecoder().decode(DoctorReport.self, from: data) {
-                    finalReport = report
-                    DispatchQueue.main.async {
-                        self.applyDoctor(report)
-                    }
-                    if let health = report.health,
-                       health.values.allSatisfy({ $0 == "ok" }) {
-                        break
-                    }
-                }
-                Thread.sleep(forTimeInterval: 2)
-            }
-            DispatchQueue.main.async {
-                self.improveRunning = false
-                self.doctorHealButton?.isEnabled = !(self.lastDoctor?.healable.isEmpty ?? true)
-                if let report = finalReport {
-                    let allGreen = (report.health ?? [:]).values.allSatisfy { $0 == "ok" }
-                    self.progressField?.stringValue = allGreen
-                        ? "✓ 감시·감독·창·워커·모델 전부 초록"
-                        : "미확인 항목이 남아 있습니다(창은 채팅방 창이 열려 있어야 합니다)."
-                    if allGreen, let summary = self.doctorSummary {
-                        summary.textColor = Palette.level("green")
-                    }
-                } else {
-                    self.progressField?.stringValue = "개선 결과를 읽지 못했습니다. 다시 시도해 주세요."
-                }
-            }
-        }
-    }
-
-    @objc func doctorFilterChanged(_ sender: NSSegmentedControl) {
-        switch sender.selectedSegment {
-        case 1: doctorFilter = "problem"
-        case 2: doctorFilter = "ok"
-        default: doctorFilter = "all"
-        }
-        if let report = lastDoctor {
-            applyDoctor(report)
-        }
-    }
-
-    func ensureDoctorWindow() {
-        if doctorWindow != nil {
-            return
-        }
-        // 표 최소 260 + 머리말 카드에 램프 줄까지 더하면 420pt가 필요하다
-        // (2026-09-16).
-        let window = Chrome.operatorWindow(
-            title: "자가 점검",
-            size: NSSize(width: 760, height: 560),
-            autosave: "AutoReplyDoctor",
-            minimum: NSSize(width: 640, height: 470)
-        )
-        let content = NSView()
-        window.contentView = content
-
-        let summary = Chrome.summary("점검 중")
-        doctorSummary = summary
-        // 안전 경계는 한 줄로 적는다. 표의 "런타임" 줄이 이미 세션 재시작과
-        // 카카오톡 포커스 이야기를 하므로, 머리말이 같은 말을 되풀이하면
-        // 창 위쪽 두 줄이 같은 내용으로 채워진다 (2026-09-16).
-        let hint = Chrome.hint("보기만 합니다. 자가 개선은 고칠 수 있는 항목만 적용합니다.")
-        doctorHint = hint
-        let filter = NSSegmentedControl(labels: ["전체", "문제", "정상"], trackingMode: .selectOne, target: self, action: #selector(doctorFilterChanged(_:)))
-        filter.selectedSegment = 0
-        filter.segmentStyle = .rounded
-        doctorFilterControl = filter
-
-        let recheckButton = Chrome.roundedButton("다시 점검", target: self, action: #selector(doctorRecheckClicked))
-        self.recheckButton = recheckButton
-        let recheck = recheckButton
-        let heal = Chrome.roundedButton("자가 개선", target: self, action: #selector(doctorHealClicked))
-        doctorHealButton = heal
-        let actions = Chrome.actionRow([recheck, heal])
-
-        let (scroll, table) = Chrome.table()
-        table.delegate = self
-        table.dataSource = self
-        // 줄 높이를 내용에 맞춘다. 예전에는 44pt 고정이라 한 줄짜리 항목도
-        // 44pt를 차지해, 560pt 창에서 13개 중 7개만 보였다 (2026-09-16).
-        table.rowHeight = 30
-        table.usesAutomaticRowHeights = false
-        table.usesAlternatingRowBackgroundColors = true
-        for spec in [
-            ("level", "상태", 64.0),
-            ("title", "항목", 108.0),
-            // 설명은 가장 긴 열이다. 창(760)에서 다른 세 열과 여백을 뺀 만큼만
-            // 갖게 해야 마지막 열이 창 밖으로 밀리지 않는다 (2026-09-16).
-            ("advice", "설명", 526.0),
-        ] as [(String, String, CGFloat)] {
-            // 항목·설명은 본문이 왼쪽이므로 머리글도 왼쪽에 붙인다
-            // (2026-09-16).
-            Chrome.addColumn(
-                table,
-                id: spec.0,
-                title: spec.1,
-                width: spec.2,
-                minWidth: 56,
-                alignment: (spec.0 == "title" || spec.0 == "advice") ? .left : .center
-            )
-        }
-        doctorTable = table
-
-        var componentLamps: [(key: String, label: NSTextField)] = []
-        for (key, name) in [("watchdog", "감시"), ("supervisor", "감독"), ("ax", "창"), ("worker", "워커"), ("model", "모델")] {
-            let label = NSTextField(labelWithString: "● \(name)")
-            label.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-            label.textColor = NSColor.systemGray
-            componentLamps.append((key, label))
-        }
-        self.componentLamps = componentLamps
-        let lampsRow = Chrome.hstack(componentLamps.map { $0.label } + [Chrome.spacer()])
-        // 실행 전에는 빈 자리로 둔다. 예전에는 "…여기 표시됩니다"라는 안내가
-        // 늘 떠 있었는데, 하지도 않은 일의 설명이 화면 한 줄을 차지했다.
-        // 자가 개선을 누르면 그 자리에 바로 진행 상황이 들어간다
-        // (2026-09-16, 6 Pro 지적).
-        let progress = Chrome.statusLabel(size: 11, lines: 1)
-        progressField = progress
-        // 일곱 덩어리가 각자 한 줄씩 차지하면 창을 키워도 빈 줄만 늘어난다.
-        // 요약·안내·램프를 한 카드로, 필터와 진행 문구를 한 줄로 묶는다
-        // (2026-09-16).
-        let headContent = Chrome.vstack([summary, hint, lampsRow], spacing: 6)
-        let headCard = Chrome.card(headContent, padding: 12)
-        let controlRow = Chrome.hstack([filter, Chrome.spacer(), progress], spacing: 10)
-        progress.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        progress.alignment = .right
-        let stack = Chrome.vstack([headCard, controlRow, scroll, actions], spacing: 10)
-        Chrome.fill(stack, in: content)
-        NSLayoutConstraint.activate([
-            headCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            headContent.widthAnchor.constraint(equalTo: headCard.widthAnchor, constant: -24),
-            summary.widthAnchor.constraint(equalTo: headContent.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: headContent.widthAnchor),
-            lampsRow.widthAnchor.constraint(equalTo: headContent.widthAnchor),
-            controlRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            filter.widthAnchor.constraint(lessThanOrEqualTo: controlRow.widthAnchor),
-            progress.widthAnchor.constraint(lessThanOrEqualTo: controlRow.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
-        ])
-        doctorWindow = window
-    }
-
-
     func ensureLogWindow() {
         if logWindow != nil {
             return
@@ -6121,8 +6391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 코어의 시스템 요약은 한 상태를 여러 문장으로 늘어놓을 때가 있다.
         // 그대로 넣으면 창을 최소 크기로 줄였을 때 세 줄을 넘겨 뒷문장이
         // 화면에서 사라지고, 정작 목록은 그만큼 아래로 밀린다. 잠금 사유
-        // 같은 문장은 메뉴 패널과 자가 점검 창에 이미 있다
-        // (2026-09-16, 6 Pro 지적).
+        // 같은 문장은 메뉴 패널이 이미 보여 준다 (2026-09-16, 6 Pro 지적).
         let levelTitle = Palette.title(level: model.level)
         let scope = Self.logScopeSummary(summary)
         logSummary?.stringValue = scope.isEmpty
@@ -6376,8 +6645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 예전에는 그 자리에 코어의 시스템 로그 줄을 대신 채웠다. 제목은
         // "선택한 턴의 자세한 기록"인데 내용은 감독·감시·세션 이야기라,
         // 운영자는 한 턴의 기록과 시스템 상태를 같은 칸에서 읽어야 했다.
-        // 시스템 상태는 자가 점검 창과 메뉴 패널에 이미 있다 (2026-09-16,
-        // 6 Pro 지적).
+        // 시스템 상태는 메뉴 패널이 이미 보여 준다 (2026-09-16, 6 Pro 지적).
         logDetailCard?.isHidden = !hasSelection
         guard hasSelection else {
             lastLogDetailKey = ""
@@ -6676,9 +6944,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if tableView === logTable {
             return displayedReceipts.count
         }
-        if tableView === doctorTable {
-            return displayedChecks.count
-        }
         if tableView === jobsTable {
             return displayedJobs.count
         }
@@ -6855,50 +7120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     alignment: .left
                 )
                 field.toolTip = job.event_id
-                return field
-            default:
-                return nil
-            }
-        }
-        if tableView === doctorTable {
-            guard row >= 0, row < displayedChecks.count, let column = tableColumn else { return nil }
-            let check = displayedChecks[row]
-            switch column.identifier.rawValue {
-            case "level":
-                let label = check.level == "fail" ? "문제" : check.level == "warn" ? "주의" : check.level == "off" ? "꺼짐" : "정상"
-                return reusedLabel(
-                    in: tableView,
-                    column: "level",
-                    text: label,
-                    font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                    color: Palette.lamp(check.level == "fail" ? "err" : check.level == "warn" ? "warn" : check.level == "ok" ? "ok" : "off")
-                )
-            case "title":
-                let field = reusedLabel(
-                    in: tableView,
-                    column: "title",
-                    text: check.title,
-                    font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                    color: NSColor.labelColor,
-                    alignment: .left
-                )
-                field.toolTip = "\(check.title) · \(check.advice)"
-                return field
-            case "advice":
-                let field = reusedLabel(
-                    in: tableView,
-                    column: "advice",
-                    text: check.advice,
-                    font: NSFont.systemFont(ofSize: 11),
-                    color: NSColor.secondaryLabelColor,
-                    alignment: .left
-                )
-                field.toolTip = check.advice
-                // 자가 점검의 주 내용은 이 설명이다. 예전에는 두 줄로 접어
-                // 보여 주고 줄 높이를 44pt로 고정했다. 그러면 한 줄짜리 항목도
-                // 44pt를 써서 창에 일곱 줄밖에 안 들어갔다. 지금은 한 줄로
-                // 두고, 긴 문장은 도움말에 전문을 남긴다 (2026-09-16).
-                field.setLines(1)
                 return field
             default:
                 return nil
@@ -8064,29 +8285,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let data = self?.runPython(["--catalog-upsert", json], timeout: 12)
             DispatchQueue.main.async { self?.applyCatalogSnapshot(data, modelToken: fetchToken) }
         }
-    }
-
-    static func unavailableDoctor() -> DoctorReport {
-        DoctorReport(
-            ok: false,
-            action: "doctor",
-            privacy: "content_redacted",
-            level: "red",
-            primary_code: "snapshot_unavailable",
-            healable: [],
-            healed: [],
-            checks: [
-                DoctorCheck(
-                    code: "snapshot_unavailable",
-                    level: "fail",
-                    title: "상태 스냅샷",
-                    detail: "code=snapshot_unavailable",
-                    advice: "상태를 읽지 못했습니다. 메뉴바는 자동 실행을 재시작하지 않습니다. 잠시 후 다시 점검해 보세요.",
-                    heal: ""
-                )
-            ],
-            health: nil
-        )
     }
 
     static func unavailableModel() -> MenubarModel {
