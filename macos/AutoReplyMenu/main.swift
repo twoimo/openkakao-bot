@@ -532,6 +532,22 @@ enum Palette {
 
 enum Chrome {
     static func operatorWindow(title: String, size: NSSize, autosave: String) -> NSWindow {
+        operatorWindow(title: title, size: size, autosave: autosave, minimum: nil)
+    }
+
+    /// 창 하나를 만든다. ``minimum``은 내용이 담기려면 필요한 최소 크기다.
+    ///
+    /// 지금까지 모든 창이 560x380으로 줄어들 수 있었는데, 그 값은 기록 창에
+    /// 너무 작다: 여섯 열의 최소 너비 합이 624pt라 가로 스크롤 없이 마지막
+    /// 열을 볼 수 없었고, 스크롤 260 + 상세 208에 머리말까지 더하면 세로도
+    /// 690pt가 필요했다. 창마다 실제로 필요한 값을 받아 그 아래로는 줄어들지
+    /// 않게 한다 (2026-09-16).
+    static func operatorWindow(
+        title: String,
+        size: NSSize,
+        autosave: String,
+        minimum: NSSize?
+    ) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -542,7 +558,11 @@ enum Chrome {
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.minSize = NSSize(width: min(560, size.width), height: min(380, size.height))
+        let floor = NSSize(width: 560, height: 380)
+        window.minSize = NSSize(
+            width: min(max(minimum?.width ?? floor.width, floor.width), size.width),
+            height: min(max(minimum?.height ?? floor.height, floor.height), size.height)
+        )
         window.setFrameAutosaveName(autosave)
         window.titlebarSeparatorStyle = .line
         window.center()
@@ -620,7 +640,7 @@ enum Chrome {
     }
 
     static func table() -> (NSScrollView, NSTableView) {
-        let scroll = NSScrollView()
+        let scroll = TableScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -778,6 +798,25 @@ final class FlippedContainerView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// 표를 담는 스크롤 뷰. 문서 뷰(표)의 폭을 자기 폭에 맞춘다.
+///
+/// AppKit은 문서 뷰가 "폭을 따라가겠다"고 말했을 때만 폭을 맞춰 준다. 그
+/// 표시가 없으면 창을 넓혀도 표가 처음 폭에 머물러 오른쪽에 빈 자리가 남고,
+/// 창을 좁히면 마지막 열이 클립 뷰 밖으로 밀려나 영영 보이지 않는다. 기록
+/// 창에서 "답변" 열이 사라지던 것이 이것이었다: 표는 976pt인데 클립 뷰는
+/// 655pt였다 (2026-09-16).
+final class TableScrollView: NSScrollView {
+    override func tile() {
+        super.tile()
+        guard !hasHorizontalScroller, let table = documentView as? NSTableView else { return }
+        let width = contentView.bounds.width
+        guard width > 0, abs(table.frame.width - width) > 0.5 else { return }
+        var frame = table.frame
+        frame.size.width = width
+        table.frame = frame
+    }
+}
+
 /// 빈 글자면 스스로 숨는 라벨. 스택 안에서 빈 줄이 자리를 차지해 창 아래에
 /// 쓸모 없는 여백을 만드는 것을 막는다.
 final class AutoHidingLabel: NSTextField {
@@ -929,6 +968,16 @@ final class CardView: NSView {
 enum LayoutAudit {
     static let visibleTextLimit = 400
 
+    /// 크기를 바꾼 뒤 실제 배치가 끝날 때까지 잠깐 런루프를 돌린다.
+    ///
+    /// 감사는 창 크기를 프로그램으로 바꾸므로, 실제 창에서 일어나는 마무리
+    /// 단계가 통째로 빠진다. 표의 열 폭이 새 폭에 맞춰 다시 나뉘는 일이
+    /// 그중 하나다. 런루프를 한 바퀴 돌리지 않으면 표가 예전 폭을 그대로
+    /// 들고 있어, 열이 넘치는지 아닌지를 잘못 재게 된다 (2026-09-16).
+    static func settle(_ seconds: TimeInterval = 0.05) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
     static func collect(
         from root: NSView,
         window: String,
@@ -1016,6 +1065,29 @@ enum LayoutAudit {
                 entry["spacing"] = stack.spacing
                 entry["orientation"] = stack.orientation == .horizontal ? "h" : "v"
                 entry["arranged"] = stack.arrangedSubviews.count
+            }
+            // 표의 열 폭을 담는다. 열 최소 너비의 합이 표에 주어진 폭보다
+            // 크면 마지막 열이 표 밖으로 밀려나고, 가로 스크롤러가 없으면
+            // 값을 읽을 방법이 아예 없다. 글자 잘림과 달리 툴팁으로도 복구할
+            // 수 없어 자동 검사가 직접 봐야 한다 (2026-09-16).
+            if let table = child as? NSTableView {
+                entry["columns"] = table.tableColumns.map { column in
+                    [
+                        "id": column.identifier.rawValue,
+                        "width": round(column.width * 100) / 100,
+                        "minWidth": round(column.minWidth * 100) / 100,
+                    ]
+                }
+                entry["intercellSpacing"] = table.intercellSpacing.width
+            }
+            // 스크롤 뷰가 가로로 굴러가는지 담는다. 열 최소 너비의 합이 표에
+            // 주어진 폭보다 클 때, 가로 스크롤이 있으면 마지막 열까지 볼 수
+            // 있고 없으면 영영 못 본다. 검사가 그 둘을 가르려면 이 값이
+            // 필요하다. 스크롤러의 프레임 모양으로 추측하면 감출 때
+            // (autohidesScrollers) 크기가 0이 되어 방향을 알 수 없다
+            // (2026-09-16).
+            if let scroll = child as? NSScrollView {
+                entry["hScroller"] = scroll.hasHorizontalScroller
             }
             // 신경망 보기가 실제로 뉴런을 그렸는지 잰다. 힘 배치가 뭉치면
             // 창이 비어 보이는데, 프레임만 봐서는 알 수 없다 (2026-09-16).
@@ -4487,12 +4559,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 저장한다. 감사가 운영자의 창 크기를 덮어쓰지 않도록 연결을
             // 끊는다. 저장된 값 자체는 그대로 남는다 (2026-09-16).
             window.setFrameAutosaveName("")
+            // 창을 만들 때 크기에서만 재면 "줄였을 때 무엇이 사라지는가"를
+            // 놓친다. 운영자가 모서리를 끌어 줄일 수 있는 가장 작은 크기를
+            // 따로 재서, 그 크기에서 내용이 잘리거나 넘치는지 본다. 기록 창의
+            // 마지막 열이 사라지던 결함이 이 검사로 드러났다 (2026-09-16).
+            let originalSize = content.bounds.size
+            window.setContentSize(window.minSize)
+            window.layoutIfNeeded()
+            content.layoutSubtreeIfNeeded()
+            LayoutAudit.settle()
+            LayoutAudit.collect(
+                from: content,
+                window: entry.0 + "-min",
+                path: entry.0 + "-min",
+                windowSize: content.bounds.size,
+                into: &rows
+            )
+            // 원래 크기로 되돌린다. 되돌리지 않으면 아래 캡처가 줄어든
+            // 창을 찍어, 운영자가 실제로 보는 그림과 달라진다 (2026-09-16).
+            window.setContentSize(originalSize)
+            window.layoutIfNeeded()
+            content.layoutSubtreeIfNeeded()
             // 창을 화면 밖에 세워 실제로 배치시킨다. 런루프가 돌지 않으면
             // AppKit이 배치를 미루고, 그러면 프레임을 잘못 읽는다.
             window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
             window.orderFrontRegardless()
             window.layoutIfNeeded()
             content.layoutSubtreeIfNeeded()
+            LayoutAudit.settle()
             LayoutAudit.collect(
                 from: content,
                 window: entry.0,
@@ -4958,7 +5052,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if jobsWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "작업 목록", size: NSSize(width: 720, height: 540), autosave: "AutoReplyJobs")
+        // 표 200 + 과정 152 + 머리말에 단추 줄까지 더하면 508pt가 필요하다
+        // (2026-09-16).
+        let window = Chrome.operatorWindow(
+            title: "작업 목록",
+            size: NSSize(width: 720, height: 540),
+            autosave: "AutoReplyJobs",
+            minimum: NSSize(width: 620, height: 520)
+        )
         let content = NSView()
         window.contentView = content
 
@@ -5246,7 +5347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if doctorWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "자가 점검", size: NSSize(width: 760, height: 560), autosave: "AutoReplyDoctor")
+        // 표 최소 260 + 머리말 카드에 램프 줄까지 더하면 420pt가 필요하다
+        // (2026-09-16).
+        let window = Chrome.operatorWindow(
+            title: "자가 점검",
+            size: NSSize(width: 760, height: 560),
+            autosave: "AutoReplyDoctor",
+            minimum: NSSize(width: 640, height: 470)
+        )
         let content = NSView()
         window.contentView = content
 
@@ -5334,7 +5442,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if logWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "답변 기록", size: NSSize(width: 1000, height: 720), autosave: "AutoReplyReceipts")
+        // 여섯 열의 최소 너비 합(624pt)에 창 여백을 더한 값보다 좁아지면
+        // 마지막 "답변" 열이 표 밖으로 밀려나고 가로 스크롤이 없어 읽을 수
+        // 없다. 세로는 파이프라인 39 + 머리말 117 + 스크롤 260 + 상세 208에
+        // 사이 여백을 더해 690pt가 필요하다. 처음 여는 크기도 그보다 커야
+        // 표가 눌리지 않는다 (2026-09-16).
+        let window = Chrome.operatorWindow(
+            title: "답변 기록",
+            size: NSSize(width: 1000, height: 756),
+            autosave: "AutoReplyReceipts",
+            minimum: NSSize(width: 704, height: 690)
+        )
         let content = NSView()
         window.contentView = content
 
@@ -5781,7 +5899,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if roomsWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "단체 채팅방", size: NSSize(width: 760, height: 560), autosave: "AutoReplyRooms")
+        // 표 최소 높이가 300pt라 380pt까지 줄이면 머리말만 남고 목록이
+        // 사라진다. 감사에서 스택이 544pt를 차지하므로 576pt 아래로는
+        // 줄이지 않는다 (2026-09-16).
+        let window = Chrome.operatorWindow(
+            title: "단체 채팅방",
+            // 스택이 544pt를 차지하는데 창을 560으로 열면 표가 눌린다. 처음
+            // 여는 크기부터 필요한 만큼 준다 (2026-09-16).
+            size: NSSize(width: 760, height: 608),
+            autosave: "AutoReplyRooms",
+            minimum: NSSize(width: 620, height: 576)
+        )
         let content = NSView()
         window.contentView = content
 
@@ -6302,7 +6430,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if vectorWindow != nil {
             return
         }
-        let window = Chrome.operatorWindow(title: "지식 그래프 (대화 기억)", size: NSSize(width: 980, height: 720), autosave: "AutoReplyVector")
+        // 표 240 + 그래프 260 + 편집 270에 머리말과 사이 여백을 더하면 세로로
+        // 974pt가 필요하다. 380pt까지 줄어들면 아래 편집 칸이 통째로 사라진다
+        // (2026-09-16).
+        let window = Chrome.operatorWindow(
+            title: "지식 그래프 (대화 기억)",
+            // 감사에서 스택이 974pt를 차지한다. 720으로 열면 표와 그래프가
+            // 서로 높이를 빼앗아 둘 다 좁아진다 (2026-09-16).
+            size: NSSize(width: 980, height: 1006),
+            autosave: "AutoReplyVector",
+            minimum: NSSize(width: 700, height: 700)
+        )
         window.title = "지식 그래프 (대화 기억)"
         window.delegate = self
         let content = NSView()

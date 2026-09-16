@@ -3508,5 +3508,183 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertEqual(payload["grounded_nodes"], 0)
 
 
+def load_layout_check():
+    spec = importlib.util.spec_from_file_location(
+        "check_menubar_layout", SCRIPTS / "check-menubar-layout.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class LayoutGateTests(unittest.TestCase):
+    """The gate has to fail on the defects it was written for.
+
+    The menu extra cannot be looked at from CI, so this script is the only
+    thing standing between a broken window and a green build. A check that
+    silently matches nothing is worse than no check, which is exactly what
+    happened to the first version of the column check: it looked for the clip
+    view among the table's children, but the clip view is the table's parent,
+    so it never found one and always passed (2026-09-16).
+    """
+
+    def setUp(self):
+        self.check = load_layout_check()
+
+    def scroll_stack(self, table_width, clip_width, h_scroller=False, window="log-min"):
+        """A table inside a clip view inside a scroll view, as AppKit builds it."""
+        scroll = {
+            "window": window,
+            "path": f"{window}/NSStackView#0/AutoReplyMenu.TableScrollView#4",
+            "kind": "AutoReplyMenu.TableScrollView",
+            "hidden": False,
+            "w": clip_width,
+            "h": 260.0,
+            "winLeft": 16.0,
+            "hScroller": h_scroller,
+        }
+        clip = {
+            "window": window,
+            "path": scroll["path"] + "/NSClipView#2",
+            "kind": "NSClipView",
+            "hidden": False,
+            "w": clip_width,
+            "h": 260.0,
+            "winLeft": 16.0,
+        }
+        table = {
+            "window": window,
+            "path": clip["path"] + "/NSTableView#0",
+            "kind": "NSTableView",
+            "hidden": False,
+            "w": table_width,
+            "h": 260.0,
+            "winLeft": 16.0,
+            "intercellSpacing": 8.0,
+            "columns": [
+                {"id": name, "width": 92.0, "minWidth": minimum}
+                for name, minimum in (
+                    ("time", 76.0),
+                    ("room", 96.0),
+                    ("outcome", 76.0),
+                    ("reason", 96.0),
+                    ("retrieval", 120.0),
+                    ("reply", 120.0),
+                )
+            ],
+        }
+        return scroll, clip, table
+
+    def test_table_wider_than_its_clip_view_is_reported(self):
+        """The receipts window shipped a 976pt table in a 951pt clip view."""
+        scroll, clip, table = self.scroll_stack(table_width=976.0, clip_width=951.0)
+        found = self.check.tables_past_their_clip([scroll, clip, table])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["window"], "log-min")
+        self.assertAlmostEqual(found[0]["over"], 25.0, places=1)
+
+    def test_table_matched_to_its_clip_view_is_clean(self):
+        scroll, clip, table = self.scroll_stack(table_width=951.0, clip_width=951.0)
+        self.assertEqual(self.check.tables_past_their_clip([scroll, clip, table]), [])
+
+    def test_a_hidden_table_is_not_reported(self):
+        scroll, clip, table = self.scroll_stack(table_width=976.0, clip_width=951.0)
+        table["hidden"] = True
+        self.assertEqual(self.check.tables_past_their_clip([scroll, clip, table]), [])
+
+    def test_a_rounding_difference_is_not_reported(self):
+        scroll, clip, table = self.scroll_stack(table_width=951.4, clip_width=951.0)
+        self.assertEqual(self.check.tables_past_their_clip([scroll, clip, table]), [])
+
+    def test_columns_that_do_not_fit_are_reported(self):
+        """624pt of column minimums in a 600pt clip view is unreachable."""
+        scroll, clip, table = self.scroll_stack(table_width=600.0, clip_width=600.0)
+        found = self.check.unreachable_columns([scroll, clip, table])
+        self.assertEqual(len(found), 1)
+        self.assertAlmostEqual(found[0]["needed"], 624.0, places=1)
+        self.assertAlmostEqual(found[0]["available"], 600.0, places=1)
+
+    def test_columns_that_fit_are_clean(self):
+        scroll, clip, table = self.scroll_stack(table_width=655.0, clip_width=655.0)
+        self.assertEqual(self.check.unreachable_columns([scroll, clip, table]), [])
+
+    def test_horizontal_scrolling_makes_narrow_columns_reachable(self):
+        """With a horizontal scroller the operator can scroll to the last one."""
+        scroll, clip, table = self.scroll_stack(
+            table_width=600.0, clip_width=600.0, h_scroller=True
+        )
+        self.assertEqual(self.check.unreachable_columns([scroll, clip, table]), [])
+
+    def test_a_table_without_a_clip_view_is_skipped(self):
+        """Nothing to compare against, so the check must not guess."""
+        _, _, table = self.scroll_stack(table_width=600.0, clip_width=600.0)
+        self.assertEqual(self.check.unreachable_columns([table]), [])
+
+    def test_content_inside_a_scroll_view_is_never_clipped(self):
+        """A scroll view exists precisely to hold more than fits."""
+        for path in (
+            "log-min/NSStackView#0/NSScrollView#4/NSTextField#0",
+            "log-min/NSStackView#0/AutoReplyMenu.TableScrollView#4/NSView#0",
+        ):
+            row = {
+                "window": "log-min",
+                "path": path,
+                "kind": "NSView",
+                "hidden": False,
+                "w": 100.0,
+                "h": 24.0,
+                "overRight": 300.0,
+            }
+            self.assertTrue(
+                self.check.inside_scroll_view(row),
+                f"{path} should read as inside a scroll view",
+            )
+            self.assertEqual(self.check.clipped_at_minimum([row]), [])
+
+    def test_overflow_at_the_minimum_size_is_reported(self):
+        row = {
+            "window": "log-min",
+            "path": "log-min/NSStackView#0/NSButton#1",
+            "kind": "NSButton",
+            "hidden": False,
+            "w": 100.0,
+            "h": 24.0,
+            "overRight": 40.0,
+        }
+        found = self.check.clipped_at_minimum([row])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["why"], "오른쪽으로")
+
+    def test_the_build_size_is_not_judged_for_overflow(self):
+        """Only the minimum-size pass is judged; the build size has room."""
+        row = {
+            "window": "log",
+            "path": "log/NSStackView#0/NSButton#1",
+            "kind": "NSButton",
+            "hidden": False,
+            "w": 100.0,
+            "h": 24.0,
+            "overRight": 40.0,
+        }
+        self.assertEqual(self.check.clipped_at_minimum([row]), [])
+
+    def test_the_audit_expects_the_resized_pass(self):
+        """Every window has to be measured at its minimum size too."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("LayoutAudit.settle()", source)
+        self.assertIn('entry.0 + "-min"', source)
+        self.assertIn("window.setContentSize(window.minSize)", source)
+        # 되돌리지 않으면 아래 캡처가 줄어든 창을 찍는다.
+        self.assertIn("window.setContentSize(originalSize)", source)
+
+    def test_every_table_follows_its_clip_view(self):
+        """The table has to resize with its clip view, or columns get cut."""
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("final class TableScrollView: NSScrollView", source)
+        self.assertIn("override func tile()", source)
+        self.assertIn("let scroll = TableScrollView()", source)
+
+
 if __name__ == "__main__":
     unittest.main()

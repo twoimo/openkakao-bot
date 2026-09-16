@@ -128,7 +128,15 @@ def draws_something(row: dict) -> bool:
 
 def scrolled(row: dict) -> bool:
     """Content inside a scroll view is legitimately larger than the window."""
-    return "/NSScrollView" in row["path"]
+    # 경로에 클래스 이름이 그대로 들어간다. 하위 클래스(TableScrollView)를
+    # 쓰면 이름이 달라져 "스크롤 안쪽"이라는 표시를 못 알아본다. 종류로
+    # 판단해 이름이 바뀌어도 같은 결론이 나오게 한다 (2026-09-16).
+    if row["kind"].endswith("ScrollView"):
+        return True
+    return any(
+        part.split("#", 1)[0].endswith("ScrollView")
+        for part in row["path"].split("/")
+    )
 
 
 def read_png(path: Path) -> tuple[int, int, list[list[tuple[int, int, int, int]]]]:
