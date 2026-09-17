@@ -69,7 +69,7 @@ class GraphShapeTests(unittest.TestCase):
     def test_graph_returns_nodes_and_edges(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         self.assertTrue(report["ok"])
         self.assertEqual(report["node_count"], len(report["nodes"]))
         self.assertEqual(report["edge_count"], len(report["edges"]))
@@ -78,7 +78,7 @@ class GraphShapeTests(unittest.TestCase):
     def test_every_node_has_a_stable_id_and_a_label(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         ids = [node["id"] for node in report["nodes"]]
         self.assertEqual(len(ids), len(set(ids)), "node ids must be unique")
         for node in report["nodes"]:
@@ -89,7 +89,7 @@ class GraphShapeTests(unittest.TestCase):
     def test_edges_reference_nodes_that_exist(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         ids = {node["id"] for node in report["nodes"]}
         for edge in report["edges"]:
             with self.subTest(edge=edge["relation"]):
@@ -101,7 +101,7 @@ class GraphShapeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             report = KG.collect_knowledge_graph(
-                root / "context.sqlite3", state_root=root / "nowhere"
+                root / "context.sqlite3", state_root=root / "nowhere", wait_for_reindex=True
             )
         self.assertTrue(report["ok"])
         self.assertGreater(report["node_count"], 0)
@@ -112,7 +112,7 @@ class EvidenceTests(unittest.TestCase):
     def test_a_node_mentioned_in_the_ledger_is_grounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         alizonku = next(
             node for node in report["nodes"] if "알쫀쿠" in node["label"]
         )
@@ -126,7 +126,7 @@ class EvidenceTests(unittest.TestCase):
         """A concept nobody has mentioned must not claim a source."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         seeds = [n for n in report["nodes"] if n["evidence"]["kind"] == "seed"]
         self.assertTrue(seeds, "the seed nodes should still be present")
         for node in seeds:
@@ -151,7 +151,7 @@ class EvidenceTests(unittest.TestCase):
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
                 encoding="utf-8",
             )
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         alizonku = next(node for node in report["nodes"] if "알쫀쿠" in node["label"])
         self.assertLessEqual(
             len(alizonku["evidence"]["source_event_ids"]),
@@ -168,7 +168,7 @@ class EvidenceTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         alizonku = next(node for node in report["nodes"] if "알쫀쿠" in node["label"])
         self.assertEqual(alizonku["evidence"]["kind"], "seed")
 
@@ -181,8 +181,84 @@ class EvidenceTests(unittest.TestCase):
                 "not json\n[1,2,3]\n" + json.dumps({"event_id": "db:9", "message": "알쫀쿠"}),
                 encoding="utf-8",
             )
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         self.assertTrue(report["ok"])
+
+
+class BackgroundReindexTests(unittest.TestCase):
+    """The refresh must not run inside the request that asks for the graph.
+
+    A cold cache used to make the first read walk the 1.4GB context DB
+    synchronously, so the menu bar hit its 25s timeout and drew an empty graph.
+    These tests pin the contract that replaced it: serve the stored graph now,
+    refresh behind the scenes, and tell the caller the picture is stale
+    (2026-09-17, 6 Pro 지적).
+    """
+
+    def test_a_cold_cache_serves_a_stored_graph_and_says_it_is_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            try:
+                self.assertTrue(report["ok"])
+                self.assertTrue(report["stale"], "a background refresh must be reported as stale")
+                self.assertTrue(report["reindex"]["started"])
+                self.assertNotEqual(report["reindex"].get("mode"), "inline")
+                # The seed graph is already readable even though the refresh is
+                # still walking the ledger.
+                self.assertGreater(report["node_count"], 0)
+            finally:
+                KG.wait_for_background_reindex()
+
+    def test_a_second_read_while_one_is_running_does_not_stack_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            first = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            second = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            try:
+                if first["reindex"]["started"]:
+                    # The second call must reuse the running refresh rather than
+                    # starting a second walk over the same database.
+                    self.assertFalse(second["reindex"]["started"])
+                    self.assertEqual(second["reindex"]["reason"], "in_flight")
+            finally:
+                KG.wait_for_background_reindex()
+
+    def test_the_wait_helper_returns_immediately_when_nothing_is_running(self):
+        self.assertTrue(KG.wait_for_background_reindex(timeout=0.0))
+
+    def test_the_wait_helper_reports_a_settled_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            self.assertTrue(KG.wait_for_background_reindex(timeout=30.0))
+            self.assertTrue(KG.wait_for_background_reindex(timeout=0.0))
+
+    def test_an_inline_read_is_not_stale_and_indexes_before_returning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            report = KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, wait_for_reindex=True
+            )
+            self.assertTrue(report["ok"])
+            self.assertFalse(report["stale"])
+            self.assertEqual(report["reindex"]["mode"], "inline")
+            # Indexing ran before the rows were read, so the ledger evidence is
+            # already attached in this very response.
+            alizonku = next(node for node in report["nodes"] if "알쫀쿠" in node["label"])
+            self.assertEqual(alizonku["evidence"]["kind"], "ledger")
+
+    def test_a_warm_read_reports_when_the_graph_was_last_indexed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, wait_for_reindex=True
+            )
+            warm = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            self.assertFalse(warm["stale"], "a fresh index must not be reported as stale")
+            self.assertIsNone(warm["reindex"], "a fresh graph needs no refresh")
+            # "언제 기준인지"는 화면이 말할 수 있어야 한다 (6 Pro 지적).
+            self.assertGreater(warm["indexed_at"], 0, "the view needs a last-indexed time")
 
 
 class MigrationTests(unittest.TestCase):
@@ -226,7 +302,7 @@ class MigrationTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         labels = [node["label"] for node in report["nodes"]]
         self.assertIn("옛 노드", labels, "the existing row must survive the migration")
         old = next(node for node in report["nodes"] if node["label"] == "옛 노드")
@@ -235,7 +311,7 @@ class MigrationTests(unittest.TestCase):
     def test_relation_evidence_follows_its_source_node(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, wait_for_reindex=True)
         by_id = {node["id"]: node for node in report["nodes"]}
         for edge in report["edges"]:
             source = by_id.get(edge["source"])

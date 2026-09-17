@@ -13,6 +13,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -184,6 +185,12 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS kg_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS kg_relations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source_id TEXT NOT NULL,
@@ -212,6 +219,28 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
                 pass
     conn.commit()
     return conn
+
+
+def read_meta(conn: sqlite3.Connection, key: str) -> str:
+    """Read one value from the graph's own bookkeeping table."""
+    try:
+        row = conn.execute("SELECT value FROM kg_meta WHERE key = ?", (key,)).fetchone()
+    except sqlite3.Error:
+        return ""
+    return str(row[0]) if row else ""
+
+
+def write_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Record a value in the graph's bookkeeping table."""
+    try:
+        conn.execute(
+            "INSERT INTO kg_meta (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        pass
 
 
 def ensure_seeded(conn: sqlite3.Connection) -> None:
@@ -1376,6 +1405,121 @@ def attach_ledger_evidence(
     return stats
 
 
+# 재색인은 프로세스마다 하나만 돌린다. 메뉴바는 2초마다 폴링하고 감사도
+# 같은 명령을 부르므로, 가드가 없으면 같은 작업이 여러 번 겹쳐 돈다.
+_reindex_lock = threading.Lock()
+_reindex_inflight = False
+_reindex_last_started_at = 0.0
+
+
+def wait_for_background_reindex(timeout: float = 30.0) -> bool:
+    """Block until the in-flight reindex finishes.
+    
+    The menu bar must never wait, but a caller that needs a settled graph
+    (a test, or a one-shot export) can. Returns True when nothing is left
+    running (2026-09-17).
+    """
+    deadline = time.time() + max(0.0, timeout)
+    while time.time() < deadline:
+        with _reindex_lock:
+            if not _reindex_inflight:
+                return True
+        time.sleep(0.05)
+    with _reindex_lock:
+        return not _reindex_inflight
+
+
+def _start_background_reindex(
+    conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    chat: str = "",
+    cycle_started_at: int | None = None,
+) -> dict[str, Any]:
+    """Kick the heavy reindex off the request path.
+
+    Returns a small status dict the caller can report. A second call while one
+    is already running returns {"started": False, "reason": "in_flight"} so the
+    caller keeps serving the stored graph instead of stacking work
+    (2026-09-17, 6 Pro 지적).
+    """
+    global _reindex_inflight, _reindex_last_started_at
+    with _reindex_lock:
+        if _reindex_inflight:
+            return {"started": False, "reason": "in_flight"}
+        _reindex_inflight = True
+        _reindex_last_started_at = time.time()
+    started_at = int(cycle_started_at or time.time())
+
+    def _run() -> None:
+        global _reindex_inflight
+        worker_conn = None
+        try:
+            # A fresh connection: the caller closes its own when the response is
+            # built, and SQLite connections are not safe to share across threads.
+            worker_conn = _connect_kg(state_root / KNOWLEDGE_GRAPH_DB_NAME)
+            _reindex_all(worker_conn, state_root, chat=chat, cycle_started_at=started_at)
+        except (OSError, sqlite3.Error, ValueError, ImportError, RuntimeError):
+            # A failed refresh must not kill the process; the stored graph stays
+            # and the next poll retries.
+            pass
+        finally:
+            if worker_conn is not None:
+                try:
+                    worker_conn.close()
+                except sqlite3.Error:
+                    pass
+            with _reindex_lock:
+                _reindex_inflight = False
+
+    thread = threading.Thread(target=_run, name="kg-reindex", daemon=True)
+    thread.start()
+    return {"started": True, "chat": chat, "cycle_started_at": started_at}
+
+
+def _reindex_all(
+    conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    chat: str = "",
+    cycle_started_at: int = 0,
+) -> None:
+    """Rebuild every indexed neuron and synapse for the graph.
+
+    This is the body that used to run inline in collect_knowledge_graph.
+    Each step is isolated: a failure in one indexer must not stop the others,
+    because a graph with topics but no rooms is still better than no refresh
+    (2026-09-16, 2026-09-17).
+    """
+    try:
+        index_topic_entities(conn, state_root, chat=chat)
+        index_topic_relations(conn, state_root, chat=chat)
+    except (OSError, sqlite3.Error, ValueError):
+        pass
+    try:
+        index_chat_entities(conn, state_root, chat=chat)
+        index_person_entities(conn, state_root, chat=chat)
+        index_membership_relations(conn, state_root, chat=chat)
+        prune_indexed_entities(conn, cycle_started_at=cycle_started_at)
+        _merge_seed_rooms(conn)
+    except (OSError, sqlite3.Error, ValueError):
+        pass
+    try:
+        attach_ledger_evidence(conn, state_root)
+    except (OSError, sqlite3.Error, ValueError):
+        pass
+    try:
+        from auto_reply_dream_rsi import dream_policy_evaluation
+
+        dream_policy_evaluation(state_root)
+    except (OSError, sqlite3.Error, ValueError, ImportError):
+        pass
+    # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
+    # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
+    write_meta(conn, "last_indexed_at", str(int(time.time())))
+
+
+
 def collect_knowledge_graph(
     db_path: Path,
     *,
@@ -1383,12 +1527,18 @@ def collect_knowledge_graph(
     chat: str = "",
     force_reindex: bool = False,
     reindex_interval_seconds: int = 300,
+    wait_for_reindex: bool = False,
 ) -> dict[str, Any]:
     """Return the whole graph as nodes and edges for a force-directed view.
 
     Node ids stay stable across calls so a viewer can animate the same layout
     instead of re-randomising every refresh. ``chat`` limits the indexed topics
     to one room; empty means every room the index covers.
+
+    A refresh normally runs in the background so the menu bar never blocks on
+    the 1.4GB context DB. Set ``wait_for_reindex`` when the caller needs a settled
+    graph before reading rows: a one-shot export, or a test asserting on
+    freshly indexed evidence (2026-09-17, 6 Pro 지적).
     """
     kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
     try:
@@ -1413,51 +1563,56 @@ def collect_knowledge_graph(
         # 메뉴바 폴링(2초 주기)과 감사에서 프로세스가 25초 타임아웃에
         # 걸려 빈 그래프로 떨어지는 병목을 해결한다 (2026-09-17).
         now = int(time.time())
-        last_updated_row = conn.execute(
-            "SELECT MAX(updated_at), COUNT(*) FROM kg_entities"
-            " WHERE entity_id LIKE 'chat:%' OR entity_id LIKE 'topic:%'"
-        ).fetchone()
-        last_updated = int(last_updated_row[0] or 0)
-        indexed_count = int(last_updated_row[1] or 0)
-        needs_reindex = force_reindex or indexed_count == 0 or (now - last_updated >= reindex_interval_seconds)
+        # 색인 시각은 메타에 남는다. 예전에는 뉴런의 updated_at 최댓값을
+        # 썼는데, 손으로 적은 시드 뉴런만 있는 그래프에서는 그 값이 방금
+        # 갱신된 것으로 보여 재색인이 영원히 걸리지 않았다. 반대로 색인할
+        # 대화가 없으면 개수가 0이라 매 폴링마다 재색인이 걸렸다. 이제
+        # "언제 색인을 끝냈는가"를 직접 기록해 둘 다 피한다 (2026-09-17).
+        try:
+            indexed_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM kg_entities"
+                    " WHERE entity_id LIKE 'chat:%' OR entity_id LIKE 'topic:%'"
+                ).fetchone()[0]
+                or 0
+            )
+        except sqlite3.Error:
+            indexed_count = 0
+        last_indexed_raw = read_meta(conn, "last_indexed_at")
+        try:
+            last_updated = int(last_indexed_raw or 0)
+        except ValueError:
+            last_updated = 0
+        # 메타가 없으면(=예전 그래프) 한 번은 다시 색인한다. 행의 updated_at
+        # 으로 대신하면, 방금 심은 시드 뉴런의 시각이 "최신"으로 읽혀 색인이
+        # 영영 돌지 않는다. 그게 6 Pro가 지적한 빈 그래프의 원인이었다
+        # (2026-09-17).
+        needs_reindex = force_reindex or (
+            last_updated == 0 or now - last_updated >= reindex_interval_seconds
+        )
+        # 재색인을 백그라운드로 돌리면 이 응답은 저장된 그래프를 담는다.
+        # 그 사실을 호출자에게 알려 화면이 "오래된 그림"이라고 말할 수 있게 한다.
+        result_meta: dict[str, Any] = {
+            "indexed_count": indexed_count,
+            "indexed_at": last_updated,
+            "needs_reindex": needs_reindex,
+        }
 
         if needs_reindex and state_root is not None:
-            # 이번 주기가 시작된 시각. 이 뒤에 다시 쓰이지 않은 색인 뉴런은
-            # 색인에서 빠졌거나 이름이 바뀐 것이므로 지운다 (2026-09-16).
-            cycle_started_at = now
-            # 색인된 대화에서 뉴런과 시냅스를 다시 만든다. 손으로 적은 다섯 개만
-            # 있으면 방에서 한 시간 동안 이야기한 주제도 그래프에 없어, 답변이
-            # 그 맥락을 모른 채 나간다 (2026-09-16).
-            try:
-                index_topic_entities(conn, state_root, chat=chat)
-                index_topic_relations(conn, state_root, chat=chat)
-            except (OSError, sqlite3.Error, ValueError):
-                pass
-            # 방과 사람도 뉴런으로 세우고 주제와 잇는다. 주제만 있으면 "코인"은
-            # 알아도 그것이 어느 방에서 누구와 나눈 이야기인지가 그래프에 없어,
-            # 답변이 엉뚱한 방의 맥락을 끌어온다 (2026-09-16, 사용자 지시).
-            try:
-                index_chat_entities(conn, state_root, chat=chat)
-                index_person_entities(conn, state_root, chat=chat)
-                index_membership_relations(conn, state_root, chat=chat)
-                # 색인에서 빠진 뉴런을 지운다. 지우지 않으면 이름이 바뀐
-                # 방이 두 이름으로 남아 그림이 중복으로 채워진다
-                # (2026-09-16, 사용자 지시).
-                prune_indexed_entities(conn, cycle_started_at=cycle_started_at)
-                # 손으로 적은 방 뉴런을 색인 뉴런에 합쳐 한 방이 한 번만
-                # 서게 한다 (2026-09-16).
-                _merge_seed_rooms(conn)
-            except (OSError, sqlite3.Error, ValueError):
-                pass
-            try:
-                attach_ledger_evidence(conn, state_root)
-            except (OSError, sqlite3.Error, ValueError):
-                pass
-            try:
-                from auto_reply_dream_rsi import dream_policy_evaluation
-                dream_policy_evaluation(state_root)
-            except (OSError, sqlite3.Error, ValueError):
-                pass
+            # 재색인은 1.4GB 컨텍스트 DB를 훑는다. 예전에는 이 요청 안에서
+            # 동기로 돌려, 캐시가 만료된 첫 조회가 25초 타임아웃에 걸려 빈
+            # 그래프로 떨어졌다. 지금은 저장된 그래프를 즉시 돌려주고,
+            # 재색인은 백그라운드에서 돌린 뒤 다음 폴링이 새 그림을 읽는다
+            # (2026-09-17, 6 Pro 지적).
+            if wait_for_reindex:
+                # 동기 경로: 재색인이 끝난 뒤의 그래프를 이 응답에 담는다.
+                _reindex_all(conn, state_root, chat=chat, cycle_started_at=now)
+                result_meta["reindex"] = {"started": True, "chat": chat, "mode": "inline"}
+                result_meta["stale"] = False
+            else:
+                started = _start_background_reindex(conn, state_root, chat=chat, cycle_started_at=now)
+                result_meta["reindex"] = started
+                result_meta["stale"] = True
         nodes: list[dict[str, Any]] = []
         for row in conn.execute(
             """
@@ -1512,6 +1667,10 @@ def collect_knowledge_graph(
             "ok": True,
             "nodes": nodes,
             "edges": edges,
+            "reindex": result_meta.get("reindex"),
+            "stale": bool(result_meta.get("stale")),
+            "indexed_count": int(result_meta.get("indexed_count") or 0),
+            "indexed_at": int(result_meta.get("indexed_at") or 0),
             "node_count": len(nodes),
             "edge_count": len(edges),
             "grounded_nodes": sum(
