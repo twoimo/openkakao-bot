@@ -360,6 +360,44 @@ def _sample_is_conversation(user: str, message: str) -> bool:
     return True
 
 
+from contextlib import contextmanager
+import shutil
+
+@contextmanager
+def _open_isolated_ro_conn(db_path: Path):
+    """DB Lock 방지: 카카오톡 DB 동기화 시 실행 중 파일 잠금을 방지하기 위해
+    임시 디렉터리로 복제한 뒤 Read Only 모드로 안전하게 연결한다 (2026-09-17).
+    """
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database not found: {db_path}")
+
+    with tempfile.TemporaryDirectory(prefix="kg-ro-copy-") as tmpdir:
+        tmp_db = Path(tmpdir) / db_path.name
+        try:
+            shutil.copy2(db_path, tmp_db)
+            wal = db_path.with_name(db_path.name + "-wal")
+            shm = db_path.with_name(db_path.name + "-shm")
+            if wal.exists():
+                try:
+                    shutil.copy2(wal, Path(tmpdir) / wal.name)
+                except OSError:
+                    pass
+            if shm.exists():
+                try:
+                    shutil.copy2(shm, Path(tmpdir) / shm.name)
+                except OSError:
+                    pass
+            conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
+        except (OSError, sqlite3.Error):
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+
+        try:
+            conn.execute("PRAGMA query_only = ON")
+            yield conn
+        finally:
+            conn.close()
+
+
 def _index_db_path(state_root: Path) -> Path:
     """The shared context index. Sibling of the state root's parent."""
     return state_root.parent / "context.sqlite3"
@@ -586,12 +624,8 @@ def index_chat_entities(
     if not index_path.exists():
         return stats
     try:
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return stats
-    try:
-        index_conn.execute("PRAGMA query_only = ON")
-        sql = (
+        with _open_isolated_ro_conn(index_path) as index_conn:
+            sql = (
             "SELECT chat, COUNT(*), MIN(date), MAX(date) FROM context_messages"
             " WHERE chat IS NOT NULL AND chat != ''"
         )
@@ -927,8 +961,6 @@ def index_topic_entities(
         conn.commit()
     except (sqlite3.Error, OSError, ValueError):
         return stats
-    finally:
-        index_conn.close()
     return stats
 
 
@@ -1419,6 +1451,11 @@ def collect_knowledge_graph(
                 pass
             try:
                 attach_ledger_evidence(conn, state_root)
+            except (OSError, sqlite3.Error, ValueError):
+                pass
+            try:
+                from auto_reply_dream_rsi import dream_policy_evaluation
+                dream_policy_evaluation(state_root)
             except (OSError, sqlite3.Error, ValueError):
                 pass
         nodes: list[dict[str, Any]] = []
