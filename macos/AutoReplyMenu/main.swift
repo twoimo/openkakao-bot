@@ -5652,7 +5652,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 따로 재서, 그 크기에서 내용이 잘리거나 넘치는지 본다. 기록 창의
             // 마지막 열이 사라지던 결함이 이 검사로 드러났다 (2026-09-16).
             let originalSize = content.bounds.size
-            window.setContentSize(window.minSize)
+            // window.minSize is the frame size, not the content size, so
+            // passing it to setContentSize under-sizes the content by the
+            // title bar. The audit then measured a window the operator can
+            // never actually reach, and real clipping could hide behind the
+            // difference. Convert through the frame rect (2026-09-17, 6 Pro
+            // 지적).
+            let minimumFrame = NSRect(origin: window.frame.origin, size: window.minSize)
+            window.setFrame(minimumFrame, display: false)
             window.layoutIfNeeded()
             content.layoutSubtreeIfNeeded()
             LayoutAudit.settle()
