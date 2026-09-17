@@ -1349,6 +1349,8 @@ def collect_knowledge_graph(
     *,
     state_root: Path | None = None,
     chat: str = "",
+    force_reindex: bool = False,
+    reindex_interval_seconds: int = 300,
 ) -> dict[str, Any]:
     """Return the whole graph as nodes and edges for a force-directed view.
 
@@ -1374,22 +1376,34 @@ def collect_knowledge_graph(
         }
     try:
         ensure_seeded(conn)
-        # 이번 주기가 시작된 시각. 이 뒤에 다시 쓰이지 않은 색인 뉴런은
-        # 색인에서 빠졌거나 이름이 바뀐 것이므로 지운다 (2026-09-16).
-        cycle_started_at = int(time.time())
-        # 색인된 대화에서 뉴런과 시냅스를 다시 만든다. 손으로 적은 다섯 개만
-        # 있으면 방에서 한 시간 동안 이야기한 주제도 그래프에 없어, 답변이
-        # 그 맥락을 모른 채 나간다 (2026-09-16).
-        if state_root is not None:
+        # 이미 색인된 데이터가 있고 최근(기본 5분)에 갱신되었다면 매번
+        # 1.4GB DB 전체를 다시 훑지 않고 저장된 그래프를 즉시 반환한다.
+        # 메뉴바 폴링(2초 주기)과 감사에서 프로세스가 25초 타임아웃에
+        # 걸려 빈 그래프로 떨어지는 병목을 해결한다 (2026-09-17).
+        now = int(time.time())
+        last_updated_row = conn.execute(
+            "SELECT MAX(updated_at), COUNT(*) FROM kg_entities"
+            " WHERE entity_id LIKE 'chat:%' OR entity_id LIKE 'topic:%'"
+        ).fetchone()
+        last_updated = int(last_updated_row[0] or 0)
+        indexed_count = int(last_updated_row[1] or 0)
+        needs_reindex = force_reindex or indexed_count == 0 or (now - last_updated >= reindex_interval_seconds)
+
+        if needs_reindex and state_root is not None:
+            # 이번 주기가 시작된 시각. 이 뒤에 다시 쓰이지 않은 색인 뉴런은
+            # 색인에서 빠졌거나 이름이 바뀐 것이므로 지운다 (2026-09-16).
+            cycle_started_at = now
+            # 색인된 대화에서 뉴런과 시냅스를 다시 만든다. 손으로 적은 다섯 개만
+            # 있으면 방에서 한 시간 동안 이야기한 주제도 그래프에 없어, 답변이
+            # 그 맥락을 모른 채 나간다 (2026-09-16).
             try:
                 index_topic_entities(conn, state_root, chat=chat)
                 index_topic_relations(conn, state_root, chat=chat)
             except (OSError, sqlite3.Error, ValueError):
                 pass
-        # 방과 사람도 뉴런으로 세우고 주제와 잇는다. 주제만 있으면 "코인"은
-        # 알아도 그것이 어느 방에서 누구와 나눈 이야기인지가 그래프에 없어,
-        # 답변이 엉뚱한 방의 맥락을 끌어온다 (2026-09-16, 사용자 지시).
-        if state_root is not None:
+            # 방과 사람도 뉴런으로 세우고 주제와 잇는다. 주제만 있으면 "코인"은
+            # 알아도 그것이 어느 방에서 누구와 나눈 이야기인지가 그래프에 없어,
+            # 답변이 엉뚱한 방의 맥락을 끌어온다 (2026-09-16, 사용자 지시).
             try:
                 index_chat_entities(conn, state_root, chat=chat)
                 index_person_entities(conn, state_root, chat=chat)
@@ -1403,7 +1417,6 @@ def collect_knowledge_graph(
                 _merge_seed_rooms(conn)
             except (OSError, sqlite3.Error, ValueError):
                 pass
-        if state_root is not None:
             try:
                 attach_ledger_evidence(conn, state_root)
             except (OSError, sqlite3.Error, ValueError):
