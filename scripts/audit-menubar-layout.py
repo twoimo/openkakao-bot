@@ -513,6 +513,7 @@ def analyze(directory: Path) -> dict:
         images[png.stem] = audit(png, scale=scale, ignore_cols=ignored.get(png.stem, ()))
     if not images:
         raise ValueError(f"no window images in {directory}")
+    by_path = {row["path"]: row for row in rows}
     return {
         "images": images,
         "overflow": [
@@ -521,6 +522,12 @@ def analyze(directory: Path) -> dict:
             if any(key in row for key in ("overRight", "overBottom", "underLeft", "underTop"))
             and not is_internal(row)
             and not scrolled(row)
+            # 숨은 판 안쪽은 화면에 없다. AppKit은 부모를 숨겨도 자식의
+            # hidden 표시를 그대로 두고 프레임도 마지막 값으로 남겨, 창이
+            # 줄면 보이지도 않는 카드가 넘침으로 보고된다. clipped_at_minimum
+            # 이 같은 이유로 이미 숨은 조상을 걸러 낸다 (2026-09-17).
+            and not row["hidden"]
+            and not hidden_ancestor(row, by_path)
         ],
         # 어떤 카드가 내용을 담고도 납작해지면 안 된다. CardView만 보면 같은
         # 실수가 다른 컨테이너에서 되풀이돼도 못 잡는다 (2026-09-16).

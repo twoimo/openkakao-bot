@@ -3293,6 +3293,51 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("Int.random", source[source.find("final class KnowledgeGraphView"):])
         self.assertNotIn("arc4random", source[source.find("final class KnowledgeGraphView"):])
 
+    def test_swift_applies_a_graph_snapshot_in_one_layout_pass(self):
+        """A snapshot must not settle the force layout twice.
+
+        nodes and edges each rebuild the layout from their didSet. Assigning
+        them one after the other ran the whole force simulation twice per
+        refresh, and the doc comment claimed otherwise (2026-09-17, 6 Pro 지적).
+        """
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("private var applyingSnapshot = false", source)
+        self.assertIn("private func rebuildLayoutUnlessApplyingSnapshot()", source)
+        self.assertIn("didSet { rebuildLayoutUnlessApplyingSnapshot() }", source)
+        start = source.find("func applySnapshot(nodes newNodes: [KnowledgeNode]")
+        end = source.find("func focusGroup(around nodeId: String)")
+        self.assertGreater(start, 0)
+        self.assertGreater(end, start)
+        body = source[start:end]
+        # 두 값을 다 넣은 뒤 한 번만 배치한다.
+        self.assertIn("applyingSnapshot = true", body)
+        self.assertIn("applyingSnapshot = false", body)
+        self.assertLess(
+            body.find("applyingSnapshot = false"),
+            body.find("rebuildLayout()"),
+            "the single rebuild has to come after both assignments",
+        )
+
+    def test_swift_shows_the_retry_affordance_on_the_first_graph_failure(self):
+        """The first failed read has no picture, so the canvas stays empty.
+
+        The retry button lives inside the graph stack, and the stack used to be
+        hidden whenever there were no nodes. A user whose very first read timed
+        out therefore saw no way to try again (2026-09-17, 6 Pro 지적).
+        """
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("let showsGraphPanel = showsGraph || graphFailed", source)
+        self.assertIn("vectorGraphStack?.isHidden = !showsGraphPanel", source)
+        # 캔버스는 접되 안내 줄은 남긴다.
+        self.assertIn("vectorGraphView?.isHidden = !showsGraph", source)
+        self.assertIn("vectorGraphHeightConstraint?.isActive = showsGraph", source)
+        # 실패를 알릴 때 화면 구성도 다시 계산해야 스택이 펼쳐진다.
+        start = source.find("func presentVectorGraphError(hasPreviousPicture: Bool)")
+        end = source.find("func refreshKnowledgeGraph()")
+        self.assertGreater(start, 0)
+        self.assertGreater(end, start)
+        self.assertIn("applyVectorLayout()", source[start:end])
+
     def test_swift_graph_refresh_is_throttled(self):
         """Re-reading the graph on every 2-second redraw would spawn a process
         per tick, so the view only re-reads on a source change or after 30s."""

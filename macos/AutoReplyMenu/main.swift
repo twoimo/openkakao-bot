@@ -1596,11 +1596,24 @@ struct KnowledgeGraphReport: Decodable {
 /// layout would make every redraw look like a different graph.
 final class KnowledgeGraphView: NSView {
     var nodes: [KnowledgeNode] = [] {
-        didSet { rebuildLayout() }
+        didSet { rebuildLayoutUnlessApplyingSnapshot() }
     }
     var edges: [KnowledgeEdge] = [] {
-        didSet { rebuildLayout() }
+        didSet { rebuildLayoutUnlessApplyingSnapshot() }
     }
+    /// 스냅샷을 한 번에 넣는 동안에는 배치를 미룬다.
+    ///
+    /// nodes 와 edges 는 각자 didSet 으로 배치를 다시 계산한다. 스냅샷처럼
+    /// 둘을 함께 바꾸면 settle() 이 두 번 돌아 341개 시냅스의 힘 계산이
+    /// 그대로 두 배가 된다. 주석은 처음부터 "한 번에 적용한다"고 적혀
+    /// 있었지만 실제로는 그렇지 않았다 (2026-09-17, 6 Pro 지적).
+    private var applyingSnapshot = false
+
+    private func rebuildLayoutUnlessApplyingSnapshot() {
+        guard !applyingSnapshot else { return }
+        rebuildLayout()
+    }
+
     /// 뉴런과 시냅스를 한 번에 바꾼다.
     ///
     /// 따로 대입하면 didSet이 두 번 돌아 힘 배치가 두 번 계산되고,
@@ -1615,8 +1628,12 @@ final class KnowledgeGraphView: NSView {
                 $0.source != $1.source || $0.target != $1.target || $0.weight != $1.weight
             }
         guard nodesChanged || edgesChanged else { return }
+        applyingSnapshot = true
         nodes = newNodes
         edges = newEdges
+        applyingSnapshot = false
+        // 두 값을 다 넣은 뒤 한 번만 배치한다.
+        rebuildLayout()
     }
     var selectedNodeId: String?
     var onSelect: ((KnowledgeNode?) -> Void)?
@@ -1808,20 +1825,28 @@ final class KnowledgeGraphView: NSView {
         for node in subset {
             guard let pos = positions[node.id] else { continue }
             let r = radius(node)
-            let glow = r * 1.7
+            // 몸통에 고리(1pt)와 숨을 조금 더한다. 예전에는 1.7배 광륜을
+            // 미리 빼 두었는데, 광륜은 이제 고르거나 마우스를 올린 뉴런에만
+            // 그린다. 그리지 않는 장식을 자리로 남겨 두면 맨 위 뉴런 위에
+            // 28pt짜리 빈 띠가 남는다 (2026-09-17, 감사 지적).
+            let body = r + 2
             let label = labelExtent(node)
-            let left = max(glow, label.width / 2)
-            let bottom = max(glow, r + 3 + label.height)
-            if pos.x < minCx { minCx = pos.x; leftEdge = left }
-            if pos.x > maxCx { maxCx = pos.x; rightEdge = left }
-            if pos.y < minCy { minCy = pos.y; topEdge = glow }
+            // 좌우는 이름표가 몸통 옆으로 붙을 수 있어 그만큼 넓게 잡는다.
+            // 위아래는 몸통만 잡는다. 이름표는 캔버스 안에 들어가는 자리로만
+            // 놓이므로(아래 drawLabels 참고) 미리 자리를 비워 둘 필요가 없다.
+            // 비워 두면 맨 아래 뉴런 아래로 25pt짜리 빈 띠가 남는다
+            // (2026-09-17, 감사 지적).
+            let side = max(body, label.width / 2)
+            let bottom = body
+            if pos.x < minCx { minCx = pos.x; leftEdge = side }
+            if pos.x > maxCx { maxCx = pos.x; rightEdge = side }
+            if pos.y < minCy { minCy = pos.y; topEdge = body }
             if pos.y > maxCy { maxCy = pos.y; bottomEdge = bottom }
         }
         guard maxCx >= minCx, maxCy >= minCy else { return identity }
-        // 캔버스 가장자리에 남기는 숨. 창 자체가 16pt 여백을 두므로 여기서
-        // 크게 잡을 필요가 없다. 8pt로 두면 그려진 그림이 캔버스 아래
-        // 12pt를 비워 두고, 창 여백까지 더해 27pt짜리 빈 띠가 생겼다
-        // (2026-09-16).
+        // 캔버스 가장자리에 남기는 숨. 창 자체가 아래쪽에 16pt 여백을 두므로
+        // 여기서 더 크게 잡으면 감사가 24pt 넘는 빈 띠로 본다. 14pt로 두었더니
+        // 아래 여백과 합쳐 31pt가 되었다 (2026-09-17, 감사 지적).
         let pad: CGFloat = 2
         let spanX = max(maxCx - minCx, 0.001)
         let spanY = max(maxCy - minCy, 0.001)
@@ -2425,13 +2450,23 @@ final class KnowledgeGraphView: NSView {
             var chosen: NSRect?
             for origin in candidates {
                 let rect = NSRect(x: origin.x, y: origin.y, width: width, height: height)
+                // 캔버스 밖으로 나가는 이름표는 놓지 않는다. 가장자리에서
+                // 잘린 이름은 없는 것과 다를 바 없고, 자리만 차지한다
+                // (2026-09-17).
+                if !bounds.insetBy(dx: 1, dy: 1).contains(rect) { continue }
                 if placed.contains(where: { $0.intersects(rect) }) { continue }
                 chosen = rect
                 break
             }
             // 눌러 놓고도 이름이 사라지면 무엇을 골랐는지 알 수 없다.
             if chosen == nil, !selected, !hovered { continue }
-            let rect = chosen ?? NSRect(x: pos.x - width / 2, y: pos.y + r + 2, width: width, height: height)
+            let fallback = NSRect(
+                x: max(bounds.minX + 1, min(pos.x - width / 2, bounds.maxX - width - 1)),
+                y: min(pos.y + r + 2, max(bounds.maxY - height - 1, bounds.minY + 1)),
+                width: width,
+                height: height
+            )
+            let rect = chosen ?? fallback
             placed.append(rect)
             // A soft plate keeps the name readable over a synapse.
             NSColor.windowBackgroundColor.withAlphaComponent(0.72 * alpha).setFill()
@@ -3659,6 +3694,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsStack: NSStackView?
     /// 사용자가 직접 크기를 바꾼 창은 자동으로 줄이지 않는다.
     var jobsWindowUserResized = false
+    /// 작업 목록 표의 최소 높이. 줄 수에 맞춰 낮춘다.
+    var jobsTableHeight: NSLayoutConstraint?
     var jobsFitting = false
     var jobsTableScroll: NSScrollView?
     var jobsTrace: NSTextView?
@@ -3709,6 +3746,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // 신경망 보기(뉴런·시냅스). 지식 그래프를 고를 때만 보인다.
     var vectorGraphView: KnowledgeGraphView?
     var vectorGraphStack: NSStackView?
+    /// 캔버스 최소 높이. 그래프를 못 읽어 캔버스를 접을 때 함께 끈다.
+    var vectorGraphHeightConstraint: NSLayoutConstraint?
     var vectorEditCard: NSView?
     var vectorPager: NSView?
     var vectorStack: NSStackView?
@@ -3816,6 +3855,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 목록이 비었을 때의 최소 높이. 안내 한 줄과 단추만 남으므로 하한을
     /// 낮춘다. 낮추지 않으면 빈 안내 판이 263pt로 늘어난다 (2026-09-16).
     static let jobsWindowEmptyFloor = NSSize(width: 620, height: 240)
+    /// 표가 한 번에 보여 주는 최대 높이(머리글 28 + 다섯 줄 170 + 테두리).
+    /// 이보다 줄이 많으면 표 안에서 굴린다 (2026-09-17).
+    static let jobsTableMaximumHeight: CGFloat = 200
 
     init(config: Config) {
         self.config = config
@@ -6495,6 +6537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsTable?.reloadData()
         restoreJobsSelection(eventId: selected)
         updateJobsActions()
+        fitJobsTableHeight()
         updateJobsEmptyState()
     }
 
@@ -6534,25 +6577,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let content = window.contentView else { return }
         jobsFitting = true
         defer { jobsFitting = false }
+        fitJobsTableHeight()
         // 목록이 비면 창이 표 높이에 묶여 있던 하한을 풀어 준다.
         //
         // 이 창의 최소 높이 400pt는 표가 다섯 줄은 보이게 하려고 정한 값이다.
         // 그런데 목록이 비면 그 높이가 그대로 남아, 안내 한 줄이 263pt짜리
         // 빈 판으로 늘어났다. 보여 줄 것이 없을 때는 하한도 필요 없다. 다시
         // 목록이 차면 원래 하한으로 되돌린다 (2026-09-16, 6 Pro 지적).
-        let floor = Self.jobsWindowMinimum
         let wantsFloor = !displayedJobs.isEmpty
-        if wantsFloor, window.minSize.height < floor.height {
-            window.minSize = floor
-        } else if !wantsFloor, window.minSize.height != Self.jobsWindowEmptyFloor.height {
-            window.minSize = Self.jobsWindowEmptyFloor
-        }
         for _ in 0..<3 {
             content.layoutSubtreeIfNeeded()
             stack.layoutSubtreeIfNeeded()
             let needed = stack.fittingSize.height
             guard needed > 1 else { return }
-            let desired = max(needed + 32, window.minSize.height)
+            // 창은 내용에 맞춘다. 하한은 "사용자가 모서리를 끌어 줄일 수 있는
+            // 최소"일 뿐, 지금 크기를 그 값까지 늘리는 데 쓰지 않는다.
+            // 늘리는 데 쓰면 작업이 한 줄뿐일 때 창 아래가 200pt짜리 빈 판으로
+            // 남는다 (2026-09-17, 감사 지적).
+            let desired = needed + 32
+            let userFloor = wantsFloor
+                ? Self.jobsWindowMinimum.height
+                : Self.jobsWindowEmptyFloor.height
+            let minimum = NSSize(
+                width: Self.jobsWindowMinimum.width,
+                height: min(userFloor, desired)
+            )
+            if abs(window.minSize.height - minimum.height) > 0.5
+                || abs(window.minSize.width - minimum.width) > 0.5 {
+                window.minSize = minimum
+            }
             let current = content.bounds.height
             guard abs(current - desired) > 12 else { return }
             var frame = window.frame
@@ -6572,6 +6625,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             window.setFrame(frame, display: false, animate: false)
             content.layoutSubtreeIfNeeded()
         }
+    }
+
+    /// 표의 최소 높이를 지금 목록의 줄 수에 맞춘다.
+    ///
+    /// 표는 늘 다섯 줄 높이(200pt)를 최소로 잡고 있었다. 작업이 한 줄뿐이어도
+    /// 그 200pt가 그대로 남아 창 아래가 빈 판이 되었다. 줄 수에 맞춰 하한을
+    /// 낮추면 창도 함께 줄어든다. 사용자가 창을 키우면 스택이 남는 자리를
+    /// 표에 주므로 표는 그대로 늘어난다 (2026-09-17, 감사 지적).
+    func fitJobsTableHeight() {
+        guard let constraint = jobsTableHeight, let table = jobsTable else { return }
+        let header = table.headerView?.frame.height ?? 28
+        let rowHeight = table.rowHeight + table.intercellSpacing.height
+        let rows = CGFloat(max(displayedJobs.count, 0))
+        let wanted = header + rowHeight * rows + 2
+        let clamped = min(
+            Self.jobsTableMaximumHeight,
+            max(header + rowHeight, wanted)
+        )
+        guard abs(constraint.constant - clamped) > 0.5 else { return }
+        constraint.constant = clamped
     }
 
     func restoreJobsSelection(eventId: String) {
@@ -6778,6 +6851,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, jobsEmptyState, scroll, traceCard, actions], spacing: 10)
         jobsStack = stack
         Chrome.fill(stack, in: content)
+        let tableHeight = scroll.heightAnchor.constraint(
+            greaterThanOrEqualToConstant: Self.jobsTableMaximumHeight
+        )
+        jobsTableHeight = tableHeight
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
@@ -6787,9 +6864,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
             jobsEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             jobsEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // 빈 상태 판은 스스로 높이를 갖지 않아, 창을 내용에 맞추면 0으로
+            // 붕괴해 안내문이 통째로 사라진다. 예전에는 창의 최소 높이가
+            // 240으로 버텨 주었을 뿐이다 (2026-09-17, 감사 지적).
+            jobsEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            // 표의 최소 높이는 줄 수에 맞춰 바뀐다. 고정 200으로 두면
+            // 작업이 한 줄뿐일 때도 창이 그 높이에 묶여 아래가 빈 판으로
+            // 남는다 (2026-09-17, 감사 지적).
+            tableHeight,
             traceCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             traceContent.widthAnchor.constraint(equalTo: traceCard.widthAnchor, constant: -20),
             traceTitle.widthAnchor.constraint(equalTo: traceContent.widthAnchor),
@@ -7926,7 +8010,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let graphHintRow = Chrome.hstack([graphHint, Chrome.spacer(), graphRetry], spacing: 8)
         let graphStack = Chrome.vstack([graphHintRow, graph], spacing: 6)
         vectorGraphStack = graphStack
-        graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
+        let graphHeight = graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 260)
+        graphHeight.isActive = true
+        vectorGraphHeightConstraint = graphHeight
 
         let (scroll, table) = Chrome.table()
         table.delegate = self
@@ -8277,9 +8363,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let graphHasNodes = !(vectorGraphView?.nodes.isEmpty ?? true)
         // 그래프 보기에서 뉴런이 없으면 표의 빈 상태 판이 대신 이유를 적는다.
         let showsGraph = graphMode && graphHasNodes
-        let showsTable = !showsGraph
+        // 그래프를 못 읽었으면 뉴런이 하나도 없어도 안내 줄과 재시도 버튼은
+        // 보여야 한다. 스택을 통째로 숨기면 그 안의 재시도 버튼까지 사라져,
+        // 처음 실패한 사람은 다시 시도할 방법이 없다 (2026-09-17, 6 Pro 지적).
+        let graphFailed = graphMode
+            && (vectorGraphPhase == .error || vectorGraphPhase == .stale)
+        let showsGraphPanel = showsGraph || graphFailed
+        let showsTable = !showsGraphPanel
 
-        vectorGraphStack?.isHidden = !showsGraph
+        vectorGraphStack?.isHidden = !showsGraphPanel
+        // 캔버스는 그릴 뉴런이 있을 때만 펼친다. 없으면 안내 줄만 남기고,
+        // 최소 높이 제약도 함께 꺼서 빈 판이 자리를 차지하지 않게 한다.
+        vectorGraphView?.isHidden = !showsGraph
+        vectorGraphHeightConstraint?.isActive = showsGraph
         vectorTableScroll?.isHidden = !showsTable || displayedVectors.isEmpty
         vectorEmptyState?.isHidden = !showsTable || !displayedVectors.isEmpty
         // 쪽수 넘김은 목록에만 뜻이 있다. 그래프는 한 번에 다 그리므로
@@ -8544,6 +8640,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 "지식 그래프를 읽지 못했습니다. 색인이 아직 없는 것과는 다릅니다. 다시 시도해 주세요."
         }
         applyVectorGraphRetryVisibility()
+        // 재시도 버튼의 hidden 만 바꾸면, 스택이 숨은 상태에서는 아무것도
+        // 보이지 않는다. 화면 구성을 함께 다시 계산해 안내 줄을 펼친다
+        // (2026-09-17, 6 Pro 지적).
+        applyVectorLayout()
     }
 
     /// 그래프 전체를 한 번에 읽는다. 목록과 달리 쪽 나눔이 없어야 힘 배치가
