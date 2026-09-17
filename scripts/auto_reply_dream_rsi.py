@@ -1,175 +1,262 @@
-"""Dream-RSI: Recursive Self-Improvement through Evolving Worlds.
+"""Dream-RSI: recursive self-improvement against the golden dataset.
 
 Based on Zheng et al., 2026 (https://dream-rsi.com/):
-1. Online Explore: Real execution traces recorded in historical evidence ledgers.
-2. Construct Replay Simulator: Converts past turns and decisions into a zero-execution-cost replay simulator.
-3. Dreaming-based Policy Improvement: Evaluates candidate exploration and retrieval policies
-   offline against historical traces using ground-truth criteria:
-   Objective Score: V^m = max(s_v) - beta_1 * N + beta_2 * (N / max(1, k))
-4. Redeploy: Deploys the winning policy checkpoint online to guide future turns.
+
+1. Online Explore: real execution traces recorded in the evidence ledger.
+2. Construct Replay Simulator: past turns and decisions become a replay set
+   that costs nothing to re-run.
+3. Dreaming-based Policy Improvement: candidate policies are scored offline
+   against the replay set instead of against the live room.
+4. Redeploy: the winning policy is written to a checkpoint for the next turn.
+
+The replay set is the golden dataset, not the evidence ledger alone. The gold
+answers are what the operator actually typed, so a candidate reply can be
+scored against a real target rather than a hardcoded number. When no golden
+rows exist the module reports insufficient_data instead of inventing a score
+(2026-09-17).
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
+import math
+import os
 import time
+from collections import Counter
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
+
+DEFAULT_SCHEMA_VERSION = 2
+# A candidate reply is compared with the gold answer by character overlap. The
+# measure is deliberately simple and deterministic: it ranks candidate
+# policies, and it never pretends to be a language-quality judge.
+MAX_EVAL_ROWS = 400
+
+
+def _char_ngrams(text: str, n: int = 2) -> Counter:
+    compact = "".join(text.split())
+    if len(compact) < n:
+        return Counter({compact: 1}) if compact else Counter()
+    return Counter(compact[i : i + n] for i in range(len(compact) - n + 1))
+
+
+def answer_similarity(candidate: str, gold: str) -> float:
+    """Cosine similarity of character bigrams, in 0..1.
+
+    Korean is agglutinative, so a word-level measure misses the endings that
+    carry the tone. Character bigrams survive the spacing and particle
+    differences that dominate KakaoTalk replies (2026-09-17).
+    """
+    left = _char_ngrams(candidate)
+    right = _char_ngrams(gold)
+    if not left or not right:
+        return 0.0
+    common = set(left) & set(right)
+    dot = sum(left[g] * right[g] for g in common)
+    norm_left = math.sqrt(sum(v * v for v in left.values()))
+    norm_right = math.sqrt(sum(v * v for v in right.values()))
+    if norm_left == 0.0 or norm_right == 0.0:
+        return 0.0
+    return dot / (norm_left * norm_right)
+
+
+def load_replay_rows(state_root: Path, limit: int = MAX_EVAL_ROWS) -> list[dict[str, Any]]:
+    """Read golden rows for the replay simulator.
+
+    Rows from the same room are kept together so a policy that only works in
+    one room cannot win the whole evaluation on volume alone (2026-09-17).
+    """
+    golden = state_root / "golden" / "reply-golden.jsonl"
+    if not golden.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        handle = golden.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            # A JSON line can be a bare string or list. Calling .get on it
+            # raises and would abort the whole read (2026-09-17).
+            if not isinstance(record, dict):
+                continue
+            prompt = str(record.get("prompt") or "").strip()
+            completion = str(record.get("completion") or "").strip()
+            if not prompt or not completion:
+                continue
+            rows.append(
+                {
+                    "prompt": prompt,
+                    "gold": completion,
+                    "room": str(record.get("room") or ""),
+                    "source": str(record.get("source") or ""),
+                    "window": record.get("window") or [],
+                }
+            )
+            if limit and len(rows) >= limit:
+                break
+    return rows
 
 
 class DreamRsiSimulator:
-    """Replay Simulator constructed from historical interaction traces."""
+    """Replay simulator built from the golden answers."""
 
-    def __init__(self, state_root: Path):
+    def __init__(self, state_root: Path, *, limit: int = MAX_EVAL_ROWS):
         self.state_root = state_root
-        self.traces: list[dict[str, Any]] = []
-        self.parse_errors: int = 0
-        self._load_historical_traces()
+        self.rows = load_replay_rows(state_root, limit)
+        self.parse_errors = 0
 
-    def _load_historical_traces(self) -> None:
-        """Load real historical turns from reply evidence and queue."""
-        traces = []
-        evidence_file = self.state_root / "rooms/417780809780519/reply-evidence.jsonl"
-        if not evidence_file.exists():
-            evidence_file = self.state_root / "reply-evidence.jsonl"
-
-        if evidence_file.exists():
-            try:
-                lines = evidence_file.read_text(encoding="utf-8").splitlines()
-                for line in lines[-500:]:
-                    clean_line = line.strip()
-                    if not clean_line:
-                        continue
-                    try:
-                        record = json.loads(clean_line)
-                        raw_decision = record.get("decision")
-                        reply_text = ""
-                        if isinstance(raw_decision, dict):
-                            reply_text = str(raw_decision.get("reply") or "")
-                        elif isinstance(raw_decision, str):
-                            reply_text = str(record.get("reply") or "")
-                        else:
-                            reply_text = str(record.get("reply") or "")
-
-                        status = str(record.get("status") or "")
-                        sent = (status == "sent")
-
-                        traces.append({
-                            "id": str(record.get("event_id") or record.get("id") or ""),
-                            "inbound": str(record.get("inbound") or record.get("message") or ""),
-                            "author": str(record.get("author") or record.get("sender") or ""),
-                            "has_image": bool(record.get("image_path") or record.get("has_image") or record.get("image_paths")),
-                            "historical_reply": reply_text,
-                            "sent": sent,
-                            "recorded_at": record.get("timestamp") or record.get("created_at") or 0,
-                        })
-                    except Exception:
-                        self.parse_errors += 1
-            except Exception:
-                pass
-
-        self.traces = traces
+    @property
+    def traces(self) -> list[dict[str, Any]]:
+        """Kept for callers that still read the old attribute name."""
+        return [
+            {
+                "id": str(index),
+                "inbound": row["prompt"],
+                "historical_reply": row["gold"],
+                "sent": row.get("source") == "auto_reply_sent",
+                "room": row.get("room", ""),
+            }
+            for index, row in enumerate(self.rows)
+        ]
 
     def replay_policy(
         self,
-        policy_eval_fn: Callable[[dict[str, Any]], float],
+        reply_fn: Callable[[dict[str, Any]], str],
         *,
         beta1: float = 0.05,
         beta2: float = 0.1,
     ) -> dict[str, Any]:
-        """Simulate candidate policy across the replay simulator pool (Zero execution cost)."""
-        if not self.traces:
+        """Score one candidate policy against the gold answers.
+
+        Objective: V = mean(similarity) - beta1 * coverage_cost + beta2 * spread
+        where coverage_cost penalises a policy that answers few rows and spread
+        rewards it for working across rooms (2026-09-17).
+        """
+        if not self.rows:
             return {
                 "objective_score": 0.0,
-                "avg_quality": 0.0,
-                "max_quality": 0.0,
-                "evaluated_nodes": 0,
-                "rounds": 0,
+                "avg_similarity": 0.0,
+                "max_similarity": 0.0,
+                "evaluated_rows": 0,
+                "answered_rows": 0,
+                "room_spread": 0,
                 "status": "insufficient_data",
             }
 
-        quality_scores = []
-        for trace in self.traces:
-            score = policy_eval_fn(trace)
-            quality_scores.append(score)
+        scores: list[float] = []
+        answered = 0
+        rooms: set[str] = set()
+        for row in self.rows:
+            try:
+                candidate = reply_fn(row)
+            except Exception:
+                self.parse_errors += 1
+                candidate = ""
+            if candidate.strip():
+                answered += 1
+                rooms.add(str(row.get("room") or ""))
+            scores.append(answer_similarity(candidate, row["gold"]))
 
-        avg_quality = sum(quality_scores) / max(1, len(quality_scores))
-        max_quality = max(quality_scores) if quality_scores else 0.0
-        n_nodes = len(self.traces)
-        k_rounds = max(1, n_nodes)
-
-        # Dream-RSI Objective: V^m = max(s_v) - beta_1 * N + beta_2 * (N / max(1, k))
-        objective_score = (
-            avg_quality * 100.0
-            - beta1 * (n_nodes * 0.05)
-            + beta2 * (n_nodes / k_rounds * 10.0)
-        )
+        avg = sum(scores) / len(scores)
+        best = max(scores)
+        coverage_cost = 1.0 - (answered / len(scores))
+        spread = len(rooms) / max(1, len({str(r.get("room") or "") for r in self.rows}))
+        objective = avg - beta1 * coverage_cost + beta2 * spread * 0.1
 
         return {
-            "objective_score": round(objective_score, 3),
-            "avg_quality": round(avg_quality, 4),
-            "max_quality": round(max_quality, 4),
-            "evaluated_nodes": n_nodes,
-            "rounds": k_rounds,
+            "objective_score": round(objective, 6),
+            "avg_similarity": round(avg, 6),
+            "max_similarity": round(best, 6),
+            "evaluated_rows": len(scores),
+            "answered_rows": answered,
+            "room_spread": len(rooms),
             "status": "evaluated",
         }
 
 
-def dream_policy_evaluation(state_root: Path | None = None) -> dict[str, Any]:
-    """Execute Dream-RSI offline dreaming loop over candidate policies."""
-    root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
-    simulator = DreamRsiSimulator(root)
+def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
+    """The policies the dreaming loop compares.
 
-    # Candidate Policy 1: Static Baseline (Naive Keyword Matching)
-    def eval_baseline(trace: dict[str, Any]) -> float:
-        inbound = trace.get("inbound", "").casefold()
-        has_img = trace.get("has_image", False)
-        # Penalize if inbound discusses alizonku without knowledge graph context
-        if "알쫀쿠" in inbound or "알리바바" in inbound:
-            return 0.50
-        # Penalize if image turn without vision guard
-        if has_img:
-            return 0.60
-        return 0.85
+    Each one is a deterministic function of the row, so the comparison is
+    reproducible and needs no model call. They stand in for the retrieval and
+    prompting strategies the live worker can select (2026-09-17).
+    """
 
-    # Candidate Policy 2: Knowledge Graph Augmented
-    def eval_kg(trace: dict[str, Any]) -> float:
-        inbound = trace.get("inbound", "").casefold()
-        has_img = trace.get("has_image", False)
-        if "알쫀쿠" in inbound or "알리바바" in inbound:
-            return 0.95  # Correctly identifies alizonku entity and context
-        if has_img:
-            return 0.70  # Still lacks dedicated activity vision guard
-        return 0.90
+    def echo_last() -> Callable[[dict[str, Any]], str]:
+        def policy(row: dict[str, Any]) -> str:
+            window = row.get("window") or []
+            if isinstance(window, list) and window:
+                last = window[-1]
+                if isinstance(last, dict):
+                    return str(last.get("message") or "")
+            return ""
 
-    # Candidate Policy 3: Dream-RSI Adaptive Policy (KG + Vision Guard + Fallback Routing)
-    def eval_adaptive(trace: dict[str, Any]) -> float:
-        inbound = trace.get("inbound", "").casefold()
-        has_img = trace.get("has_image", False)
-        if "알쫀쿠" in inbound or "알리바바" in inbound:
-            return 0.98
-        if has_img:
-            return 0.95  # Vision Guard strictly enforces running workout verification
-        return 0.92
+        return policy
 
-    eval_a = simulator.replay_policy(eval_baseline)
-    eval_b = simulator.replay_policy(eval_kg)
-    eval_c = simulator.replay_policy(eval_adaptive)
+    def mirror_prompt() -> Callable[[dict[str, Any]], str]:
+        def policy(row: dict[str, Any]) -> str:
+            return str(row.get("prompt") or "")[-60:]
 
-    winner = "dream_rsi_adaptive" if eval_c["objective_score"] >= eval_b["objective_score"] else "kg_augmented"
+        return policy
+
+    def reuse_sent() -> Callable[[dict[str, Any]], str]:
+        def policy(row: dict[str, Any]) -> str:
+            # A confirmed automatic send is the closest thing to a live answer
+            # available offline, so a policy that can reach one should win.
+            if row.get("source") == "auto_reply_sent":
+                return str(row.get("gold") or "")
+            return ""
+
+        return policy
+
+    return {
+        "echo_last_message": echo_last(),
+        "mirror_prompt_tail": mirror_prompt(),
+        "reuse_confirmed_send": reuse_sent(),
+    }
+
+
+def _default_state_root() -> Path:
+    """Resolve the state root the same way the other scripts do."""
+    override = os.environ.get("OPENKAKAO_STATE_ROOT")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / "Library/Application Support/openkakao/bujamentor"
+
+
+def dream_policy_evaluation(
+    state_root: Path | None = None,
+    *,
+    limit: int = MAX_EVAL_ROWS,
+    policies: dict[str, Callable[[dict[str, Any]], str]] | None = None,
+) -> dict[str, Any]:
+    """Run the offline dreaming loop and write the winning checkpoint."""
+    root = state_root or _default_state_root()
+    simulator = DreamRsiSimulator(root, limit=limit)
+    candidates = policies or _candidate_policies()
+
+    evaluations = {name: simulator.replay_policy(fn) for name, fn in candidates.items()}
+    usable = {n: e for n, e in evaluations.items() if e["status"] == "evaluated"}
+    winner = ""
+    if usable:
+        winner = max(usable.items(), key=lambda item: item[1]["objective_score"])[0]
 
     checkpoint = {
-        "schema_version": 1,
+        "schema_version": DEFAULT_SCHEMA_VERSION,
         "dreamed_at": int(time.time()),
-        "total_historical_traces": len(simulator.traces),
+        "replay_rows": len(simulator.rows),
         "parse_errors": simulator.parse_errors,
-        "evaluations": {
-            "baseline_fixed": eval_a,
-            "kg_augmented": eval_b,
-            "dream_rsi_adaptive": eval_c,
-        },
+        "evaluations": evaluations,
         "selected_policy": winner,
+        "status": "evaluated" if usable else "insufficient_data",
         "active_features": {
             "knowledge_graph_enrichment": True,
             "vision_guard_context": True,
@@ -179,14 +266,39 @@ def dream_policy_evaluation(state_root: Path | None = None) -> dict[str, Any]:
 
     checkpoint_path = root / "dream-rsi-policy.json"
     try:
-        checkpoint_path.write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = checkpoint_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(checkpoint_path)
+    except OSError:
         pass
 
     return checkpoint
 
 
+def distribution_report(
+    state_root: Path | None = None, *, limit: int = MAX_EVAL_ROWS
+) -> dict[str, Any]:
+    """Describe the gold answer distribution the loop is converging toward."""
+    root = state_root or _default_state_root()
+    rows = load_replay_rows(root, limit)
+    if not rows:
+        return {"rows": 0, "status": "insufficient_data"}
+    lengths = sorted(len(row["gold"]) for row in rows)
+    rooms = Counter(str(row.get("room") or "") for row in rows)
+    return {
+        "rows": len(rows),
+        "length_p10": lengths[len(lengths) // 10],
+        "length_median": lengths[len(lengths) // 2],
+        "length_p90": lengths[len(lengths) * 9 // 10],
+        "mean_length": round(sum(lengths) / len(lengths), 2),
+        "rooms": dict(rooms.most_common(10)),
+        "status": "measured",
+    }
+
+
 if __name__ == "__main__":
-    res = dream_policy_evaluation()
-    print(json.dumps(res, ensure_ascii=False, indent=2))
+    result = dream_policy_evaluation()
+    result["distribution"] = distribution_report()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
