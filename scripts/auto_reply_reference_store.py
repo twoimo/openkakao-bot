@@ -49,6 +49,11 @@ LOCAL_GROUP_MAX_MEMBERS = 40
 LOCAL_READ_LIMIT = 2000
 LOCAL_CHAT_LIST_LIMIT = 300
 LOCAL_CLI_TIMEOUT_SECONDS = 60
+# A group whose `last_updated_at` has not moved since the last pass cannot hold
+# a message we have not already read. Remembering that stamp lets a harvest
+# skip the per-group `local-read` instead of re-reading 2000 rows for every one
+# of ~90 groups on every pass, which cost 12-20 seconds each time (2026-09-17).
+LOCAL_GROUP_SEEN_KEY_PREFIX = "reference_pack_group_seen:"
 
 BOT_SENDERS = frozenset(
     {
@@ -1090,6 +1095,7 @@ def _harvest_local_groups(
         runner = _resolve_openkakao_bin(bin_path)
         if runner is None:
             return 0, 0
+    seen_stamps = _local_group_seen_stamps(connection)
     try:
         groups = (
             local_groups()
@@ -1130,6 +1136,19 @@ def _harvest_local_groups(
         if chat_id <= 0 or not title:
             continue
         if wanted and wanted not in {"전체", "*"} and title != wanted:
+            continue
+        raw_updated = group.get("last_updated_at")
+        updated = (
+            int(raw_updated)
+            if isinstance(raw_updated, int) and not isinstance(raw_updated, bool)
+            else None
+        )
+        if (
+            updated is not None
+            and updated > 0
+            and seen_stamps.get(chat_id) == updated
+            and not _chat_has_stale_pack(connection, title)
+        ):
             continue
         try:
             if local_messages is not None:
@@ -1174,7 +1193,65 @@ def _harvest_local_groups(
         scanned += extra_scanned
         del rows
         del events
+        # Remember the stamp only once this group's events reached the
+        # checkpoint. Recording it before the harvest would skip a group whose
+        # processing ran out of budget, and its messages would never be read
+        # again until the group changed (2026-09-17).
+        if updated is not None and updated > 0 and not _timed_out(deadline_at):
+            _remember_local_group_stamp(connection, chat_id, updated)
+            seen_stamps[chat_id] = updated
     return stored, scanned
+
+
+def _local_group_seen_stamps(connection: sqlite3.Connection) -> dict[int, int]:
+    """Per-group `last_updated_at` stamps from the previous harvest pass."""
+    if not _table_exists(connection, "context_retrieval_meta"):
+        return {}
+    stamps: dict[int, int] = {}
+    try:
+        # A range scan rather than LIKE: the prefix carries underscores, which
+        # LIKE would treat as single-character wildcards.
+        rows = connection.execute(
+            "SELECT key, value FROM context_retrieval_meta WHERE key >= ? AND key < ?",
+            (LOCAL_GROUP_SEEN_KEY_PREFIX, LOCAL_GROUP_SEEN_KEY_PREFIX + "\uffff"),
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    for key, value in rows:
+        suffix = str(key or "")[len(LOCAL_GROUP_SEEN_KEY_PREFIX) :]
+        if not suffix.isdigit() or not str(value or "").isdigit():
+            continue
+        stamps[int(suffix)] = int(value)
+    return stamps
+
+
+def _remember_local_group_stamp(
+    connection: sqlite3.Connection, chat_id: int, updated: int
+) -> None:
+    try:
+        connection.execute(
+            "INSERT OR REPLACE INTO context_retrieval_meta(key, value) VALUES (?, ?)",
+            (f"{LOCAL_GROUP_SEEN_KEY_PREFIX}{int(chat_id)}", str(int(updated))),
+        )
+    except sqlite3.Error:
+        pass
+
+
+def _chat_has_stale_pack(connection: sqlite3.Connection, chat: str) -> bool:
+    """Whether a policy bump still needs this chat re-read despite no new rows."""
+    if not _table_exists(connection, PACK_TABLE):
+        return False
+    try:
+        return (
+            connection.execute(
+                f"SELECT 1 FROM {PACK_TABLE} "
+                "WHERE chat = ? AND policy_version NOT IN (?, ?) LIMIT 1",
+                (chat, PACK_POLICY_VERSION, PACK_POLICY_VISION),
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
 
 
 
@@ -1805,4 +1882,3 @@ def collect_reference_list(
         }
     finally:
         connection.close()
-

@@ -145,30 +145,58 @@ REFERENCE_HARVEST_INTERVAL_SECONDS = 30 * 60
 REFERENCE_HARVEST_RETRY_SECONDS = 20
 REFERENCE_HARVEST_BUDGET_SECONDS = 12
 _last_reference_harvest_at = 0.0
+_reference_harvest_thread: threading.Thread | None = None
+_reference_harvest_lock = threading.Lock()
 
 
 def _maybe_harvest_reference_packs(*, force: bool = False) -> None:
-    global _last_reference_harvest_at
+    """Start one reference-pack harvest without blocking the worker loop.
+
+    The harvest walks every local group through the CLI and, on a large
+    context database, needs 12-20 seconds. Running it inline held the worker
+    in `idle` past the supervisor's 15 second phase limit, so the room was
+    fenced as `reply_worker_unhealthy` and replies stopped. The supervisor
+    only sees the phase ages, so the work has to leave this thread (2026-09-17).
+    """
+    global _last_reference_harvest_at, _reference_harvest_thread
     now = time.time()
     if not force and now - _last_reference_harvest_at < REFERENCE_HARVEST_INTERVAL_SECONDS:
         return
+    with _reference_harvest_lock:
+        if _reference_harvest_thread is not None and _reference_harvest_thread.is_alive():
+            return
+        _last_reference_harvest_at = now
+        thread = threading.Thread(
+            target=_run_reference_harvest,
+            name="reply-reference-harvest",
+            daemon=True,
+        )
+        _reference_harvest_thread = thread
+    thread.start()
+
+
+def _run_reference_harvest() -> None:
+    """Own the harvest deadline; the caller never waits on this."""
+    global _last_reference_harvest_at
+    started_at = time.time()
     try:
         from auto_reply_reference_store import harvest_reference_packs
 
         result = harvest_reference_packs(
             CONTEXT_DB,
             bin_path=BIN,
-            deadline_at=now + REFERENCE_HARVEST_BUDGET_SECONDS,
+            deadline_at=started_at + REFERENCE_HARVEST_BUDGET_SECONDS,
         )
         complete = True if not isinstance(result, dict) else bool(result.get("complete", True))
-        if complete:
-            _last_reference_harvest_at = time.time()
-        else:
-            _last_reference_harvest_at = (
-                time.time()
-                - REFERENCE_HARVEST_INTERVAL_SECONDS
-                + REFERENCE_HARVEST_RETRY_SECONDS
-            )
+        if not complete:
+            # A partial harvest keeps its progress; retry sooner than the full
+            # interval so the remaining groups are not left for half an hour.
+            with _reference_harvest_lock:
+                _last_reference_harvest_at = (
+                    time.time()
+                    - REFERENCE_HARVEST_INTERVAL_SECONDS
+                    + REFERENCE_HARVEST_RETRY_SECONDS
+                )
     except (
         OSError,
         PermissionError,
@@ -179,7 +207,9 @@ def _maybe_harvest_reference_packs(*, force: bool = False) -> None:
         ValueError,
         RuntimeError,
     ):
-        _last_reference_harvest_at = now
+        # A failed harvest must not stop the worker. Leave the interval stamp
+        # alone so the next idle tick retries on the normal schedule.
+        pass
 
 
 QUEUE = Path(

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
+import threading
 import time
+import types
 
 import importlib.util
 import sqlite3
@@ -16,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 STORE = ROOT / "scripts" / "auto_reply_reference_store.py"
 MENUBAR = ROOT / "scripts" / "auto-reply-menubar.py"
 SWIFT = ROOT / "macos" / "AutoReplyMenu" / "main.swift"
+
+# auto-reply-worker.py imports its sibling modules by bare name.
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def load(name: str, path: Path):
@@ -165,7 +172,8 @@ class ReferenceStoreTests(unittest.TestCase):
 
     def test_menubar_lists_reference_source_and_swift_exposes_menu(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn('title: "대화 기억…"', source)
+        # 지식 그래프 창 하나로 합쳐지면서 제목이 바뀌었다 (2026-09-17).
+        self.assertIn('title: "지식 그래프 (대화 기억)"', source)
         self.assertIn("설명 자료", source)
         self.assertIn('"references"', source)
         self.assertIn("누가 무엇을 어떻게 왜", source)
@@ -175,9 +183,211 @@ class ReferenceStoreTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS context_reference_packs(", rust)
         self.assertIn('item.result.message.starts_with(REFERENCE_PREFIX)', rust)
         menubar = MENUBAR.read_text(encoding="utf-8")
-        self.assertIn('frozenset(set(VECTOR_LIST_SOURCES) | {"references"})', menubar)
+        # 지식 그래프가 같은 목록에 들어오면서 이름이 바뀌었다 (2026-09-17).
+        self.assertIn('"references"', menubar)
+        self.assertIn("VECTOR_LIST_SOURCES", menubar)
         worker = (ROOT / "scripts" / "auto-reply-worker.py").read_text(encoding="utf-8")
         self.assertIn("_maybe_harvest_reference_packs()", worker)
+
+    def test_local_group_with_unchanged_stamp_is_not_reread(self):
+        """A group whose stamp has not moved must not pay for another read.
+
+        Re-reading every group on every pass cost 12-20 seconds on a real
+        machine, which is what fenced the room (2026-09-17).
+        """
+        lecture = (
+            "대아티아이 기술적 분석. 한줄 결론은 단기 조정은 나왔지만 아직 20일선 위에 있고 "
+            "MACD도 살아 있어서 상승 추세 내 눌림목으로 볼 수 있어. "
+            "이유는 4,900원 돌파 실패 시 박스권 가능성이 커서 그래. 매수는 천천히."
+        )
+        sent_at = 1755684000
+        reads: list[int] = []
+
+        def groups():
+            return [
+                {
+                    "chat_id": 260330955968694,
+                    "chat_type": 1,
+                    "title": "NIMDA 인수인계",
+                    "members": 4,
+                    "last_updated_at": sent_at + 16,
+                }
+            ]
+
+        def messages(chat_id: int):
+            reads.append(chat_id)
+            return [
+                {
+                    "log_id": 11,
+                    "chat_id": chat_id,
+                    "sender_name": "최연우",
+                    "message": lecture,
+                    "message_type": 1,
+                    "sent_at": sent_at,
+                },
+                {
+                    "log_id": 12,
+                    "chat_id": chat_id,
+                    "sender_name": "성린이형",
+                    "message": "차트 근거는 20일선과 MACD가 같이 살아 있다는 점이야. 아주 상세하게 풀게.",
+                    "message_type": 1,
+                    "sent_at": sent_at + 8,
+                },
+                {
+                    "log_id": 13,
+                    "chat_id": chat_id,
+                    "sender_name": "최연우",
+                    "message": "중요한 개념이니 아주 상세하게 풀게. 지지선과 저항선도 같이 봐야 해.",
+                    "message_type": 1,
+                    "sent_at": sent_at + 16,
+                },
+            ]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            db = Path(temporary) / "context.sqlite3"
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE context_messages(id INTEGER PRIMARY KEY, source TEXT, chat TEXT, date TEXT, user_name TEXT, message TEXT, vector BLOB)"
+            )
+            connection.commit()
+            connection.close()
+            first = self.store.harvest_reference_packs(
+                db, local_groups=groups, local_messages=messages
+            )
+            self.assertTrue(first["ok"])
+            self.assertEqual(reads, [260330955968694])
+
+            # 두 번째 수확은 같은 스탬프를 보므로 그룹을 다시 읽지 않는다.
+            second = self.store.harvest_reference_packs(
+                db, local_groups=groups, local_messages=messages
+            )
+            self.assertTrue(second["ok"])
+            self.assertEqual(reads, [260330955968694])
+            self.assertEqual(second["scanned"], 0)
+
+    def test_local_group_stamp_moves_when_chat_changes(self):
+        """A new stamp must bring the group back into the harvest."""
+        lecture = (
+            "대아티아이 기술적 분석. 한줄 결론은 단기 조정은 나왔지만 아직 20일선 위에 있고 "
+            "MACD도 살아 있어서 상승 추세 내 눌림목으로 볼 수 있어. "
+            "이유는 4,900원 돌파 실패 시 박스권 가능성이 커서 그래. 매수는 천천히."
+        )
+        sent_at = 1755684000
+        reads: list[int] = []
+        stamp = [sent_at + 16]
+
+        def groups():
+            return [
+                {
+                    "chat_id": 260330955968694,
+                    "chat_type": 1,
+                    "title": "NIMDA 인수인계",
+                    "members": 4,
+                    "last_updated_at": stamp[0],
+                }
+            ]
+
+        def messages(chat_id: int):
+            reads.append(chat_id)
+            return [
+                {
+                    "log_id": 11,
+                    "chat_id": chat_id,
+                    "sender_name": "최연우",
+                    "message": lecture,
+                    "message_type": 1,
+                    "sent_at": sent_at,
+                },
+                {
+                    "log_id": 12,
+                    "chat_id": chat_id,
+                    "sender_name": "성린이형",
+                    "message": "차트 근거는 20일선과 MACD가 같이 살아 있다는 점이야. 아주 상세하게 풀게.",
+                    "message_type": 1,
+                    "sent_at": sent_at + 8,
+                },
+            ]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            db = Path(temporary) / "context.sqlite3"
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "CREATE TABLE context_messages(id INTEGER PRIMARY KEY, source TEXT, chat TEXT, date TEXT, user_name TEXT, message TEXT, vector BLOB)"
+            )
+            connection.commit()
+            connection.close()
+            self.store.harvest_reference_packs(
+                db, local_groups=groups, local_messages=messages
+            )
+            self.assertEqual(reads, [260330955968694])
+            stamp[0] = sent_at + 64
+            self.store.harvest_reference_packs(
+                db, local_groups=groups, local_messages=messages
+            )
+            self.assertEqual(reads, [260330955968694, 260330955968694])
+
+    def test_worker_harvest_does_not_block_the_idle_loop(self):
+        """The harvest must run off the worker thread.
+
+        Inline harvesting held `idle` past the supervisor's 15 second phase
+        limit, so the supervisor fenced the room as `reply_worker_unhealthy`
+        and replies stopped (2026-09-17).
+        """
+        worker = load("auto_reply_worker_harvest", ROOT / "scripts" / "auto-reply-worker.py")
+        calls: list[float] = []
+        started = threading.Event()
+
+        def fake_harvest(*args, **kwargs):
+            calls.append(kwargs.get("deadline_at") or 0.0)
+            started.set()
+            time.sleep(0.4)
+            return {"ok": True, "complete": True}
+
+        module = types.ModuleType("auto_reply_reference_store")
+        module.harvest_reference_packs = fake_harvest
+        original = sys.modules.get("auto_reply_reference_store")
+        sys.modules["auto_reply_reference_store"] = module
+        try:
+            begin = time.time()
+            worker._maybe_harvest_reference_packs(force=True)
+            elapsed = time.time() - begin
+        finally:
+            if original is None:
+                sys.modules.pop("auto_reply_reference_store", None)
+            else:
+                sys.modules["auto_reply_reference_store"] = original
+        # The caller returns immediately; the harvest itself is still running.
+        self.assertLess(elapsed, 0.2)
+        self.assertTrue(started.wait(2.0))
+        self.assertEqual(len(calls), 1)
+        self.assertGreater(calls[0], begin)
+
+    def test_worker_starts_only_one_harvest_at_a_time(self):
+        worker = load("auto_reply_worker_harvest_single", ROOT / "scripts" / "auto-reply-worker.py")
+        calls: list[float] = []
+        release = threading.Event()
+
+        def fake_harvest(*args, **kwargs):
+            calls.append(time.time())
+            release.wait(2.0)
+            return {"ok": True, "complete": True}
+
+        module = types.ModuleType("auto_reply_reference_store")
+        module.harvest_reference_packs = fake_harvest
+        original = sys.modules.get("auto_reply_reference_store")
+        sys.modules["auto_reply_reference_store"] = module
+        try:
+            worker._maybe_harvest_reference_packs(force=True)
+            worker._maybe_harvest_reference_packs(force=True)
+            worker._maybe_harvest_reference_packs(force=True)
+            time.sleep(0.3)
+        finally:
+            release.set()
+            if original is None:
+                sys.modules.pop("auto_reply_reference_store", None)
+            else:
+                sys.modules["auto_reply_reference_store"] = original
+        self.assertEqual(len(calls), 1)
 
     def test_photo_count_reads_album_and_kakao_types(self):
         self.assertEqual(self.store._photo_count("사진"), 1)
