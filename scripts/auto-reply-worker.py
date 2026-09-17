@@ -11100,14 +11100,11 @@ def generate_reply(
                 f"{previous_ending}. End this reply with a different final particle."
             ]
         try:
-            from auto_reply_knowledge_graph import query_knowledge_context
-            # The incoming message alone is often a caption ("사진") or a
-            # two-character reply, and matching only it retrieved nothing even
-            # when the room had spent the last hour on one topic. The recent
-            # conversation and the quoted message say what the turn is about,
-            # so the graph is searched for those too (2026-09-16).
+            from auto_reply_knowledge_graph import retrieve_knowledge_bundle
+            # 엔티티와 관계(시냅스)를 균형 있게 배분하고, 방 격리를 철저히 검증한
+            # GraphRAG 지식 번들을 자동 답변 컨텍스트로 결합한다 (2026-09-17, 6 Pro 권고안).
             target_chat_id = _queue_expected_chat_id()
-            kg_contexts = query_knowledge_context(
+            kg_bundle = retrieve_knowledge_bundle(
                 message,
                 chat_id=target_chat_id,
                 also=[
@@ -11116,12 +11113,14 @@ def generate_reply(
                     if isinstance(item, dict)
                 ]
                 + [str((bounded_conversation_target or {}).get("message") or "")],
-                include_relations=True,
+                max_entities=3,
+                max_relations=3,
             )
-            if kg_contexts:
+            kg_facts = kg_bundle.get("facts") or []
+            if kg_facts:
                 instructions = list(instructions) + [
                     "Knowledge Graph Context (verified background context and relations): "
-                    + " | ".join(kg_contexts)
+                    + " | ".join(kg_facts)
                 ]
         except Exception:
             pass

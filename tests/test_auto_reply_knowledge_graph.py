@@ -467,6 +467,8 @@ class NormalizeTests(unittest.TestCase):
 class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
     def test_alias_matches_korean_particles(self):
         self.assertTrue(KG._alias_matches('AI', 'AI는 정말 유용하다'))
+        self.assertTrue(KG._alias_matches('AI', '(AI는 유용하다)'))
+        self.assertTrue(KG._alias_matches('주식', '주식으로 분류해야 해'))
         self.assertTrue(KG._alias_matches('주식', '주식은 변동성이 큽니다'))
         self.assertTrue(KG._alias_matches('코인', '코인도 공부해야겠어'))
         self.assertTrue(KG._alias_matches('알쫀쿠', '알쫀쿠를 써봤어'))

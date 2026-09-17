@@ -289,6 +289,25 @@ struct ProviderOAuthReport: Decodable {
     let warnings: [String]?
 }
 
+
+struct OnDeviceHardware: Decodable {
+    struct Spec: Decodable {
+        let chip: String
+        let cores: Int
+        let memory_gb: Double
+        let is_apple_silicon: Bool
+    }
+    struct Recommendation: Decodable {
+        let primary_engine: String
+        let available_engines: [String]
+        let recommended_model: String
+        let recommended_quant: String
+        let reason: String
+    }
+    let hardware: Spec
+    let recommendation: Recommendation
+}
+
 struct MenubarModel: Decodable {
     let schema_version: Int
     let privacy: String
@@ -321,6 +340,7 @@ struct MenubarModel: Decodable {
     let reply_model_fallbacks: ReplyModelFallbacks?
     // 답변 기록 창: 코어(CLI)가 만든 턴 기록. 훅이 없는 구버전 스냅샷에는 없다.
     let reply_receipts: ReplyReceipts?
+    let ondevice_hardware: OnDeviceHardware?
 }
 
 /// 모델 설정 창의 폴백 섹션이 그대로 그리는 값. 판단은 코어(파이썬)가 한다.
@@ -3327,6 +3347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelReplyPopup: NSPopUpButton?
     var modelImagePopup: NSPopUpButton?
     var modelReplySummary: NSTextField?
+    var modelHardwareHint: NSTextField?
     var modelImageSummary: NSTextField?
     var modelStatusField: NSTextField?
     var modelReplyStatus: NSTextField?
@@ -4617,6 +4638,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let replyId = reply?.id ?? ""
         let replyLabel = (reply?.label ?? replyId).trimmingCharacters(in: .whitespacesAndNewlines)
         // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
+        if let hw = lastModel?.ondevice_hardware, let hwLabel = modelHardwareHint {
+            hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · 추천 엔진: \(hw.recommendation.primary_engine.uppercased()) (Qwen3.8 최적화)"
+            hwLabel.toolTip = hw.recommendation.reason
+        }
         modelReplySummary?.stringValue = "메시지에 답할 때 씁니다."
         modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty
             ? (catalogLoading ? "모델 목록 불러오는 중…" : "모델을 선택하세요.")
@@ -4743,6 +4768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 말을 다섯 번 읽을 이유가 없어 여기 한 번만 남긴다 (2026-09-16,
         // 6 Pro 지적).
         let hint = Chrome.hint("고른 모델은 다음 턴부터 적용됩니다.", size: 12)
+        let hwHint = Chrome.hint("온디바이스 하드웨어 사양을 감지하는 중…", size: 11)
+        modelHardwareHint = hwHint
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
         let replySummary = Chrome.hint("현재 모델을 불러오는 중…", size: 12)
@@ -4841,7 +4868,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let fallbackCard = Chrome.card(fallbackContent, padding: 14)
 
         let stack = Chrome.vstack(
-            [hint, primaryCard, fallbackCard, status, actions],
+            [hint, hwHint, primaryCard, fallbackCard, status, actions],
             spacing: 12
         )
         // 폴백을 최대치까지 넣으면 창보다 길어지므로 스크롤로 감싼다.
@@ -4850,6 +4877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.delegate = self
         NSLayoutConstraint.activate([
             hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            hwHint.widthAnchor.constraint(equalTo: stack.widthAnchor),
             primaryCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             primaryContent.widthAnchor.constraint(equalTo: primaryCard.widthAnchor, constant: -28),
             replyRow.widthAnchor.constraint(equalTo: primaryContent.widthAnchor),
@@ -8067,13 +8095,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 그래프에서 고른 뉴런과 같은 행을 표에서도 고른다. 두 보기가 같은
     /// 데이터를 가리키므로, 표에 없으면 선택만 바꾸지 않고 그대로 둔다.
     func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
-        guard let node else { return }
+        guard let node else {
+            // 빈 공간 클릭으로 선택이 해제된 경우 근거 카드를 즉시 닫는다 (2026-09-17, 6 Pro 지적).
+            applyVectorLayout()
+            return
+        }
         if let index = displayedVectors.firstIndex(where: { $0.row_key == node.id }) {
             vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             vectorTable?.scrollRowToVisible(index)
-            return
         }
-        // 표에 아직 없는 노드라도 아래 편집 칸에는 그대로 보여 준다.
+        // 표에 있든 없든 선택된 노드의 근거 카드를 채우고 즉시 펼친다 (2026-09-17, 6 Pro 지적).
         vectorUserField?.stringValue = node.label
         vectorTopicsField?.stringValue = node.category
         let evidence = node.evidence
@@ -8089,6 +8120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         lines.append(contentsOf: node.facts.map { "• \($0)" })
         vectorMessageView?.string = lines.joined(separator: "\n")
         vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
+        applyVectorLayout()
     }
 
     @objc func vectorTopicChanged() {
@@ -8428,7 +8460,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             image_reply_model: nil,
             reply_model_providers: nil,
             reply_model_fallbacks: nil,
-            reply_receipts: nil
+            reply_receipts: nil,
+            ondevice_hardware: nil
         )
     }
 

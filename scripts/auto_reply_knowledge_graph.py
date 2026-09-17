@@ -1656,7 +1656,8 @@ SYNONYM_DICTIONARY = {
     "가상화폐": ["코인", "비트코인"],
 }
 
-KOREAN_PARTICLES_PATTERN = r"(?:$|[\s.,!?~/_\-은는이가을를도에과의와로등만])"
+KOREAN_PARTICLES_PATTERN = r"(?:$|[\s.,!?~/_\-()\[\]은는이가을를도에과의와로으로등만])"
+KOREAN_PREFIX_PATTERN = r"(?:^|[\s.,!?~/_\-()\[\]])"
 
 def normalize_text_query(text: str) -> str:
     normalized = str(text or "").strip()
@@ -1680,7 +1681,7 @@ def _alias_matches(alias: str, haystack: str) -> bool:
     for term in set(expanded_terms):
         if len(term) <= 2:
             if re.search(
-                r"(?:^|[\s.,!?~/_\-])" + re.escape(term) + KOREAN_PARTICLES_PATTERN,
+                KOREAN_PREFIX_PATTERN + re.escape(term) + KOREAN_PARTICLES_PATTERN,
                 haystack_folded,
             ) is not None:
                 return True
@@ -1695,21 +1696,29 @@ def retrieve_knowledge_bundle(
     *,
     chat_id: "int | str | None" = None,
     also: "list[str] | tuple[str, ...] | None" = None,
-    top_k: int = 5,
+    max_entities: int = 3,
+    max_relations: int = 3,
 ) -> dict[str, Any]:
-    """GraphRAG + 키워드/트리플 하이브리드 검색 번들 반환."""
-    contexts = query_knowledge_context(
+    """GraphRAG + 키워드/트리플 하이브리드 검색 번들 반환.
+    
+    엔티티와 관계(트리플)가 한쪽에 편중되지 않도록 균형 예산을 적용하며,
+    방 ID와 방 이름을 상호 확인하여 방 간 데이터 격리를 보장한다 (2026-09-17).
+    """
+    entity_facts, relation_facts, candidates = _query_knowledge_structured(
         query_text,
         state_root=state_root,
         chat_id=chat_id,
         also=also,
-        include_relations=True,
     )
+    balanced_facts = entity_facts[:max_entities] + relation_facts[:max_relations]
     return {
         "query": query_text,
         "chat_id": str(chat_id or ""),
-        "facts": contexts[:top_k],
-        "fact_count": len(contexts),
+        "facts": balanced_facts,
+        "fact_count": len(balanced_facts),
+        "candidate_count": len(candidates),
+        "entities_count": len(entity_facts),
+        "relations_count": len(relation_facts),
     }
 
 def query_knowledge_context(
@@ -1720,6 +1729,23 @@ def query_knowledge_context(
     also: "list[str] | tuple[str, ...] | None" = None,
     include_relations: bool = True,
 ) -> list[str]:
+    entity_facts, relation_facts, _ = _query_knowledge_structured(
+        query_text,
+        state_root=state_root,
+        chat_id=chat_id,
+        also=also,
+    )
+    if include_relations:
+        return entity_facts + relation_facts
+    return entity_facts
+
+def _query_knowledge_structured(
+    query_text: str,
+    state_root: Path | None = None,
+    *,
+    chat_id: "int | str | None" = None,
+    also: "list[str] | tuple[str, ...] | None" = None,
+) -> tuple[list[str], list[str], list[str]]:
     """Retrieve relevant Knowledge Graph context nodes for a turn.
 
     ``query_text`` is the incoming message. ``also`` adds more text the turn is
@@ -1756,10 +1782,29 @@ def query_knowledge_context(
         matched_entity_ids = set()
         matched_entity_names = {}
         chat_str = str(chat_id or "").strip()
+        # 방 ID와 카탈로그 방 이름의 상호 매핑 (P1 방 격리 해결)
+        allowed_room_names = set()
+        if chat_str:
+            allowed_room_names.add(chat_str)
+            norm_key = _room_key(root, chat_str)
+            if norm_key:
+                allowed_room_names.add(norm_key)
+                allowed_room_names.add(_chat_label(norm_key))
+
+        entity_facts: list[str] = []
+        relation_facts: list[str] = []
+        candidates: list[str] = []
+        matched_entity_ids = set()
+        matched_entity_names = {}
+
         for ent_id, name, cat, aliases_str, desc, facts_str in cursor.fetchall():
-            if chat_str and (ent_id.startswith("person:") or ent_id.startswith("chat:")):
-                if chat_str not in ent_id:
+            # 방 격리 검사: person:* 또는 chat:* 노드는 허용된 방에만 속해야 함
+            if allowed_room_names and (ent_id.startswith("person:") or ent_id.startswith("chat:")):
+                parts = ent_id.split(":")
+                ent_room = parts[1] if len(parts) > 1 else ""
+                if not any(r == ent_room or r in ent_room for r in allowed_room_names):
                     continue
+
             try:
                 aliases = json.loads(aliases_str)
             except (TypeError, ValueError):
@@ -1774,6 +1819,8 @@ def query_knowledge_context(
             )
             if not matched:
                 continue
+
+            candidates.append(ent_id)
             try:
                 facts = json.loads(facts_str)
             except (TypeError, ValueError):
@@ -1783,24 +1830,32 @@ def query_knowledge_context(
             matched_entity_ids.add(ent_id)
             matched_entity_names[ent_id] = name
             facts_snippet = f" (핵심 맥락: {'; '.join(str(f) for f in facts[:3])})" if facts else ""
-            hits.append(f"[{cat}] {name}: {desc}{facts_snippet}")
+            entity_facts.append(f"[{cat}] {name}: {desc}{facts_snippet}")
 
-        if include_relations and matched_entity_ids:
+        # 관계(시냅스) 확장: 타 방 전용 노드가 섞여 들지 않도록 관계 수준 방 격리
+        if matched_entity_ids:
             marks = ",".join("?" * len(matched_entity_ids))
             rel_cursor = conn.execute(
                 f"SELECT source_id, relation, target_id, context, weight"
                 f" FROM kg_relations"
                 f" WHERE source_id IN ({marks}) OR target_id IN ({marks})"
-                f" ORDER BY weight DESC LIMIT 6",
+                f" ORDER BY weight DESC LIMIT 12",
                 list(matched_entity_ids) + list(matched_entity_ids),
             )
             for src, rel, tgt, ctx, w in rel_cursor.fetchall():
+                # 관계의 반대편 노드가 타 방 인물/방 노드이면 격리 정책에 따라 제외
+                other = tgt if src in matched_entity_ids else src
+                if allowed_room_names and (other.startswith("person:") or other.startswith("chat:")):
+                    parts = other.split(":")
+                    other_room = parts[1] if len(parts) > 1 else ""
+                    if not any(r == other_room or r in other_room for r in allowed_room_names):
+                        continue
                 src_name = matched_entity_names.get(src, src.split(":")[-1])
                 tgt_name = matched_entity_names.get(tgt, tgt.split(":")[-1])
-                hits.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
+                relation_facts.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
 
-        return hits
+        return entity_facts, relation_facts, candidates
     except Exception:
-        return []
+        return [], [], []
     finally:
         conn.close()

@@ -2022,6 +2022,11 @@ def _attach_fallback_state(snap: Any, state_root: Any) -> Any:
         return snap
     snap = dict(snap)
     snap["reply_model_fallbacks"] = state
+    try:
+        from auto_reply_ondevice import ondevice_summary_dict
+        snap["ondevice_hardware"] = ondevice_summary_dict()
+    except Exception:
+        pass
     return snap
 
 
@@ -2526,6 +2531,11 @@ def _scope_menubar_rooms_to_enrollment() -> None:
                         chat["title"] = cat_title
             # 모델 설정 창의 폴백 사슬도 같은 스냅샷에 실어 보낸다. 이 경로는
             # 화면이 실제로 쓰는 경로라, 여기서 빠지면 창이 기본값만 보여 준다.
+            try:
+                from auto_reply_ondevice import ondevice_summary_dict
+                snap["ondevice_hardware"] = ondevice_summary_dict()
+            except Exception:
+                pass
             try:
                 snap["reply_model_fallbacks"] = reply_model_fallbacks_state(
                     Path(state_root)
