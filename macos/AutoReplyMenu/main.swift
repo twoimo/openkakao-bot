@@ -1577,6 +1577,13 @@ struct KnowledgeGraphReport: Decodable {
     let node_count: Int
     let edge_count: Int
     let grounded_nodes: Int
+    /// 색인이 마지막으로 끝난 시각(유닉스 초). 화면이 "언제 기준인지"를
+    /// 말할 수 있어야 한다 (2026-09-17).
+    let indexed_at: Int?
+    /// 색인된 방·주제 뉴런 수.
+    let indexed_count: Int?
+    /// 이 응답이 저장된 그림인지(=재색인이 뒤에서 도는 중인지).
+    let stale: Bool?
 }
 
 /// Draws the knowledge graph the way a brain scan shows neurons and synapses:
@@ -3714,6 +3721,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 마지막으로 읽은 그래프의 규모. 힌트 줄을 다시 쓸 때 쓴다.
     var vectorGraphTotal = 0
     var vectorGraphGrounded = 0
+    /// 색인이 마지막으로 끝난 시각과, 지금 재색인이 도는 중인지.
+    var vectorGraphIndexedAt = 0
+    var vectorGraphIsStale = false
     var lastVectorGraphReadAt = Date.distantPast
     var lastVectorGraphSource = ""
     /// 그래프 화면 상태. 실패와 "아직 데이터 없음"을 같은 문구로 보여 주면
@@ -8579,6 +8589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self.applyVectorGraphRetryVisibility()
                 self.vectorGraphTotal = total
                 self.vectorGraphGrounded = grounded
+                self.vectorGraphIndexedAt = report.indexed_at ?? 0
+                self.vectorGraphIsStale = report.stale ?? false
                 self.applyVectorGraphHint(total: total, grounded: grounded)
             }
         }
@@ -8593,9 +8605,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 + "빈 곳을 누르면 전체 그림으로 돌아갑니다."
             return
         }
+        // 색인이 언제 기준인지 붙인다. 카카오톡 DB는 몇 분마다 다시 읽히는데,
+        // 그 사실이 화면에 없으면 방금 한 대화가 왜 그래프에 없는지 알 길이
+        // 없다 (2026-09-17, 사용자 지시).
+        var head = "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다."
+        if let stamp = vectorGraphIndexText {
+            head += " 색인 \(stamp)."
+        }
         vectorGraphHint?.stringValue =
-            "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다. "
-            + "크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
+            head + " 크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
+    }
+
+    /// 색인 시각을 사람이 읽는 말로. 아직 색인 전이면 그렇게 말한다.
+    var vectorGraphIndexText: String? {
+        guard vectorGraphIndexedAt > 0 else { return nil }
+        let seconds = Int(Date().timeIntervalSince1970) - vectorGraphIndexedAt
+        if vectorGraphIsStale {
+            // 재색인이 뒤에서 도는 중이다. 지금 보이는 그림은 조금 오래됐다.
+            return "갱신 중 · 지금 화면은 \(vectorGraphAgeText(seconds))"
+        }
+        if seconds < 60 { return "방금 전" }
+        return vectorGraphAgeText(seconds)
+    }
+
+    private func vectorGraphAgeText(_ seconds: Int) -> String {
+        if seconds < 3600 { return "\(max(seconds, 1) / 60)분 전" }
+        if seconds < 86_400 { return "\(seconds / 3600)시간 전" }
+        return "\(seconds / 86_400)일 전"
     }
 
     /// 그래프에서 고른 뉴런과 같은 행을 표에서도 고른다. 두 보기가 같은

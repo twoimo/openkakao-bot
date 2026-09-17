@@ -3280,8 +3280,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("path.lineWidth = (touchesHighlight ? 1.6 : 0.8) + 2.0 * strength", source)
         self.assertIn("guard touchesHighlight else { continue }", source)
         # Grounded neurons glow and unverified seeds stay dim, so a reader can
-        # tell a checked concept from a placeholder.
-        self.assertIn("node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray", source)
+        # tell a checked concept from a placeholder. The colours come from the
+        # Jarvis gold family so the graph reads as part of the same core
+        # (2026-09-17, 사용자 지시).
+        self.assertIn("node.evidence.grounded ? Self.neuronGold : Self.neuronBrass", source)
+        self.assertIn("static let neuronGold", source)
+        self.assertIn("static let synapseGold", source)
         # A retracted node is visibly different instead of silently stale.
         self.assertIn("if node.evidence.retracted {", source)
         # The layout has to be deterministic: the window redraws on a timer and

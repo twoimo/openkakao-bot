@@ -6,11 +6,15 @@ checkable — evidence is read from the room ledgers, a node with no match says
 so instead of pretending, and a broken state root does not raise (2026-09-16).
 """
 
+import fcntl
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -198,7 +202,9 @@ class BackgroundReindexTests(unittest.TestCase):
     def test_a_cold_cache_serves_a_stored_graph_and_says_it_is_stale(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            report = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            report = KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, reindex_mode="thread"
+            )
             try:
                 self.assertTrue(report["ok"])
                 self.assertTrue(report["stale"], "a background refresh must be reported as stale")
@@ -213,8 +219,12 @@ class BackgroundReindexTests(unittest.TestCase):
     def test_a_second_read_while_one_is_running_does_not_stack_work(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            first = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
-            second = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            first = KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, reindex_mode="thread"
+            )
+            second = KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, reindex_mode="thread"
+            )
             try:
                 if first["reindex"]["started"]:
                     # The second call must reuse the running refresh rather than
@@ -230,7 +240,9 @@ class BackgroundReindexTests(unittest.TestCase):
     def test_the_wait_helper_reports_a_settled_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_state_root(tmp)
-            KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            KG.collect_knowledge_graph(
+                root / "context.sqlite3", state_root=root, reindex_mode="thread"
+            )
             self.assertTrue(KG.wait_for_background_reindex(timeout=30.0))
             self.assertTrue(KG.wait_for_background_reindex(timeout=0.0))
 
@@ -259,6 +271,159 @@ class BackgroundReindexTests(unittest.TestCase):
             self.assertIsNone(warm["reindex"], "a fresh graph needs no refresh")
             # "언제 기준인지"는 화면이 말할 수 있어야 한다 (6 Pro 지적).
             self.assertGreater(warm["indexed_at"], 0, "the view needs a last-indexed time")
+
+    def test_the_detached_child_entrypoint_indexes_and_records_the_time(self):
+        """The menu bar is a short-lived process, so the walk must survive it.
+
+        The parent spawns a detached child through the module CLI. This pins
+        both halves of that contract: the entrypoint runs at all (it used to
+        sit above _reindex_all and die with a NameError), and it leaves the
+        indexed time behind so the next poll stops asking for a refresh
+        (2026-09-17, 사용자 지시).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(KG.__file__),
+                    "--reindex-once",
+                    "--state-root",
+                    str(root),
+                    "--chat",
+                    "",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr[-600:])
+            conn = sqlite3.connect(str(root / KG.KNOWLEDGE_GRAPH_DB_NAME))
+            try:
+                value = KG.read_meta(conn, "last_indexed_at")
+            finally:
+                conn.close()
+            self.assertTrue(value, "the child must record when the walk finished")
+            warm = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root)
+            self.assertFalse(warm["stale"], "the parent must see the child's work")
+            self.assertIsNone(warm["reindex"], "a fresh index needs no second walk")
+
+    def test_the_process_guard_reports_a_held_lock(self):
+        """One walk at a time is enforced by the lock file, not by memory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            self.assertFalse(KG._reindex_process_running(root))
+            lock_path = root / "knowledge-graph-reindex.lock"
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertTrue(KG._reindex_process_running(root))
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+            self.assertFalse(KG._reindex_process_running(root))
+
+class RealIndexPathTests(unittest.TestCase):
+    """The indexers have to read the shared context database for real.
+
+    Every other fixture puts context.sqlite3 inside the state root, but the
+    indexers resolve it as a *sibling* of the state root and copy it aside
+    before reading. So none of them ever exercised the copy path, and a
+    missing tempfile import survived review: on the real 1.4GB database every
+    indexer raised NameError, and the menu drew a freshly "indexed" empty
+    graph (2026-09-17, 사용자 지시).
+    """
+
+    def _write_index(self, base: Path, *, rooms: int = 1) -> Path:
+        index = base / "context.sqlite3"
+        conn = sqlite3.connect(index)
+        try:
+            conn.execute(
+                "CREATE TABLE context_messages (id INTEGER PRIMARY KEY, source TEXT,"
+                " chat TEXT, date TEXT, user_name TEXT, message TEXT, vector BLOB)"
+            )
+            rows = []
+            for room in range(rooms):
+                chat = "부자멘토멘티" if room == 0 else f"방{room}"
+                for i in range(60):
+                    rows.append(
+                        (
+                            "kakao",
+                            chat,
+                            f"2026-09-{i % 28 + 1:02d} 10:00:00",
+                            "문승현",
+                            f"{chat} 대화 {i}",
+                        )
+                    )
+            conn.executemany(
+                "INSERT INTO context_messages"
+                " (source, chat, date, user_name, message) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return index
+
+    def _state_root(self, base: Path) -> Path:
+        root = base / "state"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def test_the_indexers_read_the_sibling_context_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._write_index(base)
+            root = self._state_root(base)
+            kg = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(kg)
+                KG.index_chat_entities(kg, root)
+                KG.index_person_entities(kg, root)
+                chats = [
+                    row[0]
+                    for row in kg.execute(
+                        "SELECT entity_id FROM kg_entities WHERE entity_id LIKE 'chat:%'"
+                    )
+                ]
+                people = [
+                    row[0]
+                    for row in kg.execute(
+                        "SELECT entity_id FROM kg_entities WHERE entity_id LIKE 'person:%'"
+                    )
+                ]
+            finally:
+                kg.close()
+        self.assertIn("chat:부자멘토멘티", chats, "방 뉴런이 실제 색인에서 서야 한다")
+        self.assertTrue(people, "사람 뉴런이 실제 색인에서 서야 한다")
+
+    def test_a_failed_index_step_is_recorded_not_swallowed(self):
+        """색인이 죽으면 그 이유가 그래프에 남아야 한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._write_index(base)
+            root = self._state_root(base)
+            original = KG.index_chat_entities
+
+            def _boom(*args, **kwargs):
+                raise NameError("name 'tempfile' is not defined")
+
+            KG.index_chat_entities = _boom
+            try:
+                conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+                try:
+                    KG.ensure_seeded(conn)
+                    KG._reindex_all(conn, root, cycle_started_at=int(time.time()))
+                    recorded = KG.read_meta(conn, "last_index_error")
+                    stamped = KG.read_meta(conn, "last_indexed_at")
+                finally:
+                    conn.close()
+            finally:
+                KG.index_chat_entities = original
+        self.assertIn("NameError", recorded, "실패 이유가 기록되어야 한다")
+        self.assertEqual(stamped, "", "실패한 색인을 '색인했다'로 찍으면 안 된다")
 
 
 class MigrationTests(unittest.TestCase):

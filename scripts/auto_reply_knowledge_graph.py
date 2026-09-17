@@ -9,10 +9,15 @@ Inspired by Andrej Karpathy's LLM Wiki & Algorithmic Knowledge Graph concepts:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
+import os
 import re
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import zlib
@@ -652,23 +657,31 @@ def index_chat_entities(
     index_path = _index_db_path(state_root)
     if not index_path.exists():
         return stats
+    index_conn = None
     try:
         with _open_isolated_ro_conn(index_path) as index_conn:
             sql = (
-            "SELECT chat, COUNT(*), MIN(date), MAX(date) FROM context_messages"
-            " WHERE chat IS NOT NULL AND chat != ''"
-        )
-        params: list[Any] = []
-        if chat:
-            sql += " AND chat = ?"
-            params.append(chat)
-        sql += " GROUP BY chat HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC LIMIT ?"
-        params.extend([INDEX_CHAT_MIN_MESSAGES, max(int(limit), 1)])
-        rows = index_conn.execute(sql, params).fetchall()
+                "SELECT chat, COUNT(*), MIN(date), MAX(date) FROM context_messages"
+                " WHERE chat IS NOT NULL AND chat != ''"
+            )
+            params: list[Any] = []
+            if chat:
+                sql += " AND chat = ?"
+                params.append(chat)
+            sql += " GROUP BY chat HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC LIMIT ?"
+            params.extend([INDEX_CHAT_MIN_MESSAGES, max(int(limit), 1)])
+            rows = index_conn.execute(sql, params).fetchall()
     except sqlite3.Error:
         return stats
     finally:
-        index_conn.close()
+        # with 블록이 실패하면 index_conn 이 할당되지 않아, 여기서 바로
+        # 닫으면 UnboundLocalError 가 원래 예외를 덮어쓴다. 자식 프로세스가
+        # exit 1 로만 죽어 원인을 알 수 없던 이유다 (2026-09-17).
+        if index_conn is not None:
+            try:
+                index_conn.close()
+            except sqlite3.Error:
+                pass
     now = int(time.time())
     # 같은 방이 두 키로 들어오면 여기서 하나로 합친다. 합치지 않으면
     # 방 뉴런이 둘 서고 방 안의 사람도 두 벌로 갈린다 (2026-09-16).
@@ -762,10 +775,18 @@ def index_person_entities(
     except sqlite3.Error:
         return stats
     finally:
-        index_conn.close()
+        # _open_isolated_ro_conn 이 실패하면 index_conn 이 할당되지 않아,
+        # 여기서 바로 닫으면 UnboundLocalError 가 원래 예외를 덮어쓴다.
+        # 2026-09-17 에 자식 프로세스가 exit 1 로만 죽은 원인이었다.
+        if index_conn is not None:
+            try:
+                index_conn.close()
+            except sqlite3.Error:
+                pass
     # 방마다 몇 명을 세울지 정하려면 방별 총량이 필요하다.
     totals: dict[str, int] = {}
     try:
+        index_conn = None
         index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
         try:
             index_conn.execute("PRAGMA query_only = ON")
@@ -775,7 +796,11 @@ def index_person_entities(
             ):
                 totals[str(room)] = int(count or 0)
         finally:
-            index_conn.close()
+            if index_conn is not None:
+                try:
+                    index_conn.close()
+                except sqlite3.Error:
+                    pass
     except sqlite3.Error:
         totals = {}
     per_room: dict[str, int] = {}
@@ -1435,6 +1460,7 @@ def _start_background_reindex(
     *,
     chat: str = "",
     cycle_started_at: int | None = None,
+    mode: str = "process",
 ) -> dict[str, Any]:
     """Kick the heavy reindex off the request path.
 
@@ -1444,12 +1470,29 @@ def _start_background_reindex(
     (2026-09-17, 6 Pro 지적).
     """
     global _reindex_inflight, _reindex_last_started_at
+    started_at = int(cycle_started_at or time.time())
+    if mode == "process":
+        # 프로세스 모드에서는 자식이 잠금 파일을 들고 있다. 부모의 메모리
+        # 플래그는 쓰지 않는다. 부모는 자식이 언제 끝나는지 볼 수 없으므로,
+        # 플래그를 잡으면 부모가 사는 동안 영원히 in_flight 로 남아 재색인이
+        # 다시는 걸리지 않는다 (2026-09-17).
+        if _reindex_process_running(state_root):
+            return {"started": False, "reason": "in_flight"}
+        if _spawn_reindex_process(state_root, chat=chat, cycle_started_at=started_at):
+            return {
+                "started": True,
+                "chat": chat,
+                "cycle_started_at": started_at,
+                "mode": "process",
+            }
+        # 자식을 띄울 수 없으면 스레드로라도 돌린다. 메뉴가 길게 사는
+        # 경우에는 이쪽으로도 끝난다.
+        mode = "thread"
     with _reindex_lock:
         if _reindex_inflight:
             return {"started": False, "reason": "in_flight"}
         _reindex_inflight = True
         _reindex_last_started_at = time.time()
-    started_at = int(cycle_started_at or time.time())
 
     def _run() -> None:
         global _reindex_inflight
@@ -1472,9 +1515,135 @@ def _start_background_reindex(
             with _reindex_lock:
                 _reindex_inflight = False
 
+    # 메뉴바는 이 모듈을 짧게 사는 프로세스로 부른다. 데몬 스레드는 그
+    # 프로세스가 끝나면 함께 죽어 재색인이 반쯤 돌다 만 채로 남는다. 그래서
+    # 기본값(mode="process")은 스스로 살아남는 자식 프로세스다 (2026-09-17,
+    # 사용자 지시). 테스트는 "thread", 일회성 내보내기는 "inline" 으로 돈다.
     thread = threading.Thread(target=_run, name="kg-reindex", daemon=True)
     thread.start()
-    return {"started": True, "chat": chat, "cycle_started_at": started_at}
+    return {"started": True, "chat": chat, "cycle_started_at": started_at, "mode": mode}
+
+
+def _reindex_process_running(state_root: Path) -> bool:
+    """True when a detached child already holds the reindex lock.
+
+    The lock file is the only thing the parent and the child share, so it is
+    also the only honest answer to whether a walk is still going (2026-09-17).
+    """
+    lock_path = state_root / "knowledge-graph-reindex.lock"
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, BlockingIOError):
+        os.close(descriptor)
+        return True
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    os.close(descriptor)
+    return False
+
+
+def _spawn_reindex_process(
+    state_root: Path,
+    *,
+    chat: str = "",
+    cycle_started_at: int = 0,
+) -> bool:
+    """Detach one reindex run so it outlives the caller.
+
+    Returns True when a child was started. The child holds the same lock file
+    the in-process guard uses, so a burst of menu polls still starts one walk
+    (2026-09-17).
+    """
+    lock_path = state_root / "knowledge-graph-reindex.lock"
+    try:
+        state_root.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return False
+    try:
+        # A non-blocking exclusive lock: whoever holds it is already walking
+        # the index. The descriptor stays open in the child for its lifetime.
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, BlockingIOError):
+        os.close(descriptor)
+        return False
+    argv = [
+        sys.executable,
+        "-B",
+        str(Path(__file__).resolve()),
+        "--reindex-once",
+        "--state-root",
+        str(state_root),
+        "--chat",
+        str(chat),
+        "--cycle-started-at",
+        str(int(cycle_started_at or time.time())),
+    ]
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            pass_fds=(descriptor,),
+            cwd=str(Path(__file__).resolve().parent),
+        )
+    except (OSError, ValueError):
+        os.close(descriptor)
+        return False
+    # 부모 쪽 사본은 닫는다. 잠금은 자식이 들고 있다.
+    os.close(descriptor)
+    if process.poll() is not None:
+        # 곧바로 죽었다면(인자 오류 등) 실패로 본다.
+        return False
+    return True
+
+
+def _reindex_once_entry(argv: list[str]) -> int:
+    """Run one reindex in this process. Used by the detached child."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="auto_reply_knowledge_graph")
+    parser.add_argument("--reindex-once", action="store_true")
+    parser.add_argument("--state-root", default="")
+    parser.add_argument("--chat", default="")
+    parser.add_argument("--cycle-started-at", type=int, default=0)
+    args = parser.parse_args(argv)
+    root_raw = str(args.state_root or "").strip()
+    if not root_raw:
+        return 2
+    root = Path(root_raw).expanduser()
+    try:
+        conn = _connect_kg(root / KNOWLEDGE_GRAPH_DB_NAME)
+    except (OSError, sqlite3.Error):
+        return 1
+    try:
+        _reindex_all(
+            conn,
+            root,
+            chat=str(args.chat or ""),
+            cycle_started_at=int(args.cycle_started_at or time.time()),
+        )
+    except Exception as error:
+        # 자식은 어떤 경우에도 조용히 끝난다. 메뉴가 읽는 것은 상태 파일이지
+        # 이 프로세스의 종료 코드가 아니다. 다만 왜 죽었는지는 남긴다
+        # (2026-09-17).
+        write_meta(conn, "last_index_error", f"detached: {type(error).__name__}: {error}"[:400])
+        return 1
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+    return 0
 
 
 def _reindex_all(
@@ -1490,30 +1659,47 @@ def _reindex_all(
     Each step is isolated: a failure in one indexer must not stop the others,
     because a graph with topics but no rooms is still better than no refresh
     (2026-09-16, 2026-09-17).
+
+    A step that dies is recorded in kg_meta instead of being swallowed. The
+    menu showed a freshly indexed, empty graph while every indexer had been
+    failing on a NameError that only the real database path reached
+    (2026-09-17, 사용자 지시).
     """
+    failures: list[str] = []
+
+    def _note(step: str, error: BaseException) -> None:
+        failures.append(f"{step}: {type(error).__name__}: {error}"[:400])
+
     try:
         index_topic_entities(conn, state_root, chat=chat)
         index_topic_relations(conn, state_root, chat=chat)
-    except (OSError, sqlite3.Error, ValueError):
-        pass
+    except Exception as error:  # noqa: BLE001 - 색인은 한 걸음이 죽어도 계속한다
+        _note("topics", error)
     try:
         index_chat_entities(conn, state_root, chat=chat)
         index_person_entities(conn, state_root, chat=chat)
         index_membership_relations(conn, state_root, chat=chat)
         prune_indexed_entities(conn, cycle_started_at=cycle_started_at)
         _merge_seed_rooms(conn)
-    except (OSError, sqlite3.Error, ValueError):
-        pass
+    except Exception as error:  # noqa: BLE001
+        _note("rooms", error)
     try:
         attach_ledger_evidence(conn, state_root)
-    except (OSError, sqlite3.Error, ValueError):
-        pass
+    except Exception as error:  # noqa: BLE001
+        _note("evidence", error)
     try:
         from auto_reply_dream_rsi import dream_policy_evaluation
 
         dream_policy_evaluation(state_root)
-    except (OSError, sqlite3.Error, ValueError, ImportError):
-        pass
+    except Exception as error:  # noqa: BLE001
+        _note("dream-rsi", error)
+    if failures:
+        # 실패를 남기고 "색인했다"는 도장은 찍지 않는다. 찍으면 다음 폴링이
+        # 같은 일을 다시 하지 않아 그래프가 영영 낡은 채로 남는다
+        # (2026-09-17).
+        write_meta(conn, "last_index_error", " | ".join(failures))
+        return
+    write_meta(conn, "last_index_error", "")
     # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
     # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
     write_meta(conn, "last_indexed_at", str(int(time.time())))
@@ -1528,6 +1714,7 @@ def collect_knowledge_graph(
     force_reindex: bool = False,
     reindex_interval_seconds: int = 300,
     wait_for_reindex: bool = False,
+    reindex_mode: str = "process",
 ) -> dict[str, Any]:
     """Return the whole graph as nodes and edges for a force-directed view.
 
@@ -1539,6 +1726,11 @@ def collect_knowledge_graph(
     the 1.4GB context DB. Set ``wait_for_reindex`` when the caller needs a settled
     graph before reading rows: a one-shot export, or a test asserting on
     freshly indexed evidence (2026-09-17, 6 Pro 지적).
+
+    reindex_mode picks who walks the index when wait_for_reindex is false:
+    "process" detaches a child that outlives the short-lived menu call,
+    "thread" keeps the walk in this process so a test can wait for it
+    (2026-09-17).
     """
     kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
     try:
@@ -1610,7 +1802,13 @@ def collect_knowledge_graph(
                 result_meta["reindex"] = {"started": True, "chat": chat, "mode": "inline"}
                 result_meta["stale"] = False
             else:
-                started = _start_background_reindex(conn, state_root, chat=chat, cycle_started_at=now)
+                started = _start_background_reindex(
+                    conn,
+                    state_root,
+                    chat=chat,
+                    cycle_started_at=now,
+                    mode=reindex_mode,
+                )
                 result_meta["reindex"] = started
                 result_meta["stale"] = True
         nodes: list[dict[str, Any]] = []
@@ -2093,3 +2291,9 @@ def _query_knowledge_structured(
         return [], [], []
     finally:
         conn.close()
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    raise SystemExit(_reindex_once_entry(_sys.argv[1:]))
