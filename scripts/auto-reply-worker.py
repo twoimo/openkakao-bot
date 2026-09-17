@@ -11106,18 +11106,21 @@ def generate_reply(
             # when the room had spent the last hour on one topic. The recent
             # conversation and the quoted message say what the turn is about,
             # so the graph is searched for those too (2026-09-16).
+            target_chat_id = _queue_expected_chat_id()
             kg_contexts = query_knowledge_context(
                 message,
+                chat_id=target_chat_id,
                 also=[
                     str(item.get("message") or "")
                     for item in bounded_recent_conversation
                     if isinstance(item, dict)
                 ]
                 + [str((bounded_conversation_target or {}).get("message") or "")],
+                include_relations=True,
             )
             if kg_contexts:
                 instructions = list(instructions) + [
-                    "Authoritative Knowledge Graph Context (established background facts; adhere strictly): "
+                    "Knowledge Graph Context (verified background context and relations): "
                     + " | ".join(kg_contexts)
                 ]
         except Exception:

@@ -1641,30 +1641,84 @@ def collect_knowledge_graph_list(
         conn.close()
 
 
-def _alias_matches(alias: str, haystack: str) -> bool:
-    """Whether one alias appears in the text.
+# 동의어 및 축약어 정규화 사전 (6 Pro 지적 및 GraphRAG 결합)
+SYNONYM_DICTIONARY = {
+    "알쫀쿠": ["알리바바 클라우드 쿠폰", "알리바바 클라우드 구독", "알리바바 클라우드", "alizonku"],
+    "알리바바쿠폰": ["알쫀쿠", "알리바바 클라우드 구독"],
+    "지피티": ["chatgpt", "gpt"],
+    "챗지피티": ["chatgpt", "gpt"],
+    "클로드": ["claude"],
+    "큐웬": ["qwen", "qwen3.8"],
+    "딥시크": ["deepseek", "deepseek v4"],
+    "컴유": ["컴퓨터 유즈", "computer use"],
+    "국장": ["주식", "국내주식"],
+    "미장": ["주식", "미국주식"],
+    "가상화폐": ["코인", "비트코인"],
+}
 
-    Korean attaches particles straight to the noun ("알쫀쿠는", "러닝도"), so a
-    plain substring test is right for anything longer than two characters. A
-    one or two character alias is too easy to hit inside another word, so it
-    needs a boundary on both sides ("런" must not match "런타임").
-    """
+KOREAN_PARTICLES_PATTERN = r"(?:$|[\s.,!?~/_\-은는이가을를도에과의와로등만])"
+
+def normalize_text_query(text: str) -> str:
+    normalized = str(text or "").strip()
+    normalized = re.sub(r"(오늘\s*아침|아침에)", "아침(8시)", normalized)
+    normalized = re.sub(r"(점심\s*때|점심에)", "점심(12시)", normalized)
+    normalized = re.sub(r"(저녁\s*때|저녁에|밤에)", "저녁(20시)", normalized)
+    normalized = re.sub(r"러닝박에", "러닝밖에", normalized)
+    normalized = re.sub(r"채팅내용", "채팅 내용", normalized)
+    return normalized
+
+def _alias_matches(alias: str, haystack: str) -> bool:
     folded = alias.casefold().strip()
     if not folded:
         return False
-    if len(folded) <= 2:
-        return re.search(
-            r"(?:^|[\s.,!?~/_-])" + re.escape(folded) + r"(?:$|[\s.,!?~/_-])",
-            haystack,
-        ) is not None
-    return folded in haystack
+    haystack_folded = haystack.casefold()
+    expanded_terms = [folded]
+    for syn_key, syn_vals in SYNONYM_DICTIONARY.items():
+        if folded == syn_key.casefold() or folded in [v.casefold() for v in syn_vals]:
+            expanded_terms.append(syn_key.casefold())
+            expanded_terms.extend([v.casefold() for v in syn_vals])
+    for term in set(expanded_terms):
+        if len(term) <= 2:
+            if re.search(
+                r"(?:^|[\s.,!?~/_\-])" + re.escape(term) + KOREAN_PARTICLES_PATTERN,
+                haystack_folded,
+            ) is not None:
+                return True
+        elif term in haystack_folded:
+            return True
+    return False
 
+
+def retrieve_knowledge_bundle(
+    query_text: str,
+    state_root: Path | None = None,
+    *,
+    chat_id: "int | str | None" = None,
+    also: "list[str] | tuple[str, ...] | None" = None,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """GraphRAG + 키워드/트리플 하이브리드 검색 번들 반환."""
+    contexts = query_knowledge_context(
+        query_text,
+        state_root=state_root,
+        chat_id=chat_id,
+        also=also,
+        include_relations=True,
+    )
+    return {
+        "query": query_text,
+        "chat_id": str(chat_id or ""),
+        "facts": contexts[:top_k],
+        "fact_count": len(contexts),
+    }
 
 def query_knowledge_context(
     query_text: str,
     state_root: Path | None = None,
     *,
+    chat_id: "int | str | None" = None,
     also: "list[str] | tuple[str, ...] | None" = None,
+    include_relations: bool = True,
 ) -> list[str]:
     """Retrieve relevant Knowledge Graph context nodes for a turn.
 
@@ -1695,11 +1749,17 @@ def query_knowledge_context(
         ensure_seeded(conn)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT name, category, aliases_json, description, key_facts_json"
+            "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
             " FROM kg_entities ORDER BY importance DESC, entity_id ASC"
         )
         hits: list[str] = []
-        for name, cat, aliases_str, desc, facts_str in cursor.fetchall():
+        matched_entity_ids = set()
+        matched_entity_names = {}
+        chat_str = str(chat_id or "").strip()
+        for ent_id, name, cat, aliases_str, desc, facts_str in cursor.fetchall():
+            if chat_str and (ent_id.startswith("person:") or ent_id.startswith("chat:")):
+                if chat_str not in ent_id:
+                    continue
             try:
                 aliases = json.loads(aliases_str)
             except (TypeError, ValueError):
@@ -1720,7 +1780,25 @@ def query_knowledge_context(
                 facts = []
             if not isinstance(facts, list):
                 facts = []
-            hits.append(f"[{cat}] {name}: {desc} (핵심 맥락: {'; '.join(str(f) for f in facts)})")
+            matched_entity_ids.add(ent_id)
+            matched_entity_names[ent_id] = name
+            facts_snippet = f" (핵심 맥락: {'; '.join(str(f) for f in facts[:3])})" if facts else ""
+            hits.append(f"[{cat}] {name}: {desc}{facts_snippet}")
+
+        if include_relations and matched_entity_ids:
+            marks = ",".join("?" * len(matched_entity_ids))
+            rel_cursor = conn.execute(
+                f"SELECT source_id, relation, target_id, context, weight"
+                f" FROM kg_relations"
+                f" WHERE source_id IN ({marks}) OR target_id IN ({marks})"
+                f" ORDER BY weight DESC LIMIT 6",
+                list(matched_entity_ids) + list(matched_entity_ids),
+            )
+            for src, rel, tgt, ctx, w in rel_cursor.fetchall():
+                src_name = matched_entity_names.get(src, src.split(":")[-1])
+                tgt_name = matched_entity_names.get(tgt, tgt.split(":")[-1])
+                hits.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
+
         return hits
     except Exception:
         return []

@@ -463,5 +463,45 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(result["kind"], "seed")
 
 
+
+class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
+    def test_alias_matches_korean_particles(self):
+        self.assertTrue(KG._alias_matches('AI', 'AI는 정말 유용하다'))
+        self.assertTrue(KG._alias_matches('주식', '주식은 변동성이 큽니다'))
+        self.assertTrue(KG._alias_matches('코인', '코인도 공부해야겠어'))
+        self.assertTrue(KG._alias_matches('알쫀쿠', '알쫀쿠를 써봤어'))
+        self.assertFalse(KG._alias_matches('런', '런타임 에러'))
+
+    def test_synonym_dictionary_expansion(self):
+        self.assertTrue(KG._alias_matches('알쫀쿠', '알리바바 클라우드 구독 관련 질문'))
+        self.assertTrue(KG._alias_matches('지피티', 'ChatGPT 활용법'))
+        self.assertTrue(KG._alias_matches('컴유', 'computer use 기능'))
+
+    def test_query_knowledge_context_includes_relations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context('최연우', state_root=root, include_relations=True)
+            self.assertTrue(any('최연우' in h for h in hits))
+            self.assertTrue(any(h.startswith('[관계]') for h in hits))
+
+    def test_retrieve_knowledge_bundle_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+            finally:
+                conn.close()
+            bundle = KG.retrieve_knowledge_bundle('코인 시세', state_root=root, chat_id=417780809780519)
+            self.assertIn('query', bundle)
+            self.assertIn('facts', bundle)
+            self.assertIn('fact_count', bundle)
+            self.assertEqual(bundle['chat_id'], '417780809780519')
+
 if __name__ == "__main__":
     unittest.main()
