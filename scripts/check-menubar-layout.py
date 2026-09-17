@@ -117,8 +117,16 @@ def clipped_at_minimum(rows: list[dict]) -> list[dict]:
     because scrolling to them is the point of the scroll view (2026-09-16).
     """
     found: dict[str, dict] = {}
+    audit = load_audit()
+    by_path = {row["path"]: row for row in rows}
     for row in rows:
         if row["hidden"] or not row["window"].endswith(RESIZED_SUFFIX):
+            continue
+        # 숨은 판 안쪽은 화면에 없으므로 잘림도 넘침도 아니다. AppKit은 부모를
+        # 숨겨도 자식의 hidden 표시를 그대로 두기 때문에, 여기서 조상을 직접
+        # 확인하지 않으면 보이지도 않는 빈 상태 카드가 결함으로 보고된다
+        # (2026-09-17).
+        if audit.hidden_ancestor(row, by_path):
             continue
         if inside_scroll_view(row):
             continue
@@ -324,7 +332,12 @@ def main(argv: list[str]) -> int:
     for item in result["clipped"]:
         # A table column truncates on purpose: the full text is in the tooltip
         # and the column width is the operator's choice.
-        if "/NSTableRowView" in item.get("path", ""):
+        #
+        # The marker is the table itself, not the row class: the row view is
+        # ours (`StripedRowView`), so matching on AppKit's name silently stopped
+        # filtering and reported 149 deliberate truncations as defects
+        # (2026-09-17).
+        if "/NSTableView" in item.get("path", ""):
             continue
         problems.append(
             f"{item['window']}: {item.get('text', item['kind'])[:40]!r}가 {item['clipped']}pt 잘렸습니다"

@@ -648,7 +648,12 @@ enum Chrome {
         scroll.hasHorizontalScroller = false
         let table = NSTableView()
         table.rowHeight = 32
-        table.usesAlternatingRowBackgroundColors = true
+        // 줄무늬는 행이 있는 자리에만 그린다. AppKit의 교차 배경은 표의
+        // 전체 프레임을 칠하므로, 행이 두 개뿐인 창에서 남은 300pt가 회색
+        // 줄무늬 여섯 줄로 채워졌다. 표가 아니라 행이 자기 배경을 칠하면
+        // 없는 줄은 아무것도 그리지 않는다 (2026-09-17).
+        table.usesAlternatingRowBackgroundColors = false
+        table.backgroundColor = .clear
         table.allowsMultipleSelection = false
         table.allowsEmptySelection = true
         table.gridStyleMask = []
@@ -815,6 +820,28 @@ final class FlippedContainerView: NSView {
 /// 결국 모두 최소 폭에 붙어 버린다 (2026-09-16).
 final class DesignedColumn: NSTableColumn {
     var designedWidth: CGFloat = 0
+}
+
+/// 표의 한 행. 짝수 행에만 옅은 배경을 칠한다.
+///
+/// 표의 내장 교차 배경(`usesAlternatingRowBackgroundColors`)은 표의 프레임
+/// 전체를 칠한다. 행이 두 개뿐인 창에서는 남은 300pt가 회색 줄무늬 여섯 줄로
+/// 채워져, 목록이 비었다는 안내보다 그 줄무늬가 먼저 눈에 들어왔다. 행이
+/// 자기 배경을 칠하면 없는 줄은 아무것도 그리지 않는다 (2026-09-17).
+final class StripedRowView: NSTableRowView {
+    var isOdd = false
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard isOdd else { return }
+        NSColor.labelColor.withAlphaComponent(0.03).setFill()
+        dirtyRect.fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }
 
 /// 표를 담는 스크롤 뷰. 문서 뷰(표)의 폭을 자기 폭에 맞춘다.
@@ -5593,6 +5620,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 여기서 한 번에 맞춘다.
         shrinkModelSettingsWindowNow()
         fitVectorWindow()
+        // 작업 목록 창은 행 수에 맞춰 스스로 줄어든다. 감사는 창을 만들자마자
+        // 재기 때문에 그 조정이 아직 돌지 않아, 오토세이브된 488pt 프레임에
+        // 행 하나만 그려진 그림을 재게 된다. 실제 운영 화면과 같은 상태로
+        // 맞춘 뒤에 잰다 (2026-09-17).
+        jobsWindowUserResized = false
+        fitJobsWindow()
         for entry in windows {
             guard let window = entry.1, let content = window.contentView else { continue }
             // 창을 옮기고 크기를 바꾸면 AppKit이 그 프레임을 autosave 이름에
@@ -7065,6 +7098,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        // 행마다 옅은 교차 배경을 직접 칠한다. 표의 내장 교차 배경은 행이
+        // 없는 자리까지 칠해서, 행이 한두 개인 창의 아래 절반이 회색 줄무늬로
+        // 남았다 (2026-09-17).
+        return tableCellView(tableView, column: tableColumn, row: row)
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let ident = NSUserInterfaceItemIdentifier("row.stripe")
+        let view = tableView.makeView(withIdentifier: ident, owner: self) as? StripedRowView
+            ?? StripedRowView()
+        view.identifier = ident
+        view.isOdd = row % 2 == 1
+        return view
+    }
+
+    private func tableCellView(_ tableView: NSTableView, column tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if tableView === logTable {
             guard row >= 0, row < displayedReceipts.count, let column = tableColumn else { return nil }
             let receipt = displayedReceipts[row]

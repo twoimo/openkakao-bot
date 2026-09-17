@@ -63,6 +63,23 @@ def in_table_row(row: dict) -> bool:
     return "/NSTableRowView" in row["path"]
 
 
+def hidden_ancestor(row: dict, by_path: dict[str, dict]) -> bool:
+    """Whether any view above this one is hidden.
+
+    A hidden container keeps laying its children out, and AppKit leaves the
+    children's own `hidden` flag alone. Judging those children reported the
+    empty-state card as spilling 17pt out of a view the operator cannot see
+    (2026-09-17).
+    """
+    path = row["path"]
+    while "/" in path:
+        path = path.rsplit("/", 1)[0]
+        ancestor = by_path.get(path)
+        if ancestor is not None and ancestor["hidden"]:
+            return True
+    return False
+
+
 # Containers that only position their children. Two of these can share space
 # without hiding anything, so their overlap is not reported.
 PLAIN_CONTAINERS = (
@@ -379,10 +396,16 @@ def audit(
 def overlaps_in(rows: list[dict]) -> list[dict]:
     """Siblings that share the same space hide each other's content."""
     found: list[dict] = []
+    by_path = {row["path"]: row for row in rows}
     by_parent: dict[str, list[dict]] = {}
     for row in rows:
         # A control's own bezel and title share its box by design.
-        if row["hidden"] or not row["path"].count("/") or inside_control(row):
+        if (
+            row["hidden"]
+            or hidden_ancestor(row, by_path)
+            or not row["path"].count("/")
+            or inside_control(row)
+        ):
             continue
         by_parent.setdefault(row["path"].rsplit("/", 1)[0], []).append(row)
     for siblings in by_parent.values():
@@ -431,7 +454,12 @@ def spills_in(rows: list[dict]) -> list[dict]:
         # stack reports a frame that is 7pt taller than the slot the stack
         # gave it. That is the control drawing its own edge, not content
         # escaping (2026-09-16).
-        if row["hidden"] or not row["path"].count("/") or inside_control(row):
+        if (
+            row["hidden"]
+            or hidden_ancestor(row, by_path)
+            or not row["path"].count("/")
+            or inside_control(row)
+        ):
             continue
         parent = by_path.get(row["path"].rsplit("/", 1)[0])
         if parent is None or is_internal(parent) or is_internal(row):
