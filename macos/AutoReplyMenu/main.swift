@@ -1614,6 +1614,36 @@ final class KnowledgeGraphView: NSView {
     var selectedNodeId: String?
     var onSelect: ((KnowledgeNode?) -> Void)?
 
+    /// 드릴다운으로 확대해 들여다보는 뉴런.
+    ///
+    /// 뉴런을 누르면 그 뉴런과 이웃만 남기고 카메라가 부드럽게 다가간다.
+    /// 341개 시냅스가 한 화면에 겹쳐 있으면 눌러도 무엇과 이어졌는지 읽을
+    /// 수 없어, 고른 뉴런의 이웃을 화면 가득 펼치는 편이 훨씬 잘 읽힌다
+    /// (2026-09-17, 사용자 지시).
+    private var focusNodeId: String?
+    /// 0이면 전체 그림, 1이면 포커스에 완전히 다가간 상태.
+    private var focusProgress: Double = 0
+    private var focusTimer: Timer?
+    private var focusAnimationStart: Double = 0
+    /// 확대 전환에 걸리는 시간(초).
+    static let focusDuration: Double = 0.32
+    /// 포커스 애니메이션의 프레임 상한. 코어와 같은 이유로 60fps를 쓰지 않는다.
+    static let focusFramesPerSecond: Double = 60
+
+    /// 자비스 코어와 같은 금색 계열 팔레트.
+    ///
+    /// 예전에는 이 창만 청록(teal)이었다. 같은 앱의 코어가 주황·금색인데
+    /// 지식 그래프만 다른 색이면 한 앱이 아니라 두 앱처럼 보인다
+    /// (2026-09-17, 사용자 지시).
+    /// 자비스 코어가 쓰는 값과 같은 계열로 맞춘다. 코어의 밝은 금색은
+    /// (1.0, 0.70, 0.26)이고 어두운 쪽은 (1.0, 0.62, 0.18)이다. 같은 앱
+    /// 안에서 두 화면이 같은 빛을 쓰도록 그 값을 그대로 가져온다
+    /// (2026-09-17, 사용자 지시).
+    static let neuronGold = NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.26, alpha: 1)
+    static let neuronBrass = NSColor(calibratedRed: 0.72, green: 0.52, blue: 0.24, alpha: 1)
+    static let synapseGold = NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: 1)
+    static let synapseBrass = NSColor(calibratedRed: 0.62, green: 0.48, blue: 0.26, alpha: 1)
+
     /// 뉴런마다 그릴 시냅스의 개수.
     ///
     /// 관계를 전부 그리면 가운데가 선밭이 되어 무엇이 무엇과 이어졌는지
@@ -1641,6 +1671,13 @@ final class KnowledgeGraphView: NSView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
+    }
+
+    deinit {
+        // 포커스 타이머는 뷰가 사라질 때 반드시 멈춘다. RunLoop가 타이머를
+        // 붙들고 있으면 뷰가 해제된 뒤에도 콜백이 돌아 크래시로 이어진다
+        // (2026-09-17).
+        focusTimer?.invalidate()
     }
 
     override func updateTrackingAreas() {
@@ -1698,14 +1735,55 @@ final class KnowledgeGraphView: NSView {
     /// 202pt). 시뮬레이션 좌표는 그대로 두고 그릴 때만 늘린다. 좌표를 직접
     /// 고치면 배치가 다시 돌 때마다 배율이 겹곱해져 뉴런이 창 밖으로 밀려난다
     /// (2026-09-16).
-    private func fitTransform() -> (scaleX: CGFloat, scaleY: CGFloat, offsetX: CGFloat, offsetY: CGFloat) {
+    /// 드릴다운에서 함께 보여 줄 이웃의 최대 개수.
+    ///
+    /// 허브 뉴런 하나는 이웃이 서른 개가 넘는다. 전부 남기면 확대해도
+    /// 화면이 처음과 똑같아, 눌러도 달라지는 것이 없다. 굵은 시냅스부터
+    /// 이만큼만 남기면 "이 뉴런은 무엇과 가까운가"가 한눈에 읽힌다
+    /// (2026-09-17, 사용자 지시).
+    static let focusNeighborLimit = 10
+
+    /// 드릴다운 대상과 그 이웃. 확대했을 때 화면에 남길 뉴런들이다.
+    ///
+    /// 이웃은 양쪽 방향을 모두 본다. 한 방향만 보면 "A가 B를 가리킨다"만
+    /// 있는 뉴런에서 B를 눌렀을 때 A가 사라져, 정작 이어져 있던 상대가
+    /// 화면에서 빠진다 (2026-09-17).
+    func focusGroup(around nodeId: String) -> [KnowledgeNode] {
+        // 굵은 시냅스부터 센다. 같은 뉴런으로 가는 시냅스가 여럿이면
+        // 가장 굵은 것 하나만 그 뉴런의 세기로 본다.
+        var strongest: [String: Int] = [:]
+        for edge in edges {
+            let other: String
+            if edge.source == nodeId {
+                other = edge.target
+            } else if edge.target == nodeId {
+                other = edge.source
+            } else {
+                continue
+            }
+            strongest[other] = max(strongest[other] ?? 0, edge.weight)
+        }
+        var keep: Set<String> = [nodeId]
+        let ranked = strongest.sorted { left, right in
+            if left.value != right.value { return left.value > right.value }
+            return left.key < right.key
+        }
+        for (id, _) in ranked.prefix(Self.focusNeighborLimit) {
+            keep.insert(id)
+        }
+        return nodes.filter { keep.contains($0.id) }
+    }
+
+    private func fitTransform(
+        nodes subset: [KnowledgeNode]
+    ) -> (scaleX: CGFloat, scaleY: CGFloat, offsetX: CGFloat, offsetY: CGFloat) {
         // 실제 크기를 쓴다. 시뮬레이션의 최소 크기(480x320)를 그대로 쓰면
         // 260pt 높이의 창에서 배율이 그만큼 커져 뉴런이 창 밖으로 밀려난다
         // (2026-09-16).
         let width = bounds.width
         let height = bounds.height
         let identity = (scaleX: CGFloat(1), scaleY: CGFloat(1), offsetX: CGFloat(0), offsetY: CGFloat(0))
-        guard nodes.count > 1, width > 1, height > 1 else { return identity }
+        guard subset.count > 1, width > 1, height > 1 else { return identity }
         // 그려지는 것은 중심이 아니라 그 둘레의 장식이다. 세포체 둘레에
         // 1.7배 광륜이 깔리고 이름표가 아래에 붙는데, 둘 다 화면 좌표에서
         // 고정 크기라 배율을 타지 않는다. 그래서 배율은 "장식을 뺀 나머지
@@ -1720,7 +1798,7 @@ final class KnowledgeGraphView: NSView {
         var minCy = CGFloat.greatestFiniteMagnitude
         var maxCy = -CGFloat.greatestFiniteMagnitude
         var leftEdge = 0.0, rightEdge = 0.0, topEdge = 0.0, bottomEdge = 0.0
-        for node in nodes {
+        for node in subset {
             guard let pos = positions[node.id] else { continue }
             let r = radius(node)
             let glow = r * 1.7
@@ -1766,8 +1844,80 @@ final class KnowledgeGraphView: NSView {
     }
 
     private func fitted(_ point: CGPoint) -> CGPoint {
-        let fit = fitTransform()
+        let fit = fitTransform(nodes: nodes)
         return CGPoint(x: point.x * fit.scaleX + fit.offsetX, y: point.y * fit.scaleY + fit.offsetY)
+    }
+
+    /// 포커스가 걸렸을 때 그 뉴런이 앉을 자리.
+    ///
+    /// 고른 뉴런을 화면 가운데로 옮기고 이웃을 둘레에 고르게 편다. 전체
+    /// 배치를 그대로 확대하면 이웃이 서로 멀리 떨어져 있을 때 배율이 한없이
+    /// 커져 노드가 화면 밖으로 밀려난다. 자리를 새로 잡으면 어떤 뉴런을
+    /// 눌러도 같은 크기로 펼쳐진다 (2026-09-17, 사용자 지시).
+    private func focusPoint(for nodeId: String, ring: [String]) -> CGPoint? {
+        guard let focusId = focusNodeId else { return nil }
+        let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        if nodeId == focusId { return center }
+        guard let index = ring.firstIndex(of: nodeId) else { return nil }
+        // 가장자리 이름표와 광륜이 잘리지 않을 만큼만 남기고 최대한 편다.
+        // 높이의 32%만 쓰면 위아래에 80pt가 비어 감사가 빈 띠로 잡는다.
+        // 이름표는 몸통 아래로 붙으므로 아래쪽 여유를 조금 더 준다
+        // (2026-09-17).
+        let labelRoom: CGFloat = 26
+        let radius = max(
+            min(
+                (bounds.width - 80) / 2,
+                (bounds.height - labelRoom * 2) / 2
+            ),
+            60
+        )
+        let step = (2 * Double.pi) / Double(max(ring.count, 1))
+        // -90도에서 시작해 12시 방향부터 시계 방향으로 편다. 무거운 이웃이
+        // 먼저 오므로 위쪽부터 읽힌다.
+        let angle = -Double.pi / 2 + step * Double(index)
+        return CGPoint(
+            x: center.x + CGFloat(cos(angle)) * radius,
+            y: center.y + CGFloat(sin(angle)) * radius
+        )
+    }
+
+    /// 이 뉴런을 지금 어디에 그릴지. 전체 배치와 포커스 배치를 섞는다.
+    private func layoutPoint(for nodeId: String, ring: [String]) -> CGPoint? {
+        guard let raw = positions[nodeId] else { return nil }
+        let global = fitted(raw)
+        guard focusNodeId != nil, focusProgress > 0.01,
+              let target = focusPoint(for: nodeId, ring: ring) else {
+            return global
+        }
+        // 양 끝에서 속도가 0이 되는 곡선. 선형으로 두면 다가가기 시작할 때와
+        // 멈출 때가 툭 끊겨 보인다.
+        let t = CGFloat(min(max(focusProgress, 0), 1))
+        let eased = t * t * (3 - 2 * t)
+        return CGPoint(
+            x: global.x + (target.x - global.x) * eased,
+            y: global.y + (target.y - global.y) * eased
+        )
+    }
+
+    /// 포커스 중에 둘레에 펼 뉴런의 순서. 무거운 시냅스부터다.
+    private func focusRing() -> [String] {
+        guard let focusId = focusNodeId else { return [] }
+        var strongest: [String: Int] = [:]
+        for edge in edges {
+            let other: String
+            if edge.source == focusId {
+                other = edge.target
+            } else if edge.target == focusId {
+                other = edge.source
+            } else {
+                continue
+            }
+            strongest[other] = max(strongest[other] ?? 0, edge.weight)
+        }
+        return strongest.sorted { left, right in
+            if left.value != right.value { return left.value > right.value }
+            return left.key < right.key
+        }.prefix(Self.focusNeighborLimit).map { $0.key }
     }
 
     /// A small force-directed relaxation. Repulsion between every pair is
@@ -1867,9 +2017,13 @@ final class KnowledgeGraphView: NSView {
     private func node(at point: CGPoint) -> KnowledgeNode? {
         var best: KnowledgeNode?
         var bestDistance = CGFloat.greatestFiniteMagnitude
+        let ring = focusRing()
         for node in nodes {
-            guard let raw = positions[node.id] else { continue }
-            let pos = fitted(raw)
+            guard let pos = layoutPoint(for: node.id, ring: ring) else { continue }
+            // 확대해서 걷어낸 뉴런은 화면에 없다. 눌리면 빈 곳을 눌렀는데
+            // 보이지도 않는 뉴런이 골라져 근거 카드가 엉뚱한 것을 가리킨다
+            // (2026-09-17).
+            guard focusKeeps(nodeId: node.id) else { continue }
             let r = radius(node)
             let dx = point.x - pos.x
             let dy = point.y - pos.y
@@ -1891,8 +2045,9 @@ final class KnowledgeGraphView: NSView {
         var maxX = -CGFloat.greatestFiniteMagnitude
         var minY = CGFloat.greatestFiniteMagnitude
         var maxY = -CGFloat.greatestFiniteMagnitude
+        let ring = focusRing()
         for node in nodes {
-            guard let pos = positions[node.id] else { continue }
+            guard let pos = layoutPoint(for: node.id, ring: ring) else { continue }
             let r = radius(node)
             minX = min(minX, pos.x - r)
             maxX = max(maxX, pos.x + r)
@@ -1900,23 +2055,115 @@ final class KnowledgeGraphView: NSView {
             maxY = max(maxY, pos.y + r)
         }
         guard maxX > minX else { return nil }
-        // 그리는 좌표로 돌려준다. 감사는 화면에 보이는 자리를 재야 한다.
-        let topLeft = fitted(CGPoint(x: minX, y: minY))
-        let bottomRight = fitted(CGPoint(x: maxX, y: maxY))
-        return NSRect(
-            x: topLeft.x,
-            y: topLeft.y,
-            width: bottomRight.x - topLeft.x,
-            height: bottomRight.y - topLeft.y
-        )
+        // layoutPoint()가 이미 그리는 좌표를 준다. 감사는 화면에 보이는
+        // 자리를 재야 하므로 여기서 더 옮기지 않는다 (2026-09-17).
+        return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let hit = node(at: point)
         selectedNodeId = hit?.id
+        // 고른 뉴런으로 카메라를 부드럽게 들이민다. 빈 곳을 누르면 다시
+        // 전체 그림으로 물러난다 (2026-09-17, 사용자 지시).
+        beginFocus(on: hit?.id)
         onSelect?(hit)
         needsDisplay = true
+    }
+
+    /// 드릴다운 확대를 시작한다. 이미 그 뉴런을 보고 있으면 다시 시작하지 않는다.
+    func beginFocus(on nodeId: String?) {
+        let target = (nodeId == nil || focusGroup(around: nodeId!).count <= 1) ? nil : nodeId
+        if target == focusNodeId { return }
+        focusNodeId = target
+        // 확대를 풀 때는 지금 배율에서, 걸 때는 전체 그림에서 출발한다.
+        focusAnimationStart = Date().timeIntervalSince1970
+        startFocusTimer()
+    }
+
+    /// 지금 화면이 확대 상태인지. 창이 힌트 줄에 안내를 띄울 때 쓴다.
+    var isFocused: Bool { focusNodeId != nil && focusProgress > 0.01 }
+
+    /// 확대 애니메이션을 끝 상태로 못 박는다.
+    ///
+    /// 배치 감사는 창을 화면에 띄우지 않으므로 RunLoop가 돌지 않아 타이머가
+    /// 진행되지 않는다. 그대로 찍으면 확대 전 그림만 남아, 감사가 드릴다운을
+    /// 한 번도 확인하지 못한다 (2026-09-17).
+    func finishFocusForAudit() {
+        focusTimer?.invalidate()
+        focusTimer = nil
+        focusProgress = focusNodeId == nil ? 0 : 1
+        needsDisplay = true
+    }
+
+    /// 포커스 중인 뉴런의 이름. 힌트 줄이 무엇을 보고 있는지 말한다.
+    var focusedNodeLabel: String? {
+        guard let id = focusNodeId else { return nil }
+        return nodes.first { $0.id == id }?.label
+    }
+
+    private func startFocusTimer() {
+        guard focusTimer == nil else { return }
+        let interval = 1.0 / Self.focusFramesPerSecond
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            self?.stepFocus()
+        }
+        // 메뉴가 열려 있는 동안에도 애니메이션이 돌아야 하므로 common 모드에 건다.
+        RunLoop.main.add(timer, forMode: .common)
+        focusTimer = timer
+    }
+
+    private func stepFocus() {
+        let elapsed = Date().timeIntervalSince1970 - focusAnimationStart
+        let raw = min(max(elapsed / Self.focusDuration, 0), 1)
+        let wanted = focusNodeId == nil ? 1 - raw : raw
+        if abs(wanted - focusProgress) > 0.001 {
+            focusProgress = wanted
+            needsDisplay = true
+        }
+        if raw >= 1 {
+            focusProgress = focusNodeId == nil ? 0 : 1
+            focusTimer?.invalidate()
+            focusTimer = nil
+            // 확대가 끝나면 그 상태로 멈춘다. 계속 그리면 배터리만 쓴다.
+            needsDisplay = true
+        }
+    }
+
+    /// 포커스 중에 남길 뉴런의 불투명도.
+    ///
+    /// 이어진 이웃은 그대로 두고, 나머지는 확대가 끝날 때 완전히 사라진다.
+    /// 흐리게 남겨 두면 화면 가장자리에 유령 같은 원이 늘어서, 정작 보고
+    /// 싶은 이웃 관계가 그 사이에 묻힌다 (2026-09-17, 사용자 지시).
+    private func focusAlpha(for nodeId: String) -> CGFloat {
+        guard let focusId = focusNodeId, focusProgress > 0.01 else { return 1 }
+        if nodeId == focusId { return 1 }
+        let faded = CGFloat(min(max(focusProgress, 0), 1))
+        // 둘레에 남는 이웃만 밝게. 목록에서 잘린 뉴런은 확대가 끝나면 완전히
+        // 사라진다. focusKeeps(edge:)와 같은 목록을 봐야 선과 몸통이 어긋나지
+        // 않는다 (2026-09-17).
+        guard focusRing().contains(nodeId) else {
+            return max(0, 1 - faded * 1.6)
+        }
+        return 1 - 0.2 * faded
+    }
+
+    /// 지금 그 뉴런을 눌러도 되는지. 사라진 뉴런은 누를 수 없어야 한다.
+    private func focusKeeps(nodeId: String) -> Bool {
+        focusAlpha(for: nodeId) > 0.02
+    }
+
+    /// 확대 중에 그릴 시냅스인지.
+    ///
+    /// 양쪽 끝이 모두 화면에 남는 시냅스만 그린다. 한쪽만 확인하면, 둘레에
+    /// 펼 이웃 목록에서 잘린 뉴런으로 가는 선이 화면 밖까지 뻗어 별자리처럼
+    /// 보인다 (2026-09-17, 사용자 지시).
+    private func focusKeeps(edge: KnowledgeEdge) -> Bool {
+        guard let focusId = focusNodeId, focusProgress > 0.01 else { return true }
+        if edge.source != focusId, edge.target != focusId { return false }
+        // 반대쪽 끝이 둘레에 남았는지 본다. 포커스 뉴런 자신은 언제나 남는다.
+        let other = edge.source == focusId ? edge.target : edge.source
+        return focusGroup(around: focusId).contains { $0.id == other }
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -1973,22 +2220,58 @@ final class KnowledgeGraphView: NSView {
             perNode[edge.source, default: []].append((edge.weight, index))
             perNode[edge.target, default: []].append((edge.weight, index))
         }
+        // 뉴런마다 굵은 순으로 고른 뒤, 합집합이 다시 상한을 넘지 않게
+        // 한 번 더 깎는다. 양쪽 끝에서 각각 넷을 고르면 어떤 뉴런은 여덟
+        // 개까지 붙어, "뉴런당 넷"이라는 규칙이 화면에서 지켜지지 않았다
+        // (2026-09-17, 6 Pro 지적).
         var kept: Set<Int> = []
         for (_, list) in perNode {
             for entry in list.sorted(by: { $0.weight > $1.weight }).prefix(Self.synapsesPerNeuron) {
                 kept.insert(entry.index)
             }
         }
-        keptSynapses = kept
-        return kept
+        // 무거운 시냅스부터 다시 넣으면서 양쪽 끝의 남은 자리를 확인한다.
+        var budget: [String: Int] = [:]
+        var trimmed: Set<Int> = []
+        let ranked = edges.enumerated()
+            .filter { kept.contains($0.offset) }
+            .sorted { left, right in
+                if left.element.weight != right.element.weight {
+                    return left.element.weight > right.element.weight
+                }
+                return left.offset < right.offset
+            }
+        for (index, edge) in ranked {
+            let usedSource = budget[edge.source, default: 0]
+            let usedTarget = budget[edge.target, default: 0]
+            guard usedSource < Self.synapsesPerNeuron,
+                  usedTarget < Self.synapsesPerNeuron else { continue }
+            budget[edge.source] = usedSource + 1
+            budget[edge.target] = usedTarget + 1
+            trimmed.insert(index)
+        }
+        keptSynapses = trimmed
+        return trimmed
+    }
+
+    /// 시스템이 "대비 증가"를 켰는지. 흐린 회색 시냅스를 그대로 두면 배경에
+    /// 묻혀, 저시력 사용자에게 그래프가 빈 캔버스로 보인다 (2026-09-17).
+    private var increaseContrast: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         NSColor.clear.setFill()
         bounds.fill()
+        let highContrast = increaseContrast
         let positions = self.positions
         let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+        // 포커스가 걸렸으면 이웃을 둘레로 다시 편다. 그린 자리와 누르는
+        // 자리가 어긋나면 보이는 뉴런을 눌러도 다른 것이 잡힌다
+        // (2026-09-17, 사용자 지시).
+        let ring = focusRing()
+        func placed(_ id: String) -> CGPoint? { layoutPoint(for: id, ring: ring) }
 
         // 시냅스를 먼저 깔아 세포체가 그 위에 앉게 한다.
         //
@@ -2001,19 +2284,34 @@ final class KnowledgeGraphView: NSView {
         // 고른 뉴런에 붙은 것은 하나도 빠뜨리지 않는다 (2026-09-17).
         let kept = backgroundSynapses()
         for (index, edge) in edges.enumerated() {
-            guard let rawA = positions[edge.source], let rawB = positions[edge.target] else { continue }
-            let a = fitted(rawA)
-            let b = fitted(rawB)
+            guard positions[edge.source] != nil, positions[edge.target] != nil else { continue }
+            guard let a = placed(edge.source), let b = placed(edge.target) else { continue }
             let grounded = edge.evidence.grounded
             let strength = CGFloat(min(100, max(0, edge.weight))) / 100.0
             let touchesHighlight = highlight != nil
                 && (edge.source == highlight || edge.target == highlight)
             guard touchesHighlight || kept.contains(index) else { continue }
+            // 포커스를 잡으면 그 뉴런에 붙은 시냅스만 남긴다. 나머지를
+            // 그대로 두면 확대해도 선밭이 따라와 읽히지 않는다
+            // (2026-09-17, 사용자 지시).
+            guard focusKeeps(edge: edge) else { continue }
             // 고른 뉴런에 붙은 시냅스만 또렷하게. 나머지는 배경으로 물러난다.
-            let alpha = touchesHighlight
+            var alpha = touchesHighlight
                 ? 0.55 + 0.35 * strength
                 : (highlight == nil ? 0.22 + 0.34 * strength : 0.06 + 0.10 * strength)
-            let color = (grounded ? NSColor.systemTeal : NSColor.systemGray)
+            if let focusId = focusNodeId, focusProgress > 0.01 {
+                let onFocus = edge.source == focusId || edge.target == focusId
+                if !onFocus {
+                    alpha *= CGFloat(1 - 0.88 * min(max(focusProgress, 0), 1))
+                }
+            }
+            if highContrast {
+                // 대비 증가에서는 배경 선도 읽을 수 있어야 한다.
+                alpha = touchesHighlight ? min(1.0, alpha + 0.15) : max(alpha, 0.42)
+            }
+            // 자비스 코어와 같은 금색 계열. 근거가 있는 시냅스는 밝은 금색,
+            // 아직 확인되지 않은 것은 흐린 놋쇠색이다 (2026-09-17).
+            let color = (grounded ? Self.synapseGold : Self.synapseBrass)
                 .withAlphaComponent(alpha)
             let path = NSBezierPath()
             path.move(to: a)
@@ -2031,8 +2329,7 @@ final class KnowledgeGraphView: NSView {
         }
 
         for node in nodes {
-            guard let raw = positions[node.id] else { continue }
-            let pos = fitted(raw)
+            guard let pos = placed(node.id) else { continue }
             let r = radius(node)
             let selected = node.id == selectedNodeId
             let hovered = node.id == hoveredId
@@ -2041,25 +2338,27 @@ final class KnowledgeGraphView: NSView {
             // 예전에는 모든 뉴런에 1.7배 광륜을 깔았다. 뉴런 50개가 서로
             // 겹치면서 가운데가 뿌연 얼룩이 되었다. 지금은 고르거나 마우스를
             // 올린 뉴런에만 광륜을 준다 (2026-09-17, 6 Pro 지적).
-            let core = node.evidence.grounded ? NSColor.systemTeal : NSColor.systemGray
+            let core = node.evidence.grounded ? Self.neuronGold : Self.neuronBrass
             let emphasized = selected || hovered
-            if emphasized {
-                let halo = NSBezierPath(
-                    ovalIn: NSRect(x: pos.x - r * 1.7, y: pos.y - r * 1.7, width: r * 3.4, height: r * 3.4)
-                )
-                core.withAlphaComponent(selected ? 0.30 : 0.20).setFill()
-                halo.fill()
-            }
+            // 확대해서 걷어낸 뉴런은 고리도 남기지 않는다. 몸통만 지우고
+            // 고리를 두면 화면에 빈 동그라미만 떠서, 사라진 것이 아니라
+            // 그려지다 만 것처럼 보인다 (2026-09-17).
+            let focusOpacity = focusAlpha(for: node.id)
             let body = NSBezierPath(ovalIn: NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
-            let bodyAlpha: CGFloat = emphasized ? 1.0 : (node.evidence.grounded ? 0.82 : 0.48)
+            var bodyAlpha: CGFloat = emphasized ? 1.0 : (node.evidence.grounded ? 0.82 : 0.48)
+            bodyAlpha *= focusOpacity
+            if highContrast, !emphasized {
+                bodyAlpha = max(bodyAlpha, 0.85)
+            }
             core.withAlphaComponent(bodyAlpha).setFill()
             body.fill()
             if node.evidence.retracted {
-                NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+                NSColor.systemRed.withAlphaComponent(0.9 * focusOpacity).setStroke()
                 body.lineWidth = 2
                 body.stroke()
             }
-            NSColor.white.withAlphaComponent(selected ? 0.95 : 0.6).setStroke()
+            NSColor(calibratedRed: 1.0, green: 0.93, blue: 0.68, alpha: (selected ? 0.95 : 0.6) * focusOpacity)
+                .setStroke()
             let ring = NSBezierPath(ovalIn: NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
             ring.lineWidth = selected ? 2 : 1
             ring.stroke()
@@ -2081,9 +2380,11 @@ final class KnowledgeGraphView: NSView {
     private func drawLabels() {
         var placed: [NSRect] = []
         // 세포체도 자리를 차지한다. 이름표가 남의 몸통을 덮으면 읽기 어렵다.
+        // 확대에서 걷어낸 뉴런은 자리도 차지하지 않는다.
+        let ring = focusRing()
         for node in nodes {
-            guard let raw = positions[node.id] else { continue }
-            let pos = fitted(raw)
+            guard focusAlpha(for: node.id) > 0.02 else { continue }
+            guard let pos = layoutPoint(for: node.id, ring: ring) else { continue }
             let r = radius(node)
             placed.append(NSRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2))
         }
@@ -2092,15 +2393,16 @@ final class KnowledgeGraphView: NSView {
             return left.id < right.id
         }
         for node in ordered {
-            guard let raw = positions[node.id] else { continue }
-            let pos = fitted(raw)
+            guard focusAlpha(for: node.id) > 0.02 else { continue }
+            guard let pos = layoutPoint(for: node.id, ring: ring) else { continue }
             let r = radius(node)
             let selected = node.id == selectedNodeId
             let hovered = node.id == hoveredId
             let text = node.label as NSString
+            let alpha = focusAlpha(for: node.id)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10, weight: selected ? .semibold : .regular),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: NSColor.labelColor.withAlphaComponent(alpha),
             ]
             let size = text.size(withAttributes: attrs)
             // 이름 뒤에 까는 판이 좌우로 3pt씩 넓다 (labelExtent 참고).
@@ -2125,7 +2427,7 @@ final class KnowledgeGraphView: NSView {
             let rect = chosen ?? NSRect(x: pos.x - width / 2, y: pos.y + r + 2, width: width, height: height)
             placed.append(rect)
             // A soft plate keeps the name readable over a synapse.
-            NSColor.windowBackgroundColor.withAlphaComponent(0.72).setFill()
+            NSColor.windowBackgroundColor.withAlphaComponent(0.72 * alpha).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
             let inner = NSRect(
                 x: rect.minX + 3,
@@ -3409,6 +3711,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorFitting = false
     var vectorGraphHint: NSTextField?
     var vectorGraphToken = 0
+    /// 마지막으로 읽은 그래프의 규모. 힌트 줄을 다시 쓸 때 쓴다.
+    var vectorGraphTotal = 0
+    var vectorGraphGrounded = 0
     var lastVectorGraphReadAt = Date.distantPast
     var lastVectorGraphSource = ""
     /// 그래프 화면 상태. 실패와 "아직 데이터 없음"을 같은 문구로 보여 주면
@@ -5747,6 +6052,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 images.append(name + ".png")
             }
             window.orderOut(nil)
+        }
+        // 드릴다운 확대를 한 장 더 찍는다. 뉴런을 눌렀을 때 이웃만 남고
+        // 카메라가 다가가는지, 이름표가 잘리지 않는지는 이 그림이 없으면
+        // 눈으로 확인할 방법이 없다 (2026-09-17).
+        if let graph = vectorGraphView, let window = vectorWindow,
+           let content = window.contentView, graph.nodes.count > 1 {
+            // 가장 많이 이어진 뉴런을 고른다. 이웃이 하나뿐인 뉴런을 고르면
+            // 확대 효과가 거의 보이지 않아 감사가 통과해도 의미가 없다.
+            var degree: [String: Int] = [:]
+            for edge in graph.edges {
+                degree[edge.source, default: 0] += 1
+                degree[edge.target, default: 0] += 1
+            }
+            let hub = graph.nodes.max { left, right in
+                (degree[left.id] ?? 0) < (degree[right.id] ?? 0)
+            }
+            if let hub {
+                graph.selectedNodeId = hub.id
+                graph.beginFocus(on: hub.id)
+                // 확대 애니메이션은 타이머로 돈다. 감사는 화면을 띄우지
+                // 않으므로 여기서 끝 상태로 못 박고 찍는다.
+                graph.finishFocusForAudit()
+                window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+                window.orderFrontRegardless()
+                content.layoutSubtreeIfNeeded()
+                LayoutAudit.collect(
+                    from: content,
+                    window: "vector-focus",
+                    path: "vector-focus",
+                    windowSize: content.bounds.size,
+                    into: &rows
+                )
+                if let aqua = NSAppearance(named: .aqua),
+                   LayoutAudit.writeCapture(
+                       content,
+                       appearance: aqua,
+                       to: directory.appendingPathComponent("vector-focus.png")
+                   ) {
+                    images.append("vector-focus.png")
+                }
+                window.orderOut(nil)
+            }
         }
         // 다크 모드에서도 같은 그림이 나오는지 잰다. 캡처는 화면에 실제로
         // 그리는 색을 담으므로, 라이트에서만 통과하면 어두운 배경에서
@@ -8230,18 +8577,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
                 self.vectorGraphPhase = .ready
                 self.applyVectorGraphRetryVisibility()
-                self.vectorGraphHint?.stringValue =
-                    "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다. "
-                    + "크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
+                self.vectorGraphTotal = total
+                self.vectorGraphGrounded = grounded
+                self.applyVectorGraphHint(total: total, grounded: grounded)
             }
         }
+    }
+
+    /// 지금 그래프가 무엇을 보여 주는지 한 줄로 말한다.
+    func applyVectorGraphHint(total: Int, grounded: Int) {
+        guard let graph = vectorGraphView else { return }
+        if let label = graph.focusedNodeLabel, graph.isFocused {
+            vectorGraphHint?.stringValue =
+                "\(label)을(를) 중심으로 펼쳤습니다. 이어진 뉴런만 남았습니다. "
+                + "빈 곳을 누르면 전체 그림으로 돌아갑니다."
+            return
+        }
+        vectorGraphHint?.stringValue =
+            "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다. "
+            + "크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
     }
 
     /// 그래프에서 고른 뉴런과 같은 행을 표에서도 고른다. 두 보기가 같은
     /// 데이터를 가리키므로, 표에 없으면 선택만 바꾸지 않고 그대로 둔다.
     func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
         guard let node else {
-            // 빈 공간 클릭으로 선택이 해제된 경우 근거 카드를 즉시 닫는다 (2026-09-17, 6 Pro 지적).
+            // 빈 공간 클릭으로 선택이 해제된 경우 근거 카드를 즉시 닫고,
+            // 힌트 줄도 전체 그림 기준으로 되돌린다 (2026-09-17, 6 Pro 지적).
+            applyVectorGraphHint(total: vectorGraphTotal, grounded: vectorGraphGrounded)
             applyVectorLayout()
             return
         }
@@ -8265,6 +8628,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         lines.append(contentsOf: node.facts.map { "• \($0)" })
         vectorMessageView?.string = lines.joined(separator: "\n")
         vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
+        // 확대가 끝난 뒤 힌트 줄이 "무엇을 보고 있는지"를 말한다.
+        // 선택 직후에는 아직 확대 중이므로 한 박자 뒤에 다시 쓴다.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyVectorGraphHint(
+                total: self.vectorGraphTotal,
+                grounded: self.vectorGraphGrounded
+            )
+        }
         applyVectorLayout()
     }
 
