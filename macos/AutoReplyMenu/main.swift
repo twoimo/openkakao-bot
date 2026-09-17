@@ -3377,6 +3377,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorGraphToken = 0
     var lastVectorGraphReadAt = Date.distantPast
     var lastVectorGraphSource = ""
+    /// 그래프 화면 상태. 실패와 "아직 데이터 없음"을 같은 문구로 보여 주면
+    /// 첫 조회가 타임아웃 났을 때 사용자가 색인이 비었다고 오해한다
+    /// (2026-09-17, 6 Pro 지적).
+    enum VectorGraphPhase {
+        case idle
+        case loading
+        case ready
+        case empty
+        case error
+        case stale
+    }
+    var vectorGraphPhase: VectorGraphPhase = .idle
+    /// 재시도 버튼은 실패했을 때만 보여 준다.
+    var vectorGraphRetryButton: NSButton?
+    var vectorGraphRetryHandler: (() -> Void)?
     // 모델 설정 창 (답변 모델 + 이미지 모델 통합, R5)
     var modelWindow: NSWindow?
     var modelReplyPopup: NSPopUpButton?
@@ -7501,7 +7516,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             size: 11
         )
         vectorGraphHint = graphHint
-        let graphStack = Chrome.vstack([graphHint, graph], spacing: 6)
+        // 실패했을 때만 나타나는 재시도 버튼. 빈 상태에는 누를 것이 없으므로
+        // 숨겨 두고, 오류·오래된 그림일 때만 보여 준다 (2026-09-17, 6 Pro 지적).
+        let graphRetry = Chrome.roundedButton(
+            "지식 그래프 다시 읽기",
+            target: self,
+            action: #selector(vectorGraphRetryClicked)
+        )
+        graphRetry.toolTip = "지식 그래프를 다시 읽습니다. 색인은 그대로 두고 화면만 새로 그립니다."
+        graphRetry.isHidden = true
+        vectorGraphRetryButton = graphRetry
+        let graphHintRow = Chrome.hstack([graphHint, Chrome.spacer(), graphRetry], spacing: 8)
+        let graphStack = Chrome.vstack([graphHintRow, graph], spacing: 6)
         vectorGraphStack = graphStack
         graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
 
@@ -7833,7 +7859,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 표가 비면 회색 띠 대신 이유를 적는다 (2026-09-16).
     func updateVectorEmptyState() {
         guard let label = vectorEmptyLabel else { return }
-        let empty = displayedVectors.isEmpty
         label.stringValue = ""
         vectorEmptyState?.titleText = vectorSourceKind == "knowledge_graph"
             ? "아직 그릴 뉴런이 없습니다"
@@ -8083,11 +8108,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 감추며, 감출 때는 힌트 줄에 왜 안 보이는지 적는다 (2026-09-16).
     func hideEmptyKnowledgeGraph() {
         guard let graph = vectorGraphView else { return }
-        let empty = graph.nodes.isEmpty
-        if empty, currentVectorSource() == "knowledge_graph" {
-            vectorGraphHint?.stringValue = "아직 그릴 뉴런이 없습니다. 메시지를 읽어 지식 그래프를 채우면 여기에 신경망으로 나타납니다."
+        // 실패 뒤에 이 함수가 불리면 방금 쓴 오류 안내를 "뉴런이 없습니다"로
+        // 덮어써 조회 실패가 데이터 없음으로 보인다. 오류·읽는 중에는
+        // 문구를 건드리지 않는다 (2026-09-17, 6 Pro 지적).
+        if graph.nodes.isEmpty, currentVectorSource() == "knowledge_graph" {
+            switch vectorGraphPhase {
+            case .error, .loading:
+                break
+            case .stale:
+                vectorGraphHint?.stringValue =
+                    "지식 그래프를 다시 읽지 못했습니다. 화면은 마지막으로 읽은 그림입니다."
+            default:
+                vectorGraphPhase = .empty
+                vectorGraphHint?.stringValue =
+                    "아직 그릴 뉴런이 없습니다. 메시지를 읽어 지식 그래프를 채우면 여기에 신경망으로 나타납니다."
+            }
         }
+        applyVectorGraphRetryVisibility()
         applyVectorLayout()
+    }
+
+    /// 실패했을 때만 재시도 버튼을 보여 준다. 빈 상태에는 누를 것이 없다.
+    func applyVectorGraphRetryVisibility() {
+        guard let button = vectorGraphRetryButton else { return }
+        let show = currentVectorSource() == "knowledge_graph"
+            && (vectorGraphPhase == .error || vectorGraphPhase == .stale)
+        button.isHidden = !show
+    }
+
+    /// 실패 안내와 재시도 경로를 함께 세운다.
+    func presentVectorGraphError(hasPreviousPicture: Bool) {
+        vectorGraphPhase = hasPreviousPicture ? .stale : .error
+        if hasPreviousPicture {
+            vectorGraphHint?.stringValue =
+                "지식 그래프를 다시 읽지 못했습니다. 화면은 마지막으로 읽은 그림입니다."
+        } else {
+            vectorGraphHint?.stringValue =
+                "지식 그래프를 읽지 못했습니다. 색인이 아직 없는 것과는 다릅니다. 다시 시도해 주세요."
+        }
+        applyVectorGraphRetryVisibility()
     }
 
     /// 그래프 전체를 한 번에 읽는다. 목록과 달리 쪽 나눔이 없어야 힘 배치가
@@ -8099,6 +8158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard currentVectorSource() == "knowledge_graph" else { return }
         lastVectorGraphReadAt = Date()
         lastVectorGraphSource = vectorSourceKind
+        vectorGraphPhase = .loading
+        applyVectorGraphRetryVisibility()
         vectorGraphToken += 1
         let token = vectorGraphToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -8108,19 +8169,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             DispatchQueue.main.async {
                 guard token == self.vectorGraphToken else { return }
                 guard let report, report.ok else {
-                    self.vectorGraphHint?.stringValue = "지식 그래프를 읽지 못했습니다. 잠시 뒤 다시 열어 주세요."
                     // 읽지 못했다고 이전 그림을 지우지 않는다.
                     //
                     // 지우면 한 번의 시간 초과가 화면을 "뉴런이 하나도 없는
                     // 그래프"로 바꿔, 색인이 멀쩡한데도 사용자에게는 그래프가
                     // 사라진 것으로 보인다. 그림은 그대로 두고 그 위에
                     // 마지막으로 읽은 시각을 말한다 (2026-09-17).
-                    if self.vectorGraphView?.nodes.isEmpty ?? true {
-                        self.hideEmptyKnowledgeGraph()
-                    } else {
-                        self.vectorGraphHint?.stringValue =
-                            "지식 그래프를 다시 읽지 못했습니다. 화면은 마지막으로 읽은 그림입니다."
-                    }
+                    let hasPicture = !(self.vectorGraphView?.nodes.isEmpty ?? true)
+                    self.presentVectorGraphError(hasPreviousPicture: hasPicture)
                     return
                 }
                 self.vectorGraphView?.nodes = report.nodes
@@ -8128,8 +8184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 let total = report.node_count
                 let grounded = report.grounded_nodes
                 // 뉴런이 없으면 빈 캔버스를 남기지 않는다.
-                self.hideEmptyKnowledgeGraph()
-                guard !report.nodes.isEmpty else { return }
+                if report.nodes.isEmpty {
+                    self.vectorGraphPhase = .empty
+                    self.hideEmptyKnowledgeGraph()
+                    return
+                }
+                self.vectorGraphPhase = .ready
+                self.applyVectorGraphRetryVisibility()
                 self.vectorGraphHint?.stringValue =
                     "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다. "
                     + "크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
@@ -8166,6 +8227,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         vectorMessageView?.string = lines.joined(separator: "\n")
         vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
         applyVectorLayout()
+    }
+
+    /// 사용자가 그래프를 다시 읽으라고 했을 때. 캐시 시각을 지워 다음 읽기가
+    /// 실제로 파이썬을 부르게 한다 (2026-09-17).
+    @objc func vectorGraphRetryClicked() {
+        lastVectorGraphReadAt = Date.distantPast
+        lastVectorGraphSource = ""
+        vectorGraphPhase = .loading
+        vectorGraphHint?.stringValue = "지식 그래프를 다시 읽는 중…"
+        applyVectorGraphRetryVisibility()
+        refreshKnowledgeGraph()
     }
 
     @objc func vectorTopicChanged() {
