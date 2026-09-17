@@ -8036,9 +8036,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 guard token == self.vectorGraphToken else { return }
                 guard let report, report.ok else {
                     self.vectorGraphHint?.stringValue = "지식 그래프를 읽지 못했습니다. 잠시 뒤 다시 열어 주세요."
-                    self.vectorGraphView?.nodes = []
-                    self.vectorGraphView?.edges = []
-                    self.hideEmptyKnowledgeGraph()
+                    // 읽지 못했다고 이전 그림을 지우지 않는다.
+                    //
+                    // 지우면 한 번의 시간 초과가 화면을 "뉴런이 하나도 없는
+                    // 그래프"로 바꿔, 색인이 멀쩡한데도 사용자에게는 그래프가
+                    // 사라진 것으로 보인다. 그림은 그대로 두고 그 위에
+                    // 마지막으로 읽은 시각을 말한다 (2026-09-17).
+                    if self.vectorGraphView?.nodes.isEmpty ?? true {
+                        self.hideEmptyKnowledgeGraph()
+                    } else {
+                        self.vectorGraphHint?.stringValue =
+                            "지식 그래프를 다시 읽지 못했습니다. 화면은 마지막으로 읽은 그림입니다."
+                    }
                     return
                 }
                 self.vectorGraphView?.nodes = report.nodes
