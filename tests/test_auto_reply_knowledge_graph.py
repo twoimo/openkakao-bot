@@ -505,5 +505,178 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
             self.assertIn('fact_count', bundle)
             self.assertEqual(bundle['chat_id'], '417780809780519')
 
+
+
+class RoomIsolationTests(unittest.TestCase):
+    """방 격리가 실제로 성립하는지 검사한다.
+
+    6 Pro가 배포 차단 사유로 지적한 결함이다. 예전 비교는 부분 문자열이라
+    (1) 이름이 겹치는 정상 방 노드를 걸러내고 (2) 짧은 키가 남의 방 노드를
+    통과시켰다. 두 방향을 모두 고정한다 (2026-09-17).
+    """
+
+    def _graph(self, root: Path):
+        conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+        KG.ensure_seeded(conn)
+        return conn
+
+    def _add_entity(self, conn, entity_id, name, aliases=None, facts=None):
+        conn.execute(
+            "INSERT INTO kg_entities (entity_id, name, category, aliases_json, description,"
+            " key_facts_json, importance, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(entity_id) DO UPDATE SET name=excluded.name,"
+            " aliases_json=excluded.aliases_json, key_facts_json=excluded.key_facts_json",
+            (
+                entity_id,
+                name,
+                "person",
+                json.dumps(aliases or [], ensure_ascii=False),
+                name + " 설명",
+                json.dumps(facts or [], ensure_ascii=False),
+                5,
+                0,
+            ),
+        )
+        conn.commit()
+
+    def test_a_room_can_read_its_own_person_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(
+                    conn,
+                    "person:부자멘토멘티:민수",
+                    "민수",
+                    aliases=["민수"],
+                    facts=["부자멘토멘티에서 활동"],
+                )
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "민수 어떻게 생각해",
+                state_root=root,
+                chat_id="부자멘토멘티",
+                include_relations=False,
+            )
+            self.assertTrue(
+                any("민수" in h for h in hits),
+                "자기 방의 인물 노드는 검색되어야 한다: " + repr(hits),
+            )
+
+    def test_a_person_from_another_room_is_not_returned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(
+                    conn,
+                    "person:다른방:철수",
+                    "철수",
+                    aliases=["철수"],
+                    facts=["다른 방 사람"],
+                )
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "철수 어때",
+                state_root=root,
+                chat_id="부자멘토멘티",
+                include_relations=False,
+            )
+            self.assertFalse(
+                any("철수" in h for h in hits),
+                "다른 방 인물은 검색되면 안 된다: " + repr(hits),
+            )
+
+    def test_a_room_whose_name_is_a_prefix_of_another_still_matches(self):
+        # "부자멘토멘티"는 "부자멘토멘티-스터디"의 접두사다. 부분 문자열 비교는
+        # 이 정상 노드를 걸러냈다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(
+                    conn,
+                    "person:부자멘토멘티-스터디:영희",
+                    "영희",
+                    aliases=["영희"],
+                )
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "영희 봤어",
+                state_root=root,
+                chat_id="부자멘토멘티",
+                include_relations=False,
+            )
+            self.assertFalse(
+                any("영희" in h for h in hits),
+                "이름이 접두사로 겹쳐도 다른 방이다: " + repr(hits),
+            )
+
+    def test_a_relation_to_another_room_person_is_filtered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(conn, "topic:코인", "코인", aliases=["코인"])
+                self._add_entity(conn, "person:다른방:철수", "철수", aliases=["철수"])
+                conn.execute(
+                    "INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)"
+                    " VALUES (?,?,?,?,?,?)"
+                    " ON CONFLICT(source_id, relation, target_id) DO UPDATE SET weight=excluded.weight",
+                    ("topic:코인", "TALKS_ABOUT", "person:다른방:철수", "다른 방 대화", 9, 0),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "코인 어떻게 생각해",
+                state_root=root,
+                chat_id="부자멘토멘티",
+                include_relations=True,
+            )
+            relations = [h for h in hits if h.startswith("[관계]")]
+            self.assertFalse(
+                any("철수" in h for h in relations),
+                "관계의 반대편이 타 방 인물이면 제외해야 한다: " + repr(relations),
+            )
+
+    def test_topic_nodes_are_shared_across_rooms(self):
+        # 방 스코프가 없는 주제 노드는 어느 방에서도 쓸 수 있어야 한다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(
+                    conn, "topic:알쫀쿠", "알쫀쿠", aliases=["알쫀쿠"], facts=["구독 서비스"]
+                )
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "알쫀쿠 써봤어?",
+                state_root=root,
+                chat_id="부자멘토멘티",
+                include_relations=False,
+            )
+            self.assertTrue(any("알쫀쿠" in h for h in hits), repr(hits))
+
+    def test_no_chat_id_keeps_every_node_visible(self):
+        # 방을 지정하지 않은 호출은 격리 대상이 아니다.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._graph(root)
+            try:
+                self._add_entity(conn, "person:아무방:테스트", "테스트인물", aliases=["테스트인물"])
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context(
+                "테스트인물", state_root=root, include_relations=False
+            )
+            self.assertTrue(any("테스트인물" in h for h in hits), repr(hits))
+
+
 if __name__ == "__main__":
     unittest.main()
+

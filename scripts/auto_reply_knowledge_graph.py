@@ -1819,14 +1819,56 @@ def _query_knowledge_structured(
         matched_entity_ids = set()
         matched_entity_names = {}
         chat_str = str(chat_id or "").strip()
-        # 방 ID와 카탈로그 방 이름의 상호 매핑 (P1 방 격리 해결)
-        allowed_room_names = set()
+        # 방 격리: 방 식별자를 하나의 정규 키로 모은 뒤, 노드 ID의 방 부분과
+        # 정확히 비교한다.
+        #
+        # 예전에는 부분 문자열로 비교했다. 그러면 방 이름이 다른 방 이름의
+        # 일부일 때 정상 노드가 걸러지고, 반대로 짧은 키는 남의 방 노드를
+        # 통과시킨다. 허용 집합을 만든 뒤 완전 일치만 통과시킨다
+        # (2026-09-17, 6 Pro 지적).
+        allowed_rooms: set[str] = set()
         if chat_str:
-            allowed_room_names.add(chat_str)
+            allowed_rooms.add(chat_str)
             norm_key = _room_key(root, chat_str)
             if norm_key:
-                allowed_room_names.add(norm_key)
-                allowed_room_names.add(_chat_label(norm_key))
+                allowed_rooms.add(norm_key)
+                allowed_rooms.add(_chat_label(norm_key))
+        # 어떤 표기가 들어와도 같은 정규 키로 모은다.
+        room_aliases: dict[str, str] = {}
+        for room in list(allowed_rooms):
+            if not room:
+                continue
+            canonical = _room_key(root, room) or room
+            for variant in (room, canonical, _chat_label(canonical)):
+                if variant:
+                    room_aliases[str(variant)] = canonical
+        allowed_canonical = set(room_aliases.values())
+
+        def _room_of(entity_id: str) -> str:
+            """노드 ID에서 방 식별자를 꺼낸다.
+
+            person:<room>:<name> 과 chat:<room> 두 모양만 방 스코프를 갖는다.
+            """
+            if entity_id.startswith("chat:") or entity_id.startswith("person:"):
+                parts = entity_id.split(":")
+                return parts[1] if len(parts) > 1 else ""
+            return ""
+
+        def _in_scope(entity_id: str) -> bool:
+            """이 방에서 써도 되는 노드인가.
+
+            방 스코프가 없는 노드(주제, 기술, 시드)는 모든 방에서 쓸 수 있다.
+            스코프가 있는 노드는 정규 키가 허용 집합에 있을 때만 통과한다.
+            """
+            if not allowed_canonical:
+                return True
+            room = _room_of(entity_id)
+            if not room:
+                return True
+            canonical = room_aliases.get(room)
+            if canonical is None:
+                canonical = _room_key(root, room) or room
+            return canonical in allowed_canonical
 
         entity_facts: list[str] = []
         relation_facts: list[str] = []
@@ -1836,11 +1878,8 @@ def _query_knowledge_structured(
 
         for ent_id, name, cat, aliases_str, desc, facts_str in cursor.fetchall():
             # 방 격리 검사: person:* 또는 chat:* 노드는 허용된 방에만 속해야 함
-            if allowed_room_names and (ent_id.startswith("person:") or ent_id.startswith("chat:")):
-                parts = ent_id.split(":")
-                ent_room = parts[1] if len(parts) > 1 else ""
-                if not any(r == ent_room or r in ent_room for r in allowed_room_names):
-                    continue
+            if not _in_scope(ent_id):
+                continue
 
             try:
                 aliases = json.loads(aliases_str)
@@ -1866,7 +1905,8 @@ def _query_knowledge_structured(
                 facts = []
             matched_entity_ids.add(ent_id)
             matched_entity_names[ent_id] = name
-            facts_snippet = f" (핵심 맥락: {'; '.join(str(f) for f in facts[:3])})" if facts else ""
+            snippet = "; ".join(str(f) for f in facts[:3])
+            facts_snippet = f" (핵심 맥락: {snippet})" if facts else ""
             entity_facts.append(f"[{cat}] {name}: {desc}{facts_snippet}")
 
         # 관계(시냅스) 확장: 타 방 전용 노드가 섞여 들지 않도록 관계 수준 방 격리
@@ -1880,13 +1920,11 @@ def _query_knowledge_structured(
                 list(matched_entity_ids) + list(matched_entity_ids),
             )
             for src, rel, tgt, ctx, w in rel_cursor.fetchall():
-                # 관계의 반대편 노드가 타 방 인물/방 노드이면 격리 정책에 따라 제외
-                other = tgt if src in matched_entity_ids else src
-                if allowed_room_names and (other.startswith("person:") or other.startswith("chat:")):
-                    parts = other.split(":")
-                    other_room = parts[1] if len(parts) > 1 else ""
-                    if not any(r == other_room or r in other_room for r in allowed_room_names):
-                        continue
+                # 양쪽 끝을 모두 검사한다. 매칭된 쪽만 보면 다른 방 인물이
+                # target으로 들어온 관계가 그대로 통과한다
+                # (2026-09-17, 6 Pro 지적).
+                if not _in_scope(src) or not _in_scope(tgt):
+                    continue
                 src_name = matched_entity_names.get(src, src.split(":")[-1])
                 tgt_name = matched_entity_names.get(tgt, tgt.split(":")[-1])
                 relation_facts.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
