@@ -32,20 +32,56 @@ import auto_reply_transition_journal as transition_journal
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _stable_cli_path() -> Path | None:
+    """Return the TCC-approved CLI when it exists.
+
+    macOS keys Full Disk Access and Automation approval on a file *path*. The
+    session runtime stages one signed copy at a fixed location and the operator
+    approves that path once. A repository checkout holds a second, ad-hoc
+    signed copy that no approval row covers, so preferring it made macOS ask
+    for other-app data access again on every restart (2026-09-17).
+    """
+    override = os.environ.get("OPENKAKAO_STABLE_BINARY")
+    candidates = []
+    if override:
+        candidates.append(Path(override))
+    candidates.append(
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "openkakao"
+        / "bin"
+        / "openkakao-cli"
+    )
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 def _find_cli_bin() -> Path:
     env_bin = os.environ.get("OPENKAKAO_BINARY")
     if env_bin and Path(env_bin).is_file():
         return Path(env_bin)
+    # 승인된 고정 경로를 먼저 본다. 저장소 안의 사본은 ad-hoc 서명이라
+    # TCC 승인 기록이 없어, 이쪽을 먼저 집으면 macOS가 폴더 접근을 다시
+    # 묻는다 (2026-09-17, 사용자 지적).
+    stable = _stable_cli_path()
+    if stable is not None:
+        return stable
     p = Path(__file__).resolve()
     bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
     if bundle_bin.is_file():
         return bundle_bin
-    repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
-    if repo_bin.is_file():
-        return repo_bin
     app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
     if app_bin.is_file():
         return app_bin
+    repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
+    if repo_bin.is_file():
+        return repo_bin
     return repo_bin
 
 BINARY = _find_cli_bin()
