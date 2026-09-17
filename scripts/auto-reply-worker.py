@@ -278,6 +278,9 @@ DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
     "google-antigravity/gemini-3.7-flash-tiered",
 )
 MODEL_CALL_LEASE_SECONDS = 180.0
+MODEL_GENERATION_TIMEOUT_SECONDS = 45.0
+LOCAL_MODEL_GENERATION_TIMEOUT_SECONDS = 90.0
+MODEL_GENERATION_BUDGET_SECONDS = 150.0
 MODEL_MIN_DEFER_SECONDS = 5.0
 MODEL_RETRY_HINT_MAX_SECONDS = 24.0 * 60.0 * 60.0
 MODEL_CIRCUIT_MAX_FAILURES = 16
@@ -1164,6 +1167,7 @@ class _WorkerHealth:
         now = time.time()
         self._phase = "starting"
         self._phase_started_at = now
+        self._phase_started_monotonic = time.monotonic()
         self._last_progress_at = now
         self._ready = False
         self._last_error = ""
@@ -1248,6 +1252,7 @@ class _WorkerHealth:
         with self._lock:
             self._phase = value
             self._phase_started_at = now
+            self._phase_started_monotonic = time.monotonic()
             self._last_progress_at = now
             self._ready = ready
             self._last_error = ""
@@ -1262,6 +1267,15 @@ class _WorkerHealth:
             self._write()
         except Exception:
             self._write_failed.set()
+
+    def generation_deadline(self) -> float:
+        """Leave 15 seconds for settlement inside the supervisor's 180s phase."""
+        now = time.monotonic()
+        with self._lock:
+            if self._phase == "processing":
+                return min(now + MODEL_GENERATION_BUDGET_SECONDS,
+                           self._phase_started_monotonic + 165.0)
+        return now + MODEL_GENERATION_BUDGET_SECONDS
 
     def model_status(
         self,
@@ -1807,8 +1821,18 @@ def _model_failure_delay(
         base, cap = 30.0, 10.0 * 60.0
     exponent = min(max(0, failure_count - 1), 8)
     delay = min(cap, base * (2 ** exponent))
-    if retry_after_seconds is not None:
-        delay = max(delay, retry_after_seconds)
+    if (
+        not isinstance(retry_after_seconds, bool)
+        and isinstance(retry_after_seconds, (int, float))
+        and math.isfinite(retry_after_seconds)
+        and retry_after_seconds > 0.0
+    ):
+        hint = min(MODEL_RETRY_HINT_MAX_SECONDS, retry_after_seconds)
+        if failure_class in {"quota_exhausted", "usage_limit"}:
+            # Known resets replace the conservative unknown-window backoff.
+            delay = max(MODEL_MIN_DEFER_SECONDS, hint)
+        else:
+            delay = max(delay, hint)
     # Retry-After is a minimum. Add, rather than multiply by, jitter so the
     # durable deadline can never become earlier than the provider's hint.
     delay += random.random() * min(30.0, max(1.0, delay * 0.1))
@@ -1970,9 +1994,6 @@ def _retry_after_seconds(
     lowered = error_text.casefold()
     patterns = (
         (r"retry[-_ ]after(?:[_ ]seconds)?\s*[:=]?\s*(\d+(?:\.\d+)?)", 1.0),
-        (r"try again in\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|s)\b", 1.0),
-        (r"try again in\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|m)\b", 60.0),
-        (r"try again in\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|h)\b", 3600.0),
     )
     for pattern, multiplier in patterns:
         match = re.search(pattern, lowered)
@@ -1982,6 +2003,31 @@ def _retry_after_seconds(
             value = float(match.group(1)) * multiplier
         except (TypeError, ValueError, OverflowError):
             continue
+        if math.isfinite(value) and value > 0.0:
+            return min(MODEL_RETRY_HINT_MAX_SECONDS, value)
+
+    # Scan compound durations without accepting a truncated numeric suffix
+    # ("2h -3m", "2h 30", "2h30ms") or backtracking over a long error body.
+    reset = re.search(r"\b(?:resets?|try again|retry)\s+in\s+", lowered)
+    if reset is not None:
+        multipliers = {"d": 86400.0, "h": 3600.0, "m": 60.0, "s": 1.0}
+        token = re.compile(
+            r"(\d+(?:\.\d+)?)\s*"
+            r"(days?|hours?|hrs?|minutes?|mins?|seconds?|secs?|d|h|m|s)"
+            r"(?=\d|\W|$)"
+        )
+        remainder = lowered[reset.end():]
+        seen_units: set[str] = set()
+        value = 0.0
+        while match := token.match(remainder):
+            unit = match.group(2)[0]
+            if unit in seen_units:
+                return None
+            seen_units.add(unit)
+            value += float(match.group(1)) * multipliers[unit]
+            remainder = remainder[match.end():].lstrip()
+        if remainder and re.match(r"[\d+-]|\.\d", remainder):
+            return None
         if math.isfinite(value) and value > 0.0:
             return min(MODEL_RETRY_HINT_MAX_SECONDS, value)
 
@@ -2027,7 +2073,7 @@ def _classify_model_failure(
     if any(
         marker in error_text
         for marker in (
-            "insufficient_quota", "quota exceeded", "current quota",
+            "insufficient_quota", "quota exceeded", "quota exhausted", "current quota",
             "billing hard limit", "billing_not_active", "credit balance",
             "payment required",
         )
@@ -10813,6 +10859,17 @@ def _fallback_thinking_effort(model: str) -> str:
     folded = str(model or "").casefold()
     return "medium" if folded.startswith(("omlx/", "mlx/")) else "high"
 
+def _model_generation_timeout(model: str, *, deadline: float | None = None) -> float:
+    """Allow on-device prompt processing to finish within the model lease."""
+
+    limit = (
+        LOCAL_MODEL_GENERATION_TIMEOUT_SECONDS
+        if str(model or "").casefold().startswith(("omlx/", "mlx/"))
+        else MODEL_GENERATION_TIMEOUT_SECONDS
+    )
+    return limit if deadline is None else max(0.0, min(limit, deadline - time.monotonic()))
+
+
 def _open_fallback_lease(model: str) -> dict | None:
     """Open a call lease for one fallback model, or None when it cannot run.
 
@@ -10839,13 +10896,24 @@ def _open_fallback_lease(model: str) -> dict | None:
     return {"lease_token": token, "retry_at": float(retry_at)}
 
 
-def _close_model_lease(lease_token: str, model: str, failure_class: str) -> None:
+def _close_model_lease(
+    lease_token: str,
+    model: str,
+    failure_class: str,
+    *,
+    retry_after_seconds: float | None = None,
+) -> None:
     """Record one failed attempt so its lease never stays in_flight."""
 
     if failure_class not in MODEL_CIRCUIT_FAILURE_CLASSES:
         failure_class = "runner_failed"
     try:
-        _finish_model_call_failure(str(lease_token or ""), failure_class, model=model)
+        _finish_model_call_failure(
+            str(lease_token or ""),
+            failure_class,
+            model=model,
+            retry_after_seconds=retry_after_seconds,
+        )
     except (OSError, sqlite3.Error, ValueError, TypeError):
         pass
 
@@ -10855,6 +10923,7 @@ def _model_fallback_chain(
     run_model,
     *,
     on_attempt=None,
+    deadline: float | None = None,
 ) -> dict | None:
     """Try each configured fallback model once, in order, until one answers.
 
@@ -10867,6 +10936,8 @@ def _model_fallback_chain(
     """
 
     for candidate in _reply_fallback_candidates():
+        if deadline is not None and deadline - time.monotonic() < MODEL_MIN_DEFER_SECONDS:
+            break
         if candidate == active_model:
             continue
         slot = _open_fallback_lease(candidate)
@@ -10887,12 +10958,13 @@ def _model_fallback_chain(
             )
             continue
         if returncode != 0:
-            failure_class, _retry = _classify_model_failure(
+            failure_class, retry_after = _classify_model_failure(
                 returncode,
                 stdout_bytes,
                 stderr_bytes,
             )
-            _close_model_lease(slot["lease_token"], candidate, failure_class)
+            _close_model_lease(slot["lease_token"], candidate, failure_class,
+                               retry_after_seconds=retry_after)
             continue
         return {
             "model": candidate,
@@ -11311,6 +11383,11 @@ def generate_reply(
     prompt = _fit_prompt_to_budget(prompt, prompt_budget)
     prompt_bytes = _encode_json_bounded(prompt, prompt_budget)
     generation_started = time.monotonic()
+    generation_deadline = (
+        _WORKER_HEALTH.generation_deadline()
+        if _WORKER_HEALTH is not None
+        else generation_started + MODEL_GENERATION_BUDGET_SECONDS
+    )
     gen_elapsed = None
     # A cooldown fallback that already answered fills returncode/stdout and
     # adopts its lease. The turn must then continue on that answer instead of
@@ -11475,8 +11552,9 @@ def generate_reply(
                         system_prompt,
                         prompt_bytes,
                         image_paths=normalized_image_paths,
-                        timeout=45.0,
+                        timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                     ),
+                    deadline=generation_deadline,
                 )
             else:
                 winner = _model_fallback_chain(
@@ -11485,7 +11563,7 @@ def generate_reply(
                         _model_swap_in_command(command, candidate),
                         cwd=Path("/tmp"),
                         env=env,
-                        timeout=45,
+                        timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                         stdout_cap=MAX_MODEL_OUTPUT_BYTES,
                         stderr_cap=MAX_MODEL_STDERR_BYTES,
                         stdin_bytes=model_stdin_bytes,
@@ -11494,6 +11572,7 @@ def generate_reply(
                         ),
                         isolate_group=True,
                     ),
+                    deadline=generation_deadline,
                 )
             if winner is not None:
                 slot = {
@@ -11572,6 +11651,8 @@ def generate_reply(
         )
 
     try:
+        if not cooldown_fallback_answered and generation_deadline <= time.monotonic():
+            return fail_model_call("runner_timeout")
         if REPLY_RUNNER_KIND == "opencodex":
             if not cooldown_fallback_answered:
                 returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
@@ -11579,7 +11660,7 @@ def generate_reply(
                     system_prompt,
                     prompt_bytes,
                     image_paths=normalized_image_paths,
-                    timeout=45.0,
+                    timeout=_model_generation_timeout(active_model, deadline=generation_deadline),
                 )
             if returncode != 0:
                 err_str = stderr_bytes.decode("utf-8", "replace").casefold()
@@ -11601,18 +11682,22 @@ def generate_reply(
                             system_prompt,
                             prompt_bytes,
                             image_paths=normalized_image_paths,
-                            timeout=45.0,
+                            timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                         ),
+                        deadline=generation_deadline,
                     )
                     if winner is not None:
                         # The fallback answered. Close the first attempt, then run
                         # the rest of the turn on the lease that generated it.
-                        first_class, _first_retry = _classify_model_failure(
+                        first_class, first_retry = _classify_model_failure(
                             returncode,
                             stdout_bytes,
                             stderr_bytes,
                         )
-                        _close_model_lease(lease_token, active_model, first_class)
+                        _close_model_lease(
+                            lease_token, active_model, first_class,
+                            retry_after_seconds=first_retry,
+                        )
                         lease_token = winner["lease_token"]
                         lease_retry_at = winner["retry_at"]
                         returncode = winner["returncode"]
@@ -11633,17 +11718,17 @@ def generate_reply(
                     command,
                     cwd=Path("/tmp"),
                     env=env,
-                    timeout=(
+                    timeout=min(max(0.0, generation_deadline - time.monotonic()), (
                         120
                         if REPLY_RUNNER_KIND == "codex" and normalized_image_paths
                         else 90
                         if REPLY_RUNNER_KIND == "codex"
                         else 90
-                        if str(active_model).startswith("omlx/")
+                        if str(active_model).casefold().startswith(("omlx/", "mlx/"))
                         else 45
                         if require_web_search or normalized_image_paths
                         else 30
-                    ),
+                    )),
                     stdout_cap=MAX_MODEL_OUTPUT_BYTES,
                     stderr_cap=MAX_MODEL_STDERR_BYTES,
                     stdin_bytes=model_stdin_bytes,
@@ -11673,7 +11758,7 @@ def generate_reply(
                     _model_swap_in_command(_command, candidate),
                     cwd=Path("/tmp"),
                     env=env,
-                    timeout=45,
+                    timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                     stdout_cap=MAX_MODEL_OUTPUT_BYTES,
                     stderr_cap=MAX_MODEL_STDERR_BYTES,
                     stdin_bytes=model_stdin_bytes,
@@ -11686,7 +11771,9 @@ def generate_reply(
                 )
 
             try:
-                winner = _model_fallback_chain(active_model, _run_timeout_candidate)
+                winner = _model_fallback_chain(
+                    active_model, _run_timeout_candidate, deadline=generation_deadline,
+                )
             except Exception:
                 winner = None
             if winner is not None:
@@ -11738,7 +11825,7 @@ def generate_reply(
                     fallback_command,
                     cwd=Path("/tmp"),
                     env=env,
-                    timeout=45,
+                    timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                     stdout_cap=MAX_MODEL_OUTPUT_BYTES,
                     stderr_cap=MAX_MODEL_STDERR_BYTES,
                     stdin_bytes=model_stdin_bytes,
@@ -11750,16 +11837,21 @@ def generate_reply(
                     isolate_group=True,
                 )
 
-            winner = _model_fallback_chain(active_model, _run_candidate)
+            winner = _model_fallback_chain(
+                active_model, _run_candidate, deadline=generation_deadline,
+            )
             if winner is not None:
                 # The fallback answered. Close the first attempt, then run the
                 # rest of the turn on the lease that generated it.
-                first_class, _first_retry = _classify_model_failure(
+                first_class, first_retry = _classify_model_failure(
                     returncode,
                     stdout_bytes,
                     stderr_bytes,
                 )
-                _close_model_lease(lease_token, active_model, first_class)
+                _close_model_lease(
+                    lease_token, active_model, first_class,
+                    retry_after_seconds=first_retry,
+                )
                 lease_token = winner["lease_token"]
                 lease_retry_at = winner["retry_at"]
                 returncode = winner["returncode"]
