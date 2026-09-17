@@ -1594,6 +1594,23 @@ final class KnowledgeGraphView: NSView {
     var edges: [KnowledgeEdge] = [] {
         didSet { rebuildLayout() }
     }
+    /// 뉴런과 시냅스를 한 번에 바꾼다.
+    ///
+    /// 따로 대입하면 didSet이 두 번 돌아 힘 배치가 두 번 계산되고,
+    /// 그 사이 한 프레임 동안 새 뉴런과 옛 시냅스가 섞여 그려진다. 읽어
+    /// 온 그래프는 언제나 통째로 바뀌므로 한 번에 적용한다
+    /// (2026-09-17, 6 Pro 지적).
+    func applySnapshot(nodes newNodes: [KnowledgeNode], edges newEdges: [KnowledgeEdge]) {
+        let nodesChanged = newNodes.count != nodes.count
+            || zip(newNodes, nodes).contains { $0.id != $1.id }
+        let edgesChanged = newEdges.count != edges.count
+            || zip(newEdges, edges).contains {
+                $0.source != $1.source || $0.target != $1.target || $0.weight != $1.weight
+            }
+        guard nodesChanged || edgesChanged else { return }
+        nodes = newNodes
+        edges = newEdges
+    }
     var selectedNodeId: String?
     var onSelect: ((KnowledgeNode?) -> Void)?
 
@@ -1929,7 +1946,24 @@ final class KnowledgeGraphView: NSView {
     private var keptSynapsesKey = ""
 
     private func backgroundSynapses() -> Set<Int> {
-        let key = "\(nodes.count):\(edges.count):\(edges.first?.source ?? "")"
+        // The key must cover everything the result depends on. Node and edge
+        // counts plus one source are not enough: a refresh that swaps an
+        // equal-size graph, or one that keeps the counts and changes the
+        // first edge, would keep the stale synapse set. Hashing every
+        // endpoint and weight is cheap next to the layout it guards
+        // (2026-09-17, 6 Pro 지적).
+        var hasher = Hasher()
+        hasher.combine(nodes.count)
+        for node in nodes {
+            hasher.combine(node.id)
+        }
+        hasher.combine(edges.count)
+        for edge in edges {
+            hasher.combine(edge.source)
+            hasher.combine(edge.target)
+            hasher.combine(edge.weight)
+        }
+        let key = String(hasher.finalize())
         if key == keptSynapsesKey { return keptSynapses }
         keptSynapsesKey = key
         // 뉴런마다 굵은 순으로 몇 개를 남긴다. 양쪽 끝에서 세므로 한 뉴런이
@@ -5623,8 +5657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
            let data = runPython(["--action", "knowledge-graph"], timeout: 25),
            let report = try? JSONDecoder().decode(KnowledgeGraphReport.self, from: data),
            report.ok {
-            vectorGraphView?.nodes = report.nodes
-            vectorGraphView?.edges = report.edges
+            vectorGraphView?.applySnapshot(nodes: report.nodes, edges: report.edges)
             vectorGraphView?.layoutSubtreeIfNeeded()
             vectorGraphView?.displayIfNeeded()
         }
@@ -8186,8 +8219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.presentVectorGraphError(hasPreviousPicture: hasPicture)
                     return
                 }
-                self.vectorGraphView?.nodes = report.nodes
-                self.vectorGraphView?.edges = report.edges
+                self.vectorGraphView?.applySnapshot(nodes: report.nodes, edges: report.edges)
                 let total = report.node_count
                 let grounded = report.grounded_nodes
                 // 뉴런이 없으면 빈 캔버스를 남기지 않는다.

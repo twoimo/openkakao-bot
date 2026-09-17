@@ -3705,7 +3705,12 @@ class LayoutGateTests(unittest.TestCase):
         source = SWIFT.read_text(encoding="utf-8")
         self.assertIn("LayoutAudit.settle()", source)
         self.assertIn('entry.0 + "-min"', source)
-        self.assertIn("window.setContentSize(window.minSize)", source)
+        # minSize is a frame size, so it must be applied through setFrame.
+        # Passing it to setContentSize measured a window smaller than the
+        # operator can ever reach (2026-09-17, 6 Pro 지적).
+        self.assertIn("window.minSize", source)
+        self.assertIn("window.setFrame(minimumFrame, display: false)", source)
+        self.assertNotIn("window.setContentSize(window.minSize)", source)
         # 되돌리지 않으면 아래 캡처가 줄어든 창을 찍는다.
         self.assertIn("window.setContentSize(originalSize)", source)
 
