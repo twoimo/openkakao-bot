@@ -227,16 +227,19 @@ def iter_self_pairs(
             row_id=pending_row_id,
         )
 
+    # Positional access keeps this working for a plain tuple connection as well
+    # as the Row-factory connection the CLI opens (2026-09-17).
     for row in connection.execute(query, params):
-        room = str(row["chat"] or "")
+        row_id, row_chat, row_date, row_user, row_message = row[:5]
+        room = str(row_chat or "")
         if room != current_room:
             current_room = room
             window = []
             pending = []
 
-        text = _norm_text(row["message"])
-        author = str(row["user_name"] or "")
-        row_ts = _parse_ts(row["date"])
+        text = _norm_text(row_message)
+        author = str(row_user or "")
+        row_ts = _parse_ts(row_date)
         is_self = author in authors
 
         if is_self:
@@ -250,8 +253,8 @@ def iter_self_pairs(
                         return
                 window = []
             if not pending:
-                pending_row_id = int(row["id"] or 0)
-                pending_started_at = str(row["date"] or "")
+                pending_row_id = int(row_id or 0)
+                pending_started_at = str(row_date or "")
             if text:
                 pending.append(text)
             pending_last_ts = row_ts or pending_last_ts
@@ -270,7 +273,7 @@ def iter_self_pairs(
             window = []
 
         if text and not _SUMMARY_BLOCK_PATTERN.search(text):
-            window.append((author, str(row["date"] or ""), text))
+            window.append((author, str(row_date or ""), text))
         if len(window) > window_size * 4:
             window = window[-window_size * 2 :]
 
@@ -337,15 +340,16 @@ def resolve_inbound_messages(
         except sqlite3.Error:
             return lookup
         for row in rows:
+            row_log_id, row_sender, row_chat, row_date, row_message = row[:5]
             try:
-                log_id = int(row["log_id"])
+                log_id = int(row_log_id)
             except (TypeError, ValueError):
                 continue
             lookup[log_id] = {
-                "message": _norm_text(row["message"]),
-                "chat": str(row["chat"] or ""),
-                "date": str(row["date"] or ""),
-                "author": str(row["sender_name"] or ""),
+                "message": _norm_text(row_message),
+                "chat": str(row_chat or ""),
+                "date": str(row_date or ""),
+                "author": str(row_sender or ""),
             }
     return lookup
 
