@@ -14,16 +14,29 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from scripts.auto_reply_golden_dataset import (
+    APPROVAL_FILENAME,
     DEFAULT_MERGE_GAP_SECONDS,
+    QUALITY_APPROVED,
+    QUALITY_HUMAN_AUTHORED,
+    QUALITY_MODEL_GENERATED,
+    QUALITY_UNREVIEWED,
     GoldenPair,
     _db_has_transcript,
     _is_teachable,
     extract_golden_dataset,
+    gold_quality,
+    is_gold_quality,
     iter_evidence_pairs,
     iter_self_pairs,
+    load_quality_approvals,
+    main as golden_main,
+    parse_timestamp,
+    record_approval,
     resolve_inbound_messages,
     write_dataset,
 )
@@ -224,24 +237,62 @@ class TestEvidencePairs(unittest.TestCase):
         self.evidence = self.root / "reply-evidence.jsonl"
         _write_evidence(self.evidence)
 
-    def test_only_sent_rows_are_used(self):
+    def _pairs(self, **kwargs):
         connection = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True)
         self.addCleanup(connection.close)
-        lookup = resolve_inbound_messages(connection, [555001])
-        pairs = list(
-            iter_evidence_pairs(
-                self.evidence,
-                window_size=6,
-                min_completion=4,
-                max_completion=400,
-                limit=0,
-                inbound_lookup=lookup,
-            )
+        lookup = resolve_inbound_messages(connection, [555001, 555002])
+        defaults = dict(
+            window_size=6,
+            min_completion=4,
+            max_completion=400,
+            limit=0,
+            inbound_lookup=lookup,
         )
+        defaults.update(kwargs)
+        return list(iter_evidence_pairs(self.evidence, **defaults))
+
+    def test_a_delivered_row_is_not_gold_without_a_verdict(self):
+        # 555001 is a real sentence and 555002 is affect only, so the ledger
+        # holds one trainable reply. Both sent rows are gated before the
+        # language filters run, and delivery alone is not a verdict.
+        counters: dict = {}
+        pairs = self._pairs(counters=counters)
+        self.assertEqual(pairs, [])
+        self.assertEqual(counters["unreviewed_skipped"], 2)
+
+    def test_an_approved_row_becomes_gold_with_its_provenance(self):
+        path = self.root / APPROVAL_FILENAME
+        record_approval(path, status="approved", log_id=555001, reviewer="문승현")
+        pairs = self._pairs(approvals=load_quality_approvals(path))
         self.assertEqual(len(pairs), 1)
         self.assertEqual(pairs[0].completion, "진행하고 결과 보면서 조정하자")
         self.assertEqual(pairs[0].prompt, "그래서 결론은?")
         self.assertEqual(pairs[0].source, "auto_reply_sent")
+        self.assertEqual(pairs[0].quality, QUALITY_APPROVED)
+        self.assertEqual(pairs[0].log_id, 555001)
+        self.assertEqual(pairs[0].reviewer, "문승현")
+        self.assertTrue(is_gold_quality(pairs[0].quality))
+
+    def test_unreviewed_rows_are_kept_only_when_asked_for(self):
+        counters: dict = {}
+        pairs = self._pairs(require_approval=False, counters=counters)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0].quality, QUALITY_MODEL_GENERATED)
+        self.assertFalse(is_gold_quality(pairs[0].quality))
+        self.assertEqual(counters["unreviewed_kept"], 1)
+        self.assertNotIn("approved", counters)
+
+    def test_a_rejected_row_is_dropped_even_in_the_open_mode(self):
+        path = self.root / APPROVAL_FILENAME
+        record_approval(path, status="rejected", log_id=555001, reviewer="문승현")
+        counters: dict = {}
+        pairs = self._pairs(
+            approvals=load_quality_approvals(path),
+            require_approval=False,
+            counters=counters,
+        )
+        self.assertEqual(pairs, [])
+        self.assertEqual(counters["rejected"], 1)
 
     def test_inbound_is_resolved_through_the_live_event_join(self):
         connection = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True)
@@ -259,6 +310,7 @@ class TestEvidencePairs(unittest.TestCase):
                 max_completion=400,
                 limit=0,
                 inbound_lookup={},
+                require_approval=False,
             )
         )
         self.assertEqual(pairs, [], "no inbound text and no window means no pair")
@@ -298,6 +350,12 @@ class TestExtraction(unittest.TestCase):
         self.assertTrue(_db_has_transcript(self.db))
 
     def test_extraction_combines_both_sources_and_dedupes(self):
+        record_approval(
+            self.state / "golden" / APPROVAL_FILENAME,
+            status="approved",
+            log_id=555001,
+            reviewer="문승현",
+        )
         pairs, stats = extract_golden_dataset(
             state_root=self.state,
             context_db=self.db,
@@ -306,9 +364,46 @@ class TestExtraction(unittest.TestCase):
         )
         self.assertGreater(stats["self_rows"], 0)
         self.assertEqual(stats["evidence_rows"], 1)
+        self.assertEqual(stats["evidence_approved"], 1)
+        self.assertEqual(stats["approvals_loaded"], 1)
+        self.assertTrue(stats["require_approval"])
         self.assertEqual(stats["total_pairs"], len(pairs))
         ids = [p.pair_id for p in pairs]
         self.assertEqual(len(ids), len(set(ids)), "pair ids must be unique")
+        approved = [p for p in pairs if p.source == "auto_reply_sent"]
+        self.assertEqual(len(approved), 1)
+        self.assertEqual(approved[0].quality, QUALITY_APPROVED)
+        self.assertEqual(approved[0].reviewer, "문승현")
+        self.assertEqual(approved[0].log_id, 555001)
+
+    def test_extraction_without_a_verdict_keeps_only_human_answers(self):
+        pairs, stats = extract_golden_dataset(
+            state_root=self.state,
+            context_db=self.db,
+            self_authors=["최연우"],
+            window_size=6,
+        )
+        self.assertGreater(stats["self_rows"], 0)
+        self.assertEqual(stats["evidence_rows"], 0)
+        # Both sent rows are gated before the language filters run: 555001 is a
+        # real sentence and 555002 is affect only, and neither has a verdict.
+        self.assertEqual(stats["evidence_unreviewed_skipped"], 2)
+        self.assertTrue(all(p.source == "self_history" for p in pairs))
+
+    def test_extraction_can_opt_into_unreviewed_evidence(self):
+        pairs, stats = extract_golden_dataset(
+            state_root=self.state,
+            context_db=self.db,
+            self_authors=["최연우"],
+            window_size=6,
+            require_approval=False,
+        )
+        self.assertEqual(stats["evidence_rows"], 1)
+        self.assertEqual(stats["evidence_unreviewed_kept"], 1)
+        self.assertFalse(stats["require_approval"])
+        model_rows = [p for p in pairs if p.source == "auto_reply_sent"]
+        self.assertEqual(len(model_rows), 1)
+        self.assertEqual(model_rows[0].quality, QUALITY_MODEL_GENERATED)
 
     def test_missing_context_db_drops_rows_whose_inbound_cannot_be_resolved(self):
         # Without the transcript the ledger's log id cannot be resolved, and
@@ -318,6 +413,7 @@ class TestExtraction(unittest.TestCase):
             state_root=self.state,
             context_db=self.root / "absent.sqlite3",
             self_authors=["최연우"],
+            require_approval=False,
         )
         self.assertEqual(stats["self_rows"], 0)
         self.assertIn("context_error", stats)
@@ -356,10 +452,12 @@ class TestExtraction(unittest.TestCase):
             state_root=state,
             context_db=self.root / "absent.sqlite3",
             self_authors=["최연우"],
+            require_approval=False,
         )
         self.assertEqual(stats["evidence_rows"], 1)
         self.assertEqual(pairs[0].prompt, "내일 일정 어떻게 돼?")
         self.assertEqual(pairs[0].completion, "오전에 회의 하나 있고 오후는 비어 있어")
+        self.assertEqual(pairs[0].quality, QUALITY_MODEL_GENERATED)
 
     def test_write_dataset_emits_jsonl_and_summary(self):
         pairs = [
@@ -376,6 +474,8 @@ class TestExtraction(unittest.TestCase):
         self.assertTrue(output.exists())
         record = json.loads(output.read_text(encoding="utf-8").splitlines()[0])
         self.assertEqual(record["completion"], "답변입니다")
+        self.assertEqual(record["quality"], QUALITY_HUMAN_AUTHORED)
+        self.assertEqual(record["schema_version"], 2)
         self.assertEqual(summary["output"], str(output))
         self.assertTrue(output.with_suffix(".summary.json").exists())
 
@@ -396,6 +496,218 @@ class TestExtraction(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0])["completion"], "새 답변")
         self.assertFalse(output.with_suffix(".jsonl.tmp").exists())
+
+
+NL = chr(10)
+
+
+class TestQualityApprovals(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.path = self.root / APPROVAL_FILENAME
+
+    def test_a_verdict_is_read_back_by_log_id(self):
+        record_approval(self.path, status="approved", log_id=555001, reviewer="문승현")
+        approvals = load_quality_approvals(self.path)
+        self.assertEqual(approvals.approved, 1)
+        self.assertEqual(approvals.verdicts, 1)
+        verdict = approvals.lookup({"log_id": 555001})
+        self.assertEqual(verdict["status"], "approved")
+        self.assertEqual(verdict["reviewer"], "문승현")
+        self.assertTrue(verdict["reviewed_at"])
+
+    def test_log_id_forms_share_one_key(self):
+        record_approval(self.path, status="approved", log_id=555001)
+        approvals = load_quality_approvals(self.path)
+        for candidate in (555001, 555001.0, "555001"):
+            with self.subTest(candidate=candidate):
+                self.assertIsNotNone(approvals.lookup({"log_id": candidate}))
+        self.assertIsNone(approvals.lookup({"log_id": 555002}))
+        self.assertIsNone(approvals.lookup({}))
+
+    def test_an_event_id_can_carry_the_verdict(self):
+        record_approval(self.path, status="approved", event_id="evt-9")
+        approvals = load_quality_approvals(self.path)
+        self.assertIsNotNone(approvals.lookup({"event_id": "evt-9"}))
+        self.assertIsNone(approvals.lookup({"event_id": "evt-10"}))
+
+    def test_the_last_verdict_wins(self):
+        record_approval(self.path, status="approved", log_id=555001)
+        record_approval(self.path, status="rejected", log_id=555001, note="다시 보니 어색함")
+        approvals = load_quality_approvals(self.path)
+        self.assertEqual(approvals.approved, 1)
+        self.assertEqual(approvals.rejected, 1)
+        self.assertEqual(approvals.lookup({"log_id": 555001})["status"], "rejected")
+        self.assertFalse(is_gold_quality(gold_quality({"log_id": 555001}, approvals)))
+
+    def test_broken_lines_are_counted_not_fatal(self):
+        self.path.write_text(
+            NL.join(
+                [
+                    "not json",
+                    json.dumps({"status": "maybe", "log_id": 1}),
+                    json.dumps(["list"]),
+                    json.dumps({"status": "approved", "log_id": 2}),
+                ]
+            )
+            + NL,
+            encoding="utf-8",
+        )
+        approvals = load_quality_approvals(self.path)
+        self.assertEqual(approvals.approved, 1)
+        self.assertEqual(approvals.malformed, 3)
+
+    def test_a_missing_ledger_is_empty_not_an_error(self):
+        approvals = load_quality_approvals(self.root / "absent.jsonl")
+        self.assertEqual(approvals.verdicts, 0)
+        self.assertIsNone(approvals.lookup({"log_id": 1}))
+        self.assertEqual(load_quality_approvals(None).verdicts, 0)
+
+    def test_a_verdict_needs_a_key_and_a_known_status(self):
+        with self.assertRaises(ValueError):
+            record_approval(self.path, status="maybe", log_id=1)
+        with self.assertRaises(ValueError):
+            record_approval(self.path, status="approved")
+        self.assertFalse(self.path.exists(), "a rejected write must not create the ledger")
+
+    def test_quality_classification_covers_each_source(self):
+        cases = [
+            ({"source": "self_history"}, QUALITY_HUMAN_AUTHORED),
+            ({"source": "auto_reply_sent"}, QUALITY_MODEL_GENERATED),
+            ({"quality": "approved"}, QUALITY_APPROVED),
+            ({"quality_approved": True}, QUALITY_APPROVED),
+            ({"human_reviewed": True}, QUALITY_APPROVED),
+            ({}, QUALITY_UNREVIEWED),
+        ]
+        for record, expected in cases:
+            with self.subTest(record=record):
+                self.assertEqual(gold_quality(record), expected)
+        self.assertTrue(is_gold_quality(QUALITY_HUMAN_AUTHORED))
+        self.assertTrue(is_gold_quality(QUALITY_APPROVED))
+        self.assertFalse(is_gold_quality(QUALITY_MODEL_GENERATED))
+        self.assertFalse(is_gold_quality(QUALITY_UNREVIEWED))
+
+    def test_an_explicit_rejection_beats_the_inline_flag(self):
+        record_approval(self.path, status="rejected", log_id=7)
+        approvals = load_quality_approvals(self.path)
+        self.assertEqual(
+            gold_quality({"log_id": 7, "quality": "approved"}, approvals),
+            QUALITY_UNREVIEWED,
+        )
+
+
+class TestTimestamp(unittest.TestCase):
+    def test_offset_and_z_forms_are_absolute(self):
+        self.assertEqual(parse_timestamp("2026-01-01T16:05:00+0900"), 1767251100.0)
+        self.assertEqual(parse_timestamp("2026-01-01T07:05:00Z"), 1767251100.0)
+
+    def test_the_naive_transcript_form_is_read_and_ordered(self):
+        # The naive form is interpreted in the machine zone, so only ordering
+        # and magnitude are asserted.
+        first = parse_timestamp("2026-01-01 10:00:30")
+        self.assertGreater(first, 1767225600.0)
+        self.assertLess(first, 1767312000.0)
+        self.assertLess(first, parse_timestamp("2026-01-01 11:00:30"))
+
+    def test_unreadable_and_implausible_clocks_are_unknown(self):
+        for value in (
+            "",
+            None,
+            "어제",
+            "1970-01-01 00:00:00",
+            "2999-01-01 00:00:00",
+            float("nan"),
+            float("inf"),
+            0,
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(parse_timestamp(value), 0.0)
+
+
+class TestCommandLine(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.state = self.root / "bujamentor"
+        self.room = self.state / "rooms" / "1"
+        self.room.mkdir(parents=True)
+        self.db = self.state / "context.sqlite3"
+        _build_transcript(self.db)
+        _write_evidence(self.room / "reply-evidence.jsonl")
+
+    def _run(self, argv):
+        out = StringIO()
+        with redirect_stdout(out):
+            code = golden_main(argv)
+        return code, out.getvalue()
+
+    def _summary(self):
+        path = self.state / "golden" / "reply-golden.summary.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_list_candidates_shows_the_rows_without_a_verdict(self):
+        code, out = self._run(
+            [
+                "--state-root", str(self.state),
+                "--context-db", str(self.db),
+                "--list-candidates",
+            ]
+        )
+        self.assertEqual(code, 0)
+        payloads = [json.loads(line) for line in out.splitlines() if line.strip()]
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["log_id"], 555001)
+        self.assertEqual(payloads[0]["prompt"], "그래서 결론은?")
+        self.assertEqual(payloads[0]["completion"], "진행하고 결과 보면서 조정하자")
+        self.assertFalse((self.state / "golden" / "reply-golden.jsonl").exists())
+
+    def test_approve_log_id_records_the_verdict_and_changes_the_dataset(self):
+        code, out = self._run(
+            [
+                "--state-root", str(self.state),
+                "--context-db", str(self.db),
+                "--approve-log-id", "555001",
+                "--reviewer", "문승현",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("품질 판정", out)
+        approvals = load_quality_approvals(self.state / "golden" / APPROVAL_FILENAME)
+        self.assertEqual(approvals.approved, 1)
+        summary = self._summary()
+        self.assertEqual(summary["evidence_rows"], 1)
+        self.assertEqual(summary["evidence_approved"], 1)
+
+    def test_reject_log_id_keeps_the_row_out_of_the_dataset(self):
+        record_approval(
+            self.state / "golden" / APPROVAL_FILENAME,
+            status="rejected",
+            log_id=555001,
+        )
+        code, _ = self._run(
+            ["--state-root", str(self.state), "--context-db", str(self.db)]
+        )
+        self.assertEqual(code, 0)
+        summary = self._summary()
+        self.assertEqual(summary["evidence_rows"], 0)
+        self.assertEqual(summary["evidence_rejected_skipped"], 1)
+
+    def test_unreviewed_evidence_flag_is_recorded_in_the_summary(self):
+        code, _ = self._run(
+            [
+                "--state-root", str(self.state),
+                "--context-db", str(self.db),
+                "--include-unreviewed-evidence",
+            ]
+        )
+        self.assertEqual(code, 0)
+        summary = self._summary()
+        self.assertFalse(summary["require_approval"])
+        self.assertEqual(summary["evidence_rows"], 1)
+        self.assertEqual(summary["evidence_unreviewed_kept"], 1)
 
 
 if __name__ == "__main__":

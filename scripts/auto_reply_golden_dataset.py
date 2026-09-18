@@ -4,16 +4,19 @@ Turns the room history into supervised (prompt, completion) pairs. Two sources
 are joined:
 
 1. reply-evidence.jsonl records every automatic turn the worker already decided
-   on. Rows with status "sent" carry the reply that actually went out, so they
-   are the highest-confidence completions available.
+   on. A sent row proves delivery, not quality, so it only becomes gold when the
+   approval ledger (golden/quality-approvals.jsonl) accepts it or the row itself
+   carries a quality flag. Without a verdict the row is dropped, or kept and
+   labelled model_generated under --include-unreviewed-evidence (2026-09-19).
 2. context.sqlite3 holds the room transcript. The self author's own messages
    are the human gold answers: they are what the operator really typed, with no
    model in the loop.
 
-Every emitted row records where it came from, which room it belongs to, the
-conversation window that precedes it, and a deterministic content hash used for
-de-duplication. Nothing here touches the network, and the context database is
-opened read-only so a running worker is never blocked (2026-09-17).
+Every emitted row records where it came from, who accepted it (quality, log_id,
+event_id, reviewer), which room it belongs to, the conversation window that
+precedes it, and a deterministic content hash used for de-duplication. Nothing
+here touches the network, and the context database is opened read-only so a
+running worker is never blocked (2026-09-17).
 """
 
 from __future__ import annotations
@@ -21,16 +24,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # A completion shorter than this is usually an acknowledgement ("ㅇㅇ", "ㄹㅇ")
 # that teaches the model nothing about style or content.
@@ -59,17 +64,71 @@ DEFAULT_SELF_AUTHORS: tuple[str, ...] = ("최연우",)
 # instead of a nine-character fragment (2026-09-17).
 DEFAULT_MERGE_GAP_SECONDS = 180
 
+# Where the golden set records that a person looked at a model-written reply and
+# accepted it. Delivery success is not a language judgement - a reply can be
+# sent and still be wrong - so a sent row only becomes gold once something
+# explicit says so (2026-09-19).
+QUALITY_HUMAN_AUTHORED = "human_authored"
+QUALITY_APPROVED = "approved"
+QUALITY_UNREVIEWED = "unreviewed"
+QUALITY_MODEL_GENERATED = "model_generated"
+APPROVAL_FILENAME = "quality-approvals.jsonl"
+_APPROVED_STATUSES = frozenset({"approved", "human_reviewed", "accepted"})
+_REJECTED_STATUSES = frozenset({"rejected", "unsuitable"})
+# A transcript clock outside this window is a parse accident, not a real row.
+MIN_PLAUSIBLE_EPOCH = 946684800.0  # 2000-01-01
+MAX_PLAUSIBLE_EPOCH = 4102444800.0  # 2100-01-01
 
-def _parse_ts(value: Any) -> float:
-    """Parse the transcript timestamp into epoch seconds, 0.0 when unknown."""
+
+def _plausible_epoch(epoch: Any) -> bool:
+    """True when a parsed clock looks like a real transcript timestamp.
+
+    A parse accident (1970, a year 5000 date, NaN, infinity) is reported as
+    unknown so a caller never treats garbage as a valid ordering key.
+    """
+    try:
+        value = float(epoch)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(value):
+        return False
+    return MIN_PLAUSIBLE_EPOCH <= value <= MAX_PLAUSIBLE_EPOCH
+
+
+def parse_timestamp(value: Any) -> float:
+    """Parse a transcript timestamp into epoch seconds, 0.0 when unknown.
+
+    Both the transcript form (2026-01-01 10:00:30) and the evidence ledger form
+    (2026-01-01T16:05:00+0900, sometimes with a trailing Z) are accepted. A
+    value that cannot be read is reported as unknown rather than as 1970, so a
+    caller can tell a missing clock apart from a real one.
+    """
     text = str(value or "").strip()
     if not text:
         return 0.0
+    iso = text[:-1] + "+00:00" if text[-1] in ("Z", "z") else text
+    try:
+        parsed: datetime | None = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None:
+        try:
+            epoch = (
+                parsed.timestamp()
+                if parsed.tzinfo is not None
+                else time.mktime(parsed.timetuple())
+            )
+        except (OverflowError, OSError, ValueError):
+            epoch = 0.0
+        if _plausible_epoch(epoch):
+            return float(epoch)
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"):
         try:
-            return time.mktime(time.strptime(text[: len(fmt) + 2].strip(), fmt))
-        except (ValueError, OverflowError):
+            epoch = time.mktime(time.strptime(text[: len(fmt)].strip(), fmt))
+        except (ValueError, OverflowError, OSError):
             continue
+        if _plausible_epoch(epoch):
+            return float(epoch)
     return 0.0
 DEFAULT_CONTEXT_DB = "context.sqlite3"
 DEFAULT_EVIDENCE_NAME = "reply-evidence.jsonl"
@@ -114,6 +173,160 @@ def _is_teachable(text: str) -> bool:
     return True
 
 
+def _approval_key(value: Any) -> str:
+    """Normalise a log id / event id so 555001 and 555001.0 are one key."""
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    text = str(value).strip()
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+@dataclass
+class QualityApprovals:
+    """Explicit human verdicts on rows that a model wrote.
+
+    The ledger is append-only JSONL and the last verdict for a key wins, so a
+    row can be approved, rejected, and approved again without rewriting what a
+    reviewer already said (2026-09-19).
+    """
+
+    by_log_id: dict[str, dict[str, str]] = field(default_factory=dict)
+    by_event_id: dict[str, dict[str, str]] = field(default_factory=dict)
+    approved: int = 0
+    rejected: int = 0
+    malformed: int = 0
+
+    def lookup(self, record: dict[str, Any]) -> dict[str, str] | None:
+        """Return the last verdict for this row, or None when it is unreviewed."""
+        for key, index in (("log_id", self.by_log_id), ("event_id", self.by_event_id)):
+            candidate = _approval_key(record.get(key))
+            if candidate and candidate in index:
+                return index[candidate]
+        return None
+
+    @property
+    def verdicts(self) -> int:
+        return self.approved + self.rejected
+
+
+def load_quality_approvals(path: Path | None) -> QualityApprovals:
+    """Read the approval ledger; a missing file is an empty ledger, not an error."""
+    approvals = QualityApprovals()
+    if path is None or not path.is_file():
+        return approvals
+    try:
+        handle = path.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return approvals
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                approvals.malformed += 1
+                continue
+            if not isinstance(record, dict):
+                approvals.malformed += 1
+                continue
+            status = str(record.get("status") or "").strip().lower()
+            if status not in _APPROVED_STATUSES and status not in _REJECTED_STATUSES:
+                approvals.malformed += 1
+                continue
+            verdict = {
+                "status": status,
+                "reviewer": str(record.get("reviewer") or ""),
+                "reviewed_at": str(record.get("reviewed_at") or record.get("recorded_at") or ""),
+                "note": str(record.get("note") or ""),
+            }
+            if status in _APPROVED_STATUSES:
+                approvals.approved += 1
+            else:
+                approvals.rejected += 1
+            log_id = _approval_key(record.get("log_id"))
+            event_id = _approval_key(record.get("event_id"))
+            if log_id:
+                approvals.by_log_id[log_id] = verdict
+            if event_id:
+                approvals.by_event_id[event_id] = verdict
+    return approvals
+
+
+def record_approval(
+    path: Path,
+    *,
+    status: str,
+    log_id: Any = None,
+    event_id: Any = None,
+    reviewer: str = "",
+    note: str = "",
+    recorded_at: str = "",
+    ) -> dict[str, Any]:
+    """Append one verdict to the approval ledger and return the stored entry."""
+    normalized = str(status or "").strip().lower()
+    if normalized not in _APPROVED_STATUSES and normalized not in _REJECTED_STATUSES:
+        raise ValueError(f"unknown approval status: {status!r}")
+    key_log = _approval_key(log_id)
+    key_event = _approval_key(event_id)
+    if not key_log and not key_event:
+        raise ValueError("an approval needs a log_id or an event_id")
+    entry = {
+        "status": normalized,
+        "log_id": key_log,
+        "event_id": key_event,
+        "reviewer": str(reviewer or ""),
+        "note": str(note or ""),
+        "recorded_at": recorded_at or time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return entry
+
+
+def gold_quality(record: dict[str, Any], approvals: QualityApprovals | None = None) -> str:
+    """Classify one row: who wrote the completion, and whether it was accepted."""
+    verdict = approvals.lookup(record) if approvals is not None else None
+    if verdict is not None:
+        return QUALITY_APPROVED if verdict["status"] in _APPROVED_STATUSES else QUALITY_UNREVIEWED
+    declared = str(record.get("quality") or "").strip().lower()
+    if declared in (
+        QUALITY_APPROVED,
+        QUALITY_HUMAN_AUTHORED,
+        QUALITY_UNREVIEWED,
+        QUALITY_MODEL_GENERATED,
+    ):
+        return declared
+    if record.get("quality_approved") is True or record.get("human_reviewed") is True:
+        return QUALITY_APPROVED
+    source = str(record.get("source") or "")
+    if source == "self_history":
+        return QUALITY_HUMAN_AUTHORED
+    if source == "auto_reply_sent":
+        return QUALITY_MODEL_GENERATED
+    return QUALITY_UNREVIEWED
+
+
+def is_gold_quality(quality: str) -> bool:
+    """True for a completion a person wrote or explicitly accepted."""
+    return quality in (QUALITY_HUMAN_AUTHORED, QUALITY_APPROVED)
+
+
+def _bump(counters: dict[str, int] | None, key: str, amount: int = 1) -> None:
+    if counters is not None:
+        counters[key] = counters.get(key, 0) + amount
+
+
 @dataclass
 class GoldenPair:
     """One supervised example plus the provenance a trainer needs."""
@@ -128,12 +341,18 @@ class GoldenPair:
     model: str = ""
     row_id: int = 0
     pair_id: str = ""
+    quality: str = QUALITY_HUMAN_AUTHORED
+    log_id: int = 0
+    event_id: str = ""
+    reviewer: str = ""
+    reviewed_at: str = ""
 
     def to_record(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
             "pair_id": self.pair_id,
             "source": self.source,
+            "quality": self.quality,
             "room": self.room,
             "chat_id": self.chat_id,
             "prompt": self.prompt,
@@ -141,6 +360,10 @@ class GoldenPair:
             "window": self.window,
             "recorded_at": self.recorded_at,
             "model": self.model,
+            "log_id": self.log_id,
+            "event_id": self.event_id,
+            "reviewer": self.reviewer,
+            "reviewed_at": self.reviewed_at,
         }
 
 
@@ -239,7 +462,7 @@ def iter_self_pairs(
 
         text = _norm_text(row_message)
         author = str(row_user or "")
-        row_ts = _parse_ts(row_date)
+        row_ts = parse_timestamp(row_date)
         is_self = author in authors
 
         if is_self:
@@ -362,8 +585,18 @@ def iter_evidence_pairs(
     max_completion: int,
     limit: int,
     inbound_lookup: dict[int, dict[str, str]] | None = None,
+    approvals: QualityApprovals | None = None,
+    require_approval: bool = True,
+    counters: dict[str, int] | None = None,
 ) -> Iterator[GoldenPair]:
-    """Yield pairs from confirmed automatic sends in the evidence ledger."""
+    """Yield pairs from the evidence ledger, gated on an explicit verdict.
+
+    A delivered reply is not automatically a good answer, so by default only
+    rows carrying an approval verdict (or an inline quality flag) become gold.
+    require_approval=False keeps the rest and labels them model_generated so an
+    exploratory set is still possible, but a rejected row is always dropped and
+    the two cases are never mixed silently (2026-09-19).
+    """
     if not evidence_path.exists():
         return
 
@@ -384,6 +617,20 @@ def iter_evidence_pairs(
             if str(record.get("status") or "") != "sent":
                 continue
 
+            verdict = approvals.lookup(record) if approvals is not None else None
+            if verdict is not None and verdict["status"] in _REJECTED_STATUSES:
+                _bump(counters, "rejected")
+                continue
+            quality = gold_quality(record, approvals)
+            if quality == QUALITY_UNREVIEWED:
+                # Every row in this ledger is an automatic reply, so without a
+                # verdict the honest label is model-written, not merely unseen.
+                quality = QUALITY_MODEL_GENERATED
+            if not is_gold_quality(quality):
+                if require_approval:
+                    _bump(counters, "unreviewed_skipped")
+                    continue
+
             completion = _norm_text(record.get("reply"))[:max_completion]
             if not (min_completion <= len(completion) <= max_completion):
                 continue
@@ -391,12 +638,14 @@ def iter_evidence_pairs(
                 continue
 
             inbound = _norm_text(record.get("message"))
+            try:
+                log_id = int(record.get("log_id"))
+            except (TypeError, ValueError):
+                log_id = 0
             resolved: dict[str, str] = {}
             if inbound_lookup:
-                try:
-                    resolved = inbound_lookup.get(int(record.get("log_id")), {})
-                except (TypeError, ValueError):
-                    resolved = {}
+                if log_id > 0:
+                    resolved = inbound_lookup.get(log_id, {})
                 if not inbound:
                     inbound = _norm_text(resolved.get("message"))
             recent = record.get("recent_conversation")
@@ -417,6 +666,9 @@ def iter_evidence_pairs(
             if len(prompt) < MIN_PROMPT_CHARS:
                 continue
 
+            # Counted here, not at the gate: a row that never becomes a pair
+            # must not look like an accepted answer in the summary.
+            _bump(counters, "approved" if is_gold_quality(quality) else "unreviewed_kept")
             emitted += 1
             yield GoldenPair(
                 source="auto_reply_sent",
@@ -426,6 +678,11 @@ def iter_evidence_pairs(
                 window=_window_from_rows(window_rows, window_size),
                 recorded_at=str(record.get("recorded_at") or resolved.get("date") or ""),
                 model=str(record.get("model") or ""),
+                quality=quality,
+                log_id=log_id,
+                event_id=str(record.get("event_id") or ""),
+                reviewer=str((verdict or {}).get("reviewer") or ""),
+                reviewed_at=str((verdict or {}).get("reviewed_at") or ""),
             )
             if limit and emitted >= limit:
                 return
@@ -457,10 +714,18 @@ def extract_golden_dataset(
     max_completion: int = MAX_COMPLETION_CHARS,
     limit: int = 0,
     merge_gap: float = DEFAULT_MERGE_GAP_SECONDS,
+    approvals_path: Path | None = None,
+    require_approval: bool = True,
 ) -> tuple[list[GoldenPair], dict[str, Any]]:
     """Build the de-duplicated golden set and a summary of what was dropped."""
     pairs: list[GoldenPair] = []
     seen: set[str] = set()
+    approval_path = (
+        approvals_path
+        if approvals_path is not None
+        else state_root / "golden" / APPROVAL_FILENAME
+    )
+    approvals = load_quality_approvals(approval_path)
     stats: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "self_authors": list(self_authors),
@@ -469,8 +734,18 @@ def extract_golden_dataset(
         "min_completion_chars": min_completion,
         "max_completion_chars": max_completion,
         "merge_gap_seconds": merge_gap,
+        "require_approval": require_approval,
+        "approvals_file": str(approval_path),
+        "approvals_loaded": approvals.verdicts,
+        "approvals_approved": approvals.approved,
+        "approvals_rejected": approvals.rejected,
+        "approvals_malformed": approvals.malformed,
         "evidence_files": 0,
         "evidence_rows": 0,
+        "evidence_approved": 0,
+        "evidence_unreviewed_kept": 0,
+        "evidence_unreviewed_skipped": 0,
+        "evidence_rejected_skipped": 0,
         "self_rows": 0,
         "duplicates": 0,
         "context_db": str(context_db),
@@ -533,6 +808,7 @@ def extract_golden_dataset(
                     resolver.close()
     stats["evidence_resolved"] = len(inbound_lookup)
     for path in evidence_files:
+        counters: dict[str, int] = {}
         _absorb(
             iter_evidence_pairs(
                 path,
@@ -541,9 +817,16 @@ def extract_golden_dataset(
                 max_completion=max_completion,
                 limit=limit,
                 inbound_lookup=inbound_lookup,
+                approvals=approvals,
+                require_approval=require_approval,
+                counters=counters,
             ),
             "evidence_rows",
         )
+        stats["evidence_approved"] += counters.get("approved", 0)
+        stats["evidence_unreviewed_kept"] += counters.get("unreviewed_kept", 0)
+        stats["evidence_unreviewed_skipped"] += counters.get("unreviewed_skipped", 0)
+        stats["evidence_rejected_skipped"] += counters.get("rejected", 0)
 
     stats["total_pairs"] = len(pairs)
     stats["prompt_chars"] = sum(len(p.prompt) for p in pairs)
@@ -628,6 +911,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--self-author", action="append", default=None, help="정답 발화자 (반복 가능)"
     )
     parser.add_argument("--room", action="append", default=None, help="포함할 방 이름 (반복 가능)")
+    parser.add_argument(
+        "--approvals",
+        type=Path,
+        default=None,
+        help="품질 승인 장부 경로 (기본: <state-root>/golden/quality-approvals.jsonl)",
+    )
+    parser.add_argument(
+        "--include-unreviewed-evidence",
+        action="store_true",
+        help="사람이 승인하지 않은 자동답변도 포함 (model_generated로 표시)",
+    )
+    parser.add_argument(
+        "--approve-log-id",
+        action="append",
+        type=int,
+        default=None,
+        help="이 log_id의 자동답변을 정답지로 승인 (반복 가능)",
+    )
+    parser.add_argument(
+        "--reject-log-id",
+        action="append",
+        type=int,
+        default=None,
+        help="이 log_id의 자동답변을 정답지에서 제외 (반복 가능)",
+    )
+    parser.add_argument("--reviewer", default="", help="승인/제외 판단자 이름")
+    parser.add_argument("--note", default="", help="승인/제외 메모")
+    parser.add_argument(
+        "--list-candidates",
+        action="store_true",
+        help="아직 승인하지 않은 자동답변 후보를 JSONL로 출력",
+    )
     parser.add_argument("--window", type=int, default=6, help="프롬프트에 넣을 직전 메시지 수")
     parser.add_argument(
         "--min-chars", type=int, default=MIN_COMPLETION_CHARS, help="정답 최소 길이"
@@ -646,10 +961,122 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_candidates(
+    *,
+    state_root: Path,
+    context_db: Path,
+    approvals: QualityApprovals,
+    window_size: int,
+    min_completion: int,
+    max_completion: int,
+    limit: int,
+) -> int:
+    """Print the automatic replies a person has not accepted or dropped yet.
+
+    Delivery success is the only thing the ledger proves, so the review list is
+    the whole set of sent rows that carry no verdict. Each line is JSON with the
+    log_id the approve/reject flags take (2026-09-19).
+    """
+    inbound_lookup: dict[int, dict[str, str]] = {}
+    paths = _evidence_paths(state_root)
+    if paths and context_db.is_file():
+        sent_ids = _sent_log_ids(paths)
+        if sent_ids:
+            try:
+                resolver = _connect_readonly(context_db)
+            except sqlite3.Error:
+                resolver = None
+            if resolver is not None:
+                try:
+                    inbound_lookup = resolve_inbound_messages(resolver, sent_ids)
+                finally:
+                    resolver.close()
+    printed = 0
+    for path in paths:
+        for pair in iter_evidence_pairs(
+            path,
+            window_size=window_size,
+            min_completion=min_completion,
+            max_completion=max_completion,
+            limit=limit,
+            inbound_lookup=inbound_lookup,
+            approvals=approvals,
+            require_approval=False,
+        ):
+            if is_gold_quality(pair.quality):
+                continue
+            print(
+                json.dumps(
+                    {
+                        "log_id": pair.log_id,
+                        "event_id": pair.event_id,
+                        "room": pair.room,
+                        "recorded_at": pair.recorded_at,
+                        "model": pair.model,
+                        "prompt": pair.prompt,
+                        "completion": pair.completion,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            printed += 1
+    print(
+        f"# 미승인 자동답변 {printed}건 · 승인: --approve-log-id · 제외: --reject-log-id",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     state_root = (args.state_root or _default_state_root()).expanduser()
     context_db = (args.context_db or _default_context_db(state_root)).expanduser()
+    approvals_path = (
+        args.approvals
+        if args.approvals is not None
+        else state_root / "golden" / APPROVAL_FILENAME
+    ).expanduser()
+    require_approval = not args.include_unreviewed_evidence
+    window_size = max(1, args.window)
+    min_completion = max(1, args.min_chars)
+    max_completion = max(min_completion, args.max_chars)
+    limit = max(0, args.limit)
+
+    recorded: list[dict[str, Any]] = []
+    for log_id in args.approve_log_id or []:
+        recorded.append(
+            record_approval(
+                approvals_path,
+                status="approved",
+                log_id=log_id,
+                reviewer=args.reviewer,
+                note=args.note,
+            )
+        )
+    for log_id in args.reject_log_id or []:
+        recorded.append(
+            record_approval(
+                approvals_path,
+                status="rejected",
+                log_id=log_id,
+                reviewer=args.reviewer,
+                note=args.note,
+            )
+        )
+    if recorded:
+        print(f"품질 판정 {len(recorded)}건 기록 → {approvals_path}")
+
+    if args.list_candidates:
+        return _print_candidates(
+            state_root=state_root,
+            context_db=context_db,
+            approvals=load_quality_approvals(approvals_path),
+            window_size=window_size,
+            min_completion=min_completion,
+            max_completion=max_completion,
+            limit=limit,
+        )
+
     output = args.output
     if output is None:
         output = state_root / "golden" / "reply-golden.jsonl"
@@ -660,11 +1087,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         context_db=context_db,
         self_authors=authors,
         rooms=args.room,
-        window_size=max(1, args.window),
-        min_completion=max(1, args.min_chars),
-        max_completion=max(args.min_chars, args.max_chars),
-        limit=max(0, args.limit),
+        window_size=window_size,
+        min_completion=min_completion,
+        max_completion=max_completion,
+        limit=limit,
         merge_gap=max(0.0, args.merge_gap),
+        approvals_path=approvals_path,
+        require_approval=require_approval,
     )
     summary = write_dataset(pairs, output, stats)
     if args.json:
@@ -674,6 +1103,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"  본인 발화 {summary['self_rows']}쌍 · 자동답변 확정 {summary['evidence_rows']}쌍 "
             f"· 중복 제거 {summary['duplicates']}건"
+        )
+        gate = "미승인 포함" if not summary["require_approval"] else "승인분만"
+        print(
+            f"  자동답변 게이트({gate}): 채택 {summary['evidence_approved']}건 · "
+            f"미승인 제외 {summary['evidence_unreviewed_skipped']}건 · "
+            f"제외 판정 {summary['evidence_rejected_skipped']}건"
         )
     return 0
 
