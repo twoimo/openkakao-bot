@@ -1671,6 +1671,18 @@ final class KnowledgeGraphView: NSView {
     static let synapseGold = NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: 1)
     static let synapseBrass = NSColor(calibratedRed: 0.62, green: 0.48, blue: 0.26, alpha: 1)
 
+    /// 자비스 홀로그램 바탕의 색.
+    ///
+    /// 캔버스를 투명하게 두었더니 뉴런이 없는 자리는 창 배경과 똑같이
+    /// 보였다. 그래프 아래쪽 46pt가 통째로 빈 띠로 남아 레이아웃 감사에
+    /// 걸렸고, 무엇보다 판이 "아직 안 그려진 화면"처럼 보였다. 코어와 같은
+    /// 금색을 아주 옅게 깔아 어떤 배치에서도 판이 채워지게 한다
+    /// (2026-09-18).
+    static let hologramGrid = NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.30, alpha: 0.10)
+    static let hologramRing = NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.30, alpha: 0.16)
+    static let hologramHaloInner = NSColor(calibratedRed: 1.0, green: 0.62, blue: 0.18, alpha: 0.13)
+    static let hologramHaloOuter = NSColor(calibratedRed: 1.0, green: 0.62, blue: 0.18, alpha: 0.0)
+
     /// 뉴런마다 그릴 시냅스의 개수.
     ///
     /// 관계를 전부 그리면 가운데가 선밭이 되어 무엇이 무엇과 이어졌는지
@@ -2299,6 +2311,7 @@ final class KnowledgeGraphView: NSView {
         super.draw(dirtyRect)
         NSColor.clear.setFill()
         bounds.fill()
+        drawHologramBackdrop()
         let highContrast = increaseContrast
         let positions = self.positions
         let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
@@ -2348,9 +2361,24 @@ final class KnowledgeGraphView: NSView {
             // 아직 확인되지 않은 것은 흐린 놋쇠색이다 (2026-09-17).
             let color = (grounded ? Self.synapseGold : Self.synapseBrass)
                 .withAlphaComponent(alpha)
+            // 선은 뉴런 경계에서 멈춘다.
+            //
+            // 몸통이 반투명이라 중심까지 그은 선이 원 안에 사선으로 비쳐,
+            // 뉴런이 아니라 그려지다 만 동그라미처럼 보였다. 몸통 색을
+            // 불투명하게 바꾸는 방법은 다크 모드에서 뉴런이 배경과 같은
+            // 색으로 뚫려 보였으므로, 선 길이를 잘라 같은 문제를 푼다
+            // (2026-09-18).
+            let startRadius = byId[edge.source].map { radius($0) } ?? 0
+            let endRadius = byId[edge.target].map { radius($0) } ?? 0
+            let (from, to) = Self.trimmedSegment(
+                a,
+                b,
+                startRadius: startRadius,
+                endRadius: endRadius
+            )
             let path = NSBezierPath()
-            path.move(to: a)
-            path.line(to: b)
+            path.move(to: from)
+            path.line(to: to)
             path.lineWidth = (touchesHighlight ? 1.6 : 0.8) + 2.0 * strength
             path.lineCapStyle = .round
             color.setStroke()
@@ -2408,7 +2436,30 @@ final class KnowledgeGraphView: NSView {
         // 않으면 이름을 접고, 고른 뉴런과 마우스를 올린 뉴런은 언제나
         // 보여 준다 (2026-09-16, 6 Pro 지적).
         drawLabels()
-        _ = byId
+    }
+
+    /// 두 뉴런 중심을 잇는 선에서 몸통 안쪽을 잘라 낸 구간.
+    ///
+    /// 반지름이 구간 길이의 절반을 넘으면 가운데에서 만나게 잘라, 아주
+    /// 가까운 두 뉴런이 서로를 뚫고 지나가는 것처럼 보이지 않게 한다.
+    static func trimmedSegment(
+        _ a: CGPoint,
+        _ b: CGPoint,
+        startRadius: CGFloat,
+        endRadius: CGFloat
+    ) -> (CGPoint, CGPoint) {
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let length = sqrt(dx * dx + dy * dy)
+        guard length > 0.001 else { return (a, b) }
+        let unitX = dx / length
+        let unitY = dy / length
+        let startInset = min(max(startRadius, 0), length / 2)
+        let endInset = min(max(endRadius, 0), length / 2)
+        return (
+            CGPoint(x: a.x + unitX * startInset, y: a.y + unitY * startInset),
+            CGPoint(x: b.x - unitX * endInset, y: b.y - unitY * endInset)
+        )
     }
 
     /// 이름표를 겹치지 않게 배치한다. 중요한 뉴런이 먼저 자리를 갖는다.
@@ -2472,7 +2523,7 @@ final class KnowledgeGraphView: NSView {
             let rect = chosen ?? fallback
             placed.append(rect)
             // A soft plate keeps the name readable over a synapse.
-            NSColor.windowBackgroundColor.withAlphaComponent(0.72 * alpha).setFill()
+            NSColor.windowBackgroundColor.withAlphaComponent(0.94 * alpha).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
             let inner = NSRect(
                 x: rect.minX + 3,
@@ -2482,6 +2533,82 @@ final class KnowledgeGraphView: NSView {
             )
             text.draw(in: inner, withAttributes: attrs)
         }
+    }
+
+    /// 자비스 홀로그램 바탕.
+    ///
+    /// 옅은 격자를 먼저 깔고, 뉴런 무게중심에서 번지는 금색 빛무리와
+    /// 동심원을 그 위에 얹는다. 격자의 세로줄이 모든 행을 지나므로 뉴런이
+    /// 없는 아래쪽도 빈 띠로 남지 않는다. 빛무리는 코어와 같은 금색이라
+    /// 두 화면이 같은 빛을 쓴다 (2026-09-18).
+    private func drawHologramBackdrop() {
+        let frame = bounds.insetBy(dx: 0.5, dy: 0.5)
+        guard frame.width > 40, frame.height > 40 else { return }
+        let step: CGFloat = 22
+        let grid = NSBezierPath()
+        grid.lineWidth = 1
+        var x = frame.minX + step
+        while x < frame.maxX {
+            grid.move(to: CGPoint(x: x, y: frame.minY))
+            grid.line(to: CGPoint(x: x, y: frame.maxY))
+            x += step
+        }
+        var y = frame.minY + step
+        while y < frame.maxY {
+            grid.move(to: CGPoint(x: frame.minX, y: y))
+            grid.line(to: CGPoint(x: frame.maxX, y: y))
+            y += step
+        }
+        Self.hologramGrid.setStroke()
+        grid.stroke()
+
+        let center = hologramCenter()
+        let halfWidth = frame.width / 2
+        let halfHeight = frame.height / 2
+        let radius = max(sqrt(halfWidth * halfWidth + halfHeight * halfHeight) * 0.92, 40)
+        let disc = NSBezierPath(
+            ovalIn: NSRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+        )
+        if let halo = NSGradient(
+            starting: Self.hologramHaloInner,
+            ending: Self.hologramHaloOuter
+        ) {
+            halo.draw(in: disc, relativeCenterPosition: .zero)
+        }
+        for fraction in [0.34, 0.55, 0.76, 0.97] as [CGFloat] {
+            let ringRadius = radius * fraction
+            let ring = NSBezierPath(
+                ovalIn: NSRect(
+                    x: center.x - ringRadius,
+                    y: center.y - ringRadius,
+                    width: ringRadius * 2,
+                    height: ringRadius * 2
+                )
+            )
+            ring.lineWidth = 1
+            Self.hologramRing.setStroke()
+            ring.stroke()
+        }
+    }
+
+    /// 빛무리의 중심. 뉴런이 있으면 무게중심, 없으면 캔버스 가운데.
+    private func hologramCenter() -> CGPoint {
+        let placed = nodes.compactMap { positions[$0.id] }
+        guard !placed.isEmpty else {
+            return CGPoint(x: bounds.midX, y: bounds.midY)
+        }
+        let total = placed.reduce(CGPoint.zero) { partial, point in
+            CGPoint(x: partial.x + point.x, y: partial.y + point.y)
+        }
+        return CGPoint(
+            x: total.x / CGFloat(placed.count),
+            y: total.y / CGFloat(placed.count)
+        )
     }
 }
 
