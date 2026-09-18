@@ -2,9 +2,9 @@
 
 The pipeline feeds mlx_lm.lora, so the split layout and the argument list are
 contracts, not internal details. These tests pin the failure modes that would
-silently produce a useless run: a split that leaves no training rows, a leaked
-window, a mis-parsed loss line, and a comparison that calls noise an
-improvement (2026-09-17).
+silently produce a useless run: a split that leaves no training rows, a window
+that leaks because one conversation was cut across train and test, a mis-parsed
+loss line, and a comparison that calls noise an improvement (2026-09-19).
 """
 
 from __future__ import annotations
@@ -12,12 +12,15 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from scripts.auto_reply_finetune import (
     DEFAULT_INSTRUCTION,
+    DEFAULT_SESSION_GAP,
     _parse_test_loss,
     _to_mlx_row,
+    build_parser,
     build_splits,
     compare_runs,
     load_pairs,
@@ -27,15 +30,55 @@ from scripts.auto_reply_finetune import (
 )
 
 NL = chr(10)
+# A fixed clock inside the extractor's plausible range (2000-01-01 .. 2100-01-01).
+_BASE_CLOCK = datetime(2026, 1, 1, 0, 0, 0)
 
 
-def _pair(prompt: str, completion: str, window=None) -> dict:
-    return {
+def _stamp(hours: float) -> str:
+    """A transcript clock, hours after the fixed base."""
+    return (_BASE_CLOCK + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _pair(
+    prompt: str,
+    completion: str,
+    window=None,
+    room: str = "room-a",
+    recorded_at=None,
+) -> dict:
+    record = {
         "prompt": prompt,
         "completion": completion,
         "window": window or [],
-        "room": "room-a",
+        "room": room,
     }
+    if recorded_at is not None:
+        record["recorded_at"] = recorded_at
+    return record
+
+
+def _session_pairs(sessions: int, per_session: int, *, room: str = "room-a"):
+    """Bursts one hour apart, so every one of them is its own session.
+
+    Returns the pairs and a completion -> session tag map, which is how the
+    leak tests say which conversation a row came from (2026-09-19).
+    """
+    pairs: list[dict] = []
+    tags: dict[str, str] = {}
+    for session in range(sessions):
+        recorded_at = _stamp(session)
+        for index in range(per_session):
+            completion = f"답변 {session}-{index}"
+            pairs.append(
+                _pair(
+                    f"질문 {session}-{index}",
+                    completion,
+                    room=room,
+                    recorded_at=recorded_at,
+                )
+            )
+            tags[completion] = str(session)
+    return pairs, tags
 
 
 class TestLoadPairs(unittest.TestCase):
@@ -96,21 +139,121 @@ class TestSplits(unittest.TestCase):
         splits, stats = build_splits([])
         self.assertEqual(splits["train"], [])
         self.assertEqual(stats.train, 0)
+        self.assertEqual(stats.groups, 0)
 
     def test_split_is_deterministic_for_a_seed(self):
-        pairs = [_pair("질문 " + str(i), "답변 " + str(i)) for i in range(50)]
-        first, _ = build_splits(pairs, seed=7)
-        second, _ = build_splits(pairs, seed=7)
+        pairs, _ = _session_pairs(40, 5)
+        first, first_stats = build_splits(pairs, seed=7)
+        second, second_stats = build_splits(pairs, seed=7)
         self.assertEqual(first["train"], second["train"])
+        self.assertEqual(first["valid"], second["valid"])
         self.assertEqual(first["test"], second["test"])
+        self.assertEqual(first_stats.train_groups, second_stats.train_groups)
+        self.assertEqual(first_stats.test_groups, second_stats.test_groups)
 
     def test_ratios_are_respected(self):
-        pairs = [_pair("질문 " + str(i), "답변 " + str(i)) for i in range(200)]
+        # 40 sessions of 5 rows each. The targets stay the same, but they are
+        # crossed five rows at a time because a session is never cut in half.
+        pairs, _ = _session_pairs(40, 5)
         splits, stats = build_splits(pairs, valid_ratio=0.1, test_ratio=0.05, seed=1)
         self.assertEqual(stats.test, 10)
         self.assertEqual(stats.valid, 20)
         self.assertEqual(stats.train, 170)
         self.assertEqual(stats.train + stats.valid + stats.test, len(pairs))
+        self.assertEqual(stats.groups, 40)
+        self.assertEqual(stats.test_groups, 2)
+        self.assertEqual(stats.valid_groups, 4)
+        self.assertEqual(stats.train_groups, 34)
+
+    def test_a_session_never_straddles_two_splits(self):
+        pairs, tags = _session_pairs(24, 3)
+        splits, stats = build_splits(pairs, seed=11)
+        home: dict[str, str] = {}
+        for name, rows in splits.items():
+            for row in rows:
+                session = tags[row["completion"]]
+                self.assertEqual(home.setdefault(session, name), name)
+        self.assertEqual(len(home), 24)
+        self.assertEqual(stats.groups, 24)
+
+    def test_duplicate_prompts_are_dropped_and_counted(self):
+        pairs = [
+            _pair("오늘  늦어", "첫 번째 답변", recorded_at=_stamp(0)),
+            _pair("오늘 늦어", "두 번째 답변", recorded_at=_stamp(0)),
+            _pair("다른 질문", "세 번째 답변", recorded_at=_stamp(0)),
+        ]
+        splits, stats = build_splits(pairs, seed=4)
+        completions = [row["completion"] for row in splits["train"]]
+        self.assertEqual(stats.duplicate_prompts, 1)
+        self.assertEqual(stats.dropped, 1)
+        self.assertIn("첫 번째 답변", completions)
+        self.assertNotIn("두 번째 답변", completions)
+        self.assertEqual(stats.train + stats.valid + stats.test, 2)
+
+    def test_rows_without_a_clock_share_one_group_per_room(self):
+        pairs = [_pair("질문 " + str(i), "답변 " + str(i)) for i in range(3)]
+        pairs += [
+            _pair("질문 b" + str(i), "답변 b" + str(i), room="room-b") for i in range(2)
+        ]
+        splits, stats = build_splits(pairs, seed=2)
+        self.assertEqual(stats.groups, 2)
+        self.assertEqual(stats.train, 5)
+        self.assertEqual(splits["valid"], [])
+        self.assertEqual(splits["test"], [])
+
+    def test_a_camel_case_clock_is_read(self):
+        pairs = [_pair("질문 a", "답변 a"), _pair("질문 b", "답변 b")]
+        pairs[0]["recordedAt"] = _stamp(0)
+        pairs[1]["recordedAt"] = _stamp(2)
+        _, stats = build_splits(pairs, seed=1)
+        self.assertEqual(stats.groups, 2)
+
+    def test_a_row_without_a_room_is_its_own_group(self):
+        pairs = [
+            _pair("질문 " + str(i), "답변 " + str(i), room="", recorded_at=_stamp(0))
+            for i in range(100)
+        ]
+        splits, stats = build_splits(pairs, valid_ratio=0.1, test_ratio=0.05, seed=1)
+        self.assertEqual(stats.groups, 100)
+        self.assertEqual(stats.test, 5)
+        self.assertEqual(stats.valid, 10)
+        self.assertEqual(stats.train, 85)
+
+    def test_a_single_group_trains_on_everything(self):
+        pairs = [_pair("질문 " + str(i), "답변 " + str(i)) for i in range(200)]
+        splits, stats = build_splits(pairs, valid_ratio=0.1, test_ratio=0.05, seed=1)
+        self.assertEqual(stats.groups, 1)
+        self.assertEqual(stats.train_groups, 1)
+        self.assertEqual(stats.train, 200)
+        self.assertEqual(stats.valid, 0)
+        self.assertEqual(stats.test, 0)
+        self.assertTrue(splits["train"])
+
+    def test_a_burst_that_swallows_the_targets_still_leaves_a_train_group(self):
+        big = [
+            _pair("큰 질문 " + str(i), "큰 답변 " + str(i), recorded_at=_stamp(0))
+            for i in range(190)
+        ]
+        small = [
+            _pair("작은 질문 " + str(i), "작은 답변 " + str(i), recorded_at=_stamp(5))
+            for i in range(10)
+        ]
+        splits, stats = build_splits(big + small, valid_ratio=0.1, test_ratio=0.05, seed=1)
+        self.assertEqual(stats.train_groups, 1)
+        self.assertEqual(stats.train, 10)
+        self.assertTrue(
+            all(row["completion"].startswith("작은") for row in splits["train"])
+        )
+
+    def test_the_session_gap_decides_what_counts_as_one_conversation(self):
+        pairs = [
+            _pair("질문 " + str(i), "답변 " + str(i), recorded_at=_stamp(i * 0.25))
+            for i in range(4)
+        ]
+        _, tight = build_splits(pairs, session_gap=600, seed=1)
+        _, loose = build_splits(pairs, session_gap=3600, seed=1)
+        self.assertEqual(tight.groups, 4)
+        self.assertEqual(loose.groups, 1)
 
     def test_a_tiny_set_still_keeps_training_rows(self):
         pairs = [_pair("질문", "답변")]
@@ -120,7 +263,7 @@ class TestSplits(unittest.TestCase):
         self.assertEqual(stats.test, 0)
 
     def test_no_row_appears_in_two_splits(self):
-        pairs = [_pair("질문 " + str(i), "답변 " + str(i)) for i in range(60)]
+        pairs, _ = _session_pairs(30, 2)
         splits, _ = build_splits(pairs, seed=3)
         train = {row["completion"] for row in splits["train"]}
         valid = {row["completion"] for row in splits["valid"]}
@@ -199,20 +342,34 @@ class TestEvaluation(unittest.TestCase):
         self.assertEqual(result["reason"], "loss_unavailable")
 
 
+class TestArguments(unittest.TestCase):
+    def test_the_session_gap_defaults_to_thirty_minutes(self):
+        self.assertEqual(DEFAULT_SESSION_GAP, 1800)
+        self.assertEqual(build_parser().parse_args([]).session_gap, DEFAULT_SESSION_GAP)
+
+
 class TestPrepareDataset(unittest.TestCase):
-    def test_prepare_writes_splits_and_a_summary(self):
+    def test_prepare_writes_splits_and_reports_duplicate_prompts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            pairs, _ = _session_pairs(10, 4)
             golden = root / "golden.jsonl"
-            rows = [
-                json.dumps(_pair("질문 " + str(i), "답변 " + str(i)), ensure_ascii=False)
-                for i in range(40)
-            ]
+            rows = [json.dumps(pair, ensure_ascii=False) for pair in pairs]
+            # The first row comes back a second time, as it does in a golden
+            # set built from an overlapping window.
+            rows.append(json.dumps(pairs[0], ensure_ascii=False))
             golden.write_text(NL.join(rows) + NL, encoding="utf-8")
             summary, splits = prepare_dataset(
-                golden_path=golden, data_dir=root / "data", seed=5
+                golden_path=golden, data_dir=root / "data", seed=5, session_gap=1800
             )
             self.assertEqual(summary["train"] + summary["valid"] + summary["test"], 40)
+            self.assertEqual(summary["dropped"], 1)
+            self.assertEqual(summary["duplicate_prompts"], 1)
+            self.assertEqual(summary["groups"], 10)
+            self.assertEqual(summary["test_groups"], 1)
+            self.assertEqual(summary["valid_groups"], 1)
+            self.assertEqual(summary["train_groups"], 8)
+            self.assertEqual(summary["session_gap"], 1800)
             self.assertTrue((root / "data" / "split-summary.json").exists())
             self.assertTrue(splits["train"])
 
@@ -223,6 +380,7 @@ class TestPrepareDataset(unittest.TestCase):
                 golden_path=root / "absent.jsonl", data_dir=root / "data"
             )
             self.assertEqual(summary["train"], 0)
+            self.assertEqual(summary["groups"], 0)
             self.assertEqual(splits["train"], [])
             self.assertTrue((root / "data" / "train.jsonl").exists())
 

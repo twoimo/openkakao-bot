@@ -27,10 +27,23 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+try:
+    # The golden extractor owns the transcript clock format, so its parser is
+    # reused instead of re-implemented: a session bucket that disagrees with
+    # the row's own timestamp would put one burst on both sides of the split
+    # (2026-09-19).
+    from scripts.auto_reply_golden_dataset import parse_timestamp
+except ImportError:  # `scripts` is not importable from inside its own directory
+    from auto_reply_golden_dataset import parse_timestamp
+
 SCHEMA_VERSION = 1
 DEFAULT_VALID_RATIO = 0.1
 DEFAULT_TEST_RATIO = 0.05
 DEFAULT_SEED = 42
+# Golden rows are cut from the same room bursts, so neighbours share most of
+# their window text. Two rows further apart than this gap come from separate
+# conversations and may land on opposite sides of the split (2026-09-19).
+DEFAULT_SESSION_GAP = 1800.0
 # mlx_lm.lora masks the prompt when told to, so the model is scored on the
 # answer only. The instruction line frames the task the same way every time.
 DEFAULT_INSTRUCTION = "다음 카카오톡 대화에 자연스럽게 답장하세요."
@@ -42,6 +55,11 @@ class SplitStats:
     valid: int = 0
     test: int = 0
     dropped: int = 0
+    duplicate_prompts: int = 0
+    groups: int = 0
+    train_groups: int = 0
+    valid_groups: int = 0
+    test_groups: int = 0
 
 
 @dataclass
@@ -114,6 +132,48 @@ def _to_mlx_row(record: dict[str, Any], instruction: str) -> dict[str, str]:
     }
 
 
+def _normalized_prompt(record: dict[str, Any]) -> str:
+    """Fold whitespace so two spellings of one window count as one prompt."""
+    return " ".join(str(record.get("prompt") or "").split())
+
+
+def _session_key(record: dict[str, Any], session_gap: float) -> tuple[str, str] | None:
+    """Name the conversation a row belongs to, or None when it stands alone.
+
+    A row without a room cannot be held together with anything else, so it is
+    its own group. A room row whose clock cannot be read joins that room's
+    no_clock group: an unreadable timestamp must not become a licence to split
+    a burst apart (2026-09-19).
+    """
+    room = str(record.get("room") or "").strip()
+    if not room:
+        return None
+    epoch = parse_timestamp(record.get("recorded_at") or record.get("recordedAt"))
+    if epoch <= 0:
+        return (room, "no_clock")
+    return (room, str(int(epoch // session_gap)))
+
+
+def _group_rows(
+    pairs: Sequence[dict[str, Any]], session_gap: float
+) -> list[list[dict[str, Any]]]:
+    """Bucket the pairs by (room, session), keeping the input order inside."""
+    groups: list[list[dict[str, Any]]] = []
+    index: dict[tuple[str, str], int] = {}
+    for record in pairs:
+        key = _session_key(record, session_gap)
+        if key is None:
+            groups.append([record])
+            continue
+        position = index.get(key)
+        if position is None:
+            index[key] = len(groups)
+            groups.append([record])
+        else:
+            groups[position].append(record)
+    return groups
+
+
 def build_splits(
     pairs: Sequence[dict[str, Any]],
     *,
@@ -121,17 +181,41 @@ def build_splits(
     valid_ratio: float = DEFAULT_VALID_RATIO,
     test_ratio: float = DEFAULT_TEST_RATIO,
     seed: int = DEFAULT_SEED,
+    session_gap: float = DEFAULT_SESSION_GAP,
 ) -> tuple[dict[str, list[dict[str, str]]], SplitStats]:
-    """Split the pairs into train/valid/test without leaking between them."""
-    rows = [_to_mlx_row(p, instruction) for p in pairs]
+    """Split the pairs into train/valid/test without leaking between them.
+
+    Golden rows are cut from the same room bursts, so their windows overlap: a
+    row-by-row shuffle puts one conversation on both sides of the split and the
+    held-out loss stops measuring anything. The rows are therefore
+    de-duplicated on the whitespace-folded prompt and then grouped by room and
+    session, and a whole group is dealt to exactly one split (2026-09-19).
+    """
     stats = SplitStats()
-    if not rows:
+    if not pairs:
         return {"train": [], "valid": [], "test": []}, stats
 
-    rng = random.Random(seed)
-    rng.shuffle(rows)
+    kept: list[dict[str, Any]] = []
+    seen_prompts: set[str] = set()
+    for record in pairs:
+        prompt = _normalized_prompt(record)
+        if prompt and prompt in seen_prompts:
+            # The same window with a second answer teaches nothing, and kept
+            # apart it would score the model on text it trained on.
+            stats.duplicate_prompts += 1
+            stats.dropped += 1
+            continue
+        if prompt:
+            seen_prompts.add(prompt)
+        kept.append(record)
 
-    total = len(rows)
+    # A zero or negative gap would divide the clock by zero.
+    session_seconds = max(1.0, float(session_gap))
+    groups = _group_rows(kept, session_seconds)
+    rng = random.Random(seed)
+    rng.shuffle(groups)
+
+    total = len(kept)
     test_count = int(total * max(0.0, test_ratio))
     valid_count = int(total * max(0.0, valid_ratio))
     # Keep at least one training row; a split that trains on nothing is worse
@@ -142,15 +226,44 @@ def build_splits(
         elif valid_count:
             valid_count -= 1
 
-    test_rows = rows[:test_count]
-    valid_rows = rows[test_count : test_count + valid_count]
-    train_rows = rows[test_count + valid_count :]
+    # Deal whole groups in the shuffled order until each target is reached, so
+    # a target is crossed by a conversation instead of inside one.
+    entries: list[tuple[list[dict[str, Any]], str]] = []
+    dealt_test = 0
+    dealt_valid = 0
+    for group in groups:
+        size = len(group)
+        if dealt_test < test_count:
+            entries.append((group, "test"))
+            dealt_test += size
+        elif dealt_valid < valid_count:
+            entries.append((group, "valid"))
+            dealt_valid += size
+        else:
+            entries.append((group, "train"))
 
-    stats.train = len(train_rows)
-    stats.valid = len(valid_rows)
-    stats.test = len(test_rows)
-    stats.dropped = len(pairs) - len(rows)
-    return {"train": train_rows, "valid": valid_rows, "test": test_rows}, stats
+    if not any(name == "train" for _, name in entries):
+        # One burst can swallow the whole test and valid budget and leave
+        # nothing to train on. Demote the smallest group that is not already
+        # training, which is how a single-group dataset ends up in train
+        # (2026-09-19).
+        smallest = min(range(len(entries)), key=lambda i: (len(entries[i][0]), i))
+        entries[smallest] = (entries[smallest][0], "train")
+
+    splits: dict[str, list[dict[str, str]]] = {"train": [], "valid": [], "test": []}
+    group_counts = {"train": 0, "valid": 0, "test": 0}
+    for group, name in entries:
+        group_counts[name] += 1
+        splits[name].extend(_to_mlx_row(record, instruction) for record in group)
+
+    stats.train = len(splits["train"])
+    stats.valid = len(splits["valid"])
+    stats.test = len(splits["test"])
+    stats.groups = len(entries)
+    stats.train_groups = group_counts["train"]
+    stats.valid_groups = group_counts["valid"]
+    stats.test_groups = group_counts["test"]
+    return splits, stats
 
 
 def write_splits(splits: dict[str, list[dict[str, str]]], data_dir: Path) -> list[Path]:
@@ -238,6 +351,7 @@ def prepare_dataset(
     valid_ratio: float = DEFAULT_VALID_RATIO,
     test_ratio: float = DEFAULT_TEST_RATIO,
     seed: int = DEFAULT_SEED,
+    session_gap: float = DEFAULT_SESSION_GAP,
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, str]]]]:
     """Read the golden set and write the three split files."""
     pairs = load_pairs(golden_path)
@@ -247,6 +361,7 @@ def prepare_dataset(
         valid_ratio=valid_ratio,
         test_ratio=test_ratio,
         seed=seed,
+        session_gap=session_gap,
     )
     files = write_splits(splits, data_dir)
     summary = {
@@ -258,9 +373,15 @@ def prepare_dataset(
         "valid": stats.valid,
         "test": stats.test,
         "dropped": stats.dropped,
+        "duplicate_prompts": stats.duplicate_prompts,
+        "groups": stats.groups,
+        "train_groups": stats.train_groups,
+        "valid_groups": stats.valid_groups,
+        "test_groups": stats.test_groups,
         "valid_ratio": valid_ratio,
         "test_ratio": test_ratio,
         "seed": seed,
+        "session_gap": session_gap,
         "prepared_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     summary_path = data_dir / "split-summary.json"
@@ -460,6 +581,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--valid-ratio", type=float, default=DEFAULT_VALID_RATIO)
     parser.add_argument("--test-ratio", type=float, default=DEFAULT_TEST_RATIO)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--session-gap",
+        type=float,
+        default=DEFAULT_SESSION_GAP,
+        help="한 세션으로 묶을 최대 시간 간격(초). 같은 그룹은 한 split에만 들어감",
+    )
     parser.add_argument("--prepare-only", action="store_true", help="데이터만 만들고 학습은 안 함")
     parser.add_argument("--train", action="store_true", help="실제 학습을 실행")
     parser.add_argument("--evaluate", action="store_true", help="학습 전후 손실을 비교")
@@ -482,6 +609,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         valid_ratio=args.valid_ratio,
         test_ratio=args.test_ratio,
         seed=args.seed,
+        session_gap=args.session_gap,
     )
     plan = plan_training(
         model=model,
@@ -532,6 +660,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"학습 데이터: {summary['train']} train · {summary['valid']} valid · "
             f"{summary['test']} test"
+        )
+        print(
+            f"  세션 그룹 {summary['groups']}개 (train {summary['train_groups']} · "
+            f"valid {summary['valid_groups']} · test {summary['test_groups']}) · "
+            f"중복 prompt {summary['duplicate_prompts']}건 제외"
         )
         print(f"  → {data_dir}")
         print(f"기반 모델: {plan.model}")
