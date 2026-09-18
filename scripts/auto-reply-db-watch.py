@@ -170,7 +170,7 @@ CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = 5.0
 # and reports SQLITE_BUSY. Three rooms retrying on their own clocks therefore
 # never converged and stayed fenced in context_sync_transient. One bounded
 # advisory lock keeps a single writer on the database at a time.
-CONTEXT_SYNC_WRITER_LOCK_FILE_NAME = "context-sync.lock"
+CONTEXT_SYNC_WRITER_LOCK_FILE_NAME = "context-sync.writer.lock"
 CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = 300.0
 CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = 0.25
 CONTEXT_SYNC_TOTAL_KEYS = {
@@ -305,6 +305,25 @@ def _private_lock(path: Path, *, expected_parent: Path):
         os.close(parent_fd)
 
 
+def _context_sync_writer_lock_path() -> Path:
+    """Return the context-sync writer slot shared by every room.
+
+    The context database is one file shared by all rooms, so a slot beside a
+    single room's state file cannot serialize anything. On 2026-09-18 each room
+    held its own lock and all three ran context-sync-local at once, starved each
+    other on SQLITE_BUSY, and stayed fenced in context_sync_transient. Derive
+    the shared root from the room layout; an explicit override still wins.
+    """
+    override = os.environ.get("OPENKAKAO_CONTEXT_SYNC_LOCK", "").strip()
+    if override:
+        return Path(override)
+    room = STATE.parent
+    rooms = room.parent
+    if room.name.isdigit() and rooms.name == "rooms":
+        return rooms.parent / CONTEXT_SYNC_WRITER_LOCK_FILE_NAME
+    return room / CONTEXT_SYNC_WRITER_LOCK_FILE_NAME
+
+
 @contextmanager
 def _context_sync_writer_lock(
     wait_seconds: float = CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS,
@@ -319,7 +338,7 @@ def _context_sync_writer_lock(
     slot in time raises the existing transient classification, which keeps the
     room fenced without delivery and retries on the watcher's own clock.
     """
-    lock_path = STATE.with_name(CONTEXT_SYNC_WRITER_LOCK_FILE_NAME)
+    lock_path = _context_sync_writer_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     flags |= getattr(os, "O_CLOEXEC", 0)

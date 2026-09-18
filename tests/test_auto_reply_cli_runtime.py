@@ -7114,6 +7114,46 @@ print(json.dumps({
             finally:
                 supervisor.LOG_DIR = previous_root
 
+    def test_context_sync_writer_lock_is_shared_across_rooms(self):
+        """One context database means one writer slot, not one slot per room."""
+        module = self._load_db_watch_module("auto_reply_db_context_sync_shared_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first_room = root / "rooms" / "111"
+            second_room = root / "rooms" / "222"
+            first_room.mkdir(parents=True)
+            second_room.mkdir(parents=True)
+            previous_state = module.STATE
+            try:
+                module.STATE = first_room / "db-watch-state.json"
+                shared = module._context_sync_writer_lock_path()
+                self.assertEqual(
+                    shared, root / module.CONTEXT_SYNC_WRITER_LOCK_FILE_NAME
+                )
+                with module._context_sync_writer_lock(wait_seconds=0.0):
+                    # A second room's watcher must see the same slot.
+                    module.STATE = second_room / "db-watch-state.json"
+                    self.assertEqual(module._context_sync_writer_lock_path(), shared)
+                    with self.assertRaises(module.SqliteBusyTransient):
+                        with module._context_sync_writer_lock(wait_seconds=0.0):
+                            self.fail("two rooms held the context writer slot")
+                # An explicit override still wins for operators.
+                override = root / "override.lock"
+                module.STATE = first_room / "db-watch-state.json"
+                previous_env = os.environ.get("OPENKAKAO_CONTEXT_SYNC_LOCK")
+                os.environ["OPENKAKAO_CONTEXT_SYNC_LOCK"] = str(override)
+                try:
+                    self.assertEqual(
+                        module._context_sync_writer_lock_path(), override
+                    )
+                finally:
+                    if previous_env is None:
+                        os.environ.pop("OPENKAKAO_CONTEXT_SYNC_LOCK", None)
+                    else:
+                        os.environ["OPENKAKAO_CONTEXT_SYNC_LOCK"] = previous_env
+            finally:
+                module.STATE = previous_state
+
     def test_context_sync_writer_lock_serializes_and_times_out_transient(self):
         module = self._load_db_watch_module("auto_reply_db_context_sync_lock_test")
         with tempfile.TemporaryDirectory() as temporary:
