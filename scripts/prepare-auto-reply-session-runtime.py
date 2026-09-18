@@ -612,7 +612,14 @@ def stage_runtime(
             "AbandonProcessGroup": True,
             "StartInterval": start_interval,
             "ThrottleInterval": start_interval,
-            "ProcessType": "Background",
+            # launchd's Background process type puts the whole job coalition in
+            # the low-priority I/O tier. The host preflight opens the 800MB+
+            # SQLCipher KakaoTalk database, so that tier stretched one check
+            # from ~10s to 90-200s and tripped the watchdog's 240s timeout:
+            # the service never left preflight and no reply was sent for ~20h
+            # (2026-09-18). Standard keeps normal I/O scheduling without
+            # raising CPU priority above the user's own apps.
+            "ProcessType": "Standard",
             "LimitLoadToSessionType": "Aqua",
             "Umask": 0o077,
             "StandardInPath": "/dev/null",

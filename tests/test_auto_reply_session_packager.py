@@ -136,7 +136,9 @@ class SessionRuntimePackagerTests(unittest.TestCase):
             self.assertEqual(plist["RunAtLoad"], True)
             self.assertEqual(plist["StartInterval"], 45)
             self.assertEqual(plist["ThrottleInterval"], 45)
-            self.assertEqual(plist["ProcessType"], "Background")
+            # Background I/O throttling made the 800MB KakaoTalk preflight
+            # read 10-20x slower and tripped the 240s watchdog timeout.
+            self.assertEqual(plist["ProcessType"], "Standard")
             self.assertEqual(plist["Umask"], 0o077)
             self.assertNotIn("KeepAlive", plist)
             self.assertEqual(plist["StandardInPath"], "/dev/null")

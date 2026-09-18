@@ -7114,6 +7114,64 @@ print(json.dumps({
             finally:
                 supervisor.LOG_DIR = previous_root
 
+    def test_context_sync_writer_lock_serializes_and_times_out_transient(self):
+        module = self._load_db_watch_module("auto_reply_db_context_sync_lock_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            previous_state = module.STATE
+            module.STATE = Path(temporary) / "db-watch-state.json"
+            try:
+                with module._context_sync_writer_lock() as first:
+                    metadata = os.fstat(first)
+                    self.assertTrue(stat.S_ISREG(metadata.st_mode))
+                    self.assertEqual(metadata.st_uid, os.geteuid())
+                    self.assertEqual(stat.S_IMODE(metadata.st_mode), 0o600)
+                    # A second writer cannot take the slot while the first holds it.
+                    with self.assertRaises(module.SqliteBusyTransient):
+                        with module._context_sync_writer_lock(wait_seconds=0.0):
+                            self.fail("the writer slot was handed out twice")
+                # The slot is reusable once the holder released it.
+                with module._context_sync_writer_lock(wait_seconds=5.0):
+                    pass
+            finally:
+                module.STATE = previous_state
+
+    def test_sync_context_index_holds_the_writer_lock_across_the_cli(self):
+        module = self._load_db_watch_module("auto_reply_db_context_sync_wrap_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            previous_state = module.STATE
+            previous_run_json = module.run_json
+            module.STATE = Path(temporary) / "db-watch-state.json"
+            observed: dict = {}
+
+            def fake_run_json(args, timeout=5.0):
+                del args, timeout
+                try:
+                    with module._context_sync_writer_lock(wait_seconds=0.0):
+                        observed["held"] = False
+                except module.SqliteBusyTransient:
+                    observed["held"] = True
+                return {
+                    "schema_version": 1,
+                    "action": "context_sync_local",
+                    "chat_id": 417780809780519,
+                    "chat": module.CHAT,
+                    "checkpoint_log_id": 1,
+                    "pages": 1,
+                    "authoritative": True,
+                    "deferred": None,
+                    "totals": {key: 0 for key in module.CONTEXT_SYNC_TOTAL_KEYS},
+                    "network": False,
+                }
+
+            module.run_json = fake_run_json
+            try:
+                value = module.sync_context_index(417780809780519)
+            finally:
+                module.run_json = previous_run_json
+                module.STATE = previous_state
+            self.assertTrue(observed.get("held"))
+            self.assertTrue(value["authoritative"])
+
     def test_generation_and_reply_state_locks_are_private_and_no_follow(self):
         modules = (
             (

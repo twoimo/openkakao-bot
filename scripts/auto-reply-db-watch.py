@@ -165,6 +165,14 @@ CONTEXT_SYNC_DEFERRED_RETRY_MAX_SECONDS = 5
 # slow capped schedule instead of making the supervisor restart every child.
 CONTEXT_SYNC_TRANSIENT_RETRY_DELAYS_SECONDS = (5.0, 10.0, 30.0, 60.0)
 CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = 5.0
+# Every room's watcher syncs the same context database, and that database runs
+# in rollback-journal (DELETE) mode, where a second writer starves on RESERVED
+# and reports SQLITE_BUSY. Three rooms retrying on their own clocks therefore
+# never converged and stayed fenced in context_sync_transient. One bounded
+# advisory lock keeps a single writer on the database at a time.
+CONTEXT_SYNC_WRITER_LOCK_FILE_NAME = "context-sync.lock"
+CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = 300.0
+CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = 0.25
 CONTEXT_SYNC_TOTAL_KEYS = {
     "inserted_events",
     "duplicate_events",
@@ -297,26 +305,78 @@ def _private_lock(path: Path, *, expected_parent: Path):
         os.close(parent_fd)
 
 
+@contextmanager
+def _context_sync_writer_lock(
+    wait_seconds: float = CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS,
+):
+    """Hold the single context-index writer slot while one room syncs.
+
+    The context database is opened read-write by `context-sync-local` in
+    rollback-journal (DELETE) mode, so a second writer waits on RESERVED and
+    fails with SQLITE_BUSY while the first still holds it. Every room's watcher
+    syncs that one database, so without a writer slot the rooms starve each
+    other and never clear the context-sync fence. A waiter that cannot take the
+    slot in time raises the existing transient classification, which keeps the
+    room fenced without delivery and retries on the watcher's own clock.
+    """
+    lock_path = STATE.with_name(CONTEXT_SYNC_WRITER_LOCK_FILE_NAME)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(lock_path, flags, LOCK_FILE_MODE)
+    locked = False
+    try:
+        metadata = os.fstat(fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+        ):
+            raise PermissionError("AutoReply context sync lock is unsafe")
+        os.fchmod(fd, LOCK_FILE_MODE)
+        deadline = time.monotonic() + max(0.0, float(wait_seconds))
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise SqliteBusyTransient(
+                        "context_sync_writer_lock_timeout"
+                    )
+                time.sleep(CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS)
+        yield fd
+    finally:
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
 def sync_context_index(chat_id: int, *, initial: bool = False) -> dict:
     if not 0 < int(chat_id) < MAX_INT64:
         raise DbFence("context_sync_identity")
-    value = run_json(
-        [
-            "context-sync-local",
-            "--chat-id",
-            str(chat_id),
-            "--chat",
-            CHAT,
-            # The room delivery queue is the second send authority: a terminal
-            # `sent` job proves the assistant wrote an outgoing self row, which
-            # must never be learned as an owner sample. This watcher runs the
-            # startup and periodic sync, so omitting it would leave a path where
-            # a bot reply the decision ledger never recorded is learned again.
-            "--queue",
-            str(QUEUE),
-        ],
-        timeout=900.0 if initial else 90.0,
-    )
+    with _context_sync_writer_lock():
+        value = run_json(
+            [
+                "context-sync-local",
+                "--chat-id",
+                str(chat_id),
+                "--chat",
+                CHAT,
+                # The room delivery queue is the second send authority: a
+                # terminal `sent` job proves the assistant wrote an outgoing
+                # self row, which must never be learned as an owner sample.
+                # This watcher runs the startup and periodic sync, so omitting
+                # it would leave a path where a bot reply the decision ledger
+                # never recorded is learned again.
+                "--queue",
+                str(QUEUE),
+            ],
+            timeout=900.0 if initial else 90.0,
+        )
     if (
         not isinstance(value, dict)
         or set(value)
