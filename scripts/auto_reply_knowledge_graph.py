@@ -2048,19 +2048,78 @@ SYNONYM_DICTIONARY = {
     "국장": ["주식", "국내주식"],
     "미장": ["주식", "미국주식"],
     "가상화폐": ["코인", "비트코인"],
+    # 별칭이 영어 정식 이름이고 질문은 줄임말일 때도 만나야 한다. 사전이
+    # 한글 키만 있으면 "Anthropic Claude" 같은 별칭은 "클로드"를 못 찾았다
+    # (2026-09-19).
+    "claude": ["클로드", "앤트로픽 클로드", "anthropic claude"],
+    "chatgpt": ["지피티", "챗지피티", "gpt", "openai"],
+    "qwen": ["큐웬", "큐웬3.8", "qwen3.8"],
+    "deepseek": ["딥시크", "deepseek v4"],
+    "computer use": ["컴퓨터 유즈", "컴유"],
 }
 
-KOREAN_PARTICLES_PATTERN = r"(?:$|[\s.,!?~/_\-()\[\]은는이가을를도에과의와로으로등만])"
+KOREAN_PARTICLES_PATTERN = (
+    r"(?:$|[\s.,!?~/_\-()\[\]]|은|는|이|가|을|를|도|에|과|의|와|으로|로"
+    r"|등|만|밖|부터|까지|처럼|보다|께)"
+)
 KOREAN_PREFIX_PATTERN = r"(?:^|[\s.,!?~/_\-()\[\]])"
 
+# 오타·붙여쓰기 표준형. 사전은 닫아 둔다. 규칙을 넓히면 멀쩡한 말을 건드릴
+# 수 있어서 실제로 관측된 것만 넣는다.
+TYPO_DICTIONARY: dict[str, str] = {
+    "러닝박에": "러닝밖에",
+    "채팅내용": "채팅 내용",
+}
+
+# 시간대 표현은 같은 시각을 여러 표기로 말한다. 표준형으로 모아 두면 그래프의
+# 시간 노드와 같은 말로 만난다.
+TIME_EXPRESSION_RULES: tuple[tuple[str, str], ...] = (
+    (r"(오늘\s*아침|아침에)", "아침(8시)"),
+    (r"(점심\s*때|점심에)", "점심(12시)"),
+    (r"(저녁\s*때|저녁에|밤에)", "저녁(20시)"),
+)
+
+
 def normalize_text_query(text: str) -> str:
-    normalized = str(text or "").strip()
-    normalized = re.sub(r"(오늘\s*아침|아침에)", "아침(8시)", normalized)
-    normalized = re.sub(r"(점심\s*때|점심에)", "점심(12시)", normalized)
-    normalized = re.sub(r"(저녁\s*때|저녁에|밤에)", "저녁(20시)", normalized)
-    normalized = re.sub(r"러닝박에", "러닝밖에", normalized)
-    normalized = re.sub(r"채팅내용", "채팅 내용", normalized)
+    """오타·붙여쓰기·시간대 표현을 표준형으로 바꾼다.
+
+    답변 생성은 이 함수를 거친 질의로 그래프를 찾는다. 사용자가 "러닝박에"나
+    "오늘 아침"처럼 써도 그래프의 "러닝"·"아침(8시)" 노드와 같은 말로 만나게
+    하는 것이 목적이다. 여러 번 불러도 같은 결과가 나온다(2026-09-19).
+
+    예전 본문의 시간 규칙에는 단어 경계를 뜻하는 역슬래시-b 대신 진짜
+    백스페이스 문자가 들어가 있었다. 그 규칙은 아무것도 바꾸지 못했고,
+    이 함수는 아무도 부르지 않아 통째로 죽어 있었다.
+    """
+
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return ""
+    for wrong, right in TYPO_DICTIONARY.items():
+        normalized = normalized.replace(wrong, right)
+    for pattern, replacement in TIME_EXPRESSION_RULES:
+        normalized = re.sub(pattern, replacement, normalized)
     return normalized
+
+
+def query_haystacks(
+    query_text: str,
+    also: "list[str] | tuple[str, ...] | None" = None,
+) -> list[str]:
+    """질의와 곁말을 원문과 표준형으로 함께 모은다.
+
+    원문을 지우지 않는다. 오타 사전이 모르는 표기를 표준형이 지워 버릴 수
+    있어서 둘 다 바늘더미에 남긴다. 원문이 먼저다(2026-09-19).
+    """
+
+    haystacks: list[str] = []
+    for raw in (query_text, *(also or ())):
+        for variant in (str(raw or ""), normalize_text_query(raw)):
+            folded = variant.casefold().strip()
+            if folded and folded not in haystacks:
+                haystacks.append(folded)
+    return haystacks
+
 
 def _alias_matches(alias: str, haystack: str) -> bool:
     folded = alias.casefold().strip()
@@ -2153,13 +2212,13 @@ def _query_knowledge_structured(
     message, and the returned lines keep their category and name so the model
     can tell which concept is being invoked.
     """
-    haystacks = [query_text.casefold()]
-    for extra in also or ():
-        folded = str(extra or "").casefold().strip()
-        if folded:
-            haystacks.append(folded)
-    if not any(haystacks):
-        return []
+    # 오타·붙여쓰기·시간 표현을 표준형으로 바꾼 바늘더미까지 함께 쓴다.
+    # 예전에는 원문만 썼고, 정규화 함수는 아무도 부르지 않았다.
+    haystacks = query_haystacks(query_text, also)
+    if not haystacks:
+        # 빈 질의로도 불린다. 여기서 리스트 하나를 돌려주면 호출자의 세 값
+        # 언패킹이 깨져 조회 전체가 실패한다(2026-09-19).
+        return [], [], []
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
     kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
     if not kg_path.exists():
@@ -2172,9 +2231,6 @@ def _query_knowledge_structured(
             "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
             " FROM kg_entities ORDER BY importance DESC, entity_id ASC"
         )
-        hits: list[str] = []
-        matched_entity_ids = set()
-        matched_entity_names = {}
         chat_str = str(chat_id or "").strip()
         # 방 격리: 방 식별자를 하나의 정규 키로 모은 뒤, 노드 ID의 방 부분과
         # 정확히 비교한다.

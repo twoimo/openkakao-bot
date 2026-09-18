@@ -720,6 +720,90 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
         self.assertTrue(KG._alias_matches('지피티', 'ChatGPT 활용법'))
         self.assertTrue(KG._alias_matches('컴유', 'computer use 기능'))
 
+    def test_normalize_text_query_fixes_typos_and_time_words(self):
+        """오타·붙여쓰기·시간 표현을 표준형으로 모은다."""
+
+        self.assertEqual(KG.normalize_text_query('러닝박에   뛰었어'), '러닝밖에 뛰었어')
+        self.assertEqual(KG.normalize_text_query('오늘 아침 봤어'), '아침(8시) 봤어')
+        self.assertEqual(KG.normalize_text_query('점심 때 얘기'), '점심(12시) 얘기')
+        self.assertEqual(KG.normalize_text_query('채팅내용 정리'), '채팅 내용 정리')
+        # 같은 질의를 여러 번 정규화해 쓴다. 두 번째가 첫 번째를 바꾸면
+        # 답변마다 다른 맥락을 찾는다.
+        once = KG.normalize_text_query('오늘 아침 러닝박에 뛰었어')
+        self.assertEqual(KG.normalize_text_query(once), once)
+        self.assertEqual(KG.normalize_text_query(None), '')
+        self.assertEqual(KG.normalize_text_query('   '), '')
+
+    def test_query_haystacks_keep_the_raw_and_the_normalized_form(self):
+        """원문을 지우면 오타 사전이 모르는 표기가 사라진다."""
+
+        self.assertEqual(
+            KG.query_haystacks('러닝박에 뛰었어'),
+            ['러닝박에 뛰었어', '러닝밖에 뛰었어'],
+        )
+        self.assertEqual(KG.query_haystacks('', ['오늘 아침']), ['오늘 아침', '아침(8시)'])
+        self.assertEqual(KG.query_haystacks('   '), [])
+
+    def test_a_typo_and_a_particle_still_find_the_entity(self):
+        """정규화와 조사 목록이 실제 조회 결과를 바꾼다."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+            finally:
+                conn.close()
+            # 오타 표기는 정규화를 거쳐야 "러닝" 노드와 만난다.
+            hits = KG.query_knowledge_context('러닝박에 뛰었어', state_root=root)
+            self.assertTrue(any('러닝' in hit for hit in hits))
+            # 조사 "밖에"가 붙은 짧은 이름도 같은 노드를 찾는다.
+            hits = KG.query_knowledge_context('러닝밖에 못 뛰었어', state_root=root)
+            self.assertTrue(any('러닝' in hit for hit in hits))
+
+    def test_an_english_alias_matches_a_korean_abbreviation(self):
+        """별칭이 영어 정식 이름이어도 줄임말 질문을 찾아야 한다."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                conn.execute(
+                    "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                    " description, key_facts_json, importance, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET"
+                    " aliases_json=excluded.aliases_json",
+                    (
+                        'ent:tech:claude',
+                        'Anthropic Claude',
+                        'AI/모델',
+                        json.dumps(['Anthropic Claude', 'Claude 4'], ensure_ascii=False),
+                        '대화에서 자주 언급되는 모델',
+                        json.dumps([], ensure_ascii=False),
+                        50,
+                        0,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            hits = KG.query_knowledge_context('클로드 어떤 모델 써?', state_root=root)
+            self.assertTrue(any('Claude' in hit for hit in hits))
+
+    def test_an_empty_query_returns_three_empty_lists(self):
+        """빈 질의는 빈 결과여야 한다. 예전에는 리스트 하나를 돌려주어
+        호출자의 세 값 언패킹이 깨졌다."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(
+                KG._query_knowledge_structured('', state_root=root), ([], [], [])
+            )
+            bundle = KG.retrieve_knowledge_bundle('   ', state_root=root)
+            self.assertEqual(bundle['facts'], [])
+            self.assertEqual(bundle['fact_count'], 0)
+
     def test_query_knowledge_context_includes_relations(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -920,4 +1004,3 @@ class RoomIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
