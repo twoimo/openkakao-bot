@@ -264,6 +264,13 @@ WORKER_POLL_SECONDS = 0.5
 WORKER_STATUS_SCHEMA_VERSION = 1
 WORKER_STATUS_INTERVAL_SECONDS = 1.0
 WORKER_STATUS_MAX_BYTES = 64 * 1024
+WORKER_SQLITE_BUSY_RETRY_SECONDS = 1.0
+WORKER_RECONCILIATION_RETRY_SECONDS = 1.0
+SQLITE_BUSY_OPERATIONAL_MESSAGES = (
+    "database is locked",
+    "database is busy",
+    "database table is locked",
+)
 REPLY_MODEL_OVERRIDE_NAME = "reply-model.json"
 REPLY_IMAGE_MODEL_OVERRIDE_NAME = "reply-image-model.json"
 REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
@@ -965,6 +972,13 @@ def _private_context_connection() -> sqlite3.Connection:
     connection.execute("PRAGMA query_only = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     return connection
+
+
+def _is_transient_sqlite_busy(error: sqlite3.Error) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    message = str(error).lower()
+    return any(marker in message for marker in SQLITE_BUSY_OPERATIONAL_MESSAGES)
 
 
 def _context_terminal_decision(event_id: str) -> dict | None:
@@ -15866,8 +15880,11 @@ def worker_main() -> int:
         next_retention_at = 0.0
         scheduled_claims_since_pending = 0
         initialized = False
+        reconciliation_retry_pending = False
         while True:
             try:
+                if connection is None:
+                    connection = _queue_connection()
                 now = time.time()
                 # A durable breaker can expire while the worker is otherwise
                 # idle. Refresh every loop so health never advertises a stale
@@ -15893,12 +15910,16 @@ def worker_main() -> int:
                 ):
                     pass
                 if now >= next_recovery_at:
-                    health.phase("recovery", ready=initialized)
+                    health.phase(
+                        "recovery",
+                        ready=initialized and not reconciliation_retry_pending,
+                    )
                     recover_stale_jobs(connection)
                     next_recovery_at = now + STALE_RECOVERY_INTERVAL_SECONDS
                     _auto_reconcile_give_up(connection, now)
                     if _queue_reconciliation_blockers(connection):
                         raise RuntimeError("reply_queue_reconciliation_required")
+                    reconciliation_retry_pending = False
                 if now >= next_retention_at:
                     health.phase("retention", ready=initialized)
                     archive_terminal_jobs(connection)
@@ -15965,7 +15986,8 @@ def worker_main() -> int:
                 # A failed queue connection must never be reused: doing so
                 # could repeat a claim whose commit outcome is unknown.
                 try:
-                    connection.close()
+                    if connection is not None:
+                        connection.close()
                 finally:
                     connection = None
                 print(
@@ -15973,8 +15995,38 @@ def worker_main() -> int:
                     file=sys.stderr,
                     flush=True,
                 )
+                if _is_transient_sqlite_busy(error):
+                    if health is not None:
+                        health.phase("recovery", ready=False)
+                        health.fence("sqlite_busy")
+                    time.sleep(WORKER_SQLITE_BUSY_RETRY_SECONDS)
+                    continue
                 if health is not None:
                     health.fence("sqlite_error")
+                return 1
+            except RuntimeError as error:
+                if str(error) == "reply_queue_reconciliation_required":
+                    # These blocker states are excluded from claim_job. Keep
+                    # the worker fenced and force a fresh reconciliation pass
+                    # before any later claim can become deliverable.
+                    reconciliation_retry_pending = True
+                    next_recovery_at = 0.0
+                    if health is not None:
+                        health.phase("recovery", ready=False)
+                        health.fence("reply_queue_reconciliation_required")
+                    time.sleep(WORKER_RECONCILIATION_RETRY_SECONDS)
+                    continue
+                print(f"[reply-worker] {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+                import traceback as _traceback
+
+                print(
+                    "[reply-worker] "
+                    + _traceback.format_exc(limit=25),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if health is not None:
+                    health.fence(type(error).__name__)
                 return 1
             except Exception as error:
                 print(f"[reply-worker] {type(error).__name__}: {error}", file=sys.stderr, flush=True)

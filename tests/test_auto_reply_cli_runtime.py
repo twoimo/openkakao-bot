@@ -12812,6 +12812,125 @@ print(json.dumps({
                 finally:
                     health.close()
 
+    def test_reply_worker_reopens_after_transient_sqlite_busy(self):
+        module = self._load_auto_reply_module("auto_reply_worker_sqlite_busy_test")
+        first_connection = mock.Mock()
+        reopened_connection = mock.Mock()
+        circuit_connection = mock.Mock()
+        health = mock.Mock()
+        rerank = mock.Mock()
+        with (
+            mock.patch.object(
+                module,
+                "_queue_connection",
+                side_effect=[first_connection, reopened_connection],
+            ) as open_queue,
+            mock.patch.object(
+                module,
+                "_model_circuit_connection",
+                return_value=circuit_connection,
+            ),
+            mock.patch.object(module, "_WorkerHealth", return_value=health),
+            mock.patch.object(module, "_rerank_client", return_value=rerank),
+            mock.patch.object(
+                module,
+                "_refresh_model_status_from_circuit",
+                side_effect=[{}, {}, KeyboardInterrupt()],
+            ),
+            mock.patch.object(module, "_rearm_model_call_in_flight_jobs"),
+            mock.patch.object(module, "apply_operator_request"),
+            mock.patch.object(
+                module,
+                "recover_stale_jobs",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ),
+            mock.patch.object(module.time, "sleep") as sleep,
+        ):
+            self.assertEqual(module.worker_main(), 0)
+
+        self.assertEqual(open_queue.call_count, 2)
+        first_connection.close.assert_called_once_with()
+        reopened_connection.close.assert_called_once_with()
+        health.fence.assert_any_call("sqlite_busy")
+        sleep.assert_called_once_with(module.WORKER_SQLITE_BUSY_RETRY_SECONDS)
+
+    def test_reply_worker_nonbusy_sqlite_error_still_exits(self):
+        module = self._load_auto_reply_module("auto_reply_worker_sqlite_error_test")
+        connection = mock.Mock()
+        circuit_connection = mock.Mock()
+        health = mock.Mock()
+        rerank = mock.Mock()
+        with (
+            mock.patch.object(module, "_queue_connection", return_value=connection) as open_queue,
+            mock.patch.object(
+                module,
+                "_model_circuit_connection",
+                return_value=circuit_connection,
+            ),
+            mock.patch.object(module, "_WorkerHealth", return_value=health),
+            mock.patch.object(module, "_rerank_client", return_value=rerank),
+            mock.patch.object(
+                module,
+                "_refresh_model_status_from_circuit",
+                return_value={},
+            ),
+            mock.patch.object(module, "_rearm_model_call_in_flight_jobs"),
+            mock.patch.object(module, "apply_operator_request"),
+            mock.patch.object(
+                module,
+                "recover_stale_jobs",
+                side_effect=sqlite3.DatabaseError("database disk image is malformed"),
+            ),
+            mock.patch.object(module.time, "sleep") as sleep,
+        ):
+            self.assertEqual(module.worker_main(), 1)
+
+        open_queue.assert_called_once_with()
+        connection.close.assert_called_once_with()
+        health.fence.assert_called_once_with("sqlite_error")
+        sleep.assert_not_called()
+
+    def test_reply_worker_rechecks_reconciliation_blocker_while_fenced(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_worker_reconciliation_blocker_test"
+        )
+        connection = mock.Mock()
+        circuit_connection = mock.Mock()
+        health = mock.Mock()
+        rerank = mock.Mock()
+        with (
+            mock.patch.object(module, "_queue_connection", return_value=connection),
+            mock.patch.object(
+                module,
+                "_model_circuit_connection",
+                return_value=circuit_connection,
+            ),
+            mock.patch.object(module, "_WorkerHealth", return_value=health),
+            mock.patch.object(module, "_rerank_client", return_value=rerank),
+            mock.patch.object(
+                module,
+                "_refresh_model_status_from_circuit",
+                return_value={},
+            ),
+            mock.patch.object(module, "_rearm_model_call_in_flight_jobs"),
+            mock.patch.object(module, "apply_operator_request"),
+            mock.patch.object(module, "recover_stale_jobs"),
+            mock.patch.object(module, "_auto_reconcile_give_up"),
+            mock.patch.object(
+                module,
+                "_queue_reconciliation_blockers",
+                side_effect=[1, 0],
+            ) as blockers,
+            mock.patch.object(module, "archive_terminal_jobs"),
+            mock.patch.object(module, "claim_job", side_effect=KeyboardInterrupt()),
+            mock.patch.object(module.time, "sleep") as sleep,
+        ):
+            self.assertEqual(module.worker_main(), 0)
+
+        self.assertEqual(blockers.call_count, 2)
+        health.fence.assert_any_call("reply_queue_reconciliation_required")
+        sleep.assert_called_once_with(module.WORKER_RECONCILIATION_RETRY_SECONDS)
+
     def test_expired_model_cooldown_returns_worker_health_to_available(self):
         module = self._load_auto_reply_module(
             "auto_reply_expired_model_cooldown_test"
