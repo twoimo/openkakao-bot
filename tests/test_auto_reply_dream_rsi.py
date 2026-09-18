@@ -15,6 +15,7 @@ from pathlib import Path
 
 from scripts.auto_reply_dream_rsi import (
     DreamRsiSimulator,
+    _candidate_policies,
     answer_similarity,
     distribution_report,
     dream_policy_evaluation,
@@ -105,11 +106,42 @@ class TestReplayPolicy(unittest.TestCase):
             [{"prompt": "질문", "completion": "정확한 답변", "room": "a"}],
         )
         simulator = DreamRsiSimulator(self.root)
-        perfect = simulator.replay_policy(lambda row: row["gold"])
+        perfect = simulator.replay_policy(lambda row: "정확한 답변")
         blank = simulator.replay_policy(lambda row: "")
         self.assertGreater(perfect["objective_score"], blank["objective_score"])
         self.assertEqual(perfect["avg_similarity"], 1.0)
         self.assertEqual(blank["answered_rows"], 0)
+
+    def test_candidate_policies_cannot_observe_or_copy_gold(self):
+        sentinel = "__UNIQUE_GOLD_SENTINEL_7f12c9__"
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "generation-time prompt",
+                    "completion": sentinel,
+                    "room": "a",
+                    "source": "auto_reply_sent",
+                    "window": [{"message": "generation-time context"}],
+                }
+            ],
+        )
+        simulator = DreamRsiSimulator(self.root)
+
+        for name, policy in _candidate_policies().items():
+            seen_rows = []
+            returned = []
+
+            def observed(row, *, _policy=policy):
+                seen_rows.append(dict(row))
+                candidate = _policy(row)
+                returned.append(candidate)
+                return candidate
+
+            with self.subTest(policy=name):
+                simulator.replay_policy(observed)
+                self.assertNotIn("gold", seen_rows[0])
+                self.assertNotEqual(returned[0], sentinel)
 
     def test_a_policy_that_raises_is_counted_not_fatal(self):
         _write_golden(
@@ -125,6 +157,21 @@ class TestReplayPolicy(unittest.TestCase):
         self.assertEqual(result["status"], "evaluated")
         self.assertEqual(result["answered_rows"], 0)
         self.assertEqual(simulator.parse_errors, 1)
+        self.assertEqual(result["candidate_errors"], {"exception:RuntimeError": 1})
+
+    def test_non_string_candidate_is_skipped_and_recorded(self):
+        _write_golden(
+            self.root,
+            [{"prompt": "질문", "completion": "답변", "room": "a"}],
+        )
+        simulator = DreamRsiSimulator(self.root)
+        result = simulator.replay_policy(lambda row: 123)
+
+        self.assertEqual(result["status"], "evaluated")
+        self.assertEqual(result["answered_rows"], 0)
+        self.assertEqual(result["avg_similarity"], 0.0)
+        self.assertEqual(simulator.parse_errors, 1)
+        self.assertEqual(result["candidate_errors"], {"non_string:int": 1})
 
     def test_room_spread_counts_distinct_rooms(self):
         _write_golden(
@@ -135,7 +182,9 @@ class TestReplayPolicy(unittest.TestCase):
             ],
         )
         simulator = DreamRsiSimulator(self.root)
-        result = simulator.replay_policy(lambda row: row["gold"])
+        result = simulator.replay_policy(
+            lambda row: {"q1": "a1", "q2": "a2"}[row["prompt"]]
+        )
         self.assertEqual(result["room_spread"], 2)
 
 
@@ -153,7 +202,7 @@ class TestDreamLoop(unittest.TestCase):
         result = dream_policy_evaluation(
             self.root,
             policies={
-                "perfect": lambda row: row["gold"],
+                "perfect": lambda row: "정확한 답변",
                 "blank": lambda row: "",
             },
         )
@@ -165,6 +214,19 @@ class TestDreamLoop(unittest.TestCase):
         result = dream_policy_evaluation(self.root, policies={"blank": lambda row: ""})
         self.assertEqual(result["selected_policy"], "")
         self.assertEqual(result["status"], "insufficient_data")
+
+    def test_active_features_follow_actual_policy_definitions(self):
+        result = dream_policy_evaluation(
+            self.root,
+            policies={"first": lambda row: "", "second": lambda row: ""},
+        )
+        self.assertEqual(result["active_features"], {"first": True, "second": True})
+
+    def test_checkpoint_write_errors_are_surfaced(self):
+        blocked_root = self.root / "not-a-directory"
+        blocked_root.write_text("block mkdir", encoding="utf-8")
+        with self.assertRaises(OSError):
+            dream_policy_evaluation(blocked_root, policies={"blank": lambda row: ""})
 
 
 class TestDistribution(unittest.TestCase):
@@ -191,4 +253,3 @@ class TestDistribution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

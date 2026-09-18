@@ -129,7 +129,7 @@ class DreamRsiSimulator:
 
     def replay_policy(
         self,
-        reply_fn: Callable[[dict[str, Any]], str],
+        reply_fn: Callable[[dict[str, Any]], Any],
         *,
         beta1: float = 0.05,
         beta2: float = 0.1,
@@ -148,18 +148,38 @@ class DreamRsiSimulator:
                 "evaluated_rows": 0,
                 "answered_rows": 0,
                 "room_spread": 0,
+                "candidate_errors": {},
                 "status": "insufficient_data",
             }
 
         scores: list[float] = []
         answered = 0
         rooms: set[str] = set()
+        candidate_errors: Counter[str] = Counter()
         for row in self.rows:
+            # Candidate policies only receive generation-time inputs. Keeping
+            # this as an allowlist prevents future evaluation-only fields from
+            # becoming policy inputs by accident.
+            policy_row = {
+                "prompt": row.get("prompt", ""),
+                "room": row.get("room", ""),
+                "source": row.get("source", ""),
+                "window": row.get("window") or [],
+            }
             try:
-                candidate = reply_fn(row)
-            except Exception:
+                raw_candidate = reply_fn(policy_row)
+            except Exception as exc:
                 self.parse_errors += 1
+                candidate_errors[f"exception:{type(exc).__name__}"] += 1
                 candidate = ""
+            else:
+                if isinstance(raw_candidate, str):
+                    candidate = raw_candidate
+                else:
+                    self.parse_errors += 1
+                    candidate_errors[f"non_string:{type(raw_candidate).__name__}"] += 1
+                    candidate = ""
+
             if candidate.strip():
                 answered += 1
                 rooms.add(str(row.get("room") or ""))
@@ -178,6 +198,7 @@ class DreamRsiSimulator:
             "evaluated_rows": len(scores),
             "answered_rows": answered,
             "room_spread": len(rooms),
+            "candidate_errors": dict(sorted(candidate_errors.items())),
             "status": "evaluated",
         }
 
@@ -190,14 +211,17 @@ def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
     prompting strategies the live worker can select (2026-09-17).
     """
 
+    def last_window_message(row: dict[str, Any]) -> str:
+        window = row.get("window") or []
+        if isinstance(window, list) and window:
+            last = window[-1]
+            if isinstance(last, dict):
+                return str(last.get("message") or "")
+        return ""
+
     def echo_last() -> Callable[[dict[str, Any]], str]:
         def policy(row: dict[str, Any]) -> str:
-            window = row.get("window") or []
-            if isinstance(window, list) and window:
-                last = window[-1]
-                if isinstance(last, dict):
-                    return str(last.get("message") or "")
-            return ""
+            return last_window_message(row)
 
         return policy
 
@@ -209,10 +233,10 @@ def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
 
     def reuse_sent() -> Callable[[dict[str, Any]], str]:
         def policy(row: dict[str, Any]) -> str:
-            # A confirmed automatic send is the closest thing to a live answer
-            # available offline, so a policy that can reach one should win.
+            # The send marker may gate a strategy, but the policy can only use
+            # context that was already available when generation happened.
             if row.get("source") == "auto_reply_sent":
-                return str(row.get("gold") or "")
+                return last_window_message(row)
             return ""
 
         return policy
@@ -236,12 +260,12 @@ def dream_policy_evaluation(
     state_root: Path | None = None,
     *,
     limit: int = MAX_EVAL_ROWS,
-    policies: dict[str, Callable[[dict[str, Any]], str]] | None = None,
+    policies: dict[str, Callable[[dict[str, Any]], Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the offline dreaming loop and write the winning checkpoint."""
     root = state_root or _default_state_root()
     simulator = DreamRsiSimulator(root, limit=limit)
-    candidates = policies or _candidate_policies()
+    candidates = _candidate_policies() if policies is None else policies
 
     evaluations = {name: simulator.replay_policy(fn) for name, fn in candidates.items()}
     usable = {n: e for n, e in evaluations.items() if e["status"] == "evaluated"}
@@ -257,21 +281,14 @@ def dream_policy_evaluation(
         "evaluations": evaluations,
         "selected_policy": winner,
         "status": "evaluated" if usable else "insufficient_data",
-        "active_features": {
-            "knowledge_graph_enrichment": True,
-            "vision_guard_context": True,
-            "adaptive_fallback_routing": True,
-        },
+        "active_features": {name: True for name in candidates},
     }
 
     checkpoint_path = root / "dream-rsi-policy.json"
-    try:
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = checkpoint_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(checkpoint_path)
-    except OSError:
-        pass
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = checkpoint_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(checkpoint_path)
 
     return checkpoint
 
