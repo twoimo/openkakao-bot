@@ -1042,6 +1042,20 @@ def _valid_ax_status(watcher: dict, owner: str, epoch: int) -> bool:
     )
 
 
+# How long one published reply-worker phase may stay current before the room is
+# fenced as reply_worker_unhealthy. The reply worker's own heartbeat_at is the
+# primary hang detector; these bounds catch a main loop that stopped proving
+# progress. They are read by the regression tests, so a change here is
+# deliberate.
+REPLY_WORKER_PHASE_LIMITS = {
+    "recovery": 30.0,
+    "retention": 30.0,
+    "claim": 15.0,
+    "idle": 15.0,
+    "processing": 180.0,
+}
+
+
 def _valid_reply_worker_status(
     status: dict,
     *,
@@ -1051,13 +1065,7 @@ def _valid_reply_worker_status(
     target: int,
     now: float,
 ) -> bool:
-    phase_limits = {
-        "recovery": 30.0,
-        "retention": 30.0,
-        "claim": 15.0,
-        "idle": 15.0,
-        "processing": 180.0,
-    }
+    phase_limits = REPLY_WORKER_PHASE_LIMITS
     phase = status.get("phase")
     phase_started = _heartbeat_timestamp(status.get("phase_started_at"))
     progress = _heartbeat_timestamp(status.get("last_progress_at"))

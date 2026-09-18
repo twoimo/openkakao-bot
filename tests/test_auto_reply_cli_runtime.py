@@ -13516,6 +13516,289 @@ print(json.dumps({
             )
         )
 
+    def test_blocked_idle_context_read_never_holds_the_published_idle_phase(self):
+        """A context read stuck in the store must not age the idle phase.
+
+        The supervisor fences the room as reply_worker_unhealthy once the
+        published idle phase passes REPLY_WORKER_PHASE_LIMITS["idle"]. A stack
+        sample of the live worker caught its main thread with 6430/6430
+        samples inside one sqlite3_step of the idle context probe, 6074 of them
+        in pread, so one slow page read of the shared 1.39 GB store is longer
+        than the fence and cannot be stamped around from that same thread. The
+        read now runs on the idle sampler's thread while the loop keeps
+        publishing, and the finished sample still reaches the proactive
+        enqueue (2026-09-18).
+        """
+        module = self._load_auto_reply_module("auto_reply_worker_idle_sampler_test")
+        supervisor = self._load_supervisor_module(
+            "auto_reply_supervisor_idle_sampler_test"
+        )
+        limit = supervisor.REPLY_WORKER_PHASE_LIMITS["idle"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            room = root / "42"
+            room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            module.WORKER_STATUS = room / "reply-worker-status.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    module.SUPERVISOR_OWNER_ENV: "owner",
+                    module.DB_SOURCE_EPOCH_ENV: "7",
+                    module.TARGET_CHAT_ID_ENV: "42",
+                },
+                clear=False,
+            ):
+                health = module._WorkerHealth()
+                read_started = threading.Event()
+                read_released = threading.Event()
+                read_finished = threading.Event()
+                read_started_at: list[float] = []
+                source_event = {
+                    "event_id": "db:42:9",
+                    "chat_id": 42,
+                    "log_id": 9,
+                    "room_last_sent_at": 100,
+                }
+
+                def slow_context_read():
+                    read_started_at.append(time.time())
+                    read_started.set()
+                    read_released.wait(30.0)
+                    read_finished.set()
+                    return source_event, False
+
+                sampler = module._IdleContextSampler(
+                    interval=0.0,
+                    silence_source=slow_context_read,
+                    vector_profiles=lambda: (None, None),
+                )
+                enqueued: list[dict] = []
+                ages: list[float] = []
+                try:
+                    health.start()
+                    health.phase("idle")
+                    sampler.start()
+                    started = time.monotonic()
+                    while time.monotonic() - started < 2.0:
+                        module._idle_cycle(
+                            mock.Mock(),
+                            now=time.time(),
+                            health=health,
+                            residency=lambda: None,
+                            harvest=lambda: None,
+                            enqueue=lambda *args, **kwargs: enqueued.append(kwargs),
+                            sampler=sampler,
+                        )
+                        # phase() proves progress in memory and the status
+                        # writer publishes it, so flush what the loop just
+                        # proved before measuring the published age.
+                        health._write()
+                        published = json.loads(
+                            module.WORKER_STATUS.read_text(encoding="utf-8")
+                        )
+                        ages.append(time.time() - published["phase_started_at"])
+                        time.sleep(0.2)
+                    blocked_for = time.monotonic() - started
+                    self.assertTrue(read_started.is_set())
+                    # The read is still inside the store after the whole window.
+                    self.assertFalse(read_finished.is_set())
+                    self.assertGreater(blocked_for, 1.0)
+                    published = json.loads(
+                        module.WORKER_STATUS.read_text(encoding="utf-8")
+                    )
+                    # The loop kept proving progress while the read was blocked:
+                    # the published idle phase was restamped long after the read
+                    # began, so the published age tracks the loop's own cadence
+                    # and not the duration of the read.
+                    self.assertGreaterEqual(
+                        published["phase_started_at"], read_started_at[0] + 1.0
+                    )
+                    self.assertGreater(len(ages), 3)
+                    self.assertLess(max(ages), 1.0)
+                    self.assertEqual(published["phase"], "idle")
+                    self.assertTrue(
+                        supervisor._valid_reply_worker_status(
+                            published,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=time.time(),
+                        )
+                    )
+                    # A loop frozen by the read would already be fenced: counted
+                    # from the end of the blocked window, the published proof is
+                    # still valid half a second before the supervisor's idle
+                    # limit expires.
+                    self.assertTrue(
+                        supervisor._valid_reply_worker_status(
+                            published,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=published["phase_started_at"] + limit - 0.5,
+                        )
+                    )
+                    # No sample, so this cycle has nothing to enqueue.
+                    self.assertEqual(enqueued, [])
+                    # Once the read lands, the sample still drives the enqueue
+                    # with the values the synchronous branch used to pass.
+                    read_released.set()
+                    deadline = time.monotonic() + 10.0
+                    while time.monotonic() < deadline and not enqueued:
+                        module._idle_cycle(
+                            mock.Mock(),
+                            now=time.time(),
+                            health=health,
+                            residency=lambda: None,
+                            harvest=lambda: None,
+                            enqueue=lambda *args, **kwargs: enqueued.append(kwargs),
+                            sampler=sampler,
+                        )
+                        time.sleep(0.2)
+                    self.assertEqual(len(enqueued), 1)
+                    self.assertIs(enqueued[0]["source_event"], source_event)
+                    self.assertFalse(enqueued[0]["conversation_advanced"])
+                    self.assertEqual(enqueued[0]["last_observed_sent_at"], 100)
+                finally:
+                    read_released.set()
+                    sampler.close()
+                    health.close()
+
+    def test_stopped_idle_loop_still_fences_with_a_live_sampler(self):
+        """Only the main loop may prove idle progress.
+
+        The idle context reads moved to a helper thread, so the published idle
+        phase has exactly one producer: the main loop. A loop that stops
+        republishing must still be fenced, even while the heartbeat thread and
+        the sampler both keep working, and a stale heartbeat must fence on its
+        own (2026-09-18).
+        """
+        module = self._load_auto_reply_module("auto_reply_worker_idle_stale_test")
+        supervisor = self._load_supervisor_module(
+            "auto_reply_supervisor_idle_stale_test"
+        )
+        limit = supervisor.REPLY_WORKER_PHASE_LIMITS["idle"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            room = root / "42"
+            room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            module.WORKER_STATUS = room / "reply-worker-status.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    module.SUPERVISOR_OWNER_ENV: "owner",
+                    module.DB_SOURCE_EPOCH_ENV: "7",
+                    module.TARGET_CHAT_ID_ENV: "42",
+                },
+                clear=False,
+            ):
+                health = module._WorkerHealth()
+                published_phases: list[str] = []
+                phase = health.phase
+
+                def recording_phase(value, *, ready=True):
+                    published_phases.append(value)
+                    return phase(value, ready=ready)
+
+                health.phase = recording_phase
+                sampler = module._IdleContextSampler(
+                    interval=0.0,
+                    silence_source=lambda: ({"event_id": "db:42:9"}, False),
+                    vector_profiles=lambda: (None, None),
+                )
+                try:
+                    health.start()
+                    health.phase("idle")
+                    health._write()
+                    # The main loop stops here: nothing else publishes a phase.
+                    stopped = json.loads(
+                        module.WORKER_STATUS.read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(stopped["phase"], "idle")
+                    sampler.start()
+                    sample = None
+                    deadline = time.monotonic() + 5.0
+                    while time.monotonic() < deadline and sample is None:
+                        sampler.tick()
+                        sample = sampler.take(now=time.time())
+                        time.sleep(0.1)
+                    self.assertIsNotNone(sample)
+                    time.sleep(1.2)
+                    current = json.loads(
+                        module.WORKER_STATUS.read_text(encoding="utf-8")
+                    )
+                    # The heartbeat thread kept the file fresh and the sampler
+                    # kept reading, but neither published a liveness proof.
+                    self.assertGreater(current["heartbeat_at"], stopped["heartbeat_at"])
+                    self.assertEqual(
+                        current["phase_started_at"], stopped["phase_started_at"]
+                    )
+                    self.assertEqual(
+                        current["last_progress_at"], stopped["last_progress_at"]
+                    )
+                    # The sampler is the only other idle writer and it never
+                    # published a phase of its own: the loop's stamp above is
+                    # the last one this process proved.
+                    self.assertEqual(published_phases, ["idle"])
+                    self.assertTrue(
+                        supervisor._valid_reply_worker_status(
+                            current,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=time.time(),
+                        )
+                    )
+                    # The stopped loop is fenced the moment its published idle
+                    # phase passes the supervisor limit.
+                    self.assertFalse(
+                        supervisor._valid_reply_worker_status(
+                            current,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=current["phase_started_at"] + limit + 1.0,
+                        )
+                    )
+                    # A stale heartbeat alone still fences.
+                    now = time.time()
+                    fresh = dict(current)
+                    fresh["phase_started_at"] = now - 1.0
+                    fresh["last_progress_at"] = now - 1.0
+                    fresh["heartbeat_at"] = now
+                    self.assertTrue(
+                        supervisor._valid_reply_worker_status(
+                            fresh,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=now,
+                        )
+                    )
+                    fresh["heartbeat_at"] = now - limit - 1.0
+                    self.assertFalse(
+                        supervisor._valid_reply_worker_status(
+                            fresh,
+                            pid=os.getpid(),
+                            owner="owner",
+                            epoch=7,
+                            target=42,
+                            now=now,
+                        )
+                    )
+                finally:
+                    sampler.close()
+                    health.close()
+
     def test_reply_worker_reopens_after_transient_sqlite_busy(self):
         module = self._load_auto_reply_module("auto_reply_worker_sqlite_busy_test")
         first_connection = mock.Mock()

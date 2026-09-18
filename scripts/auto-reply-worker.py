@@ -182,12 +182,25 @@ CONTEXT_DB = Path(
 # child rewrites under one shared writer slot, so contention is normal.
 CONTEXT_BUSY_TIMEOUT_MS = 5000
 # Idle probes are the ones that collide with a background context-sync write,
-# and the supervisor fences a healthy worker once one *published* idle phase
-# ages past 15 s. Measured 2026-09-18 against a store locked by another
-# connection: the read fails after 5.33 s at the default bound and after 1.63 s
-# at 1500 ms. Idle reads therefore take the short bound and skip the sample
-# while the store is busy instead of parking the loop (2026-09-18).
+# and a busy sample is worth less than a prompt loop, so idle readers take the
+# short bound and skip the sample while the store is busy (2026-09-18).
 IDLE_CONTEXT_BUSY_TIMEOUT_MS = 1500
+# The idle context reads run on a helper thread so that a genuinely slow page
+# read cannot hold the published idle phase open. The idle branch's only
+# readers of the shared 1.39 GB decision store are the two probes the sampler
+# owns, and the branch used to run them twice a second per room, so samples are
+# taken at most once per interval. Measured 2026-09-18 on this machine: one
+# whole sample - connection open, both probes, close - costs 1.4 ms warm
+# against the live store, and a live stack sample caught one cold sqlite3_step
+# of this branch spending 6.0 s in page reads.
+IDLE_CONTEXT_SAMPLE_INTERVAL_SECONDS = 5.0
+# A sample that survived a long busy period is dropped instead of being fed to
+# the proactive enqueue, whose own gates are measured in minutes (the GeekNews
+# room-quiet window is 600 s).
+IDLE_CONTEXT_SAMPLE_MAX_AGE_SECONDS = 60.0
+# Wait this long for an in-flight sample at shutdown. The helper is a daemon
+# thread, so a read still running when the worker exits is simply abandoned.
+IDLE_CONTEXT_SAMPLER_STOP_JOIN_SECONDS = 2.0
 REFERENCE_HARVEST_INTERVAL_SECONDS = 30 * 60
 REFERENCE_HARVEST_RETRY_SECONDS = 20
 REFERENCE_HARVEST_BUDGET_SECONDS = 12
@@ -15897,6 +15910,158 @@ def _publish_idle_progress(health: "_WorkerHealth | None") -> None:
         health.phase("idle")
 
 
+class _IdleContextSampler:
+    """Read the idle branch's context inputs off the worker's main loop.
+
+    Two idle inputs come from the shared 1.39 GB decision store: the vector
+    profiles (_load_proactive_vector_profiles) and the fallback read of
+    context_live_events inside _latest_inbound_silence_source, which runs
+    whenever the db-watch tail carries no authorized inbound row. They are the
+    idle branch's only readers of that store. Measured 2026-09-18: a stack
+    sample of the live worker caught its main thread with 6430/6430 samples
+    inside one sqlite3_step, 6074 of them in pread, so one slow read of the
+    store is longer than the supervisor's 15 s idle fence and no amount of
+    in-loop stamping keeps the published phase honest. The read has to leave
+    the main loop.
+
+    The main loop ticks from its idle branch - never while a job is being
+    processed - and takes whatever this thread has finished. The thread owns
+    its own read-only connections and never publishes a liveness stamp, so a
+    main loop that stops running stops proving progress and is still fenced.
+    """
+
+    def __init__(
+        self,
+        *,
+        interval: float = IDLE_CONTEXT_SAMPLE_INTERVAL_SECONDS,
+        max_age: float = IDLE_CONTEXT_SAMPLE_MAX_AGE_SECONDS,
+        silence_source=None,
+        vector_profiles=None,
+    ) -> None:
+        self._interval = max(0.0, float(interval))
+        self._max_age = max(0.0, float(max_age))
+        self._silence_source = silence_source or _latest_inbound_silence_source
+        self._vector_profiles = vector_profiles or _load_proactive_vector_profiles
+        self._lock = threading.Lock()
+        self._request = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._sequence = 0
+        self._consumed = 0
+        self._latest: tuple[int, float, tuple] | None = None
+        self._last_sample_started: float | None = None
+
+    def _sample(self) -> tuple:
+        source, advanced = self._silence_source()
+        style_profile, response_time = self._vector_profiles()
+        return source, advanced, style_profile, response_time
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            # Ticks come from the idle branch only. The timeout exists so a
+            # close during a quiet period is still noticed.
+            if not self._request.wait(1.0):
+                continue
+            if self._stop.is_set():
+                return
+            started = time.monotonic()
+            if self._last_sample_started is not None:
+                delay = self._interval - (started - self._last_sample_started)
+                if delay > 0:
+                    # Coalesce the idle loop's faster ticks: the store is
+                    # shared with the db-watch sync writer and must not be read
+                    # on every idle iteration.
+                    self._stop.wait(delay)
+                    continue
+            self._request.clear()
+            self._last_sample_started = started
+            try:
+                sample = self._sample()
+            except (
+                OSError,
+                PermissionError,
+                sqlite3.Error,
+                RetrievalError,
+                TypeError,
+                ValueError,
+            ):
+                # A failed read is not a sample and must not become one: the
+                # idle branch skips its enqueue for this cycle instead.
+                sample = None
+            if sample is None or self._stop.is_set():
+                continue
+            with self._lock:
+                self._sequence += 1
+                self._latest = (self._sequence, time.time(), sample)
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name="reply-idle-context",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def tick(self) -> None:
+        """Ask for one sample; never blocks the calling loop."""
+        self._request.set()
+
+    def take(self, *, now: float | None = None) -> tuple | None:
+        """Return the newest unconsumed sample, or None when none is ready.
+
+        None means the helper has not finished a fresh sample, so the idle
+        branch skips its enqueue for this cycle instead of waiting on the
+        store. A sample older than the freshness bound is dropped rather than
+        acted on, so the proactive gates are never fed a room state that
+        predates the work the loop just did.
+        """
+        moment = time.time() if now is None else float(now)
+        with self._lock:
+            latest = self._latest
+            if latest is None or latest[0] <= self._consumed:
+                return None
+            self._consumed = latest[0]
+            _sequence, recorded_at, sample = latest
+        if moment - recorded_at > self._max_age:
+            return None
+        return sample
+
+    def close(self) -> None:
+        self._stop.set()
+        self._request.set()
+        thread = self._thread
+        self._thread = None
+        if thread is not None:
+            thread.join(IDLE_CONTEXT_SAMPLER_STOP_JOIN_SECONDS)
+
+
+def _idle_sample(
+    sampler: "_IdleContextSampler | None",
+    silence_source,
+    vector_profiles,
+    *,
+    now: float,
+) -> tuple | None:
+    """Return one idle context sample without waiting on the decision store.
+
+    With a sampler this hands over whatever its helper thread has finished, and
+    None while the sample is not ready yet. Without one - the shape used when
+    the idle branch is driven step by step - the two reads happen inline, as
+    they did before the reads left the main loop (2026-09-18).
+    """
+    if sampler is not None:
+        return sampler.take(now=now)
+    if silence_source is None:
+        silence_source = _latest_inbound_silence_source
+    if vector_profiles is None:
+        vector_profiles = _load_proactive_vector_profiles
+    source, advanced = silence_source()
+    style_profile, response_time = vector_profiles()
+    return source, advanced, style_profile, response_time
+
+
 def _idle_cycle(
     connection: sqlite3.Connection,
     *,
@@ -15907,57 +16072,59 @@ def _idle_cycle(
     silence_source=None,
     vector_profiles=None,
     enqueue=None,
+    sampler: "_IdleContextSampler | None" = None,
 ) -> None:
     """Run one idle housekeeping cycle under a bounded progress proof.
 
     One idle iteration used to publish a single stamp at the top, so any step
     that legitimately took seconds (a local model residency probe, the
-    reference-harvest handoff, or a read of the shared 1.39 GB context
-    database) held that stamp back far enough for the supervisor to fence a
-    working worker as `reply_worker_unhealthy`. Every step is now bracketed by
-    an idle stamp, including one after the last step and before the caller's
-    poll sleep (2026-09-18).
+    reference-harvest handoff) held that stamp back far enough for the
+    supervisor to fence a working worker as `reply_worker_unhealthy`. Every
+    remaining step in this thread is bracketed by an idle stamp, and the reads
+    of the shared 1.39 GB context database moved to the sampler's own thread,
+    because one slow page read was measured longer than the fence itself
+    (2026-09-18).
     """
     active_health = _WORKER_HEALTH if health is None else health
     if residency is None:
         residency = _ensure_omlx_model_resident
     if harvest is None:
         harvest = _maybe_harvest_reference_packs
-    if silence_source is None:
-        silence_source = _latest_inbound_silence_source
-    if vector_profiles is None:
-        vector_profiles = _load_proactive_vector_profiles
     if enqueue is None:
         enqueue = maybe_enqueue_proactive_topic
 
     _publish_idle_progress(active_health)
+    if sampler is not None:
+        # Ask for a fresh context sample while this iteration keeps proving
+        # progress; the read itself runs on the sampler's thread.
+        sampler.tick()
     residency()
     _publish_idle_progress(active_health)
     harvest()
     _publish_idle_progress(active_health)
     try:
-        source, advanced = silence_source()
-        _publish_idle_progress(active_health)
-        style_profile, response_time = vector_profiles()
-        _publish_idle_progress(active_health)
-        sent_at = None
-        if isinstance(source, dict):
-            raw_sent = source.get("room_last_sent_at")
-            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
-                raw_sent = source.get("inbound_silence_at")
-            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
-                raw_sent = source.get("sent_at")
-            if isinstance(raw_sent, int) and not isinstance(raw_sent, bool):
-                sent_at = raw_sent
-        enqueue(
-            connection,
-            now=now,
-            response_time=response_time,
-            style_profile=style_profile,
-            last_observed_sent_at=sent_at,
-            conversation_advanced=advanced,
-            source_event=source,
-        )
+        sample = _idle_sample(sampler, silence_source, vector_profiles, now=now)
+        if sample is not None:
+            source, advanced, style_profile, response_time = sample
+            _publish_idle_progress(active_health)
+            sent_at = None
+            if isinstance(source, dict):
+                raw_sent = source.get("room_last_sent_at")
+                if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
+                    raw_sent = source.get("inbound_silence_at")
+                if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
+                    raw_sent = source.get("sent_at")
+                if isinstance(raw_sent, int) and not isinstance(raw_sent, bool):
+                    sent_at = raw_sent
+            enqueue(
+                connection,
+                now=now,
+                response_time=response_time,
+                style_profile=style_profile,
+                last_observed_sent_at=sent_at,
+                conversation_advanced=advanced,
+                source_event=source,
+            )
     except (OSError, PermissionError, sqlite3.Error, RetrievalError, TypeError, ValueError):
         pass
     _publish_idle_progress(active_health)
@@ -15968,6 +16135,7 @@ def worker_main() -> int:
     connection: sqlite3.Connection | None = None
     circuit_connection: sqlite3.Connection | None = None
     health: _WorkerHealth | None = None
+    idle_sampler: _IdleContextSampler | None = None
     try:
         try:
             connection = _queue_connection()
@@ -15977,6 +16145,11 @@ def worker_main() -> int:
             circuit_status = _refresh_model_status_from_circuit(circuit_connection)
             _rearm_model_call_in_flight_jobs(connection, circuit_status)
             health.start()
+            # The idle context reads run on their own thread, so a slow page
+            # read of the shared decision store cannot hold the published idle
+            # phase past the supervisor's fence.
+            idle_sampler = _IdleContextSampler()
+            idle_sampler.start()
             try:
                 _rerank_client().ensure()
             except Exception:
@@ -16048,7 +16221,12 @@ def worker_main() -> int:
                     ),
                 )
                 if claimed is None:
-                    _idle_cycle(connection, now=now, health=health)
+                    _idle_cycle(
+                        connection,
+                        now=now,
+                        health=health,
+                        sampler=idle_sampler,
+                    )
                     time.sleep(_worker_sleep_seconds(time.time(), next_recovery_at))
                     continue
                 job, previous_status = claimed
@@ -16131,6 +16309,8 @@ def worker_main() -> int:
                     health.fence(type(error).__name__)
                 return 1
     finally:
+        if idle_sampler is not None:
+            idle_sampler.close()
         if _RERANK_CLIENT is not None:
             try:
                 _RERANK_CLIENT.close()
