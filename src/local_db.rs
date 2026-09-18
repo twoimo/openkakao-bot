@@ -1318,6 +1318,89 @@ impl std::io::Write for ByteCounter {
     }
 }
 
+/// Default bound on opening the KakaoTalk database.
+///
+/// The container sits behind macOS's "App Data" consent gate. While the
+/// operator has not answered the prompt, the `open()` syscall blocks inside
+/// SQLite's WAL shared-memory mapping, and the unattended host spent its whole
+/// 240s preflight budget there before fencing every room (2026-09-18). Bound
+/// the wait so a pending decision fails fast with a reason the operator can act
+/// on instead of a silent stall.
+const LOCAL_DB_OPEN_TIMEOUT_SECS_DEFAULT: u64 = 25;
+const LOCAL_DB_OPEN_TIMEOUT_SECS_ENV: &str = "OPENKAKAO_DB_OPEN_TIMEOUT_SECS";
+const LOCAL_DB_OPEN_TIMEOUT_SECS_MAX: u64 = 240;
+
+fn parse_local_db_open_timeout(raw: Option<&str>) -> std::time::Duration {
+    let seconds = raw
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| (1..=LOCAL_DB_OPEN_TIMEOUT_SECS_MAX).contains(value))
+        .unwrap_or(LOCAL_DB_OPEN_TIMEOUT_SECS_DEFAULT);
+    std::time::Duration::from_secs(seconds)
+}
+
+fn local_db_open_timeout() -> std::time::Duration {
+    parse_local_db_open_timeout(std::env::var(LOCAL_DB_OPEN_TIMEOUT_SECS_ENV).ok().as_deref())
+}
+
+/// Run `op` on a helper thread and give up after `timeout`.
+///
+/// A blocked `open()` cannot be interrupted from the same thread, so the wait
+/// has to happen outside it. The helper thread is abandoned on timeout; the
+/// process reclaims it on exit and the caller keeps a usable reason.
+fn run_bounded<T>(
+    timeout: std::time::Duration,
+    blocked_reason: String,
+    op: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T>
+where
+    T: Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("local-db-open".to_string())
+        .spawn(move || {
+            let _ = sender.send(op());
+        })
+        .context("Failed to start the local database opener")?;
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => anyhow::bail!("{blocked_reason}"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("local database opener stopped without a result")
+        }
+    }
+}
+
+fn open_encrypted_connection_bounded(db_path: &Path, secure_key: &str) -> Result<Connection> {
+    let path = db_path.to_path_buf();
+    let key = secure_key.to_string();
+    let timeout = local_db_open_timeout();
+    let blocked_reason = format!(
+        "KakaoTalk database open did not finish within {}s. macOS is waiting for the operator \
+         to allow this binary to read another app's data; grant 전체 디스크 접근 in 시스템 설정 > \
+         개인정보 보호 및 보안 and retry.",
+        timeout.as_secs()
+    );
+    run_bounded(timeout, blocked_reason, move || {
+        let conn = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .with_context(|| format!("Failed to open database: {}", path.display()))?;
+        // Set the passphrase first; changing cipher compatibility resets cipher
+        // state in SQLCipher builds used by current KakaoTalk databases.
+        conn.pragma_update(None, "key", &key)?;
+        conn.pragma_update(None, "cipher_compatibility", 3)?;
+        // Verify the key works
+        conn.execute_batch("SELECT count(*) FROM sqlite_master")
+            .context(
+                "Failed to decrypt KakaoTalk database. Key derivation may have failed. \
+                 Ensure KakaoTalk is installed and logged in.",
+            )?;
+        Ok(conn)
+    })
+}
+
 impl LocalDbReader {
     pub fn open() -> Result<Self> {
         Self::open_with_cache_mode(IdentityCacheMode::Normal)
@@ -1348,26 +1431,10 @@ impl LocalDbReader {
         let secure_key = derive_secure_key(user_id, &uuid);
         let account_fingerprint = local_account_fingerprint(user_id, &uuid);
 
-        let conn = Connection::open_with_flags(
-            &db_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .with_context(|| format!("Failed to open database: {}", db_path.display()))?;
+        let conn = open_encrypted_connection_bounded(&db_path, &secure_key)?;
         if database_identity(&db_path)? != db_identity {
             anyhow::bail!("Local database identity changed during open");
         }
-
-        // Set the passphrase first; changing cipher compatibility resets cipher
-        // state in SQLCipher builds used by current KakaoTalk databases.
-        conn.pragma_update(None, "key", &secure_key)?;
-        conn.pragma_update(None, "cipher_compatibility", 3)?;
-
-        // Verify the key works
-        conn.execute_batch("SELECT count(*) FROM sqlite_master")
-            .context(
-                "Failed to decrypt KakaoTalk database. Key derivation may have failed. \
-                 Ensure KakaoTalk is installed and logged in.",
-            )?;
 
         Ok(Self {
             conn,
@@ -2111,6 +2178,64 @@ pub struct LocalDbStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_db_open_timeout_stays_inside_its_bounds() {
+        let default = std::time::Duration::from_secs(LOCAL_DB_OPEN_TIMEOUT_SECS_DEFAULT);
+        assert_eq!(parse_local_db_open_timeout(None), default);
+        assert_eq!(parse_local_db_open_timeout(Some("30")), std::time::Duration::from_secs(30));
+        assert_eq!(parse_local_db_open_timeout(Some("  45  ")), std::time::Duration::from_secs(45));
+        // Zero, negative, non-numeric and oversized values fall back to the default
+        // instead of disabling the bound.
+        assert_eq!(parse_local_db_open_timeout(Some("0")), default);
+        assert_eq!(parse_local_db_open_timeout(Some("-5")), default);
+        assert_eq!(parse_local_db_open_timeout(Some("soon")), default);
+        assert_eq!(parse_local_db_open_timeout(Some("")), default);
+        assert_eq!(parse_local_db_open_timeout(Some("241")), default);
+        assert_eq!(
+            parse_local_db_open_timeout(Some("240")),
+            std::time::Duration::from_secs(240)
+        );
+    }
+
+    #[test]
+    fn run_bounded_returns_a_prompt_result() {
+        let value = run_bounded(
+            std::time::Duration::from_secs(5),
+            "should not be used".to_string(),
+            || Ok(41),
+        )
+        .expect("a prompt operation must succeed");
+        assert_eq!(value, 41);
+    }
+
+    #[test]
+    fn run_bounded_reports_the_blocked_reason_on_timeout() {
+        let error = run_bounded(
+            std::time::Duration::from_millis(50),
+            "blocked by a pending consent prompt".to_string(),
+            || {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                Ok(())
+            },
+        )
+        .expect_err("a blocked operation must fail");
+        assert!(
+            error.to_string().contains("pending consent prompt"),
+            "the operator-facing reason must survive, got {error}"
+        );
+    }
+
+    #[test]
+    fn run_bounded_propagates_the_operation_error() {
+        let error = run_bounded::<()>(
+            std::time::Duration::from_secs(5),
+            "should not be used".to_string(),
+            || anyhow::bail!("decrypt failed"),
+        )
+        .expect_err("the operation error must surface");
+        assert!(error.to_string().contains("decrypt failed"), "got {error}");
+    }
 
     fn revision_plist(hash: &str, revision: u64) -> plist::Dictionary {
         let mut dict = plist::Dictionary::new();
