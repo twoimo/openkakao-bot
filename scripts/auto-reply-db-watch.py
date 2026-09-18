@@ -562,6 +562,25 @@ def _wait_context_sync_startup_retry(
             raise DbFence("state_persist_failed")
 
 
+def _context_sync_transient_log_line(exc: object) -> str:
+    """One bounded line naming why a periodic context sync was transient.
+
+    A periodic fence used to be silent. The room went fenced with nothing in
+    this log to say why, so telling a queued writer slot apart from a real
+    snapshot gap meant guessing from the state file. This prints the same
+    shape the inline startup path prints: an exception class name and a
+    bounded message. Chat content never reaches this line, and neither does
+    any provider detail (2026-09-19).
+    """
+
+    if not isinstance(exc, BaseException):
+        return "[db-watch] context_sync_transient:unknown:"
+    return (
+        f"[db-watch] context_sync_transient:{type(exc).__name__}:"
+        f"{str(exc).strip()[:200]}"
+    )
+
+
 def _clear_context_sync_transient_fence(state: dict, now: float) -> dict:
     """Keep delivery off until the next local poll re-proves readiness."""
     state = _state(state)
@@ -4519,6 +4538,12 @@ def main() -> int:
                         )
                         if not save_state(state, _require_ready=False):
                             raise DbFence("state_persist_failed")
+                        # The durable fence is visible now, so the reason can
+                        # be written without racing the state file.
+                        print(
+                            _context_sync_transient_log_line(sync_value),
+                            flush=True,
+                        )
                         # Stop only after the durable send fence is visible.
                         # Recovery starts a fresh stream from the unchanged
                         # authoritative ACK cursor.

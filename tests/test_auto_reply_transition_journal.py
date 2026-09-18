@@ -517,6 +517,41 @@ class TransitionJournalTests(unittest.TestCase):
             finally:
                 verify.close()
 
+    def test_periodic_context_sync_transient_fence_is_logged(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "auto_reply_journal_db_watch_transient_test",
+            SCRIPTS / "auto-reply-db-watch.py",
+        )
+        db_watch = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(db_watch)
+        # 상태 파일만 보고는 알 수 없던 이유를 한 줄로 남긴다. 클래스 이름과
+        # 200자로 자른 메시지까지만이고, 대화 내용은 들어가지 않는다.
+        self.assertEqual(
+            db_watch._context_sync_transient_log_line(
+                db_watch.ContextSyncTransient(
+                    "context_sync_snapshot_retry_exhausted"
+                )
+            ),
+            "[db-watch] context_sync_transient:ContextSyncTransient:"
+            "context_sync_snapshot_retry_exhausted",
+        )
+        prefix = "[db-watch] context_sync_transient:SqliteBusyTransient:"
+        self.assertEqual(
+            len(db_watch._context_sync_transient_log_line(
+                db_watch.SqliteBusyTransient("x" * 5000)
+            )),
+            len(prefix) + 200,
+        )
+        # 예외가 아닌 값이 와도 로그 줄은 만들어진다. 이 경로에서 다시
+        # 예외를 내면 관측하려던 실패가 관측 코드 때문에 사라진다.
+        self.assertEqual(
+            db_watch._context_sync_transient_log_line(None),
+            "[db-watch] context_sync_transient:unknown:",
+        )
+
     def test_strict_candidate_recovery_never_invents_ack(self):
         import importlib.util
 
