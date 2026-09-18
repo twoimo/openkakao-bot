@@ -123,6 +123,158 @@ class ReferenceStoreTests(unittest.TestCase):
                 ),
             )
 
+    def test_harvest_flushes_before_slow_cli_enrichment(self):
+        """A slow enrich must not keep the shared context DB RESERVED.
+
+        Every room's `context-sync-local` writes this same database. Holding
+        the implicit write transaction across the CLI image analysis made each
+        room fail with "database is locked" and restarted the auto-reply group
+        in a loop (2026-09-18).
+        """
+        store = self.store
+        with tempfile.TemporaryDirectory() as temporary:
+            db = Path(temporary) / "context.sqlite3"
+            image = Path(temporary) / "shot.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n")
+            connection = sqlite3.connect(db)
+            store.ensure_reference_schema(connection)
+            connection.commit()
+            lecture = (
+                "1. 대아티아이 기술적 분석을 아주 상세하게 설명한다. "
+                "단기 조정은 나왔지만 아직 20일선 위에 있고 MACD도 살아 있어서 "
+                "상승 추세 내 눌림목으로 볼 수 있다. "
+                "2. 이유는 4,900원 돌파 실패 시 박스권 가능성이 커서 그렇다. "
+                "3. 매수는 천천히 나눠서 들어가는 게 좋고 손절선은 20일선이다. "
+                "중요한 개념이니 아주 상세하게 풀어서 정리해 두고 다음에도 "
+                "같은 기준으로 판단할 수 있게 남겨 둔다."
+            )
+            events = [
+                {
+                    "log_id": 10,
+                    "sender": "문승현",
+                    "sent_at": 1000,
+                    "date": "2026-09-18 10:00:00",
+                    "message": "사진 차트 캡처",
+                },
+                {
+                    "log_id": 11,
+                    "sender": "문승현",
+                    "sent_at": 1005,
+                    "date": "2026-09-18 10:00:05",
+                    "message": lecture,
+                },
+                {
+                    "log_id": 12,
+                    "sender": "문승현",
+                    "sent_at": 1010,
+                    "date": "2026-09-18 10:00:10",
+                    "message": lecture,
+                },
+                {
+                    "log_id": 20,
+                    "sender": "현준",
+                    "sent_at": 5000,
+                    "date": "2026-09-18 11:00:00",
+                    "message": "사진 매매 일지",
+                },
+                {
+                    "log_id": 21,
+                    "sender": "현준",
+                    "sent_at": 5005,
+                    "date": "2026-09-18 11:00:05",
+                    "message": lecture.replace("대아티아이", "삼성전자").replace(
+                        "4,900원", "72,000원"
+                    ),
+                },
+                {
+                    "log_id": 22,
+                    "sender": "현준",
+                    "sent_at": 5010,
+                    "date": "2026-09-18 11:00:10",
+                    "message": lecture.replace("대아티아이", "삼성전자").replace(
+                        "4,900원", "72,000원"
+                    ),
+                },
+            ]
+            blocked: list[str] = []
+            probes: list[int] = []
+
+            def probe(*_args, **_kwargs):
+                probes.append(1)
+                other = sqlite3.connect(db, timeout=0.0, isolation_level=None)
+                try:
+                    other.execute("BEGIN IMMEDIATE")
+                    other.execute("ROLLBACK")
+                except sqlite3.OperationalError as error:
+                    blocked.append(str(error))
+                finally:
+                    other.close()
+                return {"what": "요약", "how": "", "why": ""}
+
+            stored, _scanned = store._harvest_event_stream(
+                connection,
+                events,
+                checkpoint_key="probe",
+                source="live",
+                chat="부자멘토멘티",
+                chat_id=417780809780519,
+                encode_blob=store.encode_vector_blob,
+                now="2026-09-18 10:00:00",
+                image_loader=lambda _cluster: [image],
+                analyzer=probe,
+                vision_left=[4, 4],
+            )
+            connection.close()
+        self.assertEqual(stored, 2)
+        self.assertEqual(len(probes), 2)
+        self.assertEqual(blocked, [])
+
+    def test_local_group_read_flushes_pending_pack_writes(self):
+        """A group's CLI read must not run inside the caller's transaction."""
+        store = self.store
+        with tempfile.TemporaryDirectory() as temporary:
+            db = Path(temporary) / "context.sqlite3"
+            connection = sqlite3.connect(db)
+            store.ensure_reference_schema(connection)
+            # A pack write the caller has not committed yet.
+            connection.execute(
+                "INSERT INTO context_retrieval_meta(key, value) VALUES ('pending-pack', '1')"
+            )
+            blocked: list[str] = []
+            reads: list[int] = []
+
+            def local_messages(chat_id: int) -> list[dict]:
+                reads.append(chat_id)
+                other = sqlite3.connect(db, timeout=0.0, isolation_level=None)
+                try:
+                    other.execute("BEGIN IMMEDIATE")
+                    other.execute("ROLLBACK")
+                except sqlite3.OperationalError as error:
+                    blocked.append(str(error))
+                finally:
+                    other.close()
+                return []
+
+            stored, scanned = store._harvest_local_groups(
+                connection,
+                encode_blob=store.encode_vector_blob,
+                now="2026-09-18 10:00:00",
+                local_groups=lambda: [
+                    {
+                        "chat_type": store.LOCAL_GROUP_CHAT_TYPE,
+                        "members": store.LOCAL_GROUP_MIN_MEMBERS,
+                        "chat_id": 417780809780519,
+                        "title": "부자멘토멘티",
+                        "last_updated_at": 1,
+                    }
+                ],
+                local_messages=local_messages,
+            )
+            connection.close()
+        self.assertEqual(reads, [417780809780519])
+        self.assertEqual(blocked, [])
+        self.assertEqual((stored, scanned), (0, 0))
+
     def test_seed_prompt_defaults_inserts_missing_instruction_45(self):
         prompts = load(
             "auto_reply_operator_prompt_store",

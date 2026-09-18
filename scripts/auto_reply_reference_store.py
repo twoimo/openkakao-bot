@@ -1048,6 +1048,13 @@ def _harvest_event_stream(
         )
         if pack is None:
             continue
+        # _enrich_pack_analysis downloads and analyzes images through the CLI,
+        # which can take tens of seconds on a large room. Holding the implicit
+        # write transaction across it kept a RESERVED lock on the shared
+        # context database for that whole window, so every room's
+        # context-sync-local failed with "database is locked" and the
+        # auto-reply group restarted in a loop (2026-09-18). Flush first.
+        connection.commit()
         _enrich_pack_analysis(
             connection,
             pack,
@@ -1119,6 +1126,10 @@ def _harvest_local_groups(
         return 0, 0
     stored = 0
     scanned = 0
+    # Flush before the first CLI read. Reading one room's messages runs the
+    # CLI against the KakaoTalk database and can take seconds, and the shared
+    # context database must never stay RESERVED across that read.
+    connection.commit()
     for group in groups:
         if deadline_at is not None and time.time() >= deadline_at:
             break
@@ -1319,6 +1330,11 @@ def _rebuild_stale_v1_packs(
         rebuilt += 1
         if rebuilt % HARVEST_COMMIT_EVERY == 0:
             connection.commit()
+    # A partial batch must not leak its write transaction into the caller's
+    # long read phase. This database is shared with every room's
+    # context-sync-local, and an open write transaction holds a RESERVED lock
+    # on it for as long as the caller keeps working (2026-09-18).
+    connection.commit()
     return rebuilt
 
 
