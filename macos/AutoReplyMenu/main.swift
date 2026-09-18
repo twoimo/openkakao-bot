@@ -833,8 +833,11 @@ final class StripedRowView: NSTableRowView {
 
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
-        guard isOdd else { return }
-        NSColor.labelColor.withAlphaComponent(0.03).setFill()
+        // 짝수 줄을 비워 두면 그 줄은 창 배경과 구분되지 않는다. 줄이 하나뿐인
+        // 창에서는 마지막 줄 아래가 통째로 빈 띠가 되어, 감사가 작업 목록
+        // 창에서 25pt를 재고 실패했다. 모든 줄에 옅은 바탕을 깔고 홀수 줄만
+        // 조금 더 진하게 해 줄무늬는 그대로 남긴다 (2026-09-18).
+        NSColor.labelColor.withAlphaComponent(isOdd ? 0.07 : 0.04).setFill()
         dirtyRect.fill()
     }
 
@@ -3855,9 +3858,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 목록이 비었을 때의 최소 높이. 안내 한 줄과 단추만 남으므로 하한을
     /// 낮춘다. 낮추지 않으면 빈 안내 판이 263pt로 늘어난다 (2026-09-16).
     static let jobsWindowEmptyFloor = NSSize(width: 620, height: 240)
-    /// 표가 한 번에 보여 주는 최대 높이(머리글 28 + 다섯 줄 170 + 테두리).
-    /// 이보다 줄이 많으면 표 안에서 굴린다 (2026-09-17).
-    static let jobsTableMaximumHeight: CGFloat = 200
+    /// 표가 한 번에 보여 주는 최대 높이(머리글 28 + 다섯 줄 170 + 양식 여백
+    /// 10). 이보다 줄이 많으면 표 안에서 굴린다 (2026-09-17).
+    ///
+    /// 양식 여백을 빼고 200으로 두었더니 표가 클립 뷰보다 8pt 커져 마지막
+    /// 줄 아래가 잘렸다. 잘린 자리는 아무것도 그리지 않아 흰 띠로 남는다
+    /// (2026-09-18).
+    static let jobsTableMaximumHeight: CGFloat = 210
+    /// `.inset` 양식이 첫 줄 위와 마지막 줄 아래에 두는 세로 여백의 합.
+    static let jobsTableStylePadding: CGFloat = 10
 
     init(config: Config) {
         self.config = config
@@ -6638,10 +6647,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let header = table.headerView?.frame.height ?? 28
         let rowHeight = table.rowHeight + table.intercellSpacing.height
         let rows = CGFloat(max(displayedJobs.count, 0))
-        let wanted = header + rowHeight * rows + 2
+        // 표 양식이 두는 세로 여백까지 더한다. 빼고 잡으면 표가 클립 뷰보다
+        // 커져 마지막 줄의 아래쪽이 잘리고, 그 자리가 빈 띠로 남는다
+        // (2026-09-18).
+        let wanted = header + rowHeight * rows + Self.jobsTableStylePadding
         let clamped = min(
             Self.jobsTableMaximumHeight,
-            max(header + rowHeight, wanted)
+            max(header + rowHeight + Self.jobsTableStylePadding, wanted)
         )
         guard abs(constraint.constant - clamped) > 0.5 else { return }
         constraint.constant = clamped
