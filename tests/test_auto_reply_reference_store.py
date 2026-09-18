@@ -519,7 +519,10 @@ class ReferenceStoreTests(unittest.TestCase):
         self.assertIn('"references"', menubar)
         self.assertIn("VECTOR_LIST_SOURCES", menubar)
         worker = (ROOT / "scripts" / "auto-reply-worker.py").read_text(encoding="utf-8")
-        self.assertIn("_maybe_harvest_reference_packs()", worker)
+        # 2026-09-18: the handoff moved into the idle cycle, which brackets
+        # every slow idle step (this one included) with a fresh liveness stamp.
+        self.assertIn("harvest = _maybe_harvest_reference_packs", worker)
+        self.assertIn("harvest()", worker)
 
     def test_local_group_with_unchanged_stamp_is_not_reread(self):
         """A group whose stamp has not moved must not pay for another read.

@@ -177,6 +177,17 @@ CONTEXT_DB = Path(
         str(Path.home() / "Library/Application Support/openkakao/context.sqlite3"),
     )
 )
+# How long one read-only probe waits for a writer on the shared decision store.
+# The store is a 1.39 GB rollback-journal database that every room's db-watch
+# child rewrites under one shared writer slot, so contention is normal.
+CONTEXT_BUSY_TIMEOUT_MS = 5000
+# Idle probes are the ones that collide with a background context-sync write,
+# and the supervisor fences a healthy worker once one *published* idle phase
+# ages past 15 s. Measured 2026-09-18 against a store locked by another
+# connection: the read fails after 5.33 s at the default bound and after 1.63 s
+# at 1500 ms. Idle reads therefore take the short bound and skip the sample
+# while the store is busy instead of parking the loop (2026-09-18).
+IDLE_CONTEXT_BUSY_TIMEOUT_MS = 1500
 REFERENCE_HARVEST_INTERVAL_SECONDS = 30 * 60
 REFERENCE_HARVEST_RETRY_SECONDS = 20
 REFERENCE_HARVEST_BUDGET_SECONDS = 12
@@ -955,8 +966,16 @@ def _queue_operation_connection(
     return _queue_connection(), True
 
 
-def _private_context_connection() -> sqlite3.Connection:
-    """Open the decision store read-only after a strict local-file check."""
+def _private_context_connection(
+    *,
+    busy_timeout_ms: int = CONTEXT_BUSY_TIMEOUT_MS,
+) -> sqlite3.Connection:
+    """Open the decision store read-only after a strict local-file check.
+
+    `busy_timeout_ms` bounds how long the read may sit in the store's busy
+    handler. Idle callers pass the short idle bound so a concurrent
+    context-sync write becomes a skipped sample instead of a stalled loop.
+    """
     metadata = os.lstat(CONTEXT_DB)
     if (
         not stat.S_ISREG(metadata.st_mode)
@@ -967,11 +986,25 @@ def _private_context_connection() -> sqlite3.Connection:
     ):
         raise PermissionError("context_permissions_unavailable")
     uri = f"file:{urllib.parse.quote(str(CONTEXT_DB.resolve()))}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True, timeout=5.0)
+    connection = sqlite3.connect(
+        uri,
+        uri=True,
+        timeout=max(0.0, float(busy_timeout_ms) / 1000.0),
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
     return connection
+
+
+def _idle_context_connection() -> sqlite3.Connection:
+    """Open the decision store read-only with the short idle busy bound.
+
+    The idle branch is the reader that shares the store with the db-watch
+    context-sync writer, so it must fail out quickly instead of holding the
+    worker's published idle phase open.
+    """
+    return _private_context_connection(busy_timeout_ms=IDLE_CONTEXT_BUSY_TIMEOUT_MS)
 
 
 def _is_transient_sqlite_busy(error: sqlite3.Error) -> bool:
@@ -15322,8 +15355,10 @@ def _load_proactive_vector_profiles() -> tuple[dict | None, dict | None]:
     style_profile = None
     response_time = None
     try:
-        connection = _private_context_connection()
+        connection = _idle_context_connection()
     except (OSError, PermissionError, sqlite3.Error):
+        # A busy decision store skips this sample; the idle probe carries the
+        # short busy bound so the loop keeps proving progress.
         connection = None
     try:
         if connection is not None:
@@ -15461,8 +15496,9 @@ def _latest_authorized_inbound_from_context(room_last_sent_at: int | None) -> di
     if not bindings:
         return None
     try:
-        connection = _private_context_connection()
+        connection = _idle_context_connection()
     except (OSError, PermissionError, sqlite3.Error):
+        # Busy store: skip this idle sample rather than stall the loop.
         return None
     try:
         names = tuple(bindings)
@@ -15849,6 +15885,84 @@ def apply_operator_request(
     return action
 
 
+def _publish_idle_progress(health: "_WorkerHealth | None") -> None:
+    """Publish one fresh idle liveness proof.
+
+    The supervisor rejects a reply worker whose published idle phase age
+    exceeds its 15 s limit, so the idle branch re-publishes the same idle phase
+    after every step that can be slow. The phase name and the readiness flag
+    are unchanged, so delivery gating and the fence semantics are untouched.
+    """
+    if health is not None:
+        health.phase("idle")
+
+
+def _idle_cycle(
+    connection: sqlite3.Connection,
+    *,
+    now: float,
+    health: "_WorkerHealth | None" = None,
+    residency=None,
+    harvest=None,
+    silence_source=None,
+    vector_profiles=None,
+    enqueue=None,
+) -> None:
+    """Run one idle housekeeping cycle under a bounded progress proof.
+
+    One idle iteration used to publish a single stamp at the top, so any step
+    that legitimately took seconds (a local model residency probe, the
+    reference-harvest handoff, or a read of the shared 1.39 GB context
+    database) held that stamp back far enough for the supervisor to fence a
+    working worker as `reply_worker_unhealthy`. Every step is now bracketed by
+    an idle stamp, including one after the last step and before the caller's
+    poll sleep (2026-09-18).
+    """
+    active_health = _WORKER_HEALTH if health is None else health
+    if residency is None:
+        residency = _ensure_omlx_model_resident
+    if harvest is None:
+        harvest = _maybe_harvest_reference_packs
+    if silence_source is None:
+        silence_source = _latest_inbound_silence_source
+    if vector_profiles is None:
+        vector_profiles = _load_proactive_vector_profiles
+    if enqueue is None:
+        enqueue = maybe_enqueue_proactive_topic
+
+    _publish_idle_progress(active_health)
+    residency()
+    _publish_idle_progress(active_health)
+    harvest()
+    _publish_idle_progress(active_health)
+    try:
+        source, advanced = silence_source()
+        _publish_idle_progress(active_health)
+        style_profile, response_time = vector_profiles()
+        _publish_idle_progress(active_health)
+        sent_at = None
+        if isinstance(source, dict):
+            raw_sent = source.get("room_last_sent_at")
+            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
+                raw_sent = source.get("inbound_silence_at")
+            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
+                raw_sent = source.get("sent_at")
+            if isinstance(raw_sent, int) and not isinstance(raw_sent, bool):
+                sent_at = raw_sent
+        enqueue(
+            connection,
+            now=now,
+            response_time=response_time,
+            style_profile=style_profile,
+            last_observed_sent_at=sent_at,
+            conversation_advanced=advanced,
+            source_event=source,
+        )
+    except (OSError, PermissionError, sqlite3.Error, RetrievalError, TypeError, ValueError):
+        pass
+    _publish_idle_progress(active_health)
+
+
 def worker_main() -> int:
     global _WORKER_HEALTH
     connection: sqlite3.Connection | None = None
@@ -15934,32 +16048,7 @@ def worker_main() -> int:
                     ),
                 )
                 if claimed is None:
-                    health.phase("idle")
-                    _ensure_omlx_model_resident()
-                    _maybe_harvest_reference_packs()
-                    try:
-                        source, advanced = _latest_inbound_silence_source()
-                        style_profile, response_time = _load_proactive_vector_profiles()
-                        sent_at = None
-                        if isinstance(source, dict):
-                            raw_sent = source.get("room_last_sent_at")
-                            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
-                                raw_sent = source.get("inbound_silence_at")
-                            if not isinstance(raw_sent, int) or isinstance(raw_sent, bool):
-                                raw_sent = source.get("sent_at")
-                            if isinstance(raw_sent, int) and not isinstance(raw_sent, bool):
-                                sent_at = raw_sent
-                        maybe_enqueue_proactive_topic(
-                            connection,
-                            now=now,
-                            response_time=response_time,
-                            style_profile=style_profile,
-                            last_observed_sent_at=sent_at,
-                            conversation_advanced=advanced,
-                            source_event=source,
-                        )
-                    except (OSError, PermissionError, sqlite3.Error, RetrievalError, TypeError, ValueError):
-                        pass
+                    _idle_cycle(connection, now=now, health=health)
                     time.sleep(_worker_sleep_seconds(time.time(), next_recovery_at))
                     continue
                 job, previous_status = claimed

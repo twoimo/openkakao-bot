@@ -13337,6 +13337,185 @@ print(json.dumps({
                 finally:
                     health.close()
 
+    def test_idle_cycle_republishes_progress_around_a_slow_step(self):
+        """A slow idle step must not leave the published phase stamp stale.
+
+        The supervisor fences the room once the published idle phase age passes
+        its 15 s limit. The idle branch used to stamp once per iteration, so a
+        legitimately slow step (model residency probe, harvest handoff, context
+        database read) held that one stamp back and fenced a healthy worker as
+        `reply_worker_unhealthy` (2026-09-18).
+        """
+        module = self._load_auto_reply_module("auto_reply_worker_idle_cycle_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            room = root / "42"
+            room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            module.WORKER_STATUS = room / "reply-worker-status.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    module.SUPERVISOR_OWNER_ENV: "owner",
+                    module.DB_SOURCE_EPOCH_ENV: "7",
+                    module.TARGET_CHAT_ID_ENV: "42",
+                },
+                clear=False,
+            ):
+                health = module._WorkerHealth()
+                stamps: list[tuple[float, str]] = []
+                slow_step_returned_at: list[float] = []
+
+                class _RecordingHealth:
+                    def phase(self, value, *, ready=True):
+                        stamps.append((time.time(), value))
+                        return health.phase(value, ready=ready)
+
+                def slow_harvest():
+                    time.sleep(0.6)
+                    slow_step_returned_at.append(time.time())
+
+                try:
+                    module._idle_cycle(
+                        mock.Mock(),
+                        now=time.time(),
+                        health=_RecordingHealth(),
+                        residency=lambda: None,
+                        harvest=slow_harvest,
+                        silence_source=lambda: (None, False),
+                        vector_profiles=lambda: (None, None),
+                        enqueue=lambda *args, **kwargs: None,
+                    )
+                    health._write()
+                    published = json.loads(
+                        module.WORKER_STATUS.read_text(encoding="utf-8")
+                    )
+                finally:
+                    health.close()
+
+        self.assertEqual(len(slow_step_returned_at), 1)
+        self.assertTrue(stamps)
+        self.assertEqual({value for _, value in stamps}, {"idle"})
+        # A fresh proof is published after the slow step, so the published idle
+        # age never has to cover the slow work itself.
+        self.assertTrue(
+            any(timestamp >= slow_step_returned_at[0] for timestamp, _ in stamps)
+        )
+        gaps = [
+            later - earlier
+            for (earlier, _), (later, _) in zip(stamps, stamps[1:])
+        ]
+        self.assertLess(max(gaps), 2.0)
+        self.assertGreater(sum(gaps), 0.6)
+        # The stamp the supervisor reads is the one published after that work.
+        self.assertGreaterEqual(published["phase_started_at"], slow_step_returned_at[0])
+        self.assertEqual(published["phase"], "idle")
+
+    def test_idle_context_read_is_bounded_and_skips_a_busy_store(self):
+        """An idle read must not sit in the shared store's busy handler.
+
+        The db-watch children rewrite the shared context database while the
+        worker reads it, and the supervisor fences a healthy worker once one
+        published idle phase ages past 15 s. Measured 2026-09-18 on a store
+        locked by another connection: the read fails after 5.33 s at the
+        default bound and after 1.63 s at the idle bound.
+        """
+        module = self._load_auto_reply_module("auto_reply_worker_idle_context_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            context = Path(temporary) / "context.sqlite3"
+            writer = sqlite3.connect(context)
+            writer.execute("PRAGMA journal_mode = DELETE")
+            writer.execute(
+                "CREATE TABLE choi_yeonwoo_style_profile("
+                "chat TEXT, user_name TEXT, sample_count INTEGER, "
+                "common_tokens_json TEXT)"
+            )
+            writer.execute(
+                "INSERT INTO choi_yeonwoo_style_profile VALUES(?,?,?,?)",
+                ("42", "최연우", 3, "{}"),
+            )
+            writer.commit()
+            writer.close()
+            context.chmod(0o600)
+            module.CONTEXT_DB = context
+            holder = sqlite3.connect(context)
+            holder.execute("BEGIN EXCLUSIVE")
+            holder.execute(
+                "UPDATE choi_yeonwoo_style_profile SET sample_count = 4"
+            )
+            try:
+                started = time.perf_counter()
+                profiles = module._load_proactive_vector_profiles()
+                elapsed = time.perf_counter() - started
+            finally:
+                holder.rollback()
+                holder.close()
+
+        # A busy store is skipped, and the skip stays well inside the idle bound
+        # instead of blocking the loop for the default five second wait.
+        self.assertEqual(profiles, (None, None))
+        self.assertLess(elapsed, 4.0)
+        self.assertLess(
+            module.IDLE_CONTEXT_BUSY_TIMEOUT_MS, module.CONTEXT_BUSY_TIMEOUT_MS
+        )
+        self.assertLessEqual(module.IDLE_CONTEXT_BUSY_TIMEOUT_MS, 2000)
+        self.assertLessEqual(
+            elapsed, module.IDLE_CONTEXT_BUSY_TIMEOUT_MS / 1000.0 + 1.0
+        )
+
+    def test_supervisor_still_fences_a_stale_idle_phase(self):
+        """The idle liveness fence stays tight; only the published proof changed."""
+        supervisor = self._load_supervisor_module(
+            "auto_reply_supervisor_idle_fence_test"
+        )
+        now = time.time()
+        status = {
+            "schema_version": 1,
+            "pid": 123,
+            "owner_id": "owner",
+            "source_epoch": 7,
+            "target_chat_id": 42,
+            "target_chat_name": supervisor.CHAT,
+            "state": "healthy",
+            "readiness": "ready",
+            "phase": "idle",
+            "phase_started_at": now - 16,
+            "last_progress_at": now - 16,
+            "last_error": "",
+            "model_state": "available",
+            "model_failure_class": "",
+            "model_retry_at": None,
+            "heartbeat_at": now,
+        }
+        self.assertFalse(
+            supervisor._valid_reply_worker_status(
+                status, pid=123, owner="owner", epoch=7, target=42, now=now
+            )
+        )
+        status["phase_started_at"] = now - 14
+        status["last_progress_at"] = now - 14
+        self.assertTrue(
+            supervisor._valid_reply_worker_status(
+                status, pid=123, owner="owner", epoch=7, target=42, now=now
+            )
+        )
+        # A stale phase stamp alone, and a stale progress stamp alone, both
+        # still fence: the idle bound was not widened.
+        status["phase_started_at"] = now - 16
+        self.assertFalse(
+            supervisor._valid_reply_worker_status(
+                status, pid=123, owner="owner", epoch=7, target=42, now=now
+            )
+        )
+        status["phase_started_at"] = now - 14
+        status["last_progress_at"] = now - 16
+        self.assertFalse(
+            supervisor._valid_reply_worker_status(
+                status, pid=123, owner="owner", epoch=7, target=42, now=now
+            )
+        )
+
     def test_reply_worker_reopens_after_transient_sqlite_busy(self):
         module = self._load_auto_reply_module("auto_reply_worker_sqlite_busy_test")
         first_connection = mock.Mock()
