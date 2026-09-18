@@ -107,6 +107,76 @@ def uneven_gaps(rows: list[dict]) -> dict[str, list[float]]:
     return complaints
 
 
+def vertical_dead_bands(rows: list[dict], limit: float = 40.0) -> list[dict]:
+    """Large empty vertical bands between children of one vertical stack.
+
+    A table scroll view can be much taller than the rows it actually paints.
+    Comparing only the scroll view frame to the next arranged view therefore
+    misses the receipts-window regression: the stack spacing is still 10pt,
+    but the last row can end hundreds of points before the following card.
+    For table scroll views use the last visible row as the painted bottom.
+    Stacks that themselves live inside a scroll view are skipped because empty
+    space there can be reached by scrolling and is not a window-layout defect.
+    """
+    audit = load_audit()
+    by_path = {row["path"]: row for row in rows}
+    stacks = [
+        row
+        for row in rows
+        if row.get("orientation") == "v"
+        and "NSStackView" in row["kind"]
+        and not row["hidden"]
+        and not audit.hidden_ancestor(row, by_path)
+        and not inside_scroll_view(row)
+    ]
+    found: list[dict] = []
+    for stack in stacks:
+        path = stack["path"]
+        children = [
+            row
+            for row in rows
+            if row["path"].rsplit("/", 1)[0] == path
+            and not row["hidden"]
+            and not audit.hidden_ancestor(row, by_path)
+        ]
+        children.sort(key=lambda row: float(row.get("winTop") or 0.0))
+        for before, after in zip(children, children[1:]):
+            before_top = float(before.get("winTop") or 0.0)
+            before_bottom = before_top + float(before.get("h") or 0.0)
+            if before["kind"].endswith("ScrollView"):
+                prefix = before["path"] + "/"
+                scroll_bottom = before_bottom
+                painted_rows = [
+                    row
+                    for row in rows
+                    if row["path"].startswith(prefix)
+                    and row["kind"].endswith("RowView")
+                    and not row["hidden"]
+                    and not audit.hidden_ancestor(row, by_path)
+                    and float(row.get("winTop") or 0.0) < scroll_bottom
+                ]
+                if painted_rows:
+                    before_bottom = min(
+                        scroll_bottom,
+                        max(
+                            float(row.get("winTop") or 0.0)
+                            + float(row.get("h") or 0.0)
+                            for row in painted_rows
+                        ),
+                    )
+            gap = float(after.get("winTop") or 0.0) - before_bottom
+            if gap > limit:
+                found.append(
+                    {
+                        "window": stack["window"],
+                        "before": before["path"].split("/", 1)[-1][:60],
+                        "after": after["path"].split("/", 1)[-1][:60],
+                        "gap": round(gap, 1),
+                    }
+                )
+    return found
+
+
 def clipped_at_minimum(rows: list[dict]) -> list[dict]:
     """Content that runs out of window when the window is at its smallest.
 
@@ -312,6 +382,15 @@ def main(argv: list[str]) -> int:
         problems.append(
             f"{item['window']}: {item['table']}가 클립 뷰보다 {item['over']:.0f}pt 넓습니다. "
             f"오른쪽 끝을 볼 수 없습니다"
+        )
+
+    # 세로 스택의 다음 카드까지 40pt 넘게 비면 내용이 끊겨 보인다. 표는
+    # 스크롤 프레임이 아니라 마지막으로 실제 그린 행의 아래쪽을 기준으로
+    # 재서, 짧은 목록 아래에 큰 빈 꼬리가 생기는 회귀도 잡는다.
+    for item in vertical_dead_bands(result["rows"]):
+        problems.append(
+            f"{item['window']}: {item['before']}와 {item['after']} 사이에 "
+            f"{item['gap']:.0f}pt 빈 세로 띠가 있습니다"
         )
 
     # 같은 부모 안에서 형제 사이 간격이 제각각이면 눈에 띄게 고르지 않다.

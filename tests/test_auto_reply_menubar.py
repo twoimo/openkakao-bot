@@ -3722,6 +3722,74 @@ class LayoutGateTests(unittest.TestCase):
             )
             self.assertEqual(self.check.clipped_at_minimum([row]), [])
 
+    def test_vertical_dead_band_uses_the_last_painted_table_row(self):
+        stack = {
+            "window": "log",
+            "path": "log/NSStackView#0",
+            "kind": "NSStackView",
+            "hidden": False,
+            "orientation": "v",
+            "spacing": 10.0,
+            "winTop": 16.0,
+            "h": 600.0,
+        }
+        scroll = {
+            "window": "log",
+            "path": stack["path"] + "/AutoReplyMenu.TableScrollView#3",
+            "kind": "AutoReplyMenu.TableScrollView",
+            "hidden": False,
+            "winTop": 100.0,
+            "h": 300.0,
+        }
+        row = {
+            "window": "log",
+            "path": scroll["path"] + "/NSClipView#0/NSTableView#0/AutoReplyMenu.StripedRowView#1",
+            "kind": "AutoReplyMenu.StripedRowView",
+            "hidden": False,
+            "winTop": 134.0,
+            "h": 34.0,
+        }
+        detail = {
+            "window": "log",
+            "path": stack["path"] + "/AutoReplyMenu.CardView#4",
+            "kind": "AutoReplyMenu.CardView",
+            "hidden": False,
+            "winTop": 410.0,
+            "h": 208.0,
+        }
+        found = self.check.vertical_dead_bands([stack, scroll, row, detail])
+        self.assertEqual(len(found), 1)
+        self.assertAlmostEqual(found[0]["gap"], 242.0, places=1)
+
+    def test_vertical_dead_band_inside_a_scroll_view_is_ignored(self):
+        stack = {
+            "window": "model",
+            "path": "model/NSScrollView#0/NSClipView#0/NSStackView#0",
+            "kind": "NSStackView",
+            "hidden": False,
+            "orientation": "v",
+            "spacing": 10.0,
+            "winTop": 0.0,
+            "h": 500.0,
+        }
+        first = {
+            "window": "model",
+            "path": stack["path"] + "/NSView#0",
+            "kind": "NSView",
+            "hidden": False,
+            "winTop": 10.0,
+            "h": 20.0,
+        }
+        second = {
+            "window": "model",
+            "path": stack["path"] + "/NSView#1",
+            "kind": "NSView",
+            "hidden": False,
+            "winTop": 200.0,
+            "h": 20.0,
+        }
+        self.assertEqual(self.check.vertical_dead_bands([stack, first, second]), [])
+
     def test_overflow_at_the_minimum_size_is_reported(self):
         row = {
             "window": "log-min",

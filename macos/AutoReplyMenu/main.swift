@@ -3665,6 +3665,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var logEmptyState: EmptyStateView?
     var logDetailView: NSTextView?
     var logDetailCard: NSView?
+    /// 답변 기록 창의 세로 스택. 행 수에 맞춰 창을 내용 높이로 줄일 때 쓴다.
+    var logStack: NSStackView?
+    /// 기록 표 높이의 하한. 실제 행 수에 맞춰 갱신한다.
+    var logTableHeight: NSLayoutConstraint?
+    var logFitting = false
     var receiptRows: [ReceiptRow] = []
     var displayedReceipts: [ReceiptRow] = []
     var receiptTitles: [(id: String, title: String)] = []
@@ -3872,6 +3877,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     static let jobsTableMaximumHeight: CGFloat = 210
     /// `.inset` 양식이 첫 줄 위와 마지막 줄 아래에 두는 세로 여백의 합.
     static let jobsTableStylePadding: CGFloat = 10
+    /// 답변 기록은 여섯 줄까지만 한 번에 보여 주고 그보다 많으면 표 안에서
+    /// 굴린다. 짧은 목록은 실제 행 수만큼 줄여 상세 카드가 바로 이어지게 한다.
+    static let logTableMaximumHeight: CGFloat = 244
+    /// 한 줄뿐이어도 표 머리글과 두 줄 정도의 자리는 남겨 짧은 목록이
+    /// 지나치게 눌려 보이지 않게 한다.
+    static let logTableMinimumRows: CGFloat = 2
+    static let logTableStylePadding: CGFloat = 10
+    static let logWindowMinimum = NSSize(width: 704, height: 650)
 
     init(config: Config) {
         self.config = config
@@ -6915,7 +6928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             title: "답변 기록",
             size: NSSize(width: 1000, height: 756),
             autosave: "AutoReplyReceipts",
-            minimum: NSSize(width: 704, height: 650)
+            minimum: Self.logWindowMinimum
         )
         let content = NSView()
         window.contentView = content
@@ -7010,7 +7023,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
         // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
         let stack = Chrome.vstack([headerCard, empty, emptyState, scroll, detailCard], spacing: 10)
+        logStack = stack
         Chrome.fill(stack, in: content)
+        let tableHeight = scroll.heightAnchor.constraint(
+            greaterThanOrEqualToConstant: Self.logTableMaximumHeight
+        )
+        logTableHeight = tableHeight
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
@@ -7018,15 +7036,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             toolbar.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
             emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
-            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
-            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            // 빈 상태도 짧은 표와 같은 정도의 높이만 차지한다. 260pt를
+            // 고정하면 기록이 없을 때 안내 한 줄 아래가 빈 판으로 늘어난다.
+            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 108),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailContent.widthAnchor.constraint(equalTo: detailCard.widthAnchor, constant: -20),
             detailTitle.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
             detailScroll.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            tableHeight,
             detailScroll.heightAnchor.constraint(equalToConstant: 168),
             scope.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
             scope.widthAnchor.constraint(lessThanOrEqualToConstant: 168),
@@ -7034,6 +7052,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             room.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
         ])
         logWindow = window
+    }
+
+    /// 기록 표는 실제 행 수만큼만 높이를 쓴다.
+    ///
+    /// 예전 260pt 고정 하한은 행이 몇 개뿐이어도 남는 공간을 모두 표가
+    /// 가져가, 마지막 행과 상세 카드 사이에 242pt 빈 띠를 만들었다.
+    func fitLogTableHeight() {
+        guard let constraint = logTableHeight, let table = logTable else { return }
+        let header = table.headerView?.frame.height ?? 28
+        let rowHeight = table.rowHeight + table.intercellSpacing.height
+        let rows = CGFloat(displayedReceipts.count)
+        let minimum = header + rowHeight * Self.logTableMinimumRows + Self.logTableStylePadding
+        let wanted = header + rowHeight * rows + Self.logTableStylePadding
+        let clamped = min(Self.logTableMaximumHeight, max(minimum, wanted))
+        guard abs(constraint.constant - clamped) > 0.5 else { return }
+        constraint.constant = clamped
+    }
+
+    /// 표 높이가 줄어든 만큼 창도 내용에 맞춘다. 스택이 창 전체 높이에
+    /// 고정되어 있어 창을 그대로 두면 남는 높이를 다른 카드가 대신 먹는다.
+    func fitLogWindow() {
+        guard !logFitting,
+              let window = logWindow,
+              let stack = logStack,
+              let content = window.contentView else { return }
+        logFitting = true
+        defer { logFitting = false }
+        fitLogTableHeight()
+        for _ in 0..<3 {
+            content.layoutSubtreeIfNeeded()
+            stack.layoutSubtreeIfNeeded()
+            let needed = stack.fittingSize.height
+            guard needed > 1 else { return }
+            let desired = needed + 32
+            let minimumFrameHeight = window.frameRect(
+                forContentRect: NSRect(
+                    origin: .zero,
+                    size: NSSize(width: content.bounds.width, height: desired)
+                )
+            ).height
+            let minimum = NSSize(
+                width: Self.logWindowMinimum.width,
+                height: min(Self.logWindowMinimum.height, minimumFrameHeight)
+            )
+            if abs(window.minSize.height - minimum.height) > 0.5
+                || abs(window.minSize.width - minimum.width) > 0.5 {
+                window.minSize = minimum
+            }
+            let current = content.bounds.height
+            guard abs(current - desired) > 12 else { return }
+            var frame = window.frame
+            let delta = current - desired
+            if delta > 0 {
+                frame.size.height -= delta
+                frame.origin.y += delta
+            } else {
+                let grown = min(-delta, frame.origin.y)
+                guard grown > 0 else { return }
+                frame.size.height += grown
+                frame.origin.y -= grown
+            }
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
+        }
     }
 
     func updateLogWindow(_ model: MenubarModel) {
@@ -7257,6 +7339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         logEmptyState?.detailText = logEmptyDetail()
         applyLogDetail()
         updateLogStatus()
+        fitLogWindow()
     }
 
     func rememberLogSelection() {
