@@ -27,9 +27,12 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -379,12 +382,35 @@ def _window_from_rows(
     return window
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    """Open the large context database without taking a write lock."""
-    uri = f"file:{db_path}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True, timeout=5.0)
-    connection.row_factory = sqlite3.Row
-    return connection
+@contextmanager
+def _connect_readonly(db_path: Path) -> Iterator[sqlite3.Connection]:
+    """Read a temporary snapshot so long scans never contend with the source DB."""
+    with tempfile.TemporaryDirectory(prefix="golden-ro-copy-") as tmpdir:
+        tmp_db = Path(tmpdir) / db_path.name
+        try:
+            shutil.copy2(db_path, tmp_db)
+            wal = db_path.with_name(db_path.name + "-wal")
+            shm = db_path.with_name(db_path.name + "-shm")
+            if wal.exists():
+                try:
+                    shutil.copy2(wal, Path(tmpdir) / wal.name)
+                except OSError:
+                    pass
+            if shm.exists():
+                try:
+                    shutil.copy2(shm, Path(tmpdir) / shm.name)
+                except OSError:
+                    pass
+            connection = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True, timeout=5.0)
+        except (OSError, sqlite3.Error):
+            connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            yield connection
+        finally:
+            connection.close()
 
 
 def iter_self_pairs(
@@ -763,13 +789,8 @@ def extract_golden_dataset(
             pairs.append(pair)
 
     if context_db.is_file():
-        connection = None
         try:
-            connection = _connect_readonly(context_db)
-        except sqlite3.Error as exc:
-            stats["context_error"] = f"{type(exc).__name__}: {exc}"
-        if connection is not None:
-            try:
+            with _connect_readonly(context_db) as connection:
                 _absorb(
                     iter_self_pairs(
                         connection,
@@ -783,10 +804,8 @@ def extract_golden_dataset(
                     ),
                     "self_rows",
                 )
-            except sqlite3.Error as exc:
-                stats["context_error"] = f"{type(exc).__name__}: {exc}"
-            finally:
-                connection.close()
+        except sqlite3.Error as exc:
+            stats["context_error"] = f"{type(exc).__name__}: {exc}"
     else:
         stats["context_error"] = f"missing: {context_db}"
 
@@ -798,14 +817,10 @@ def extract_golden_dataset(
         stats["evidence_sent_ids"] = len(sent_ids)
         if sent_ids:
             try:
-                resolver = _connect_readonly(context_db)
-            except sqlite3.Error:
-                resolver = None
-            if resolver is not None:
-                try:
+                with _connect_readonly(context_db) as resolver:
                     inbound_lookup = resolve_inbound_messages(resolver, sent_ids)
-                finally:
-                    resolver.close()
+            except sqlite3.Error:
+                pass
     stats["evidence_resolved"] = len(inbound_lookup)
     for path in evidence_files:
         counters: dict[str, int] = {}
@@ -983,14 +998,10 @@ def _print_candidates(
         sent_ids = _sent_log_ids(paths)
         if sent_ids:
             try:
-                resolver = _connect_readonly(context_db)
-            except sqlite3.Error:
-                resolver = None
-            if resolver is not None:
-                try:
+                with _connect_readonly(context_db) as resolver:
                     inbound_lookup = resolve_inbound_messages(resolver, sent_ids)
-                finally:
-                    resolver.close()
+            except sqlite3.Error:
+                pass
     printed = 0
     for path in paths:
         for pair in iter_evidence_pairs(

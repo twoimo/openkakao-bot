@@ -26,6 +26,7 @@ from scripts.auto_reply_golden_dataset import (
     QUALITY_MODEL_GENERATED,
     QUALITY_UNREVIEWED,
     GoldenPair,
+    _connect_readonly,
     _db_has_transcript,
     _is_teachable,
     extract_golden_dataset,
@@ -127,6 +128,53 @@ def _write_evidence(path: Path) -> None:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
         encoding="utf-8",
     )
+
+
+class TestIsolatedReadOnlyConnection(unittest.TestCase):
+    def _write_source_db(self, root: Path) -> Path:
+        db = root / "source.sqlite3"
+        connection = sqlite3.connect(db)
+        try:
+            connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            connection.execute("INSERT INTO sample (value) VALUES ('copied row')")
+            connection.commit()
+        finally:
+            connection.close()
+        return db
+
+    def test_isolated_copy_is_read_only_and_removed_after_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            with _connect_readonly(db) as connection:
+                copied_path = Path(connection.execute("PRAGMA database_list").fetchone()[2])
+                copied_dir = copied_path.parent
+                self.assertNotEqual(copied_path.resolve(), db.resolve())
+                self.assertTrue(copied_path.exists())
+                self.assertEqual(
+                    connection.execute("SELECT value FROM sample").fetchone()[0],
+                    "copied row",
+                )
+                self.assertEqual(connection.execute("PRAGMA query_only").fetchone()[0], 1)
+                with self.assertRaises(sqlite3.OperationalError):
+                    connection.execute("INSERT INTO sample (value) VALUES ('blocked write')")
+            self.assertFalse(copied_dir.exists(), "temporary copy must be removed after close")
+
+    def test_isolated_copy_reads_while_source_database_is_exclusively_locked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            holder = sqlite3.connect(db)
+            try:
+                holder.execute("BEGIN EXCLUSIVE")
+                with _connect_readonly(db) as connection:
+                    copied_path = Path(connection.execute("PRAGMA database_list").fetchone()[2])
+                    self.assertNotEqual(copied_path.resolve(), db.resolve())
+                    self.assertEqual(
+                        connection.execute("SELECT value FROM sample").fetchone()[0],
+                        "copied row",
+                    )
+            finally:
+                holder.rollback()
+                holder.close()
 
 
 class TestGoldenFilters(unittest.TestCase):
