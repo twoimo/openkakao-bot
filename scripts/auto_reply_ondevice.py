@@ -254,10 +254,23 @@ def recommend_ondevice_setup(
 def ondevice_summary_dict() -> dict[str, Any]:
     hw = detect_hardware()
     rec = recommend_ondevice_setup(hw)
+    verification = verify_ondevice_setup(rec)
+    if verification.get("ok"):
+        status = "검증 통과"
+    elif verification.get("checks") or verification.get("errors"):
+        status = "가중치 미확인"
+    else:
+        status = "검증 정보 없음"
+    model_name = Path(rec.recommended_model).name
     return {
         "hardware": asdict(hw),
         "recommendation": asdict(rec),
-        "verification": verify_ondevice_setup(rec),
+        "verification": verification,
+        "status_label": (
+            f"온디바이스 감지: {hw.chip} ({int(hw.memory_gb)}GB RAM)"
+            f" · {rec.primary_engine} · {model_name} · {status}"
+        ),
+        "status_detail": f"{rec.reason} · {rec.recommended_model}",
     }
 
 

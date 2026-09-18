@@ -313,6 +313,8 @@ struct OnDeviceHardware: Decodable {
     let hardware: Spec
     let recommendation: Recommendation
     let verification: Verification?
+    let status_label: String?
+    let status_detail: String?
 }
 
 struct MenubarModel: Decodable {
@@ -5441,15 +5443,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
         if let hw = lastModel?.ondevice_hardware, let hwLabel = modelHardwareHint {
             let modelName = hw.recommendation.recommended_model
-            let verify = hw.verification
-            let verifyText: String
-            if let verify {
-                verifyText = verify.ok ? "검증 통과" : "가중치 미확인"
+            if let statusLabel = hw.status_label, !statusLabel.isEmpty {
+                hwLabel.stringValue = statusLabel
+            } else if let verify = hw.verification {
+                let verifyText = verify.ok ? "검증 통과" : "가중치 미확인"
+                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · \(modelName) · \(verifyText)"
             } else {
-                verifyText = "검증 정보 없음"
+                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · 검증 정보 없음"
             }
-            hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · Gemma · \(verifyText)"
-            hwLabel.toolTip = hw.recommendation.reason + " · " + modelName
+            hwLabel.toolTip = hw.status_detail ?? (hw.recommendation.reason + " · " + modelName)
         }
         modelReplySummary?.stringValue = "메시지에 답할 때 씁니다."
         modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty

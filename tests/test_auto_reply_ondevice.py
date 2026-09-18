@@ -127,6 +127,11 @@ class TestCommands(unittest.TestCase):
         self.assertIn("engine_paths", summary["recommendation"])
         self.assertIn("fallback_models", summary["recommendation"])
         self.assertIn("verification", summary)
+        self.assertIn("status_label", summary)
+        self.assertIn("status_detail", summary)
+        self.assertTrue(str(summary["status_label"]).startswith("온디바이스 감지:"))
+        self.assertIn(summary["recommendation"]["primary_engine"], summary["status_label"])
+        self.assertIn(summary["recommendation"]["recommended_model"], summary["status_detail"])
 
 
 class TestVerification(unittest.TestCase):
