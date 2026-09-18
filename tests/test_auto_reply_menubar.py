@@ -1453,9 +1453,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
         # 패널 높이는 조각을 이어 붙여 계산한다. 숫자를 따로 박아 두면 조각을
         # 고칠 때마다 아래가 겹치거나 빈 띠가 남는다 (2026-09-16).
         self.assertIn("static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset", source)
+        self.assertIn("static let sectionGap: CGFloat = 10", source)
         self.assertIn("static let tileTop: CGFloat = roomGridTop", source)
-        self.assertIn("static let lampTop: CGFloat = tileTop + tileHeight + afterTileGap", source)
-        self.assertIn("static let actionTop: CGFloat = lampTop + lampHeight + afterLampGap", source)
+        self.assertIn("static let actionTop: CGFloat = tileTop + tileHeight + sectionGap", source)
         self.assertIn("vectorCompactStatusLine", source)
         self.assertNotIn("count) 멈춤", source)
         self.assertIn("vectorStatusLine", source)

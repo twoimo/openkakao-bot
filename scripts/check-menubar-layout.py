@@ -107,6 +107,100 @@ def uneven_gaps(rows: list[dict]) -> dict[str, list[float]]:
     return complaints
 
 
+def uneven_panel_gaps(
+    rows: list[dict], tolerance: float = 1.0
+) -> dict[str, list[float]]:
+    """Uneven major-section gaps in the hand-placed dropdown panels.
+
+    The other operator windows mix deliberate local spacings, so treating every
+    hand-placed sibling in every window as one rhythm produces false positives.
+    The dropdown is different: below the Jarvis caption its room block (when
+    expanded), metric tiles, and action buttons are one vertical flow. Measure
+    those bands directly so a recurrence of the old 8/34pt split fails the
+    audit even though none of them lives in an NSStackView (2026-09-18).
+    """
+    panel_windows = {
+        name for name in EXPECTED_WINDOWS if name.startswith("menu-panel")
+    }
+    action_titles = {"즉시 답장 보내기", "긱뉴스 바로 전송"}
+    complaints: dict[str, list[float]] = {}
+    for window in panel_windows:
+        direct = [
+            row
+            for row in rows
+            if row["window"] == window
+            and not row["hidden"]
+            and row["path"].rsplit("/", 1)[0] == window
+        ]
+        tiles = [
+            row
+            for row in direct
+            if row["kind"].endswith("Button")
+            and 50 <= float(row.get("h") or 0) <= 54
+        ]
+        actions = [
+            row
+            for row in direct
+            if row["kind"].endswith("Button") and row.get("text") in action_titles
+        ]
+        if not tiles or not actions:
+            continue
+        tile_top = min(float(row["winTop"]) for row in tiles)
+        tile_bottom = max(
+            float(row["winTop"]) + float(row["h"]) for row in tiles
+        )
+        action_top = min(float(row["winTop"]) for row in actions)
+        action_bottom = max(
+            float(row["winTop"]) + float(row["h"]) for row in actions
+        )
+        captions = [
+            row
+            for row in direct
+            if row["kind"].endswith("TextField")
+            and float(row["winTop"]) < tile_top
+        ]
+        if not captions:
+            continue
+        caption = max(captions, key=lambda row: float(row["winTop"]))
+        caption_top = float(caption["winTop"])
+        caption_bottom = caption_top + float(caption["h"])
+
+        # Expanded panels insert room buttons (or one scroll view when the
+        # catalog is long) between the caption and the metric row. Treat that
+        # grid as one block: its internal row spacing is a separate grid rule.
+        middle = [
+            row
+            for row in direct
+            if float(row["winTop"]) >= caption_bottom - tolerance
+            and float(row["winTop"]) < tile_top - tolerance
+            and row is not caption
+        ]
+        bands = [(caption_top, caption_bottom)]
+        if middle:
+            bands.append(
+                (
+                    min(float(row["winTop"]) for row in middle),
+                    max(
+                        float(row["winTop"]) + float(row["h"])
+                        for row in middle
+                    ),
+                )
+            )
+        bands.extend(
+            [
+                (tile_top, tile_bottom),
+                (action_top, action_bottom),
+            ]
+        )
+        gaps = [
+            round(after[0] - before[1], 1)
+            for before, after in zip(bands, bands[1:])
+        ]
+        if gaps and max(gaps) - min(gaps) > tolerance:
+            complaints[window] = gaps
+    return complaints
+
+
 def vertical_dead_bands(rows: list[dict], limit: float = 40.0) -> list[dict]:
     """Large empty vertical bands between children of one vertical stack.
 
@@ -397,6 +491,11 @@ def main(argv: list[str]) -> int:
     # 예전 메뉴 패널이 6/8/10을 섞어 썼다 (2026-09-16).
     for window, gaps in uneven_gaps(result["rows"]).items():
         problems.append(f"{window}: 형제 간격이 고르지 않습니다 {gaps}")
+
+    # 드롭다운 패널은 스택을 쓰지 않고 직접 프레임을 놓는다. 코어 설명 아래
+    # 주요 구간의 간격이 다시 벌어지면 기존 uneven_gaps로는 잡히지 않는다.
+    for window, gaps in uneven_panel_gaps(result["rows"]).items():
+        problems.append(f"{window}: 손배치 세로 간격이 고르지 않습니다 {gaps}")
 
     for card in result["collapsed_cards"]:
         problems.append(f"{card['window']}: 카드 높이가 {card['h']}pt로 붕괴했습니다")

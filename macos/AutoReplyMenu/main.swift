@@ -3026,9 +3026,13 @@ final class MenuPanelView: NSView {
     /// 위에서부터의 세로 리듬. 값 하나만 바꾸면 아래가 따라 움직이도록
     /// 조각을 이어 붙여 계산한다. 예전에는 7/36/94/98/158/186이 따로 박혀
     /// 있어 조각 사이 간격이 제각각이었다 (2026-09-16).
-    /// 조각 사이 간격은 모두 같은 값을 쓴다. 예전에는 6/8/10이 섞여 있어
-    /// 눈에 띄게 고르지 않았다 (2026-09-16).
+    /// 패널 바깥 여백과 상단 상태/코어 사이에 쓰는 기본 간격.
     static let gap: CGFloat = 8
+    /// 코어 설명 아래의 손배치 구간은 이 간격 하나로 이어 붙인다. 램프 줄이
+    /// 타일과 동작 단추 사이 높이를 따로 먹던 때에는 감사에서 8/34pt로
+    /// 보였다. 램프를 코어 옆으로 옮긴 뒤 설명/방 목록/타일/동작 단추는
+    /// 모두 같은 간격으로 흐른다 (2026-09-18).
+    static let sectionGap: CGFloat = 10
     static let panelTop: CGFloat = gap
     static let sideInset: CGFloat = 16
     static let statusPillHeight: CGFloat = 22
@@ -3040,12 +3044,8 @@ final class MenuPanelView: NSView {
     /// 있어 한눈에 들어오지 않았다. 지금은 코어 하나가 상태를 대신하고,
     /// 단계는 창에서 본다 (2026-09-17).
     static let coreSize: CGFloat = 148
-    static let afterCoreGap: CGFloat = gap
-    static let afterRoomGridGap: CGFloat = gap
     static let tileHeight: CGFloat = 52
-    static let afterTileGap: CGFloat = gap
     static let lampHeight: CGFloat = 18
-    static let afterLampGap: CGFloat = gap
     static let actionHeight: CGFloat = 28
     static let bottomInset: CGFloat = gap
     /// 코어가 놓이는 위쪽 좌표(패널 위에서부터).
@@ -3053,12 +3053,11 @@ final class MenuPanelView: NSView {
     /// 코어 아래 한 줄이 차지하는 높이.
     static let coreCaptionHeight: CGFloat = 15
     /// 방 목록 격자가 시작하는 위쪽 좌표. 코어와 그 아래 한 줄에 붙는다.
-    static let roomGridTop: CGFloat = coreTop + coreSize + coreCaptionHeight + afterCoreGap
+    static let roomGridTop: CGFloat = coreTop + coreSize + coreCaptionHeight + sectionGap
     /// 지표 타일은 방 목록이 접혀 있을 때 격자 자리에서 바로 시작한다.
     static let tileTop: CGFloat = roomGridTop
-    static let lampTop: CGFloat = tileTop + tileHeight + afterTileGap
-    static let actionTop: CGFloat = lampTop + lampHeight + afterLampGap
-    /// 상태 알약 + 홀로그램 코어 + 지표 타일 + 램프 줄 + 동작 버튼 + 아래 여백.
+    static let actionTop: CGFloat = tileTop + tileHeight + sectionGap
+    /// 상태 알약 + 홀로그램 코어 + 지표 타일 + 동작 버튼 + 아래 여백.
     static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset
     var roomsExpanded = false {
         didSet {
@@ -3149,7 +3148,7 @@ final class MenuPanelView: NSView {
     static func roomGridExtra(count: Int, expanded: Bool) -> CGFloat {
         guard expanded else { return 0 }
         return min(roomGridHeight(count: count), roomGridSpan(rows: maxRoomGridRows))
-            + afterRoomGridGap
+            + sectionGap
     }
 
     /// 방 목록이 차지할 수 있는 최대 줄 수.
@@ -3454,7 +3453,6 @@ final class MenuPanelView: NSView {
 
         let extra = roomGridExtra()
         let tileY: CGFloat = Self.tileTop + extra
-        let lampY: CGFloat = Self.lampTop + extra
         if roomsExpanded {
             let rows = (max(AppDelegate.inspectableRooms(in: model).count, 1) + Self.roomGridColumns - 1) / Self.roomGridColumns
             let card = NSRect(
@@ -3508,7 +3506,12 @@ final class MenuPanelView: NSView {
             ("워커", health["worker"] ?? "off"),
             ("모델", health["model"] ?? "off"),
         ]
-        var x: CGFloat = 16
+        // 램프와 긱뉴스 슬롯은 코어 좌우의 빈 공간을 쓴다. 내용은 그대로
+        // 유지하면서 타일과 동작 단추 사이에 별도 18pt 행을 예약하지 않아,
+        // 하단 손배치 구간의 간격과 패널 높이가 실제 콘텐츠를 따라간다.
+        let lampStackHeight = CGFloat(lamps.count) * Self.lampHeight
+            + CGFloat(max(lamps.count - 1, 0)) * Self.gap
+        var lampY = Self.coreTop + (Self.coreSize - lampStackHeight) / 2
         for lamp in lamps {
             let label = NSString(string: lamp.0)
             let labelAttrs: [NSAttributedString.Key: Any] = [
@@ -3516,20 +3519,27 @@ final class MenuPanelView: NSView {
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
             let labelSize = label.size(withAttributes: labelAttrs)
-            let chip = NSRect(x: x, y: lampY, width: 16 + labelSize.width + 8, height: Self.lampHeight)
+            let chip = NSRect(
+                x: Self.sideInset,
+                y: lampY,
+                width: 16 + labelSize.width + 8,
+                height: Self.lampHeight
+            )
             NSColor.labelColor.withAlphaComponent(0.05).setFill()
             NSBezierPath(roundedRect: chip, xRadius: 9, yRadius: 9).fill()
             Palette.lamp(lamp.1).setFill()
             NSBezierPath(ovalIn: NSRect(x: chip.minX + 5, y: chip.minY + 5, width: 8, height: 8)).fill()
             label.draw(at: CGPoint(x: chip.minX + 16, y: chip.minY + 2), withAttributes: labelAttrs)
-            x = chip.maxX + 6
+            lampY = chip.maxY + Self.gap
         }
 
         let posted = Set(room?.geeknews_slots ?? [])
         let day = Self.kstDay()
         let slots: [(String, String)] = [("아침", "morning"), ("점심", "lunch"), ("저녁", "evening")]
-        var slotX = width - 16
-        for slot in slots.reversed() {
+        let slotStackHeight = CGFloat(slots.count) * Self.lampHeight
+            + CGFloat(max(slots.count - 1, 0)) * Self.gap
+        var slotY = Self.coreTop + (Self.coreSize - slotStackHeight) / 2
+        for slot in slots {
             let filled = posted.contains("\(day):\(slot.1)")
             let label = NSString(string: slot.0)
             let attrs: [NSAttributedString.Key: Any] = [
@@ -3537,11 +3547,16 @@ final class MenuPanelView: NSView {
                 .foregroundColor: filled ? NSColor.white : NSColor.secondaryLabelColor,
             ]
             let size = label.size(withAttributes: attrs)
-            let pill = NSRect(x: slotX - size.width - 16, y: lampY, width: size.width + 14, height: Self.lampHeight)
+            let pill = NSRect(
+                x: width - Self.sideInset - size.width - 14,
+                y: slotY,
+                width: size.width + 14,
+                height: Self.lampHeight
+            )
             (filled ? NSColor.systemGreen : NSColor.labelColor.withAlphaComponent(0.08)).setFill()
             NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
             label.draw(at: CGPoint(x: pill.minX + 7, y: pill.minY + 2), withAttributes: attrs)
-            slotX = pill.minX - 6
+            slotY = pill.maxY + Self.gap
         }
     }
 
