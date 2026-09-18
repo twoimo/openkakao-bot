@@ -2354,6 +2354,7 @@ def _query_knowledge_structured(
         relation_facts: list[str] = []
         ranked: list[tuple[float, str, str, str]] = []
         candidates: list[str] = []
+        query_vec = _deterministic_text_embedding(" ".join(haystacks))
         matched_entity_ids = set()
         matched_entity_names = {}
 
@@ -2382,7 +2383,6 @@ def _query_knowledge_structured(
             node_text = " ".join(
                 [str(name), str(desc or "")] + [str(term) for term in terms] + [str(f) for f in facts[:5]]
             )
-            query_vec = _deterministic_text_embedding(" ".join(haystacks))
             node_vec = _deterministic_text_embedding(node_text)
             vector_score = _vector_similarity(query_vec, node_vec)
             score = _hybrid_score(keyword_score, vector_score)
