@@ -2635,6 +2635,10 @@ mod imp {
     const CONTEXT_MENU_TITLES_REPLY: &[&str] = &["답장"];
     const CONTEXT_MENU_TITLES_DELETE_EVERYONE: &[&str] = &["모두에게서 삭제"];
     const OPEN_CHAT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Poll interval while an already-open window's AX transcript settles.
+    /// KakaoTalk repaints the message list after a room switch or raise, so the
+    /// first read can legitimately return no rows.
+    const EXACT_WINDOW_SETTLE_POLL: Duration = Duration::from_millis(200);
     const SERVICE_AX_TRAVERSAL_TIMEOUT: Duration = Duration::from_secs(10);
     const CHAT_ROW_SELECT_RETRY_DELAYS_MS: [u64; 2] = [250, 500];
     const SERVICE_AX_MESSAGING_TIMEOUT_SECS: f32 = 0.5;
@@ -3803,19 +3807,34 @@ mod imp {
     /// Read an already-open, exact-title chat window without selecting a chat
     /// row, focusing a field, or synthesizing keyboard input. Duplicate exact
     /// window titles are rejected so callers cannot attest an ambiguous target.
+    ///
+    /// KakaoTalk repaints the transcript when a room is switched or a window is
+    /// raised, and the AX tree can briefly expose the window with an empty
+    /// message list. Treating that first empty read as final fenced every bound
+    /// room (2026-09-18 flapping), so the read settles inside a bounded window
+    /// and still fails closed if no row ever appears.
     pub fn read_open_exact_via_ax(chat_display_name: &str, count: usize) -> Result<Vec<AxMessage>> {
         let pid = find_kakaotalk_pid()?;
         ensure_ax_permission()?;
         let app = AXUIElement::application(pid);
-        let window = find_chat_window(&app, chat_display_name)?.ok_or_else(|| {
-            anyhow!(
-                "expected exactly one already-open KakaoTalk window titled {chat_display_name:?}; found 0"
-            )
-        })?;
-        let mut messages = read_visible_messages(&window);
-        if messages.is_empty() {
-            anyhow::bail!("the exact chat window {chat_display_name:?} has no visible messages");
-        }
+        let deadline = Instant::now() + OPEN_CHAT_TIMEOUT;
+        let mut messages = loop {
+            let window = find_chat_window(&app, chat_display_name)?.ok_or_else(|| {
+                anyhow!(
+                    "expected exactly one already-open KakaoTalk window titled {chat_display_name:?}; found 0"
+                )
+            })?;
+            let messages = read_visible_messages(&window);
+            if !messages.is_empty() {
+                break messages;
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!(
+                    "the exact chat window {chat_display_name:?} has no visible messages"
+                );
+            }
+            sleep(EXACT_WINDOW_SETTLE_POLL);
+        };
         if messages.len() > count {
             messages = messages.split_off(messages.len() - count);
         }

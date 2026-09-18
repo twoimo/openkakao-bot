@@ -4346,7 +4346,53 @@ fn resolve_auto_reply_author_bindings(
     Ok(bindings)
 }
 
+/// Bound on transient read-only attestation failures.
+///
+/// KakaoTalk can expose a chat window mid-repaint, where one read returns rows
+/// from another view or none at all. The unattended host treated the single
+/// read as final and fenced every bound room when that landed (2026-09-18
+/// flapping). Each attempt re-reads both sides and re-runs the same read-only
+/// match, so the safety property is unchanged.
+const AUTO_REPLY_ATTEST_ATTEMPTS: usize = 3;
+const AUTO_REPLY_ATTEST_RETRY_PAUSE: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
+/// Run one bounded operation until it succeeds or the attempt budget is spent.
+///
+/// Returns the last error so callers keep the original diagnostics, and always
+/// runs at least once even when the budget is configured to zero.
+fn retry_bounded<T>(
+    attempts: usize,
+    pause: std::time::Duration,
+    mut op: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    let budget = attempts.max(1);
+    let mut last_error: Option<anyhow::Error> = None;
+    for index in 0..budget {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = Some(error);
+                if index + 1 < budget {
+                    std::thread::sleep(pause);
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("bounded retry produced no attempt")))
+}
+
 fn auto_reply_attest_explicit_bindings(
+    reader: &local_db::LocalDbReader,
+    selectors: &[local_db::ChatSelector],
+    targets: &[local_db::LocalChat],
+) -> Result<Vec<AutoReplyBindingEvidence>> {
+    retry_bounded(AUTO_REPLY_ATTEST_ATTEMPTS, AUTO_REPLY_ATTEST_RETRY_PAUSE, || {
+        auto_reply_attest_explicit_bindings_once(reader, selectors, targets)
+    })
+}
+
+fn auto_reply_attest_explicit_bindings_once(
     reader: &local_db::LocalDbReader,
     selectors: &[local_db::ChatSelector],
     targets: &[local_db::LocalChat],
@@ -7431,6 +7477,61 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_bounded_stops_at_the_first_success() {
+        let mut calls = 0;
+        let value = retry_bounded(3, std::time::Duration::ZERO, || {
+            calls += 1;
+            if calls < 3 {
+                anyhow::bail!("transient failure {calls}");
+            }
+            Ok(calls)
+        })
+        .expect("third attempt should succeed");
+        assert_eq!(value, 3);
+        assert_eq!(calls, 3, "retry must stop once an attempt succeeds");
+    }
+
+    #[test]
+    fn retry_bounded_surfaces_the_last_error_after_the_budget() {
+        let mut calls = 0;
+        let error = retry_bounded::<()>(3, std::time::Duration::ZERO, || {
+            calls += 1;
+            anyhow::bail!("failure {calls}")
+        })
+        .expect_err("an exhausted budget must fail");
+        assert_eq!(calls, 3, "retry must spend the whole budget");
+        assert!(
+            error.to_string().contains("failure 3"),
+            "the last error must be surfaced, got {error}"
+        );
+    }
+
+    #[test]
+    fn retry_bounded_always_attempts_once_and_never_exceeds_the_budget() {
+        let mut zero_budget_calls = 0;
+        retry_bounded::<()>(0, std::time::Duration::ZERO, || {
+            zero_budget_calls += 1;
+            Ok(())
+        })
+        .expect("a zero budget still attempts once");
+        assert_eq!(zero_budget_calls, 1);
+
+        let mut first_success_calls = 0;
+        retry_bounded(3, std::time::Duration::ZERO, || {
+            first_success_calls += 1;
+            Ok(7)
+        })
+        .expect("the first attempt succeeds");
+        assert_eq!(first_success_calls, 1, "a success must not retry");
+    }
+
+    #[test]
+    fn auto_reply_attestation_retry_budget_is_bounded() {
+        assert!((2..=5).contains(&AUTO_REPLY_ATTEST_ATTEMPTS));
+        assert!(AUTO_REPLY_ATTEST_RETRY_PAUSE <= std::time::Duration::from_secs(2));
+    }
 
     #[test]
     fn download_local_requires_and_parses_numeric_author_binding() {
