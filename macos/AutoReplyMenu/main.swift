@@ -2968,7 +2968,7 @@ final class JarvisCoreView: NSView {
         super.draw(dirtyRect)
         NSColor.clear.setFill()
         bounds.fill()
-        let radius = min(bounds.width, bounds.height) * 0.5 - 4
+        let radius = min(bounds.width, bounds.height) * 0.5 - 1
         guard radius > 8 else { return }
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         drawBackdrop(center: center, radius: radius)
@@ -3018,7 +3018,10 @@ final class JarvisCoreView: NSView {
         for orbit in orbits {
             let angle = phase * orbit.speed
             // 고리의 긴 지름은 코어보다 조금 크다. 궤도가 코어를 감싼다.
-            let span = radius * (1.06 + 0.05 * CGFloat(abs(sin(angle))))
+            let span = min(
+                radius * (1.06 + 0.05 * CGFloat(abs(sin(angle)))),
+                min(center.x, bounds.width - center.x) - 1
+            )
             let rect = NSRect(
                 x: center.x - span,
                 y: center.y - span * orbit.squash,
@@ -3205,7 +3208,8 @@ final class MenuPanelView: NSView {
     /// 타일과 동작 단추 사이 높이를 따로 먹던 때에는 감사에서 8/34pt로
     /// 보였다. 램프를 코어 옆으로 옮긴 뒤 설명/방 목록/타일/동작 단추는
     /// 모두 같은 간격으로 흐른다 (2026-09-18).
-    static let sectionGap: CGFloat = 10
+    // 캡션 아래·타일·동작 단추 간격을 8pt로 맞춰 손배치 감사와 빈 여백을 함께 잡는다.
+    static let sectionGap: CGFloat = 8
     static let panelTop: CGFloat = gap
     static let sideInset: CGFloat = 16
     static let statusPillHeight: CGFloat = 22
@@ -3981,10 +3985,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var logScopeButton: NSPopUpButton?
     var logRoomButton: NSPopUpButton?
     var logStatusField: NSTextField?
+    var logStatusMinWidthConstraint: NSLayoutConstraint?
     var logEmptyLabel: NSTextField?
     var logEmptyState: EmptyStateView?
     var logDetailView: NSTextView?
     var logDetailCard: NSView?
+    var logDetailHeight: NSLayoutConstraint?
     /// 답변 기록 창의 세로 스택. 행 수에 맞춰 창을 내용 높이로 줄일 때 쓴다.
     var logStack: NSStackView?
     /// 기록 표 높이의 하한. 실제 행 수에 맞춰 갱신한다.
@@ -4204,7 +4210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 지나치게 눌려 보이지 않게 한다.
     static let logTableMinimumRows: CGFloat = 2
     static let logTableStylePadding: CGFloat = 10
-    static let logWindowMinimum = NSSize(width: 704, height: 650)
+    static let logWindowMinimum = NSSize(width: 704, height: 580)
 
     init(config: Config) {
         self.config = config
@@ -7081,7 +7087,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "작업 목록",
-            size: NSSize(width: 720, height: 540),
+            size: NSSize(width: 640, height: 220),
             autosave: "AutoReplyJobs",
             minimum: Self.jobsWindowMinimum
         )
@@ -7134,6 +7140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let actions = Chrome.actionRow([skip, ack])
 
         let (scroll, table) = Chrome.table()
+        scroll.setContentHuggingPriority(.required, for: .vertical)
         table.delegate = self
         table.dataSource = self
         for spec in [
@@ -7204,7 +7211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         jobsStack = stack
         Chrome.fill(stack, in: content)
         let tableHeight = scroll.heightAnchor.constraint(
-            greaterThanOrEqualToConstant: Self.jobsTableMaximumHeight
+            equalToConstant: 72
         )
         jobsTableHeight = tableHeight
         NSLayoutConstraint.activate([
@@ -7246,7 +7253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 않는다 (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "답변 기록",
-            size: NSSize(width: 1000, height: 756),
+            size: NSSize(width: 1000, height: 620),
             autosave: "AutoReplyReceipts",
             minimum: Self.logWindowMinimum
         )
@@ -7276,12 +7283,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let status = Chrome.label("기록을 읽는 중", size: 11, color: .secondaryLabelColor, lines: 1)
         status.alignment = .right
+        status.usesSingleLineMode = true
+        status.lineBreakMode = .byTruncatingTail
+        status.maximumNumberOfLines = 1
         logStatusField = status
+        (status.cell as? NSTextFieldCell)?.wraps = false
+        (status.cell as? NSTextFieldCell)?.lineBreakMode = .byTruncatingTail
+        status.setContentCompressionResistancePriority(.required, for: .horizontal)
+        status.setContentHuggingPriority(.required, for: .horizontal)
+        let statusMinWidth = status.widthAnchor.constraint(greaterThanOrEqualToConstant: 164)
+        logStatusMinWidthConstraint = statusMinWidth
         // 필터는 한 줄로 붙이고, 남는 가로 공간은 spacer가 먹는다. 예전에는
         // 팝업 둘과 상태가 각자 폭을 요구해 가운데가 벌어졌다 (2026-09-16).
         scope.setContentHuggingPriority(.required, for: .horizontal)
         room.setContentHuggingPriority(.required, for: .horizontal)
-        status.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let scopeTitle = Chrome.label("결과", size: 11, color: .secondaryLabelColor, lines: 1)
         scopeTitle.setContentHuggingPriority(.required, for: .horizontal)
         let roomTitle = Chrome.label("채팅방", size: 11, color: .secondaryLabelColor, lines: 1)
@@ -7297,6 +7312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         self.logEmptyState = emptyState
 
         let (scroll, table) = Chrome.table()
+        scroll.setContentHuggingPriority(.required, for: .vertical)
         table.delegate = self
         table.dataSource = self
         Chrome.addColumn(table, id: "time", title: "시각", width: 92, minWidth: 76, alignment: .left)
@@ -7346,9 +7362,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         logStack = stack
         Chrome.fill(stack, in: content)
         let tableHeight = scroll.heightAnchor.constraint(
-            greaterThanOrEqualToConstant: Self.logTableMaximumHeight
+            equalToConstant: Self.logTableMaximumHeight
         )
         logTableHeight = tableHeight
+        let detailHeight = detailScroll.heightAnchor.constraint(equalToConstant: 168)
+        logDetailHeight = detailHeight
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
@@ -7365,11 +7383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             detailTitle.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
             detailScroll.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
             tableHeight,
-            detailScroll.heightAnchor.constraint(equalToConstant: 168),
+            detailHeight,
             scope.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
             scope.widthAnchor.constraint(lessThanOrEqualToConstant: 168),
             room.widthAnchor.constraint(greaterThanOrEqualToConstant: 148),
             room.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            statusMinWidth,
         ])
         logWindow = window
     }
@@ -7715,10 +7734,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         let text = lines.isEmpty ? "이 턴에 대한 자세한 기록이 없습니다." : lines.joined(separator: "\n")
         if text == lastLogDetailKey, (view.textStorage?.length ?? 0) > 0 {
+            fitLogDetailHeight()
+            fitLogWindow()
             return
         }
         lastLogDetailKey = text
         view.string = text
+        fitLogDetailHeight()
+        fitLogWindow()
+    }
+
+    func fitLogDetailHeight() {
+        guard let constraint = logDetailHeight, let view = logDetailView else { return }
+        let width = max((view.enclosingScrollView?.contentSize.width ?? view.bounds.width) - 20, 120)
+        let font = view.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let rect = (view.string as NSString).boundingRect(
+            with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        let wanted = ceil(rect.height + view.textContainerInset.height * 2 + 4)
+        let clamped = min(168, max(96, wanted))
+        if abs(constraint.constant - clamped) > 0.5 {
+            constraint.constant = clamped
+        }
     }
 
     /// 고른 행이 없을 때 아래 칸에 채우는 코어의 한 줄 요약.
@@ -7807,8 +7846,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if logPageMissing {
             parts.append("기록 없음")
         }
-        field.stringValue = parts.joined(separator: " · ")
-        field.textColor = attention > 0 ? NSColor.systemRed : NSColor.secondaryLabelColor
+        let text = parts.joined(separator: " · ")
+        let font = field.font ?? NSFont.systemFont(ofSize: 11)
+        let needed = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 4
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: font,
+            ]
+        )
+        if attention > 0 {
+            let warning = "확인 필요 \(attention)"
+            let range = (text as NSString).range(of: warning)
+            if range.location != NSNotFound {
+                attributed.addAttribute(.foregroundColor, value: NSColor.systemRed, range: range)
+            }
+        }
+        logStatusMinWidthConstraint?.constant = max(164, needed)
+        field.attributedStringValue = attributed
+        field.invalidateIntrinsicContentSize()
+        field.needsLayout = true
     }
 
     func ensureRoomsWindow() {
