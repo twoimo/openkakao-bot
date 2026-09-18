@@ -10,6 +10,7 @@ Inspired by Andrej Karpathy's LLM Wiki & Algorithmic Knowledge Graph concepts:
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -2143,6 +2144,72 @@ def _alias_matches(alias: str, haystack: str) -> bool:
     return False
 
 
+HYBRID_KEYWORD_WEIGHT = 0.6
+HYBRID_VECTOR_WEIGHT = 0.4
+KNOWLEDGE_EMBEDDING_DIM = 128
+VECTOR_CANDIDATE_MIN = 0.18
+
+
+def _deterministic_text_embedding(
+    text: str,
+    *,
+    dim: int = KNOWLEDGE_EMBEDDING_DIM,
+) -> tuple[float, ...]:
+    """외부 모델 없이 재현 가능한 문자/단어 해시 임베딩을 만든다."""
+    if dim <= 0:
+        raise ValueError("embedding dimension must be positive")
+    normalized = normalize_text_query(text).casefold()
+    tokens = re.findall(r"[0-9a-z가-힣]+", normalized)
+    vector = [0.0] * dim
+    for token in tokens:
+        features = [f"w:{token}"]
+        padded = f"^{token}$"
+        for width in (2, 3):
+            if len(padded) >= width:
+                features.extend(
+                    f"c{width}:{padded[index:index + width]}"
+                    for index in range(len(padded) - width + 1)
+                )
+        for feature in features:
+            digest = hashlib.blake2b(
+                feature.encode("utf-8"),
+                digest_size=8,
+                person=b"kg-hybrid-v1",
+            ).digest()
+            vector[int.from_bytes(digest, "big") % dim] += 1.0
+    norm = sum(value * value for value in vector) ** 0.5
+    if not norm:
+        return tuple(vector)
+    return tuple(value / norm for value in vector)
+
+
+def _vector_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    return sum(a * b for a, b in zip(left, right))
+
+
+def _keyword_match_score(terms: list[str], haystacks: list[str]) -> float:
+    score = 0.0
+    seen: set[tuple[str, str]] = set()
+    for haystack in haystacks:
+        haystack_folded = haystack.casefold().strip()
+        for term in terms:
+            term_folded = term.casefold().strip()
+            pair = (term_folded, haystack_folded)
+            if not term_folded or pair in seen:
+                continue
+            seen.add(pair)
+            if not _alias_matches(term, haystack):
+                continue
+            score += 1.0
+            if term_folded == haystack_folded:
+                score += 2.0
+    return score
+
+
+def _hybrid_score(keyword_score: float, vector_score: float) -> float:
+    return HYBRID_KEYWORD_WEIGHT * keyword_score + HYBRID_VECTOR_WEIGHT * vector_score
+
+
 def retrieve_knowledge_bundle(
     query_text: str,
     state_root: Path | None = None,
@@ -2222,7 +2289,7 @@ def _query_knowledge_structured(
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
     kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
     if not kg_path.exists():
-        return []
+        return [], [], []
     conn = _connect_kg(kg_path)
     try:
         ensure_seeded(conn)
@@ -2285,6 +2352,7 @@ def _query_knowledge_structured(
 
         entity_facts: list[str] = []
         relation_facts: list[str] = []
+        ranked: list[tuple[float, str, str, str]] = []
         candidates: list[str] = []
         matched_entity_ids = set()
         matched_entity_names = {}
@@ -2301,26 +2369,33 @@ def _query_knowledge_structured(
             if not isinstance(aliases, list):
                 aliases = []
             terms = [str(alias) for alias in aliases] + [str(name)]
-            matched = any(
-                _alias_matches(term, haystack)
-                for haystack in haystacks
-                for term in terms
-            )
-            if not matched:
+            keyword_score = _keyword_match_score(terms, haystacks)
+            if keyword_score <= 0:
                 continue
 
-            candidates.append(ent_id)
             try:
                 facts = json.loads(facts_str)
             except (TypeError, ValueError):
                 facts = []
             if not isinstance(facts, list):
                 facts = []
-            matched_entity_ids.add(ent_id)
-            matched_entity_names[ent_id] = name
+            node_text = " ".join(
+                [str(name), str(desc or "")] + [str(term) for term in terms] + [str(f) for f in facts[:5]]
+            )
+            query_vec = _deterministic_text_embedding(" ".join(haystacks))
+            node_vec = _deterministic_text_embedding(node_text)
+            vector_score = _vector_similarity(query_vec, node_vec)
+            score = _hybrid_score(keyword_score, vector_score)
             snippet = "; ".join(str(f) for f in facts[:3])
             facts_snippet = f" (핵심 맥락: {snippet})" if facts else ""
-            entity_facts.append(f"[{cat}] {name}: {desc}{facts_snippet}")
+            ranked.append((score, ent_id, name, f"[{cat}] {name}: {desc}{facts_snippet}"))
+
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        for score, ent_id, name, fact in ranked:
+            candidates.append(ent_id)
+            matched_entity_ids.add(ent_id)
+            matched_entity_names[ent_id] = name
+            entity_facts.append(fact)
 
         # 관계(시냅스) 확장: 타 방 전용 노드가 섞여 들지 않도록 관계 수준 방 격리
         if matched_entity_ids:

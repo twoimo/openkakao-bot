@@ -830,6 +830,69 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
             self.assertIn('fact_count', bundle)
             self.assertEqual(bundle['chat_id'], '417780809780519')
 
+    def test_missing_graph_db_returns_three_empty_lists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(
+                KG._query_knowledge_structured('코인', state_root=root),
+                ([], [], []),
+            )
+
+    def test_hybrid_ranks_exact_alias_above_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                rows = [
+                    (
+                        'test:coin-exact',
+                        '코인',
+                        'topic',
+                        json.dumps(['코인'], ensure_ascii=False),
+                        '정확 일치 테스트',
+                        json.dumps(['정확 일치 사실'], ensure_ascii=False),
+                        10,
+                        0,
+                    ),
+                    (
+                        'test:coin-partial',
+                        '알리바바 클라우드 쿠폰',
+                        'topic',
+                        json.dumps(['코인 쿠폰'], ensure_ascii=False),
+                        '부분 일치 테스트',
+                        json.dumps(['부분 일치 사실'], ensure_ascii=False),
+                        10,
+                        0,
+                    ),
+                ]
+                conn.executemany(
+                    "INSERT INTO kg_entities (entity_id, name, category, aliases_json, description,"
+                    " key_facts_json, importance, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(entity_id) DO UPDATE SET name=excluded.name,"
+                    " aliases_json=excluded.aliases_json, description=excluded.description,"
+                    " key_facts_json=excluded.key_facts_json, importance=excluded.importance",
+                    rows,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            facts, _, _ = KG._query_knowledge_structured('코인', state_root=root)
+            self.assertTrue(facts)
+            self.assertIn('코인', facts[0])
+            self.assertNotIn('알리바바 클라우드 쿠폰', facts[0])
+
+    def test_hybrid_helpers_are_deterministic(self):
+        text = '코인 알리바바 클라우드'
+        self.assertEqual(
+            KG._deterministic_text_embedding(text),
+            KG._deterministic_text_embedding(text),
+        )
+        exact = KG._keyword_match_score(['코인'], ['코인'])
+        partial = KG._keyword_match_score(['코인'], ['코인 시세'])
+        self.assertGreater(exact, partial)
+
 
 
 class RoomIsolationTests(unittest.TestCase):
