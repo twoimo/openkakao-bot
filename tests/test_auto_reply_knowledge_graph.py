@@ -399,6 +399,31 @@ class RealIndexPathTests(unittest.TestCase):
         self.assertIn("chat:부자멘토멘티", chats, "방 뉴런이 실제 색인에서 서야 한다")
         self.assertTrue(people, "사람 뉴런이 실제 색인에서 서야 한다")
 
+    def test_person_indexer_reads_while_source_database_is_exclusively_locked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            index = self._write_index(base)
+            root = self._state_root(base)
+            holder = sqlite3.connect(index)
+            try:
+                holder.execute("BEGIN EXCLUSIVE")
+                kg = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+                try:
+                    KG.ensure_seeded(kg)
+                    KG.index_person_entities(kg, root)
+                    people = [
+                        row[0]
+                        for row in kg.execute(
+                            "SELECT entity_id FROM kg_entities WHERE entity_id LIKE 'person:%'"
+                        )
+                    ]
+                finally:
+                    kg.close()
+            finally:
+                holder.rollback()
+                holder.close()
+        self.assertTrue(people, "원본이 EXCLUSIVE여도 사람 색인이 복사본에서 서야 한다")
+
     def test_a_failed_index_step_is_recorded_not_swallowed(self):
         """색인이 죽으면 그 이유가 그래프에 남아야 한다."""
         with tempfile.TemporaryDirectory() as tmp:

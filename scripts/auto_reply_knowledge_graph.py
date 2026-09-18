@@ -751,104 +751,83 @@ def index_person_entities(
     index_path = _index_db_path(state_root)
     if not index_path.exists():
         return stats
+    per_room: dict[str, int] = {}
+    selected: list[tuple[str, str, int, float, str, list[str]]] = []
     try:
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return stats
-    try:
-        index_conn.execute("PRAGMA query_only = ON")
-        sql = (
-            "SELECT chat, user_name, COUNT(*) FROM context_messages"
-            " WHERE chat IS NOT NULL AND chat != ''"
-            "   AND user_name IS NOT NULL AND user_name != ''"
-        )
-        params: list[Any] = []
-        if chat:
-            sql += " AND chat = ?"
-            params.append(chat)
-        sql += (
-            " GROUP BY chat, user_name"
-            " HAVING COUNT(*) >= ?"
-            " ORDER BY COUNT(*) DESC LIMIT ?"
-        )
-        params.extend([INDEX_PERSON_MIN_MESSAGES, max(int(limit), 1)])
-        rows = index_conn.execute(sql, params).fetchall()
-    except sqlite3.Error:
-        return stats
-    finally:
-        # _open_isolated_ro_conn 이 실패하면 index_conn 이 할당되지 않아,
-        # 여기서 바로 닫으면 UnboundLocalError 가 원래 예외를 덮어쓴다.
-        # 2026-09-17 에 자식 프로세스가 exit 1 로만 죽은 원인이었다.
-        if index_conn is not None:
-            try:
-                index_conn.close()
-            except sqlite3.Error:
-                pass
-    # 방마다 몇 명을 세울지 정하려면 방별 총량이 필요하다.
-    totals: dict[str, int] = {}
-    try:
-        index_conn = None
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
-        try:
-            index_conn.execute("PRAGMA query_only = ON")
+        with _open_isolated_ro_conn(index_path) as index_conn:
+            sql = (
+                "SELECT chat, user_name, COUNT(*) FROM context_messages"
+                " WHERE chat IS NOT NULL AND chat != ''"
+                "   AND user_name IS NOT NULL AND user_name != ''"
+            )
+            params: list[Any] = []
+            if chat:
+                sql += " AND chat = ?"
+                params.append(chat)
+            sql += (
+                " GROUP BY chat, user_name"
+                " HAVING COUNT(*) >= ?"
+                " ORDER BY COUNT(*) DESC LIMIT ?"
+            )
+            params.extend([INDEX_PERSON_MIN_MESSAGES, max(int(limit), 1)])
+            rows = index_conn.execute(sql, params).fetchall()
+            # 방마다 몇 명을 세울지 정하려면 방별 총량이 필요하다.
+            totals: dict[str, int] = {}
             for room, count in index_conn.execute(
                 "SELECT chat, COUNT(*) FROM context_messages"
                 " WHERE chat IS NOT NULL AND chat != '' GROUP BY chat"
             ):
                 totals[str(room)] = int(count or 0)
-        finally:
-            if index_conn is not None:
-                try:
-                    index_conn.close()
-                except sqlite3.Error:
-                    pass
+            # 방 키를 하나로 모은 뒤에 사람을 센다. 같은 방이 두 키로 들어오면
+            # 한 사람이 두 뉴런으로 갈리고, 방마다 세는 상한도 두 번 적용된다
+            # (2026-09-16).
+            merged: dict[tuple[str, str], int] = {}
+            raw_keys: dict[str, list[str]] = {}
+            for room, user, count in rows:
+                room_key = _room_key(state_root, str(room))
+                key = (room_key, str(user).strip())
+                merged[key] = merged.get(key, 0) + int(count or 0)
+                bucket = raw_keys.setdefault(room_key, [])
+                if str(room) not in bucket:
+                    bucket.append(str(room))
+            merged_totals: dict[str, int] = {}
+            for room, count in totals.items():
+                key = _room_key(state_root, room)
+                merged_totals[key] = merged_totals.get(key, 0) + int(count or 0)
+            # 사람이 많은 방부터 세운다. 상한에 먼저 닿는 쪽이 대화를 많이 한 방이어야
+            # 그림이 그 방을 중심으로 읽힌다.
+            for (room_key, user), count in sorted(merged.items(), key=lambda item: -item[1]):
+                name = user
+                if not name or name.endswith("봇"):
+                    continue
+                if any(name.casefold() == skip.casefold() for skip in INDEX_SAMPLE_SKIP_AUTHORS):
+                    continue
+                # 방 이름과 같은 화자가 곧 그 방 자체다.
+                #
+                # 은행·증권·쇼핑 앱은 방마다 알림을 보내고, 그 알림의 화자 이름이
+                # 방 이름과 같다. 그래서 "커리어톡 (커리어톡)" 같은 뉴런이 방
+                # 뉴런 바로 옆에 하나 더 서서, 같은 것을 가리키는 두 이름이 그림에
+                # 겹쳐 보였다. 방 이름과 같은 화자는 방 뉴런이 이미 말하고 있으므로
+                # 사람 뉴런으로 세우지 않는다 (2026-09-16, 6 Pro 지적).
+                room_name = _chat_label(room_key)
+                if name.casefold() == room_name.casefold():
+                    continue
+                taken = per_room.get(room_key, 0)
+                if taken >= INDEX_PERSONS_PER_CHAT:
+                    continue
+                total = merged_totals.get(room_key, 0)
+                share = (count / total) if total else 0.0
+                if total >= INDEX_CHAT_MIN_MESSAGES and share < INDEX_PERSON_SHARE:
+                    continue
+                per_room[room_key] = taken + 1
+                lines = _index_person_lines(
+                    index_conn, raw_keys.get(room_key, [room_key]), name
+                )
+                selected.append((room_key, name, count, share, room_name, lines))
     except sqlite3.Error:
-        totals = {}
-    per_room: dict[str, int] = {}
+        return stats
     now = int(time.time())
-    # 방 키를 하나로 모은 뒤에 사람을 센다. 같은 방이 두 키로 들어오면
-    # 한 사람이 두 뉴런으로 갈리고, 방마다 세는 상한도 두 번 적용된다
-    # (2026-09-16).
-    merged: dict[tuple[str, str], int] = {}
-    raw_keys: dict[str, list[str]] = {}
-    for room, user, count in rows:
-        room_key = _room_key(state_root, str(room))
-        key = (room_key, str(user).strip())
-        merged[key] = merged.get(key, 0) + int(count or 0)
-        bucket = raw_keys.setdefault(room_key, [])
-        if str(room) not in bucket:
-            bucket.append(str(room))
-    merged_totals: dict[str, int] = {}
-    for room, count in totals.items():
-        key = _room_key(state_root, room)
-        merged_totals[key] = merged_totals.get(key, 0) + int(count or 0)
-    # 사람이 많은 방부터 세운다. 상한에 먼저 닿는 쪽이 대화를 많이 한 방이어야
-    # 그림이 그 방을 중심으로 읽힌다.
-    for (room_key, user), count in sorted(merged.items(), key=lambda item: -item[1]):
-        name = user
-        if not name or name.endswith("봇"):
-            continue
-        if any(name.casefold() == skip.casefold() for skip in INDEX_SAMPLE_SKIP_AUTHORS):
-            continue
-        # 방 이름과 같은 화자가 곧 그 방 자체다.
-        #
-        # 은행·증권·쇼핑 앱은 방마다 알림을 보내고, 그 알림의 화자 이름이
-        # 방 이름과 같다. 그래서 "커리어톡 (커리어톡)" 같은 뉴런이 방
-        # 뉴런 바로 옆에 하나 더 서서, 같은 것을 가리키는 두 이름이 그림에
-        # 겹쳐 보였다. 방 이름과 같은 화자는 방 뉴런이 이미 말하고 있으므로
-        # 사람 뉴런으로 세우지 않는다 (2026-09-16, 6 Pro 지적).
-        room_name = _chat_label(room_key)
-        if name.casefold() == room_name.casefold():
-            continue
-        taken = per_room.get(room_key, 0)
-        if taken >= INDEX_PERSONS_PER_CHAT:
-            continue
-        total = merged_totals.get(room_key, 0)
-        share = (count / total) if total else 0.0
-        if total >= INDEX_CHAT_MIN_MESSAGES and share < INDEX_PERSON_SHARE:
-            continue
-        per_room[room_key] = taken + 1
-        lines = _index_person_lines(index_path, raw_keys.get(room_key, [room_key]), name)
+    for room_key, name, count, share, room_name, lines in selected:
         if lines:
             stats["with_lines"] += 1
         facts = [f"{room_name}에서 {count:,}건의 메시지를 남겼습니다"]
@@ -887,8 +866,9 @@ def index_person_entities(
     return stats
 
 
+
 def _index_person_lines(
-    index_path: Path,
+    conn: sqlite3.Connection,
     chats: str | list[str],
     user: str,
     *,
@@ -899,17 +879,11 @@ def _index_person_lines(
     요약이 아니라 발언 원문이다. 답변이 그 사람의 말투와 관심사를 그대로
     참고할 수 있어야 한다 (2026-09-16).
     """
-    try:
-        conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return []
     keys = [chats] if isinstance(chats, str) else list(chats)
     if not keys:
-        conn.close()
         return []
     marks = ",".join("?" * len(keys))
     try:
-        conn.execute("PRAGMA query_only = ON")
         # 같은 방이 두 키로 색인되어 있어도 한 사람의 발언을 모아 읽는다.
         rows = conn.execute(
             "SELECT date, message FROM context_messages"
@@ -919,8 +893,6 @@ def _index_person_lines(
         ).fetchall()
     except sqlite3.Error:
         return []
-    finally:
-        conn.close()
     lines: list[str] = []
     seen: set[str] = set()
     for date, message in rows:
@@ -933,6 +905,7 @@ def _index_person_lines(
         if len(lines) >= max(int(limit), 1):
             break
     return lines
+
 
 
 def index_topic_entities(
@@ -953,70 +926,67 @@ def index_topic_entities(
     if not index_path.exists():
         return stats
     try:
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return stats
-    try:
-        index_conn.execute("PRAGMA query_only = ON")
-        topics = _index_topic_rows(index_conn, chat=chat)[: max(int(limit), 1)]
-        stats["topics"] = len(topics)
-        now = int(time.time())
-        for topic, count in topics:
-            samples = _index_topic_samples(index_conn, topic, chat=chat)
-            label = INDEX_TOPIC_LABELS.get(topic, topic)
-            dates = [date for date, _user, _message in samples if date]
-            span = ""
-            if dates:
-                span = f"{dates[0][:10]} ~ {dates[-1][:10]}"
-            facts: list[str] = []
-            if count:
-                facts.append(f"이 방에서 {count}건의 메시지가 이 주제로 묶였습니다")
-            if span:
-                facts.append(f"기록된 기간: {span}")
-            # Recent lines, newest first, deduplicated, and short enough to
-            # keep the prompt small.
-            seen: set[str] = set()
-            for _date, user, message in reversed(samples):
-                line = " ".join(message.split())
-                if not _sample_is_conversation(user, line) or line in seen:
-                    continue
-                seen.add(line)
-                facts.append(f"{user or '누군가'}: {line[:90]}")
-                if len(facts) >= 6:
-                    break
-            if samples:
-                stats["with_samples"] += 1
-            conn.execute(
-                """
-                INSERT INTO kg_entities
-                    (entity_id, name, category, aliases_json, description,
-                     key_facts_json, importance, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(entity_id) DO UPDATE SET
-                    name=excluded.name,
-                    category=excluded.category,
-                    aliases_json=excluded.aliases_json,
-                    description=excluded.description,
-                    key_facts_json=excluded.key_facts_json,
-                    importance=excluded.importance,
-                    updated_at=excluded.updated_at
-                """,
-                (
-                    f"topic:{topic}",
-                    f"{label} (대화 주제)",
-                    "대화 주제",
-                    json.dumps(_topic_terms(topic, samples), ensure_ascii=False),
-                    f"색인된 대화에서 {count}건이 묶인 주제입니다. 최근 대화가 이 주제 위에 있습니다.",
-                    json.dumps(facts, ensure_ascii=False),
-                    min(99, 40 + count // 200),
-                    now,
-                ),
-            )
-            stats["written"] += 1
-        conn.commit()
+        with _open_isolated_ro_conn(index_path) as index_conn:
+            topics = _index_topic_rows(index_conn, chat=chat)[: max(int(limit), 1)]
+            stats["topics"] = len(topics)
+            now = int(time.time())
+            for topic, count in topics:
+                samples = _index_topic_samples(index_conn, topic, chat=chat)
+                label = INDEX_TOPIC_LABELS.get(topic, topic)
+                dates = [date for date, _user, _message in samples if date]
+                span = ""
+                if dates:
+                    span = f"{dates[0][:10]} ~ {dates[-1][:10]}"
+                facts: list[str] = []
+                if count:
+                    facts.append(f"이 방에서 {count}건의 메시지가 이 주제로 묶였습니다")
+                if span:
+                    facts.append(f"기록된 기간: {span}")
+                # Recent lines, newest first, deduplicated, and short enough to
+                # keep the prompt small.
+                seen: set[str] = set()
+                for _date, user, message in reversed(samples):
+                    line = " ".join(message.split())
+                    if not _sample_is_conversation(user, line) or line in seen:
+                        continue
+                    seen.add(line)
+                    facts.append(f"{user or '누군가'}: {line[:90]}")
+                    if len(facts) >= 6:
+                        break
+                if samples:
+                    stats["with_samples"] += 1
+                conn.execute(
+                    """
+                    INSERT INTO kg_entities
+                        (entity_id, name, category, aliases_json, description,
+                         key_facts_json, importance, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(entity_id) DO UPDATE SET
+                        name=excluded.name,
+                        category=excluded.category,
+                        aliases_json=excluded.aliases_json,
+                        description=excluded.description,
+                        key_facts_json=excluded.key_facts_json,
+                        importance=excluded.importance,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        f"topic:{topic}",
+                        f"{label} (대화 주제)",
+                        "대화 주제",
+                        json.dumps(_topic_terms(topic, samples), ensure_ascii=False),
+                        f"색인된 대화에서 {count}건이 묶인 주제입니다. 최근 대화가 이 주제 위에 있습니다.",
+                        json.dumps(facts, ensure_ascii=False),
+                        min(99, 40 + count // 200),
+                        now,
+                    ),
+                )
+                stats["written"] += 1
+            conn.commit()
     except (sqlite3.Error, OSError, ValueError):
         return stats
     return stats
+
 
 
 def index_topic_relations(
@@ -1045,27 +1015,21 @@ def index_topic_relations(
     if not known:
         return stats
     try:
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+        with _open_isolated_ro_conn(index_path) as index_conn:
+            sql = (
+                "SELECT a.topic, b.topic, COUNT(*) FROM context_message_topics a"
+                " JOIN context_message_topics b"
+                "   ON a.message_id = b.message_id AND a.topic < b.topic"
+            )
+            params: list[Any] = []
+            if chat:
+                sql += " JOIN context_messages m ON m.id = a.message_id WHERE m.chat = ?"
+                params.append(chat)
+            sql += " GROUP BY a.topic, b.topic ORDER BY COUNT(*) DESC LIMIT ?"
+            params.append(max(int(limit), 1))
+            rows = index_conn.execute(sql, params).fetchall()
     except sqlite3.Error:
         return stats
-    try:
-        index_conn.execute("PRAGMA query_only = ON")
-        sql = (
-            "SELECT a.topic, b.topic, COUNT(*) FROM context_message_topics a"
-            " JOIN context_message_topics b"
-            "   ON a.message_id = b.message_id AND a.topic < b.topic"
-        )
-        params: list[Any] = []
-        if chat:
-            sql += " JOIN context_messages m ON m.id = a.message_id WHERE m.chat = ?"
-            params.append(chat)
-        sql += " GROUP BY a.topic, b.topic ORDER BY COUNT(*) DESC LIMIT ?"
-        params.append(max(int(limit), 1))
-        rows = index_conn.execute(sql, params).fetchall()
-    except sqlite3.Error:
-        return stats
-    finally:
-        index_conn.close()
     now = int(time.time())
     for left, right, count in rows:
         left_id, right_id = f"topic:{left}", f"topic:{right}"
@@ -1096,6 +1060,7 @@ def index_topic_relations(
     return stats
 
 
+
 def index_membership_relations(
     conn: sqlite3.Connection,
     state_root: Path,
@@ -1124,140 +1089,137 @@ def index_membership_relations(
     if not known:
         return stats
     try:
-        index_conn = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+        with _open_isolated_ro_conn(index_path) as index_conn:
+            now = int(time.time())
+            # 사람 → 방
+            sql = (
+                "SELECT chat, user_name, COUNT(*) FROM context_messages"
+                " WHERE chat IS NOT NULL AND chat != ''"
+                "   AND user_name IS NOT NULL AND user_name != ''"
+            )
+            params: list[Any] = []
+            if chat:
+                sql += " AND chat = ?"
+                params.append(chat)
+            sql += " GROUP BY chat, user_name ORDER BY COUNT(*) DESC LIMIT ?"
+            params.append(max(int(limit), 1))
+            try:
+                for room, user, count in index_conn.execute(sql, params):
+                    room_key, name = _room_key(state_root, str(room)), str(user).strip()
+                    source = f"person:{room_key}:{name}"
+                    target = f"chat:{room_key}"
+                    if source not in known or target not in known:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO kg_relations
+                            (source_id, relation, target_id, context, weight, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+                            context=excluded.context,
+                            weight=excluded.weight,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            source,
+                            "TALKED_IN",
+                            target,
+                            f"이 방에서 {int(count or 0):,}건을 남김",
+                            _synapse_weight(int(count or 0)),
+                            now,
+                        ),
+                    )
+                    stats["person_chat"] += 1
+            except sqlite3.Error:
+                pass
+            # 방 → 주제. 방마다 그 주제가 얼마나 나왔는지가 곧 연결 강도다.
+            sql = (
+                "SELECT m.chat, t.topic, COUNT(*) FROM context_message_topics t"
+                " JOIN context_messages m ON m.id = t.message_id"
+                " WHERE m.chat IS NOT NULL AND m.chat != ''"
+            )
+            params = []
+            if chat:
+                sql += " AND m.chat = ?"
+                params.append(chat)
+            sql += " GROUP BY m.chat, t.topic ORDER BY COUNT(*) DESC LIMIT ?"
+            params.append(max(int(limit), 1))
+            try:
+                for room, topic, count in index_conn.execute(sql, params):
+                    source = f"chat:{_room_key(state_root, str(room))}"
+                    target = f"topic:{topic}"
+                    if source not in known or target not in known:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO kg_relations
+                            (source_id, relation, target_id, context, weight, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+                            context=excluded.context,
+                            weight=excluded.weight,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            source,
+                            "DISCUSSED",
+                            target,
+                            f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
+                            _synapse_weight(int(count or 0)),
+                            now,
+                        ),
+                    )
+                    stats["chat_topic"] += 1
+            except sqlite3.Error:
+                pass
+            # 사람 → 주제. 사람 뉴런은 `person:방:이름` 꼴이라, 그 사람의 메시지에
+            # 붙은 주제를 세면 곧 사람과 주제의 연결이 된다.
+            sql = (
+                "SELECT m.chat, m.user_name, t.topic, COUNT(*)"
+                " FROM context_message_topics t"
+                " JOIN context_messages m ON m.id = t.message_id"
+                " WHERE m.chat IS NOT NULL AND m.chat != ''"
+                "   AND m.user_name IS NOT NULL AND m.user_name != ''"
+            )
+            params = []
+            if chat:
+                sql += " AND m.chat = ?"
+                params.append(chat)
+            sql += " GROUP BY m.chat, m.user_name, t.topic ORDER BY COUNT(*) DESC LIMIT ?"
+            params.append(max(int(limit), 1))
+            try:
+                for room, user, topic, count in index_conn.execute(sql, params):
+                    source = f"person:{_room_key(state_root, str(room))}:{str(user).strip()}"
+                    target = f"topic:{topic}"
+                    if source not in known or target not in known:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO kg_relations
+                            (source_id, relation, target_id, context, weight, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+                            context=excluded.context,
+                            weight=excluded.weight,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            source,
+                            "TALKS_ABOUT",
+                            target,
+                            f"이 주제로 {int(count or 0):,}건을 말함",
+                            _synapse_weight(int(count or 0)),
+                            now,
+                        ),
+                    )
+                    stats["person_topic"] += 1
+            except sqlite3.Error:
+                pass
     except sqlite3.Error:
         return stats
-    now = int(time.time())
-    try:
-        index_conn.execute("PRAGMA query_only = ON")
-        # 사람 → 방
-        sql = (
-            "SELECT chat, user_name, COUNT(*) FROM context_messages"
-            " WHERE chat IS NOT NULL AND chat != ''"
-            "   AND user_name IS NOT NULL AND user_name != ''"
-        )
-        params: list[Any] = []
-        if chat:
-            sql += " AND chat = ?"
-            params.append(chat)
-        sql += " GROUP BY chat, user_name ORDER BY COUNT(*) DESC LIMIT ?"
-        params.append(max(int(limit), 1))
-        try:
-            for room, user, count in index_conn.execute(sql, params):
-                room_key, name = _room_key(state_root, str(room)), str(user).strip()
-                source = f"person:{room_key}:{name}"
-                target = f"chat:{room_key}"
-                if source not in known or target not in known:
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO kg_relations
-                        (source_id, relation, target_id, context, weight, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                        context=excluded.context,
-                        weight=excluded.weight,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        source,
-                        "TALKED_IN",
-                        target,
-                        f"이 방에서 {int(count or 0):,}건을 남김",
-                        _synapse_weight(int(count or 0)),
-                        now,
-                    ),
-                )
-                stats["person_chat"] += 1
-        except sqlite3.Error:
-            pass
-        # 방 → 주제. 방마다 그 주제가 얼마나 나왔는지가 곧 연결 강도다.
-        sql = (
-            "SELECT m.chat, t.topic, COUNT(*) FROM context_message_topics t"
-            " JOIN context_messages m ON m.id = t.message_id"
-            " WHERE m.chat IS NOT NULL AND m.chat != ''"
-        )
-        params = []
-        if chat:
-            sql += " AND m.chat = ?"
-            params.append(chat)
-        sql += " GROUP BY m.chat, t.topic ORDER BY COUNT(*) DESC LIMIT ?"
-        params.append(max(int(limit), 1))
-        try:
-            for room, topic, count in index_conn.execute(sql, params):
-                source = f"chat:{_room_key(state_root, str(room))}"
-                target = f"topic:{topic}"
-                if source not in known or target not in known:
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO kg_relations
-                        (source_id, relation, target_id, context, weight, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                        context=excluded.context,
-                        weight=excluded.weight,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        source,
-                        "DISCUSSED",
-                        target,
-                        f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
-                        _synapse_weight(int(count or 0)),
-                        now,
-                    ),
-                )
-                stats["chat_topic"] += 1
-        except sqlite3.Error:
-            pass
-        # 사람 → 주제. 사람 뉴런은 `person:방:이름` 꼴이라, 그 사람의 메시지에
-        # 붙은 주제를 세면 곧 사람과 주제의 연결이 된다.
-        sql = (
-            "SELECT m.chat, m.user_name, t.topic, COUNT(*)"
-            " FROM context_message_topics t"
-            " JOIN context_messages m ON m.id = t.message_id"
-            " WHERE m.chat IS NOT NULL AND m.chat != ''"
-            "   AND m.user_name IS NOT NULL AND m.user_name != ''"
-        )
-        params = []
-        if chat:
-            sql += " AND m.chat = ?"
-            params.append(chat)
-        sql += " GROUP BY m.chat, m.user_name, t.topic ORDER BY COUNT(*) DESC LIMIT ?"
-        params.append(max(int(limit), 1))
-        try:
-            for room, user, topic, count in index_conn.execute(sql, params):
-                source = f"person:{_room_key(state_root, str(room))}:{str(user).strip()}"
-                target = f"topic:{topic}"
-                if source not in known or target not in known:
-                    continue
-                conn.execute(
-                    """
-                    INSERT INTO kg_relations
-                        (source_id, relation, target_id, context, weight, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                        context=excluded.context,
-                        weight=excluded.weight,
-                        updated_at=excluded.updated_at
-                    """,
-                    (
-                        source,
-                        "TALKS_ABOUT",
-                        target,
-                        f"이 주제로 {int(count or 0):,}건을 말함",
-                        _synapse_weight(int(count or 0)),
-                        now,
-                    ),
-                )
-                stats["person_topic"] += 1
-        except sqlite3.Error:
-            pass
-    finally:
-        index_conn.close()
     conn.commit()
     return stats
+
 
 
 def prune_indexed_entities(
