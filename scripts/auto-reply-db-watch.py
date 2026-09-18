@@ -22,6 +22,7 @@ import signal
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -173,6 +174,12 @@ CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = 5.0
 CONTEXT_SYNC_WRITER_LOCK_FILE_NAME = "context-sync.writer.lock"
 CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = 300.0
 CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = 0.25
+# The periodic sync runs on a background worker so the poll loop keeps
+# observing the local database at its normal cadence while
+# `context-sync-local` queues for the shared writer slot and indexes. The
+# supervisor escalates SIGTERM to SIGKILL after three seconds, so a stopping
+# watcher only waits this long for the worker to unwind its own child.
+CONTEXT_SYNC_WORKER_STOP_JOIN_SECONDS = 2.0
 CONTEXT_SYNC_TOTAL_KEYS = {
     "inserted_events",
     "duplicate_events",
@@ -582,6 +589,123 @@ def _record_context_sync(state: dict, sync: dict, now: float) -> None:
     else:
         state.pop("context_sync_deferred_log_id", None)
         state["context_sync_retry_at"] = now + CONTEXT_SYNC_INTERVAL_SECONDS
+
+
+class ContextSyncCancelled(BaseException):
+    """Abort one periodic sync because this watcher is stopping.
+
+    Deliberately not an `Exception`: the liveness callbacks of the bounded CLI
+    helper swallow ordinary exceptions, and a cancellation must reach the
+    worker instead of being mistaken for a failed heartbeat.
+    """
+
+
+class _PeriodicContextSync:
+    """Run the periodic context index beside the poll loop.
+
+    The periodic sync used to run inline, so the loop stopped observing the
+    local database for as long as `context-sync-local` held the shared writer
+    slot and indexed: measured from the room's reply evidence, the last 52
+    replies reached the delivery queue after a median 20.2 s and a p90 147.2 s.
+    One worker keeps at most one sync in flight while the loop keeps polling at
+    its normal interval, and the loop applies the result on a later iteration.
+
+    The worker never writes room state. It hands its result and its liveness
+    proofs to the loop, and the loop -- still the only `save_state` caller --
+    publishes both, so no background thread can publish a half-written state.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._result: tuple[str, object] | None = None
+        self._proof_at: float | None = None
+        self._stop = threading.Event()
+
+    def in_flight(self) -> bool:
+        with self._guard:
+            return self._thread is not None
+
+    def start(self, chat_id: int, *, on_wait=None, on_tick=None) -> bool:
+        """Start one sync unless one is already running."""
+        with self._guard:
+            if self._thread is not None or self._stop.is_set():
+                return False
+            thread = threading.Thread(
+                target=self._run,
+                args=(chat_id, on_wait, on_tick),
+                name="context-sync",
+                daemon=True,
+            )
+            self._thread = thread
+        thread.start()
+        return True
+
+    def _run(self, chat_id: int, on_wait, on_tick) -> None:
+        # The worker owns its in-flight marker: every exit path, cancellation
+        # included, has to clear it, or in_flight() would stay true and no
+        # later periodic sync could ever start.
+        result: tuple[str, object] | None = None
+        try:
+            value = sync_context_index(
+                chat_id,
+                on_wait=on_wait,
+                on_tick=on_tick,
+            )
+        except ContextSyncCancelled:
+            # The watcher is stopping: this sync has no result to publish.
+            pass
+        except (
+            ContextSyncTransient,
+            SqliteBusyTransient,
+            subprocess.TimeoutExpired,
+        ) as exc:
+            result = ("transient", exc)
+        except BaseException as exc:
+            # Every other failure is reported to the loop, which decides
+            # whether it is transient or terminal for this generation.
+            result = ("failed", exc)
+        else:
+            result = ("ok", value)
+        finally:
+            with self._guard:
+                self._result = result
+                self._thread = None
+
+    def take_result(self) -> tuple[str, object] | None:
+        """Return the finished sync once, then forget it."""
+        with self._guard:
+            if self._thread is not None or self._result is None:
+                return None
+            result = self._result
+            self._result = None
+            return result
+
+    def take_proof(self) -> float | None:
+        """Return the newest liveness proof the worker recorded."""
+        with self._guard:
+            proof = self._proof_at
+            self._proof_at = None
+            return proof
+
+    def note_proof(self) -> None:
+        """Record one liveness proof, or abort a stopping watcher's sync."""
+        if self._stop.is_set():
+            raise ContextSyncCancelled("context_sync_cancelled")
+        with self._guard:
+            self._proof_at = time.time()
+
+    def stop(self) -> None:
+        """Stop accepting syncs and let the in-flight one unwind its child."""
+        self._stop.set()
+        with self._guard:
+            thread = self._thread
+        if thread is not None:
+            thread.join(CONTEXT_SYNC_WORKER_STOP_JOIN_SECONDS)
+
+
+# The one periodic-sync worker of this watcher process.
+_PERIODIC_CONTEXT_SYNC = _PeriodicContextSync()
 
 
 def state_schema_version() -> int:
@@ -1534,6 +1658,11 @@ def _owner_epoch_current(state: dict, *, require_ready: bool = False) -> bool:
     return _supervisor_status_matches(owner, epoch, target, require_ready=require_ready)
 
 
+# Serializes this process's state-file writers. The state lock below it only
+# excludes other processes.
+_STATE_WRITE_LOCK = threading.RLock()
+
+
 def save_state(
     state: dict,
     *,
@@ -1602,7 +1731,14 @@ def save_state(
                 # epoch after it has been fenced.
                 return False
         lock_path = STATE.with_name(f"{STATE.name}.lock")
-        with _private_lock(lock_path, expected_parent=STATE.parent):
+        # The state file lock serializes writers; this in-process lock keeps
+        # two threads of this watcher -- the poll loop and a helper publishing
+        # for a background sync -- from writing the shared temporary path at
+        # once and publishing a half-written room state.
+        with _STATE_WRITE_LOCK, _private_lock(
+            lock_path,
+            expected_parent=STATE.parent,
+        ):
             tmp = STATE.with_suffix(".tmp")
             tmp.write_text(
                 json.dumps(state, ensure_ascii=False, sort_keys=True),
@@ -4272,6 +4408,15 @@ def main() -> int:
         state["heartbeat_at"] = time.time()
         save_state(state, _require_ready=False)
 
+    def note_sync_liveness() -> None:
+        """Record the background sync's liveness for the loop to publish.
+
+        The worker must not write room state, so it only hands the loop the
+        newest proof timestamp. Stopping the watcher also stops claiming
+        liveness for a sync that is about to be abandoned.
+        """
+        _PERIODIC_CONTEXT_SYNC.note_proof()
+
     try:
         target_chat_id = 0
         context_sync_transient_failures = 0
@@ -4344,14 +4489,26 @@ def main() -> int:
             return 1
         while True:
             try:
-                if time.monotonic() >= context_sync_next_at:
-                    try:
-                        sync = sync_context_index(
-                            target_chat_id,
-                            on_wait=publish_sync_heartbeat,
-                            on_tick=publish_sync_heartbeat,
-                        )
-                    except (ContextSyncTransient, SqliteBusyTransient, subprocess.TimeoutExpired):
+                sync_proof_at = _PERIODIC_CONTEXT_SYNC.take_proof()
+                if sync_proof_at is not None:
+                    # A room queuing for the shared writer slot still has to
+                    # look alive, and the loop stays the only state writer.
+                    state["heartbeat_at"] = sync_proof_at
+                    if not save_state(state, _require_ready=False):
+                        raise DbFence("state_persist_failed")
+                # The periodic sync runs beside this loop, so its result can
+                # only be applied on a later iteration. Until it lands, the
+                # room keeps the authority and delivery state it already
+                # published and keeps polling at its normal interval.
+                sync_result = _PERIODIC_CONTEXT_SYNC.take_result()
+                if sync_result is not None:
+                    sync_kind, sync_value = sync_result
+                    if sync_kind == "failed":
+                        # Any failure the inline periodic sync would not have
+                        # classified as transient stays terminal for this
+                        # watcher generation.
+                        raise sync_value
+                    if sync_kind == "transient":
                         context_sync_transient_failures += 1
                         context_sync_now = time.time()
                         state, retry_delay = _context_sync_transient_state(
@@ -4370,6 +4527,7 @@ def main() -> int:
                         context_authoritative = False
                         context_sync_fence_reason = "context_sync_transient"
                     else:
+                        sync = sync_value
                         context_sync_transient_failures = 0
                         context_sync_now = time.time()
                         _record_context_sync(state, sync, context_sync_now)
@@ -4385,6 +4543,15 @@ def main() -> int:
                                 state,
                                 context_sync_now,
                             )
+                if (
+                    not _PERIODIC_CONTEXT_SYNC.in_flight()
+                    and time.monotonic() >= context_sync_next_at
+                ):
+                    _PERIODIC_CONTEXT_SYNC.start(
+                        target_chat_id,
+                        on_wait=note_sync_liveness,
+                        on_tick=note_sync_liveness,
+                    )
                 if not context_authoritative:
                     state = _state(state)
                     state.update(
@@ -4440,6 +4607,10 @@ def main() -> int:
             time.sleep(interval)
     finally:
         _stop_poll_stream()
+        # Let an in-flight periodic sync unwind while this process still owns
+        # its child and the shared writer slot. The supervisor kills this
+        # watcher two seconds later, so this is bounded best effort.
+        _PERIODIC_CONTEXT_SYNC.stop()
 
 if __name__ == "__main__":
     raise SystemExit(main())

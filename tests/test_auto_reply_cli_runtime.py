@@ -59,6 +59,30 @@ def held_open_stdin_pipe():
         os.close(write_fd)
 
 
+def settling_sleep(db_watch, real_sleep, real_monotonic, timeout: float = 5.0):
+    """Return a `time.sleep` replacement that lets a started sync land.
+
+    The watcher runs its periodic context sync on one background worker, so a
+    test that scripts the clock must give that worker time to publish its
+    result before the loop's next iteration. The replacement returns instead of
+    sleeping, and fails the test instead of hiding a sync that never finished.
+    """
+    worker = getattr(db_watch, "_PERIODIC_CONTEXT_SYNC", None)
+    if worker is None:
+        # A watcher that still runs its periodic sync inline has no worker to
+        # wait for; the calling test's own assertions report that regression.
+        return lambda _delay: None
+
+    def sleep(_delay):
+        deadline = real_monotonic() + timeout
+        while worker.in_flight() and real_monotonic() < deadline:
+            real_sleep(0.001)
+        if worker.in_flight():
+            raise AssertionError("periodic context sync never finished")
+
+    return sleep
+
+
 class AutoReplyCliRuntimeTests(unittest.TestCase):
     @staticmethod
     def _load_auto_reply_module(name):
@@ -3147,15 +3171,19 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
 
         def poll_after_recovery(state, interval):
             polled.append((dict(state), interval))
-            ready = dict(state)
-            ready.update(
-                capability_state="ready",
-                delivery_enabled=True,
-                fence_reason="",
-                fence="ready",
-            )
-            return ready, 0
+            if (
+                state.get("context_sync_checkpoint_log_id") == 999
+                and "context_sync_transient_failures" not in state
+                and any(
+                    item.get("fence_reason") == "context_sync_transient"
+                    for item in saved
+                )
+            ):
+                raise StopIteration
+            return dict(state), 0
 
+        real_sleep = time.sleep
+        real_monotonic = time.monotonic
         with (
             mock.patch.dict(
                 os.environ,
@@ -3170,6 +3198,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 "_state",
                 side_effect=lambda state: dict(state),
             ),
+            mock.patch.object(db_watch, "CONTEXT_SYNC_INTERVAL_SECONDS", 5.0),
             mock.patch.object(
                 db_watch,
                 "sync_context_index",
@@ -3190,18 +3219,34 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             mock.patch.object(
                 db_watch.time,
                 "monotonic",
-                side_effect=[0.0, 61.0, 61.0, 61.0, 67.0, 67.0],
+                side_effect=[
+                    20.0,
+                    26.0,
+                    26.1,
+                    26.2,
+                    26.3,
+                    26.4,
+                    26.5,
+                    32.0,
+                    32.1,
+                    32.2,
+                    32.3,
+                ],
             ),
             mock.patch.object(
                 db_watch.time,
                 "time",
-                side_effect=[90.0, 100.0, 101.0, 110.0],
+                side_effect=[100.0, 110.0, 111.0, 112.0, 113.0, 120.0],
             ),
             mock.patch.object(
                 db_watch.time,
                 "sleep",
-                side_effect=[None, StopIteration],
-            ) as sleep,
+                side_effect=settling_sleep(
+                    db_watch,
+                    real_sleep,
+                    real_monotonic,
+                ),
+            ),
             mock.patch.object(
                 db_watch, "_stop_poll_stream", side_effect=stop_poll_stream
             ),
@@ -3216,26 +3261,506 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(sync_call_kwargs(sync.call_args_list[0]), {"initial": True})
         self.assertEqual(sync_call_kwargs(sync.call_args_list[1]), {})
         self.assertEqual(sync_call_kwargs(sync.call_args_list[2]), {})
-        self.assertEqual(sleep.call_args_list[0].args, (1.0,))
-        self.assertEqual(len(saved), 2)
-        fenced = saved[0]
+        fenced = [
+            item
+            for item in saved
+            if item.get("fence_reason") == "context_sync_transient"
+        ][0]
         self.assertEqual(fenced["capability_state"], "starting")
         self.assertFalse(fenced["delivery_enabled"])
         self.assertEqual(fenced["fence"], "starting")
         self.assertEqual(fenced["fence_reason"], "context_sync_transient")
-        self.assertEqual(fenced["context_sync_retry_at"], 105.0)
+        self.assertEqual(fenced["context_sync_retry_at"], 115.0)
         self.assertEqual(fenced["context_sync_transient_failures"], 1)
+        self.assertNotIn("context_sync_deferred_log_id", fenced)
         self.assertEqual(call_order[:2], ["save", "stop"])
-        self.assertEqual(saved[1]["fence_reason"], "context_sync_transient")
-        self.assertFalse(saved[1]["delivery_enabled"])
-        self.assertEqual(len(polled), 1)
-        recovered, interval = polled[0]
+        # The room kept polling with the authority it had already published
+        # while the transient sync was still in flight.
+        self.assertEqual(len(polled), 2)
+        in_flight_state, in_flight_interval = polled[0]
+        self.assertEqual(in_flight_interval, 1.0)
+        self.assertEqual(in_flight_state["fence_reason"], "")
+        self.assertFalse(in_flight_state["delivery_enabled"])
+        self.assertNotIn("context_sync_transient_failures", in_flight_state)
+        recovered, interval = polled[1]
         self.assertEqual(interval, 1.0)
         self.assertEqual(recovered["capability_state"], "starting")
         self.assertFalse(recovered["delivery_enabled"])
         self.assertEqual(recovered["fence_reason"], "")
+        self.assertEqual(recovered["context_sync_at"], 120.0)
+        self.assertEqual(recovered["context_sync_checkpoint_log_id"], 999)
+        self.assertEqual(recovered["context_sync_retry_at"], 125.0)
         self.assertNotIn("context_sync_transient_failures", recovered)
         self.assertNotIn("context_sync_failure_at", recovered)
+
+    def test_periodic_context_sync_keeps_polling_at_the_normal_cadence(self):
+        db_watch = self._load_db_watch_module(
+            "auto_reply_periodic_context_sync_cadence_test"
+        )
+        db_watch.SELF = "self"
+        valid = {
+            "schema_version": 1,
+            "action": "context_sync_local",
+            "chat_id": 42,
+            "chat": db_watch.CHAT,
+            "checkpoint_log_id": 999,
+            "pages": 1,
+            "authoritative": True,
+            "deferred": None,
+            "totals": {key: 0 for key in db_watch.CONTEXT_SYNC_TOTAL_KEYS},
+            "network": False,
+        }
+        interval = 0.2
+        release = threading.Event()
+        started = threading.Event()
+        in_flight = {"active": False}
+        polls_while_blocked = []
+        polls_total = []
+        sync_calls = []
+
+        def blocking_sync(chat_id, *, initial=False, on_wait=None, on_tick=None):
+            sync_calls.append((chat_id, initial))
+            if initial:
+                return valid
+            started.set()
+            in_flight["active"] = True
+            try:
+                self.assertTrue(
+                    release.wait(5.0),
+                    "the poll loop never reached the in-flight sync",
+                )
+            finally:
+                in_flight["active"] = False
+            return valid
+
+        def poll(state, _interval):
+            polls_total.append((time.monotonic(), dict(state)))
+            if in_flight["active"]:
+                polls_while_blocked.append((time.monotonic(), dict(state)))
+                if len(polls_while_blocked) >= 4:
+                    # Unblock the worker before unwinding so the watcher's
+                    # bounded shutdown does not have to wait out its join.
+                    release.set()
+                    raise StopIteration
+            elif len(polls_total) >= 12:
+                raise StopIteration
+            return dict(state), 0
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {db_watch.TARGET_CHAT_ID_ENV: "42"},
+                clear=False,
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["auto-reply-db-watch.py", "--interval", str(interval)],
+            ),
+            mock.patch.object(db_watch.signal, "signal"),
+            mock.patch.object(db_watch, "load_state", return_value={}),
+            mock.patch.object(
+                db_watch,
+                "_state",
+                side_effect=lambda state: dict(state),
+            ),
+            # Shorten only the periodic trigger so one run stays bounded; the
+            # poll interval below is the production-cadence control.
+            mock.patch.object(db_watch, "CONTEXT_SYNC_INTERVAL_SECONDS", 0.05),
+            mock.patch.object(
+                db_watch,
+                "sync_context_index",
+                side_effect=blocking_sync,
+            ),
+            mock.patch.object(db_watch, "save_state", return_value=True),
+            mock.patch.object(
+                db_watch,
+                "_poll_with_bounded_clean_retry",
+                side_effect=poll,
+            ),
+            mock.patch.object(db_watch, "_stop_poll_stream"),
+            self.assertRaises(StopIteration),
+        ):
+            db_watch.main()
+
+        self.assertTrue(started.is_set())
+        # One background worker: the loop starts no second sync while the first
+        # one is still blocked.
+        self.assertEqual([initial for _, initial in sync_calls], [True, False])
+        self.assertGreaterEqual(len(polls_while_blocked), 4)
+        # The loop kept polling at its normal interval for the whole in-flight
+        # window instead of freezing on the sync.
+        span = polls_while_blocked[-1][0] - polls_while_blocked[0][0]
+        self.assertGreaterEqual(span, 3 * interval * 0.75)
+        for (earlier, _), (later, _) in zip(
+            polls_while_blocked,
+            polls_while_blocked[1:],
+        ):
+            self.assertGreaterEqual(later - earlier, interval * 0.5)
+            self.assertLessEqual(later - earlier, interval * 2.0)
+        # Every poll still saw the authority the room had already published:
+        # the in-flight sync neither fenced delivery nor claimed readiness.
+        first_state = polls_while_blocked[0][1]
+        self.assertEqual(first_state["fence_reason"], "")
+        self.assertFalse(first_state["delivery_enabled"])
+        self.assertNotIn("context_sync_transient_failures", first_state)
+        self.assertTrue(
+            all(state == first_state for _, state in polls_while_blocked)
+        )
+        self.assertFalse(db_watch._PERIODIC_CONTEXT_SYNC.in_flight())
+
+    def test_periodic_context_sync_publishes_worker_liveness_from_the_loop(self):
+        db_watch = self._load_db_watch_module(
+            "auto_reply_periodic_context_sync_liveness_test"
+        )
+        db_watch.SELF = "self"
+        valid = {
+            "schema_version": 1,
+            "action": "context_sync_local",
+            "chat_id": 42,
+            "chat": db_watch.CHAT,
+            "checkpoint_log_id": 999,
+            "pages": 1,
+            "authoritative": True,
+            "deferred": None,
+            "totals": {key: 0 for key in db_watch.CONTEXT_SYNC_TOTAL_KEYS},
+            "network": False,
+        }
+        interval = 0.2
+        release = threading.Event()
+        proofs = []
+        saved = []
+        sync_calls = []
+
+        def slow_sync(chat_id, *, initial=False, on_wait=None, on_tick=None):
+            sync_calls.append(initial)
+            if initial:
+                return valid
+            # The bounded child proves liveness while it runs; here the sync
+            # itself is what keeps this room's poll loop occupied.
+            proofs.append(time.time())
+            on_tick()
+            self.assertTrue(release.wait(5.0))
+            return valid
+
+        def save_state(state, **_kwargs):
+            saved.append(dict(state))
+            return True
+
+        def poll(state, _interval):
+            if proofs and any(
+                item["heartbeat_at"] >= proofs[0] for item in saved
+            ):
+                release.set()
+                raise StopIteration
+            return dict(state), 0
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {db_watch.TARGET_CHAT_ID_ENV: "42"},
+                clear=False,
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["auto-reply-db-watch.py", "--interval", str(interval)],
+            ),
+            mock.patch.object(db_watch.signal, "signal"),
+            mock.patch.object(db_watch, "load_state", return_value={}),
+            mock.patch.object(
+                db_watch,
+                "_state",
+                side_effect=lambda state: dict(state),
+            ),
+            mock.patch.object(db_watch, "CONTEXT_SYNC_INTERVAL_SECONDS", 0.05),
+            mock.patch.object(db_watch, "sync_context_index", side_effect=slow_sync),
+            mock.patch.object(db_watch, "save_state", side_effect=save_state),
+            mock.patch.object(
+                db_watch,
+                "_poll_with_bounded_clean_retry",
+                side_effect=poll,
+            ),
+            mock.patch.object(db_watch, "_stop_poll_stream"),
+            self.assertRaises(StopIteration),
+        ):
+            db_watch.main()
+
+        self.assertEqual(sync_calls, [True, False])
+        self.assertTrue(proofs)
+        published = [
+            item for item in saved if item["heartbeat_at"] >= proofs[0]
+        ]
+        self.assertTrue(published)
+        # The worker never writes state: the poll loop publishes its liveness,
+        # and publishing a heartbeat never claims readiness.
+        self.assertTrue(
+            all(
+                item["capability_state"] == "starting"
+                and item["delivery_enabled"] is False
+                and item["fence_reason"] == ""
+                and item["fence"] == "starting"
+                for item in saved
+            )
+        )
+
+    def test_periodic_context_sync_worker_clears_in_flight_after_cancellation(self):
+        db_watch = self._load_db_watch_module(
+            "auto_reply_periodic_context_sync_cancelled_test"
+        )
+        worker = db_watch._PERIODIC_CONTEXT_SYNC
+        calls = []
+        valid = {
+            "schema_version": 1,
+            "action": "context_sync_local",
+            "chat_id": 42,
+            "chat": db_watch.CHAT,
+            "checkpoint_log_id": 999,
+            "pages": 1,
+            "authoritative": True,
+            "deferred": None,
+            "totals": {key: 0 for key in db_watch.CONTEXT_SYNC_TOTAL_KEYS},
+            "network": False,
+        }
+
+        def cancelling_sync(chat_id, *, initial=False, on_wait=None, on_tick=None):
+            calls.append((chat_id, initial))
+            # A stopping watcher aborts the sync from its own liveness
+            # callback, exactly like the bounded CLI helper does.
+            raise db_watch.ContextSyncCancelled("context_sync_cancelled")
+
+        def wait_for_worker():
+            deadline = time.monotonic() + 5.0
+            while worker.in_flight() and time.monotonic() < deadline:
+                time.sleep(0.005)
+            self.assertFalse(
+                worker.in_flight(),
+                "the worker never reported that its sync had finished",
+            )
+
+        with mock.patch.object(
+            db_watch, "sync_context_index", side_effect=cancelling_sync
+        ):
+            self.assertTrue(worker.start(42))
+            wait_for_worker()
+
+        self.assertEqual(calls, [(42, False)])
+        # A cancelled sync has no result to publish, but the worker still has
+        # to clear its in-flight marker: leaving it set would turn every later
+        # periodic sync of this process into a silent no-op.
+        self.assertIsNone(worker.take_result())
+        self.assertIsNone(worker.take_proof())
+
+        # The worker is reusable rather than wedged: the next periodic sync
+        # runs and publishes normally after the cancelled one.
+        with mock.patch.object(
+            db_watch, "sync_context_index", return_value=valid
+        ):
+            self.assertTrue(worker.start(42))
+            wait_for_worker()
+        self.assertEqual(worker.take_result(), ("ok", valid))
+
+    def test_periodic_context_sync_worker_clears_in_flight_when_the_watcher_stops(self):
+        db_watch = self._load_db_watch_module(
+            "auto_reply_periodic_context_sync_stopped_test"
+        )
+        worker = db_watch._PERIODIC_CONTEXT_SYNC
+        entered = threading.Event()
+        release = threading.Event()
+
+        def stopping_sync(chat_id, *, initial=False, on_wait=None, on_tick=None):
+            entered.set()
+            release.wait(5.0)
+            # A stopping watcher is what turns the next liveness proof into
+            # the cancellation that has to reach this worker.
+            on_tick()
+            raise AssertionError("a stopping watcher did not cancel the sync")
+
+        with mock.patch.object(
+            db_watch, "sync_context_index", side_effect=stopping_sync
+        ):
+            self.assertTrue(
+                worker.start(
+                    42,
+                    on_wait=worker.note_proof,
+                    on_tick=worker.note_proof,
+                )
+            )
+            self.assertTrue(entered.wait(5.0), "the sync never started")
+            # Let the in-flight sync observe the stop that this call sets.
+            threading.Timer(0.05, release.set).start()
+            worker.stop()
+
+        self.assertFalse(worker.in_flight())
+        self.assertIsNone(worker.take_result())
+        # A stopped worker refuses new syncs, and its liveness callback now
+        # reports the cancellation instead of claiming a heartbeat.
+        self.assertFalse(worker.start(42))
+        with self.assertRaises(db_watch.ContextSyncCancelled):
+            worker.note_proof()
+
+    def test_periodic_context_sync_deferral_disables_delivery_until_authoritative(self):
+        db_watch = self._load_db_watch_module(
+            "auto_reply_periodic_context_sync_deferred_test"
+        )
+        db_watch.SELF = "self"
+        valid = {
+            "schema_version": 1,
+            "action": "context_sync_local",
+            "chat_id": 42,
+            "chat": db_watch.CHAT,
+            "checkpoint_log_id": 999,
+            "pages": 1,
+            "authoritative": True,
+            "deferred": None,
+            "totals": {key: 0 for key in db_watch.CONTEXT_SYNC_TOTAL_KEYS},
+            "network": False,
+        }
+        deferred = {
+            **valid,
+            "authoritative": False,
+            "deferred": {
+                "reason": "fresh_unmatched_self",
+                "log_id": 1000,
+                "retry_after_seconds": 5,
+            },
+        }
+        saved = []
+        polled = []
+        call_order = []
+
+        def save_state(state, **_kwargs):
+            call_order.append("save")
+            saved.append(dict(state))
+            return True
+
+        def poll(state, interval):
+            polled.append((dict(state), interval))
+            if (
+                state.get("context_sync_checkpoint_log_id") == 999
+                and "context_sync_transient_failures" not in state
+                and any(
+                    item.get("fence_reason") == "context_sync_deferred"
+                    for item in saved
+                )
+            ):
+                raise StopIteration
+            return dict(state), 0
+
+        def stop_poll_stream():
+            call_order.append("stop")
+
+        real_sleep = time.sleep
+        real_monotonic = time.monotonic
+        with (
+            mock.patch.dict(
+                os.environ,
+                {db_watch.TARGET_CHAT_ID_ENV: "42"},
+                clear=False,
+            ),
+            mock.patch.object(sys, "argv", ["auto-reply-db-watch.py"]),
+            mock.patch.object(db_watch.signal, "signal"),
+            mock.patch.object(db_watch, "load_state", return_value={}),
+            mock.patch.object(
+                db_watch,
+                "_state",
+                side_effect=lambda state: dict(state),
+            ),
+            mock.patch.object(db_watch, "CONTEXT_SYNC_INTERVAL_SECONDS", 5.0),
+            mock.patch.object(
+                db_watch,
+                "sync_context_index",
+                side_effect=[valid, deferred, valid],
+            ) as sync,
+            mock.patch.object(db_watch, "save_state", side_effect=save_state),
+            mock.patch.object(
+                db_watch,
+                "_poll_with_bounded_clean_retry",
+                side_effect=poll,
+            ),
+            mock.patch.object(
+                db_watch.time,
+                "monotonic",
+                side_effect=[
+                    20.0,
+                    26.0,
+                    26.1,
+                    26.2,
+                    26.3,
+                    26.4,
+                    26.5,
+                    32.0,
+                    32.1,
+                    32.2,
+                    32.3,
+                ],
+            ),
+            mock.patch.object(
+                db_watch.time,
+                "time",
+                side_effect=[100.0, 110.0, 111.0, 112.0, 113.0, 120.0],
+            ),
+            mock.patch.object(
+                db_watch.time,
+                "sleep",
+                side_effect=settling_sleep(
+                    db_watch,
+                    real_sleep,
+                    real_monotonic,
+                ),
+            ),
+            mock.patch.object(
+                db_watch,
+                "_stop_poll_stream",
+                side_effect=stop_poll_stream,
+            ),
+            self.assertRaises(StopIteration),
+        ):
+            db_watch.main()
+
+        self.assertEqual(
+            [call.args for call in sync.call_args_list],
+            [(42,), (42,), (42,)],
+        )
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[0]), {"initial": True})
+        deferred_publish = [
+            item
+            for item in saved
+            if item.get("fence_reason") == "context_sync_deferred"
+        ][0]
+        self.assertEqual(deferred_publish["capability_state"], "starting")
+        self.assertEqual(deferred_publish["fence"], "starting")
+        self.assertFalse(deferred_publish["delivery_enabled"])
+        self.assertEqual(deferred_publish["context_sync_at"], 110.0)
+        self.assertEqual(deferred_publish["context_sync_checkpoint_log_id"], 999)
+        self.assertEqual(deferred_publish["context_sync_deferred_log_id"], 1000)
+        self.assertEqual(deferred_publish["context_sync_retry_at"], 115.0)
+        # A deferral fences delivery without stopping the poll stream: the only
+        # stop is the watcher's own shutdown unwind.
+        self.assertEqual(call_order[-1], "stop")
+        self.assertNotIn("stop", call_order[:-1])
+        # Only the poll that ran while the deferred result was still landing,
+        # then the poll that ran once the sync proved authoritative again: no
+        # inbound observation is delivered while the room is deferred.
+        self.assertEqual(len(polled), 2)
+        self.assertTrue(
+            all(
+                state.get("fence_reason") != "context_sync_deferred"
+                for state, _ in polled
+            )
+        )
+        in_flight_state, in_flight_interval = polled[0]
+        self.assertEqual(in_flight_interval, 1.0)
+        self.assertEqual(in_flight_state["fence_reason"], "")
+        self.assertNotIn("context_sync_deferred_log_id", in_flight_state)
+        recovered, interval = polled[1]
+        self.assertEqual(interval, 1.0)
+        self.assertEqual(recovered["fence_reason"], "")
+        self.assertEqual(recovered["context_sync_at"], 120.0)
+        self.assertEqual(recovered["context_sync_checkpoint_log_id"], 999)
+        self.assertEqual(recovered["context_sync_retry_at"], 125.0)
+        self.assertNotIn("context_sync_deferred_log_id", recovered)
+        self.assertNotIn("context_sync_transient_failures", recovered)
 
     def test_startup_context_sync_transient_recovers_without_process_exit(self):
         db_watch = self._load_db_watch_module(
