@@ -74,13 +74,13 @@ class TestGemmaRecommendation(unittest.TestCase):
         self.assertIn("qat", rec.recommended_model)
         self.assertIn("128.0GB", rec.reason)
 
-    def test_mid_memory_gets_the_12b_tier(self):
+    def test_mid_memory_gets_the_gemma_4_e4b_tier(self):
         rec = recommend_ondevice_setup(_hw("Apple M3 Pro", 36.0), engines={"mlx": "/x/mlx_lm"})
-        self.assertIn("gemma-3-12b", rec.recommended_model)
+        self.assertEqual(rec.recommended_model, "mlx-community/gemma-4-e4b-it-4bit")
 
-    def test_small_memory_gets_a_small_gemma(self):
+    def test_small_memory_gets_the_gemma_4_e2b_tier(self):
         rec = recommend_ondevice_setup(_hw("Apple M1", 16.0), engines={"mlx": "/x/mlx_lm"})
-        self.assertIn("gemma-3-", rec.recommended_model)
+        self.assertEqual(rec.recommended_model, "mlx-community/gemma-4-e2b-it-4bit")
         self.assertNotIn("31b", rec.recommended_model)
 
     def test_ollama_never_receives_an_mlx_repo_id(self):

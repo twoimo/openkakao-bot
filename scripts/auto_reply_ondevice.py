@@ -44,21 +44,21 @@ GEMMA_TIERS: tuple[tuple[float, str, str, str], ...] = (
     ),
     (
         24.0,
-        "mlx-community/gemma-3-12b-it-4bit",
+        "mlx-community/gemma-4-e4b-it-4bit",
         "4bit",
-        "12B급 균형 구성. 한국어 일상 대화에 충분한 품질",
+        "Gemma 4 E4B 경량 구성. 중형 메모리에서 한국어 대화용",
     ),
     (
         8.0,
-        "mlx-community/gemma-3-4b-it-4bit",
+        "mlx-community/gemma-4-e2b-it-4bit",
         "4bit",
-        "4B급 저지연 구성. 메모리가 작은 기기에서도 상주 가능",
+        "Gemma 4 E2B 초경량 구성. 작은 기기에서도 상주 가능",
     ),
     (
         0.0,
         "mlx-community/gemma-3-1b-it-4bit",
         "4bit",
-        "1B급 초경량 구성. 답장 초안 보조 용도",
+        "1B급 최후 보조. Gemma 4 경량조차 부담일 때",
     ),
 )
 
