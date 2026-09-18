@@ -3146,7 +3146,7 @@ final class MenuPanelView: NSView {
     let roomButton = NSButton(title: "방", target: nil, action: #selector(AppDelegate.roomPickerClicked(_:)))
     var roomTitle = ""
     var selectedRoomId = 0
-    static let panelWidth: CGFloat = 408
+    static let panelWidth: CGFloat = 360
     static let roomGridColumns = 2
     static let roomCellHeight: CGFloat = 28
     static let roomGridGap: CGFloat = 6
@@ -3170,17 +3170,33 @@ final class MenuPanelView: NSView {
     /// 띠가 들어 있었는데, 단계 이름 여덟 개를 읽어야 현재 상태를 알 수
     /// 있어 한눈에 들어오지 않았다. 지금은 코어 하나가 상태를 대신하고,
     /// 단계는 창에서 본다 (2026-09-17).
-    static let coreSize: CGFloat = 148
+    static let coreSize: CGFloat = 168
     static let tileHeight: CGFloat = 52
-    static let lampHeight: CGFloat = 18
     static let actionHeight: CGFloat = 28
     static let bottomInset: CGFloat = gap
     /// 코어가 놓이는 위쪽 좌표(패널 위에서부터).
     static let coreTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
     /// 코어 아래 한 줄이 차지하는 높이.
     static let coreCaptionHeight: CGFloat = 15
-    /// 방 목록 격자가 시작하는 위쪽 좌표. 코어와 그 아래 한 줄에 붙는다.
-    static let roomGridTop: CGFloat = coreTop + coreSize + coreCaptionHeight + sectionGap
+    /// 코어 아래 상태 줄의 높이와 그 안쪽 치수.
+    static let statusRowHeight: CGFloat = 22
+    static let statusDotSize: CGFloat = 9
+    static let statusDotGap: CGFloat = 6
+    static let statusChipPadding: CGFloat = 8
+    /// 코어 아래 점등 묶음 앞에 붙는 한 마디. 이름표 다섯 개를 대신한다.
+    static let statusRowTitle = "구성"
+    /// 점등 묶음과 슬롯 묶음 사이. 한 줄 안의 다른 두 간격과 구분된다.
+    static let statusGroupGap: CGFloat = 16
+    /// 코어 아래 상태 줄이 놓이는 위쪽 좌표.
+    ///
+    /// 예전에는 구성 요소 점등과 긱뉴스 슬롯이 코어 좌우에 세로로 늘어서
+    /// 있었다. 왼쪽 이름표 다섯 개를 한 줄씩 읽어야 상태를 알 수 있었고,
+    /// 그 좌우를 채우려고 패널이 408pt까지 넓어져 정작 주인공인 코어가
+    /// 작아 보였다. 지금은 코어 아래 한 줄에 모으고, 이름표는 툴팁으로
+    /// 옮기고, 코어를 168pt로 키우고, 패널을 360pt로 좁혔다 (2026-09-19).
+    static let statusRowTop: CGFloat = coreTop + coreSize + coreCaptionHeight + sectionGap
+    /// 방 목록 격자가 시작하는 위쪽 좌표. 상태 줄 아래에 같은 간격으로 붙는다.
+    static let roomGridTop: CGFloat = statusRowTop + statusRowHeight + sectionGap
     /// 지표 타일은 방 목록이 접혀 있을 때 격자 자리에서 바로 시작한다.
     static let tileTop: CGFloat = roomGridTop
     static let actionTop: CGFloat = tileTop + tileHeight + sectionGap
@@ -3199,6 +3215,17 @@ final class MenuPanelView: NSView {
     private var roomGridScroll: NSScrollView?
     private var roomGridContent: NSView?
     var tileButtons: [NSButton] = []
+    /// 코어 아래 상태 줄 위에 얹는 투명한 단추. 칩은 직접 그리고, 이 단추가
+    /// 툴팁과 클릭을 받는다. 감사도 이 줄을 하나의 구간으로 재야 하므로
+    /// 그리기만 하고 끝내지 않고 실제 뷰를 둔다 (2026-09-19).
+    let healthButton = NSButton(title: "", target: nil, action: nil)
+    var slotButtons: [NSButton] = []
+    /// 오늘 보낸 슬롯을 표시하는 세 칸. 이름과 키는 긱뉴스 발송기와 같다.
+    static let geeknewsSlots: [(String, String)] = [
+        ("아침", "morning"),
+        ("점심", "lunch"),
+        ("저녁", "evening"),
+    ]
     let autoButton = NSButton(title: "즉시 답장 보내기", target: nil, action: #selector(AppDelegate.instantAutoReplyClicked))
     let geekButton = NSButton(title: "긱뉴스 바로 전송", target: nil, action: #selector(AppDelegate.instantGeekNewsClicked))
 
@@ -3256,6 +3283,22 @@ final class MenuPanelView: NSView {
             button.toolTip = "\(titles[index]) 목록 열기"
             addSubview(button)
             tileButtons.append(button)
+        }
+        healthButton.bezelStyle = .inline
+        healthButton.isBordered = false
+        healthButton.title = ""
+        healthButton.identifier = NSUserInterfaceItemIdentifier("health-row")
+        healthButton.target = tileTarget
+        healthButton.action = #selector(AppDelegate.showLogWindow)
+        addSubview(healthButton)
+        for slot in Self.geeknewsSlots {
+            let button = NSButton(title: "", target: nil, action: nil)
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.title = ""
+            button.identifier = NSUserInterfaceItemIdentifier("geeknews-\(slot.1)")
+            addSubview(button)
+            slotButtons.append(button)
         }
         styleAction(autoButton)
         styleAction(geekButton)
@@ -3424,6 +3467,11 @@ final class MenuPanelView: NSView {
             width: width - Self.sideInset * 2,
             height: Self.coreCaptionHeight
         )
+        let chips = statusRowRects(width: width)
+        healthButton.frame = chips.health
+        for (index, button) in slotButtons.enumerated() where index < chips.slots.count {
+            button.frame = chips.slots[index]
+        }
         let columns = Self.roomGridColumns
         let gap = Self.roomGridGap
         let cellH = Self.roomCellHeight
@@ -3505,6 +3553,16 @@ final class MenuPanelView: NSView {
         } ?? false
         autoButton.isEnabled = selectedLive
         geekButton.isEnabled = selectedGeek
+        healthButton.toolTip = Self.healthTooltip(model.health ?? [:])
+        let posted = Set(room?.geeknews_slots ?? [])
+        let day = Self.kstDay()
+        for (index, button) in slotButtons.enumerated() {
+            guard index < Self.geeknewsSlots.count else { break }
+            let slot = Self.geeknewsSlots[index]
+            button.toolTip = posted.contains("\(day):\(slot.1)")
+                ? "오늘 \(slot.0) 긱뉴스를 보냈습니다"
+                : "오늘 \(slot.0) 긱뉴스는 아직 보내지 않았습니다"
+        }
         needsDisplay = true
     }
 
@@ -3625,7 +3683,34 @@ final class MenuPanelView: NSView {
             )
         }
 
-        let health = model.health ?? [:]
+        drawStatusRow(width: width, health: model.health ?? [:], room: room)
+    }
+
+    /// 구성 요소 점등 다섯 개와 오늘의 긱뉴스 슬롯 세 칸을 한 줄에 그린다.
+    ///
+    /// 이름표를 화면에서 뺀 이유는 그 다섯 줄이 상태를 읽는 유일한 방법이
+    /// 아니기 때문이다. 위쪽 알약이 이미 "정상 작동/처리 중/확인 필요"를
+    /// 말하고, 어느 구성 요소가 꺼졌는지는 이 줄의 툴팁이 이름으로 알려
+    /// 준다. 점등은 자리로, 이름은 툴팁으로 나눠 맡긴다 (2026-09-19).
+    func drawStatusRow(width: CGFloat, health: [String: String], room: RoomChoice?) {
+        let chips = statusRowRects(width: width)
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        NSBezierPath(roundedRect: chips.health, xRadius: 9, yRadius: 9).fill()
+        // 이름표 다섯 개를 뺀 자리에 "구성" 한 마디만 남긴다. 이 글자가
+        // 없으면 점 다섯 개가 무엇을 뜻하는지 알 길이 없다 (2026-09-19).
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let title = NSString(string: Self.statusRowTitle)
+        let titleSize = title.size(withAttributes: titleAttrs)
+        title.draw(
+            at: CGPoint(
+                x: chips.health.minX + Self.statusChipPadding,
+                y: chips.health.midY - titleSize.height / 2
+            ),
+            withAttributes: titleAttrs
+        )
         let lamps: [(String, String)] = [
             ("감시", health["watchdog"] ?? "off"),
             ("감독", health["supervisor"] ?? "off"),
@@ -3633,58 +3718,87 @@ final class MenuPanelView: NSView {
             ("워커", health["worker"] ?? "off"),
             ("모델", health["model"] ?? "off"),
         ]
-        // 램프와 긱뉴스 슬롯은 코어 좌우의 빈 공간을 쓴다. 내용은 그대로
-        // 유지하면서 타일과 동작 단추 사이에 별도 18pt 행을 예약하지 않아,
-        // 하단 손배치 구간의 간격과 패널 높이가 실제 콘텐츠를 따라간다.
-        let lampStackHeight = CGFloat(lamps.count) * Self.lampHeight
-            + CGFloat(max(lamps.count - 1, 0)) * Self.gap
-        var lampY = Self.coreTop + (Self.coreSize - lampStackHeight) / 2
+        var dotX = chips.health.minX + Self.statusChipPadding + titleSize.width + Self.statusDotGap
         for lamp in lamps {
-            let label = NSString(string: lamp.0)
-            let labelAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .medium),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-            let labelSize = label.size(withAttributes: labelAttrs)
-            let chip = NSRect(
-                x: Self.sideInset,
-                y: lampY,
-                width: 16 + labelSize.width + 8,
-                height: Self.lampHeight
+            let dot = NSRect(
+                x: dotX,
+                y: chips.health.midY - Self.statusDotSize / 2,
+                width: Self.statusDotSize,
+                height: Self.statusDotSize
             )
-            NSColor.labelColor.withAlphaComponent(0.05).setFill()
-            NSBezierPath(roundedRect: chip, xRadius: 9, yRadius: 9).fill()
             Palette.lamp(lamp.1).setFill()
-            NSBezierPath(ovalIn: NSRect(x: chip.minX + 5, y: chip.minY + 5, width: 8, height: 8)).fill()
-            label.draw(at: CGPoint(x: chip.minX + 16, y: chip.minY + 2), withAttributes: labelAttrs)
-            lampY = chip.maxY + Self.gap
+            NSBezierPath(ovalIn: dot).fill()
+            dotX = dot.maxX + Self.statusDotGap
         }
-
         let posted = Set(room?.geeknews_slots ?? [])
         let day = Self.kstDay()
-        let slots: [(String, String)] = [("아침", "morning"), ("점심", "lunch"), ("저녁", "evening")]
-        let slotStackHeight = CGFloat(slots.count) * Self.lampHeight
-            + CGFloat(max(slots.count - 1, 0)) * Self.gap
-        var slotY = Self.coreTop + (Self.coreSize - slotStackHeight) / 2
-        for slot in slots {
+        let slotFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        for (index, slot) in Self.geeknewsSlots.enumerated() {
+            guard index < chips.slots.count else { break }
+            let rect = chips.slots[index]
             let filled = posted.contains("\(day):\(slot.1)")
-            let label = NSString(string: slot.0)
+            (filled ? NSColor.systemGreen : NSColor.labelColor.withAlphaComponent(0.08)).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9).fill()
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                .font: slotFont,
                 .foregroundColor: filled ? NSColor.white : NSColor.secondaryLabelColor,
             ]
+            let label = NSString(string: slot.0)
             let size = label.size(withAttributes: attrs)
-            let pill = NSRect(
-                x: width - Self.sideInset - size.width - 14,
-                y: slotY,
-                width: size.width + 14,
-                height: Self.lampHeight
+            label.draw(
+                at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+                withAttributes: attrs
             )
-            (filled ? NSColor.systemGreen : NSColor.labelColor.withAlphaComponent(0.08)).setFill()
-            NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
-            label.draw(at: CGPoint(x: pill.minX + 7, y: pill.minY + 2), withAttributes: attrs)
-            slotY = pill.maxY + Self.gap
         }
+    }
+
+    /// 상태 줄에서 각 칩이 차지하는 자리. 가운데 정렬이라 패널 폭이 바뀌어도
+    /// 좌우 여백이 같다.
+    func statusRowRects(width: CGFloat) -> (health: NSRect, slots: [NSRect]) {
+        let lampCount = 5
+        let titleFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        let healthWidth = Self.statusChipPadding * 2
+            + NSString(string: Self.statusRowTitle).size(withAttributes: [.font: titleFont]).width
+            + Self.statusDotGap
+            + CGFloat(lampCount) * Self.statusDotSize
+            + CGFloat(max(lampCount - 1, 0)) * Self.statusDotGap
+        let slotFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        var widths: [CGFloat] = [healthWidth]
+        for slot in Self.geeknewsSlots {
+            widths.append(
+                Self.statusChipPadding * 2
+                    + NSString(string: slot.0).size(withAttributes: [.font: slotFont]).width
+            )
+        }
+        let total = widths.reduce(0, +)
+            + Self.statusGroupGap
+            + CGFloat(Self.geeknewsSlots.count - 1) * Self.statusDotGap
+        var x = max(Self.sideInset, (width - total) / 2)
+        var rects: [NSRect] = []
+        for (index, item) in widths.enumerated() {
+            rects.append(
+                NSRect(x: x, y: Self.statusRowTop, width: item, height: Self.statusRowHeight)
+            )
+            x += item + (index == 0 ? Self.statusGroupGap : Self.statusDotGap)
+        }
+        return (rects[0], Array(rects.dropFirst()))
+    }
+
+    /// 점등 다섯 개를 이름으로 읽어 주는 설명. 화면에서 뺀 이름표가 여기 남는다.
+    static func healthTooltip(_ health: [String: String]) -> String {
+        let lamps: [(String, String)] = [
+            ("감시", health["watchdog"] ?? "off"),
+            ("감독", health["supervisor"] ?? "off"),
+            ("카톡창", health["ax"] ?? "off"),
+            ("답변 워커", health["worker"] ?? "off"),
+            ("AI 모델", health["model"] ?? "off"),
+        ]
+        let off = lamps.filter { $0.1 != "ok" }.map { $0.0 }
+        if off.isEmpty {
+            return "구성 요소 다섯이 모두 켜져 있습니다. 눌러서 처리 기록을 엽니다."
+        }
+        return "점검이 필요한 구성 요소: " + off.joined(separator: " · ")
+            + " — 눌러서 처리 기록을 엽니다."
     }
 
     static func compact(_ value: Int) -> String {
@@ -3758,7 +3872,6 @@ final class LampCell: NSView {
         super.draw(dirtyRect)
         NSColor.clear.setFill()
         bounds.fill()
-        (on ? color : NSColor.tertiaryLabelColor).setFill()
         let lampSize: CGFloat = 10
         let lampRect = NSRect(
             x: (bounds.width - lampSize) / 2,
@@ -3766,12 +3879,23 @@ final class LampCell: NSView {
             width: lampSize,
             height: lampSize
         )
-        NSBezierPath(ovalIn: lampRect).fill()
+        if on {
+            color.setFill()
+            NSBezierPath(ovalIn: lampRect).fill()
+        } else {
+            // 꺼진 칸은 빈 동그라미로 그린다. 회색으로 꽉 채우면 켜진 칸과
+            // 같은 무게로 보여, 방 목록을 훑을 때 어느 방이 돌고 있는지
+            // 색만으로는 갈리지 않는다 (2026-09-19).
+            NSColor.tertiaryLabelColor.setStroke()
+            let ring = NSBezierPath(ovalIn: lampRect.insetBy(dx: 0.75, dy: 0.75))
+            ring.lineWidth = 1.5
+            ring.stroke()
+        }
         if interactive {
             NSColor.white.withAlphaComponent(0.35).setStroke()
-            let ring = NSBezierPath(ovalIn: lampRect.insetBy(dx: 0.4, dy: 0.4))
-            ring.lineWidth = 1
-            ring.stroke()
+            let edge = NSBezierPath(ovalIn: lampRect.insetBy(dx: 0.4, dy: 0.4))
+            edge.lineWidth = 1
+            edge.stroke()
         }
     }
     override func resetCursorRects() {

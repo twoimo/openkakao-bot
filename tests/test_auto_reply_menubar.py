@@ -843,7 +843,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("layoutRoomGrid", source)
         self.assertIn("button.isHidden = true", source)
         self.assertIn("roomsListExpanded = false", source)
-        self.assertIn("lampY", source)
+        # 코어 좌우에 이름표를 세로로 늘어놓던 줄은 코어 아래 한 줄로
+        # 합쳐졌다. 점등은 자리로, 이름은 툴팁으로 읽는다 (2026-09-19).
+        self.assertIn("statusRowTop", source)
+        self.assertIn("drawStatusRow", source)
+        self.assertIn("healthTooltip", source)
+        self.assertNotIn("lampY", source)
         self.assertNotIn("보고 있는 방", source)
         self.assertIn("chat.catalog || chat.live", source)
         self.assertIn("inspectableRooms", source)
@@ -1449,7 +1454,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("jobsFilterChanged", source)
         self.assertIn("NSSegmentedControl", source)
         self.assertIn("enum Chrome", source)
-        self.assertIn("static let panelWidth: CGFloat = 408", source)
+        # 패널은 코어 아래 한 줄로 상태를 모은 뒤 360pt로 좁아졌고, 코어는
+        # 168pt로 커졌다. 좌우 빈칸을 없애는 것이 목적이었다 (2026-09-19).
+        self.assertIn("static let panelWidth: CGFloat = 360", source)
+        self.assertIn("static let coreSize: CGFloat = 168", source)
         # 패널 높이는 조각을 이어 붙여 계산한다. 숫자를 따로 박아 두면 조각을
         # 고칠 때마다 아래가 겹치거나 빈 띠가 남는다 (2026-09-16).
         self.assertIn("static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset", source)
