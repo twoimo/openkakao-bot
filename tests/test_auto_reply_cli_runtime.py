@@ -27,6 +27,22 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+CONTEXT_SYNC_HEARTBEAT_KWARGS = ("on_wait", "on_tick")
+
+
+def sync_call_kwargs(call, *, heartbeat: bool = False) -> dict:
+    """Read one `sync_context_index` call's keyword arguments.
+
+    Every call also carries the watcher's heartbeat callbacks, and those are a
+    fresh local closure per call. Tests compare the durable arguments here and
+    pin the callbacks separately.
+    """
+    return {
+        key: value
+        for key, value in call.kwargs.items()
+        if heartbeat or key not in CONTEXT_SYNC_HEARTBEAT_KWARGS
+    }
+
 
 @contextmanager
 def held_open_stdin_pipe():
@@ -3197,9 +3213,9 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             [call.args for call in sync.call_args_list],
             [(42,), (42,), (42,)],
         )
-        self.assertEqual(sync.call_args_list[0].kwargs, {"initial": True})
-        self.assertEqual(sync.call_args_list[1].kwargs, {})
-        self.assertEqual(sync.call_args_list[2].kwargs, {})
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[0]), {"initial": True})
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[1]), {})
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[2]), {})
         self.assertEqual(sleep.call_args_list[0].args, (1.0,))
         self.assertEqual(len(saved), 2)
         fenced = saved[0]
@@ -3302,8 +3318,8 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(fenced["fence_reason"], "context_sync_transient")
         self.assertEqual(fenced["context_sync_retry_at"], 105.0)
         sleep.assert_called_once_with(5.0)
-        self.assertEqual(sync.call_args_list[0].kwargs, {"initial": True})
-        self.assertEqual(sync.call_args_list[1].kwargs, {"initial": False})
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[0]), {"initial": True})
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[1]), {"initial": False})
         self.assertEqual(len(polled), 1)
         recovered, interval = polled[0]
         self.assertEqual(interval, 1.0)
@@ -3384,12 +3400,22 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(waited, [5.0, 10.0, 30.0])
         self.assertEqual(
-            [call.kwargs for call in sync.call_args_list],
+            [sync_call_kwargs(call) for call in sync.call_args_list],
             [
                 {"initial": True},
                 {"initial": False},
                 {"initial": False},
             ],
+        )
+        # Every sync proves liveness through the same watcher heartbeat, both
+        # while queuing for the shared writer slot and while its child runs.
+        self.assertTrue(
+            all(
+                callable(sync_call_kwargs(call, heartbeat=True)["on_wait"])
+                and sync_call_kwargs(call, heartbeat=True)["on_wait"]
+                is sync_call_kwargs(call, heartbeat=True)["on_tick"]
+                for call in sync.call_args_list
+            )
         )
         poll.assert_not_called()
 
@@ -3483,7 +3509,9 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         ):
             db_watch.main()
 
-        sync.assert_called_once_with(42, initial=True)
+        self.assertEqual(sync.call_count, 1)
+        self.assertEqual(sync.call_args_list[0].args, (42,))
+        self.assertEqual(sync_call_kwargs(sync.call_args_list[0]), {"initial": True})
         poll.assert_not_called()
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["context_sync_checkpoint_log_id"], 999)
@@ -7183,8 +7211,8 @@ print(json.dumps({
             module.STATE = Path(temporary) / "db-watch-state.json"
             observed: dict = {}
 
-            def fake_run_json(args, timeout=5.0):
-                del args, timeout
+            def fake_run_json(args, timeout=5.0, on_tick=None):
+                del args, timeout, on_tick
                 try:
                     with module._context_sync_writer_lock(wait_seconds=0.0):
                         observed["held"] = False
@@ -7211,6 +7239,157 @@ print(json.dumps({
                 module.STATE = previous_state
             self.assertTrue(observed.get("held"))
             self.assertTrue(value["authoritative"])
+
+    def test_context_sync_writer_lock_heartbeats_while_it_waits(self):
+        """A room queuing behind another room's sync must not look dead."""
+        module = self._load_db_watch_module("auto_reply_db_context_sync_beat_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            previous_state = module.STATE
+            previous_wait = module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS
+            previous_poll = module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS
+            previous_beat = module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS
+            module.STATE = Path(temporary) / "db-watch-state.json"
+            module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = 0.4
+            module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = 0.05
+            module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = 0.05
+            beats: list[float] = []
+
+            def beat() -> None:
+                beats.append(time.monotonic())
+
+            def broken() -> None:
+                beats.append(time.monotonic())
+                raise RuntimeError("heartbeat write failed")
+
+            try:
+                with module._context_sync_writer_lock(wait_seconds=0.0):
+                    with self.assertRaises(module.SqliteBusyTransient):
+                        with module._context_sync_writer_lock(on_wait=beat):
+                            self.fail("a second room took the writer slot")
+                    self.assertGreaterEqual(len(beats), 2)
+                    beats.clear()
+                    # A failing heartbeat write must not replace the transient
+                    # classification the caller's retry path depends on.
+                    with self.assertRaises(module.SqliteBusyTransient):
+                        with module._context_sync_writer_lock(on_wait=broken):
+                            self.fail("a second room took the writer slot")
+                    self.assertGreaterEqual(len(beats), 2)
+            finally:
+                module.STATE = previous_state
+                module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = previous_wait
+                module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = previous_poll
+                module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = previous_beat
+
+    def test_run_bounded_cli_ticks_while_the_child_still_runs(self):
+        """A slow bounded read must not silence the watcher's heartbeat."""
+        module = self._load_db_watch_module("auto_reply_db_bounded_tick_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            child = Path(temporary) / "slow-cli"
+            child.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys, time\n"
+                "time.sleep(0.6)\n"
+                "sys.stdout.write('{\"ok\": true}')\n",
+                encoding="utf-8",
+            )
+            child.chmod(0o755)
+            previous_binary = module.BINARY
+            module.BINARY = child
+            ticks: list[float] = []
+
+            def broken() -> None:
+                ticks.append(time.monotonic())
+                raise RuntimeError("heartbeat write failed")
+
+            try:
+                code, stdout, _ = module._run_bounded_cli(
+                    [],
+                    5.0,
+                    on_tick=lambda: ticks.append(time.monotonic()),
+                    tick_seconds=0.05,
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(stdout.decode("utf-8")), {"ok": True})
+                self.assertGreaterEqual(len(ticks), 2)
+                ticks.clear()
+                code, stdout, _ = module._run_bounded_cli(
+                    [],
+                    5.0,
+                    on_tick=broken,
+                    tick_seconds=0.05,
+                )
+            finally:
+                module.BINARY = previous_binary
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout.decode("utf-8")), {"ok": True})
+            self.assertGreaterEqual(len(ticks), 2)
+
+    def test_sync_context_index_keeps_the_heartbeat_fresh_through_the_sync(self):
+        """Both the sync child and the writer-slot queue publish heartbeats."""
+        module = self._load_db_watch_module("auto_reply_db_sync_beat_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            previous_state = module.STATE
+            previous_run_json = module.run_json
+            previous_wait = module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS
+            previous_poll = module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS
+            previous_beat = module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS
+            module.STATE = Path(temporary) / "db-watch-state.json"
+            module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = 0.4
+            module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = 0.05
+            module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = 0.05
+            observed: dict = {}
+            ticks: list[float] = []
+
+            def beat() -> None:
+                ticks.append(time.monotonic())
+
+            def fake_run_json(args, timeout=5.0, on_tick=None):
+                del args
+                observed["on_tick"] = on_tick
+                observed["timeout"] = timeout
+                if on_tick is not None:
+                    on_tick()
+                return {
+                    "schema_version": 1,
+                    "action": "context_sync_local",
+                    "chat_id": 417780809780519,
+                    "chat": module.CHAT,
+                    "checkpoint_log_id": 1,
+                    "pages": 1,
+                    "authoritative": True,
+                    "deferred": None,
+                    "totals": {key: 0 for key in module.CONTEXT_SYNC_TOTAL_KEYS},
+                    "network": False,
+                }
+
+            module.run_json = fake_run_json
+            try:
+                value = module.sync_context_index(
+                    417780809780519,
+                    on_wait=beat,
+                    on_tick=beat,
+                )
+                self.assertIs(observed.get("on_tick"), beat)
+                self.assertEqual(observed.get("timeout"), 90.0)
+                self.assertEqual(len(ticks), 1)
+                self.assertTrue(value["authoritative"])
+                # While another room holds the shared slot the same callback
+                # proves this room is alive instead of fencing it as stale.
+                ticks.clear()
+                with module._context_sync_writer_lock(wait_seconds=0.0):
+                    with self.assertRaises(module.SqliteBusyTransient):
+                        module.sync_context_index(
+                            417780809780519,
+                            on_wait=beat,
+                            on_tick=beat,
+                        )
+                self.assertGreaterEqual(len(ticks), 2)
+            finally:
+                module.run_json = previous_run_json
+                module.STATE = previous_state
+                module.CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS = previous_wait
+                module.CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS = previous_poll
+                module.CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS = previous_beat
 
     def test_generation_and_reply_state_locks_are_private_and_no_follow(self):
         modules = (

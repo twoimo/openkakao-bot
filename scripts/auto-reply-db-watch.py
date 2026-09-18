@@ -326,7 +326,8 @@ def _context_sync_writer_lock_path() -> Path:
 
 @contextmanager
 def _context_sync_writer_lock(
-    wait_seconds: float = CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS,
+    wait_seconds: float | None = None,
+    on_wait=None,
 ):
     """Hold the single context-index writer slot while one room syncs.
 
@@ -337,9 +338,15 @@ def _context_sync_writer_lock(
     other and never clear the context-sync fence. A waiter that cannot take the
     slot in time raises the existing transient classification, which keeps the
     room fenced without delivery and retries on the watcher's own clock.
+
+    on_wait runs roughly every CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS while this
+    room queues for the slot, so a room waiting on another room's long sync
+    still proves it is alive instead of going heartbeat-stale.
     """
     lock_path = _context_sync_writer_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if wait_seconds is None:
+        wait_seconds = CONTEXT_SYNC_WRITER_LOCK_WAIT_SECONDS
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     flags |= getattr(os, "O_CLOEXEC", 0)
     fd = os.open(lock_path, flags, LOCK_FILE_MODE)
@@ -353,16 +360,27 @@ def _context_sync_writer_lock(
             raise PermissionError("AutoReply context sync lock is unsafe")
         os.fchmod(fd, LOCK_FILE_MODE)
         deadline = time.monotonic() + max(0.0, float(wait_seconds))
+        next_beat = time.monotonic() + CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 locked = True
                 break
             except OSError:
-                if time.monotonic() >= deadline:
+                now = time.monotonic()
+                if now >= deadline:
                     raise SqliteBusyTransient(
                         "context_sync_writer_lock_timeout"
                     )
+                if on_wait is not None and now >= next_beat:
+                    next_beat = now + CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS
+                    try:
+                        on_wait()
+                    except Exception:
+                        # A failed heartbeat write must never turn a lock wait
+                        # into a terminal fence; the caller's own retry path
+                        # reports persistence problems.
+                        pass
                 time.sleep(CONTEXT_SYNC_WRITER_LOCK_POLL_SECONDS)
         yield fd
     finally:
@@ -374,10 +392,22 @@ def _context_sync_writer_lock(
         os.close(fd)
 
 
-def sync_context_index(chat_id: int, *, initial: bool = False) -> dict:
+def sync_context_index(
+    chat_id: int,
+    *,
+    initial: bool = False,
+    on_wait=None,
+    on_tick=None,
+) -> dict:
+    """Run one bounded context index, keeping this room's heartbeat fresh.
+
+    Both callbacks publish the same fenced heartbeat the transient retry path
+    uses, so a room queuing for the shared writer slot or waiting on its own
+    indexing child proves it is alive without ever claiming readiness.
+    """
     if not 0 < int(chat_id) < MAX_INT64:
         raise DbFence("context_sync_identity")
-    with _context_sync_writer_lock():
+    with _context_sync_writer_lock(on_wait=on_wait):
         value = run_json(
             [
                 "context-sync-local",
@@ -395,6 +425,7 @@ def sync_context_index(chat_id: int, *, initial: bool = False) -> dict:
                 str(QUEUE),
             ],
             timeout=900.0 if initial else 90.0,
+            on_tick=on_tick,
         )
     if (
         not isinstance(value, dict)
@@ -1123,7 +1154,19 @@ def _validate_poll_envelope(
 def _run_bounded_cli(
     args: list[str],
     timeout: float,
+    on_tick=None,
+    tick_seconds: float | None = None,
 ) -> tuple[int, bytes, bytes]:
+    """Run one bounded CLI read, optionally proving liveness while it runs.
+
+    `context-sync-local` legitimately holds this child open for tens of
+    seconds against the multi-hundred-megabyte KakaoTalk database. The watcher
+    heartbeat would otherwise age out for the whole read and the supervisor
+    would fence a room that is only busy indexing, which is exactly the
+    `db_heartbeat_stale` flapping the operator sees as a red menubar light.
+    on_tick runs at most once per tick_seconds while the child is still
+    working, and a failing callback must never abort the read.
+    """
     process = subprocess.Popen(
         [str(BINARY), *args, "--json"],
         cwd=ROOT,
@@ -1137,6 +1180,8 @@ def _run_bounded_cli(
         for stream in (process.stdout, process.stderr)
         if stream is not None
     }
+    if tick_seconds is None:
+        tick_seconds = CONTEXT_SYNC_RETRY_HEARTBEAT_SECONDS
     open_streams = set(streams)
     deadline = time.monotonic() + max(0.0, timeout)
     try:
@@ -1145,8 +1190,19 @@ def _run_bounded_cli(
             if remaining <= 0.0:
                 process.terminate()
                 raise subprocess.TimeoutExpired(args, timeout)
-            ready, _, _ = select.select(list(open_streams), [], [], remaining)
+            wait = remaining
+            if on_tick is not None:
+                wait = min(remaining, max(0.001, float(tick_seconds)))
+            ready, _, _ = select.select(list(open_streams), [], [], wait)
             if not ready:
+                if on_tick is not None and wait < remaining:
+                    # A bounded slice, not the deadline: the child is still
+                    # working, so prove liveness and keep waiting for it.
+                    try:
+                        on_tick()
+                    except Exception:
+                        pass
+                    continue
                 process.terminate()
                 raise subprocess.TimeoutExpired(args, timeout)
             for stream in ready:
@@ -1176,10 +1232,18 @@ def _run_bounded_cli(
                 stream.close()
 
 
-def run_json(args: list[str], timeout: float = 5.0) -> object:
+def run_json(
+    args: list[str],
+    timeout: float = 5.0,
+    on_tick=None,
+) -> object:
     with perf.measure("db_watch.cli") as metric:
         try:
-            returncode, stdout_bytes, stderr_bytes = _run_bounded_cli(args, timeout)
+            returncode, stdout_bytes, stderr_bytes = _run_bounded_cli(
+                args,
+                timeout,
+                on_tick=on_tick,
+            )
         except DbFence:
             metric.outcome = "error"
             metric.error_class = "subprocess"
@@ -4195,6 +4259,19 @@ def main() -> int:
     # _state(), which then rejects it as reconcile_required on first start.
     state = _state(load_state())
     interval = max(LOCAL_POLL_MIN_INTERVAL, min(float(args.interval), LOCAL_POLL_MAX_INTERVAL))
+
+    def publish_sync_heartbeat() -> None:
+        """Keep this room's heartbeat fresh while its own bounded work runs.
+
+        One context database means one writer slot, so a room can queue behind
+        another room's indexing for a long time. Publishing the same fenced
+        heartbeat the transient retry path uses proves the watcher is alive
+        without ever claiming readiness: delivery stays off until the sync
+        itself proves authoritative and the next poll re-proves it.
+        """
+        state["heartbeat_at"] = time.time()
+        save_state(state, _require_ready=False)
+
     try:
         target_chat_id = 0
         context_sync_transient_failures = 0
@@ -4205,6 +4282,8 @@ def main() -> int:
                     sync = sync_context_index(
                         target_chat_id,
                         initial=context_sync_transient_failures == 0,
+                        on_wait=publish_sync_heartbeat,
+                        on_tick=publish_sync_heartbeat,
                     )
                     break
                 except (ContextSyncTransient, SqliteBusyTransient, subprocess.TimeoutExpired):
@@ -4267,7 +4346,11 @@ def main() -> int:
             try:
                 if time.monotonic() >= context_sync_next_at:
                     try:
-                        sync = sync_context_index(target_chat_id)
+                        sync = sync_context_index(
+                            target_chat_id,
+                            on_wait=publish_sync_heartbeat,
+                            on_tick=publish_sync_heartbeat,
+                        )
                     except (ContextSyncTransient, SqliteBusyTransient, subprocess.TimeoutExpired):
                         context_sync_transient_failures += 1
                         context_sync_now = time.time()
