@@ -322,6 +322,186 @@ class ReferenceStoreTests(unittest.TestCase):
         self.assertIn("[설명자료]", row[1])
         self.assertEqual(kept[0], "keep me")
 
+    @staticmethod
+    def _prompt_store():
+        return load(
+            "auto_reply_operator_prompt_store",
+            ROOT / "scripts" / "auto_reply_operator_prompt_store.py",
+        )
+
+    @staticmethod
+    def _create_prompt_table(connection, *, body_nullable=False, with_builtin=True):
+        body_clause = "body TEXT" + ("" if body_nullable else " NOT NULL")
+        builtin_clause = "builtin INTEGER NOT NULL," if with_builtin else ""
+        connection.execute(
+            "CREATE TABLE context_operator_prompts("
+            " id INTEGER PRIMARY KEY,"
+            " prompt_key TEXT NOT NULL UNIQUE,"
+            " title TEXT NOT NULL,"
+            " kind TEXT NOT NULL,"
+            f" {body_clause},"
+            " sort_order INTEGER NOT NULL,"
+            " enabled INTEGER NOT NULL,"
+            f" {builtin_clause}"
+            " updated_at TEXT NOT NULL,"
+            " source TEXT NOT NULL)"
+        )
+
+    @staticmethod
+    def _insert_prompt(
+        connection,
+        prompt_key,
+        *,
+        body="기존 본문",
+        title="기존 제목",
+        sort_order=0,
+        enabled=1,
+        builtin=1,
+        updated_at="2026-08-21 05:34:11",
+        source="menubar-operator",
+    ):
+        connection.execute(
+            """
+            INSERT INTO context_operator_prompts(
+                prompt_key, title, kind, body, sort_order, enabled, builtin, updated_at, source
+            ) VALUES (?, ?, 'instruction', ?, ?, ?, ?, ?, ?)
+            """,
+            (prompt_key, title, body, sort_order, enabled, builtin, updated_at, source),
+        )
+
+    @staticmethod
+    def _default_item(prompts, key):
+        return next(item for item in prompts.load_prompt_defaults() if item["key"] == key)
+
+    def test_seed_prompt_defaults_refreshes_drifted_builtin_body(self):
+        prompts = self._prompt_store()
+        default = self._default_item(prompts, "instruction.17")
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection)
+        self._insert_prompt(
+            connection,
+            "instruction.17",
+            title="옛 제목",
+            body="If inbound accuses this account of being AI/봇, reply with exactly 어디가 봇 같았음?.",
+            sort_order=17,
+        )
+        row_id = connection.execute("SELECT id FROM context_operator_prompts").fetchone()[0]
+        prompts.seed_prompt_defaults(connection)
+        row = connection.execute(
+            "SELECT id, title, body, sort_order, enabled, builtin, source, updated_at "
+            "FROM context_operator_prompts WHERE prompt_key = ?",
+            ("instruction.17",),
+        ).fetchone()
+        connection.close()
+        self.assertEqual(row[0], row_id)
+        self.assertEqual(row[1], default["title"])
+        self.assertNotIn("봇 같았음?", row[2])
+        self.assertEqual(row[2], default["body"])
+        self.assertEqual(row[3], 17)
+        self.assertEqual(row[4], 1)
+        self.assertEqual(row[5], 1)
+        self.assertEqual(row[6], "menubar-operator")
+        self.assertNotEqual(row[7], "2026-08-21 05:34:11")
+
+    def test_seed_prompt_defaults_leaves_custom_rows_untouched(self):
+        prompts = self._prompt_store()
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection)
+        self._insert_prompt(
+            connection,
+            "custom.style_tell_avoid",
+            body="운영자가 직접 쓴 본문",
+            sort_order=45,
+            builtin=0,
+        )
+        # A custom row that reuses a builtin key must stay untouched as well.
+        self._insert_prompt(
+            connection,
+            "instruction.12",
+            body="내장 키를 쓰는 사용자 정의 본문",
+            sort_order=99,
+            builtin=0,
+        )
+        query = (
+            "SELECT id, prompt_key, title, body, sort_order, enabled, builtin, updated_at, source "
+            "FROM context_operator_prompts WHERE builtin = 0 ORDER BY id"
+        )
+        before = connection.execute(query).fetchall()
+        prompts.seed_prompt_defaults(connection)
+        after = connection.execute(query).fetchall()
+        connection.close()
+        self.assertEqual(len(before), 2)
+        self.assertEqual(after, before)
+
+    def test_seed_prompt_defaults_preserves_disabled_builtin_row(self):
+        prompts = self._prompt_store()
+        default = self._default_item(prompts, "instruction.27")
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection)
+        self._insert_prompt(
+            connection,
+            "instruction.27",
+            body="Keep the reply under 137 characters.",
+            sort_order=27,
+            enabled=0,
+        )
+        prompts.seed_prompt_defaults(connection)
+        row = connection.execute(
+            "SELECT body, enabled, sort_order, builtin, source FROM context_operator_prompts "
+            "WHERE prompt_key = ?",
+            ("instruction.27",),
+        ).fetchone()
+        connection.close()
+        self.assertEqual(row[0], default["body"])
+        self.assertEqual(row[1], 0)
+        self.assertEqual(row[2], 27)
+        self.assertEqual(row[3], 1)
+        self.assertEqual(row[4], "menubar-operator")
+
+    def test_seed_prompt_defaults_refresh_is_idempotent(self):
+        prompts = self._prompt_store()
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection)
+        self._insert_prompt(connection, "instruction.17", body="예전 문구", sort_order=17)
+        first_added = prompts.seed_prompt_defaults(connection)
+        snapshot = connection.execute(
+            "SELECT * FROM context_operator_prompts ORDER BY id"
+        ).fetchall()
+        second_added = prompts.seed_prompt_defaults(connection)
+        after = connection.execute(
+            "SELECT * FROM context_operator_prompts ORDER BY id"
+        ).fetchall()
+        connection.close()
+        self.assertGreaterEqual(first_added, 1)
+        self.assertEqual(second_added, 0)
+        self.assertEqual(after, snapshot)
+
+    def test_refresh_builtin_prompt_bodies_tolerates_odd_tables(self):
+        prompts = self._prompt_store()
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection, with_builtin=False)
+        connection.execute(
+            "INSERT INTO context_operator_prompts("
+            "prompt_key, title, kind, body, sort_order, enabled, updated_at, source"
+            ") VALUES ('instruction.17', '봇 의심 대응', 'instruction', '예전 문구', 17, 1,"
+            " '2026-08-21 05:34:11', 'menubar-operator')"
+        )
+        self.assertEqual(prompts.refresh_builtin_prompt_bodies(connection), 0)
+        self.assertEqual(
+            connection.execute("SELECT body FROM context_operator_prompts").fetchone()[0],
+            "예전 문구",
+        )
+        connection.close()
+
+        connection = sqlite3.connect(":memory:")
+        self._create_prompt_table(connection, body_nullable=True)
+        self._insert_prompt(connection, "instruction.17", body=None, sort_order=17)
+        self.assertEqual(prompts.refresh_builtin_prompt_bodies(connection), 0)
+        self.assertIsNone(
+            connection.execute("SELECT body FROM context_operator_prompts").fetchone()[0]
+        )
+        connection.close()
+
     def test_menubar_lists_reference_source_and_swift_exposes_menu(self):
         source = SWIFT.read_text(encoding="utf-8")
         # 지식 그래프 창 하나로 합쳐지면서 제목이 바뀌었다 (2026-09-17).

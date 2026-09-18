@@ -94,6 +94,66 @@ def ensure_prompt_table(connection: sqlite3.Connection) -> None:
     )
 
 
+def refresh_builtin_prompt_bodies(
+    connection: sqlite3.Connection,
+    defaults: list[dict[str, str]] | None = None,
+    *,
+    now: str = "",
+) -> int:
+    """Align builtin rows whose body drifted from the shipped defaults.
+
+    Builtin rows are code-owned safety lines, so a changed default body has to
+    reach the live prompt instead of staying shadowed by the row seeded on
+    2026-08-21. Only the text is refreshed: id, sort_order, enabled, source and
+    the builtin flag stay as they are, and custom rows (builtin = 0) are never
+    touched. Rows the table cannot describe (missing column, NULL or non-text
+    body) are skipped instead of raising.
+    """
+    items = load_prompt_defaults() if defaults is None else defaults
+    by_key = {item["key"]: item for item in items if item.get("key")}
+    if not by_key:
+        return 0
+    try:
+        cursor = connection.execute("SELECT * FROM " + PROMPT_TABLE)
+        rows = cursor.fetchall()
+    except sqlite3.Error:
+        return 0
+    columns = [str(column[0]) for column in (cursor.description or ())]
+    try:
+        id_at = columns.index("id")
+        key_at = columns.index("prompt_key")
+        body_at = columns.index("body")
+        builtin_at = columns.index("builtin")
+    except ValueError:
+        return 0
+    stamp = now or time.strftime("%Y-%m-%d %H:%M:%S")
+    refreshed = 0
+    for row in rows:
+        row_id, row_key, row_body, row_builtin = (
+            row[id_at],
+            row[key_at],
+            row[body_at],
+            row[builtin_at],
+        )
+        if not isinstance(row_id, int) or not isinstance(row_key, str):
+            continue
+        if not isinstance(row_builtin, int) or row_builtin != 1:
+            continue
+        if not isinstance(row_body, str):
+            continue
+        item = by_key.get(row_key)
+        if item is None or row_body.strip() == item["body"].strip():
+            continue
+        connection.execute(
+            "UPDATE "
+            + PROMPT_TABLE
+            + " SET title = ?, body = ?, updated_at = ? WHERE id = ?",
+            (item["title"][:80], item["body"], stamp, row_id),
+        )
+        refreshed += 1
+    return refreshed
+
+
 def seed_prompt_defaults(connection: sqlite3.Connection, *, force: bool = False) -> int:
     ensure_prompt_table(connection)
     defaults = load_prompt_defaults()
@@ -122,6 +182,10 @@ def seed_prompt_defaults(connection: sqlite3.Connection, *, force: bool = False)
                 ),
             )
             added += int(inserted.rowcount or 0)
+        # The seed never replaced an existing body (INSERT OR IGNORE), so a
+        # changed default used to stay shadowed by the row written on the first
+        # seed. Refresh builtin rows here; custom rows keep their own text.
+        refresh_builtin_prompt_bodies(connection, defaults, now=now)
         return added
     if force:
         connection.execute("DELETE FROM " + PROMPT_TABLE + " WHERE builtin = 1")
