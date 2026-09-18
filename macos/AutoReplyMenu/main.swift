@@ -3681,6 +3681,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var roomsWindow: NSWindow?
     var roomsTable: NSTableView?
     var roomsFilterField: NSTextField?
+    var roomsTableScroll: NSScrollView?
+    var roomsStack: NSStackView?
+    /// 사용자가 직접 크기를 바꾼 창은 자동으로 줄이지 않는다.
+    var roomsWindowUserResized = false
+    var roomsFitting = false
     var displayedChats: [AvailableChat] = []
     var allChats: [AvailableChat] = []
     var jobsWindow: NSWindow?
@@ -6468,6 +6473,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorWindowUserResized = true
         } else if window === jobsWindow {
             jobsWindowUserResized = true
+        } else if window === roomsWindow {
+            roomsWindowUserResized = true
         }
     }
 
@@ -7443,6 +7450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         table.dataSource = self
         table.target = self
         table.action = #selector(roomsTableClicked(_:))
+        roomsTableScroll = scroll
         for spec in [
             ("title", "제목", 280.0),
             ("members", "인원", 52.0),
@@ -7471,6 +7479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let headerCard = Chrome.card(headerContent, padding: 12)
 
         let stack = Chrome.vstack([headerCard, scroll], spacing: 10)
+        roomsStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
             headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -7483,6 +7492,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ])
         window.initialFirstResponder = filter
         roomsWindow = window
+    }
+
+    /// 저장된 큰 창 크기가 표의 빈 영역으로 흘러 들어가지 않게, 머리말과
+    /// 표의 실제 최소 높이에 맞춘다. 사용자가 직접 늘린 뒤에는 그대로 둔다.
+    func fitRoomsWindow() {
+        guard !roomsFitting,
+              !roomsWindowUserResized,
+              let window = roomsWindow,
+              let stack = roomsStack,
+              let scroll = roomsTableScroll,
+              let content = window.contentView else { return }
+        roomsFitting = true
+        defer { roomsFitting = false }
+        for _ in 0..<3 {
+            content.layoutSubtreeIfNeeded()
+            stack.layoutSubtreeIfNeeded()
+            let needed = stack.fittingSize.height
+            guard needed > 1 else { return }
+            // 스크롤 뷰는 창의 남는 높이를 전부 먹는다. 그 늘어난 부분을
+            // fittingSize에서 빼야 오토세이브된 큰 프레임을 다시 목표 높이로
+            // 쓰지 않는다.
+            let tableExcess = max(0, scroll.bounds.height - 300)
+            let desired = needed - tableExcess + 32
+            let current = content.bounds.height
+            guard abs(current - desired) > 12 else { return }
+            var frame = window.frame
+            let delta = current - desired
+            if delta > 0 {
+                frame.size.height -= delta
+                frame.origin.y += delta
+            } else {
+                let grown = min(-delta, frame.origin.y)
+                guard grown > 0 else { return }
+                frame.size.height += grown
+                frame.origin.y -= grown
+            }
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
+        }
     }
 
 
@@ -7534,6 +7582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             restoreRoomsSelection()
         }
+        fitRoomsWindow()
     }
 
     func reusedLabel(
@@ -8426,6 +8475,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let content = window.contentView else { return }
         vectorFitting = true
         defer { vectorFitting = false }
+        // 오래된 autosave 값이 현재 최소 크기보다 작을 수도 있다. 그 상태로
+        // 높이만 맞추면 편집 폼의 고정 폭 필드가 눌려 이름·시각·주제 라벨이
+        // 사라진다. 자동 맞춤을 하는 동안에는 선언한 최소 프레임을 지킨다.
+        if window.frame.width < window.minSize.width {
+            var frame = window.frame
+            frame.size.width = window.minSize.width
+            window.setFrame(frame, display: false, animate: false)
+            content.layoutSubtreeIfNeeded()
+        }
+        let minimumContentHeight = window.contentRect(
+            forFrameRect: NSRect(origin: .zero, size: window.minSize)
+        ).height
         // 배치가 한 번에 수렴하지 않는다. 줄인 뒤 다시 재서 맞춘다.
         for _ in 0..<3 {
             content.layoutSubtreeIfNeeded()
@@ -8438,11 +8499,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 다만 실제로 그릴 뉴런이 있을 때만 그렇다. 보기만 지식
             // 그래프이고 그릴 것이 없으면, 이 높이가 그대로 남아 빈 상태
             // 판이 704pt짜리 빈 카드가 되었다 (2026-09-16).
-            let graphCanvas = max(content.bounds.width - 40, Self.vectorWindowFloor.height)
             let showsGraph = currentVectorSource() == "knowledge_graph"
                 && !(vectorGraphView?.nodes.isEmpty ?? true)
+            var compactNeeded = needed
+            if showsGraph, let graph = vectorGraphView {
+                // 그래프는 남는 높이를 전부 먹는 뷰라, 복원된 큰 프레임에서
+                // fittingSize를 재면 그 높이가 다시 목표값이 된다. 그래프의
+                // 제약상 최소 높이인 260pt를 넘는 부분만 빼고, 아래에서 창의
+                // 실제 최소 높이를 다시 보장한다. 편집 카드가 열려 있으면 그
+                // 카드의 fittingSize는 그대로 남으므로 함께 들어간다.
+                compactNeeded -= max(0, graph.bounds.height - 260)
+            } else if let scroll = vectorTableScroll, !scroll.isHidden {
+                compactNeeded -= max(0, scroll.bounds.height - 240)
+            } else if let empty = vectorEmptyState, !empty.isHidden {
+                compactNeeded -= max(0, empty.bounds.height - 240)
+            }
             let desired = min(
-                max(needed, showsGraph ? graphCanvas : 0) + 32,
+                max(compactNeeded + 32, minimumContentHeight),
                 Self.vectorWindowHeightLimit
             )
             let current = content.bounds.height
