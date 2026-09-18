@@ -8,12 +8,16 @@ catalog mutate and browser OAuth onto that surface.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
+import io
 import json
+import math
 import marshal
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -2285,6 +2289,393 @@ def _install_receipt_snapshot_hook() -> None:
 _install_receipt_snapshot_hook()
 
 
+# ---------------------------------------------------------------------------
+# 백그라운드 작업 표시
+#
+# 메인 화면의 자비스 코어는 답변 생성만 보고 있었다. 사용자가 실제로 기다리는
+# 일은 긱뉴스 전송과 카카오톡 DB 동기화라서 그 둘도 같은 코어가 반응해야 한다.
+# 어떤 상태를 몇 세기로 볼지는 여기서 정하고, 화면은 받은 숫자를 그리기만
+# 한다(2026-09-19).
+BACKGROUND_STATE_LIMIT_BYTES = 262_144
+BACKGROUND_SYNC_FRESH_SECONDS = 12.0
+BACKGROUND_HEARTBEAT_FRESH_SECONDS = 90.0
+GEEKNEWS_CONFIRMED_FRESH_SECONDS = 20.0
+BACKGROUND_ROOM_ACTIVE_STATUSES = (
+    "pending",
+    "processing",
+    "scheduled",
+    "sending",
+    "projection_pending",
+)
+BACKGROUND_CAPTIONS = {
+    "geeknews": {
+        "sending": "긱뉴스 전송 중",
+        "confirmed": "긱뉴스 전송 확인",
+    },
+    "db_sync": {
+        "syncing": "DB 동기화 중",
+        "behind": "DB 동기화 따라잡는 중",
+        "retrying": "DB 동기화 재시도",
+    },
+}
+
+
+def _bounded_epoch(value: Any) -> float | None:
+    """쓸 만한 유닉스 시각만 돌려준다. 아니면 None.
+
+    이 상태 파일들에서 0이나 음수는 "없음"이고, NaN이나 무한대는 아래 모든
+    나이 계산을 오염시킨다.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+def _read_background_state(path: Path) -> dict:
+    """작은 상태 파일 하나를 읽는다. 없거나 크거나 깨졌으면 {}."""
+
+    try:
+        if path.stat().st_size > BACKGROUND_STATE_LIMIT_BYTES:
+            return {}
+        raw = path.read_bytes()
+    except OSError:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _queue_has_active_geeknews_job(queue_path: Path) -> bool:
+    """지금 긱뉴스 작업이 큐에 있거나 나가는 중인가."""
+
+    placeholders = ",".join("?" for _ in BACKGROUND_ROOM_ACTIVE_STATUSES)
+    query = (
+        "SELECT 1 FROM reply_jobs WHERE reason=? AND status IN ("
+        + placeholders
+        + ") LIMIT 1"
+    )
+    try:
+        connection = sqlite3.connect(
+            "file:" + str(queue_path) + "?mode=ro", uri=True, timeout=1.0
+        )
+    except (sqlite3.Error, ValueError):
+        return False
+    try:
+        connection.execute("PRAGMA busy_timeout=250")
+        row = connection.execute(
+            query, ("geeknews_rss", *BACKGROUND_ROOM_ACTIVE_STATUSES)
+        ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return False
+    finally:
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+
+
+def _empty_background_source(kind: str) -> dict[str, Any]:
+    """방 디렉터리를 못 볼 때 쓰는 값. 모르는 것과 멈춘 것을 섞지 않는다."""
+
+    source: dict[str, Any] = {
+        "state": "unknown",
+        "activity": 0.0,
+        "age_seconds": None,
+        "caption": "",
+    }
+    if kind == "geeknews":
+        source["posted_slots"] = 0
+    else:
+        source["capability_state"] = ""
+        source["fence_reason"] = ""
+    return source
+
+
+def _background_rank(source: dict) -> tuple[float, int]:
+    """전체 값으로 접을 때 어느 방을 남길지 정하는 순서.
+
+    세기가 큰 쪽이 먼저고, 같으면 "모름"이 아닌 쪽을 남긴다. 모든 방이
+    멈춰 있으면 마지막 방의 "멈춤"이 남아야 하고, 모든 방이 조용하면
+    "모름"이 아니라 "조용함"이 남아야 한다(2026-09-19).
+    """
+
+    activity = source.get("activity")
+    if isinstance(activity, bool) or not isinstance(activity, (int, float)):
+        activity = 0.0
+    known = 0 if str(source.get("state") or "") == "unknown" else 1
+    return (float(activity), known)
+
+
+def _room_geeknews_background(room_dir: Path, now: float) -> dict[str, Any]:
+    """긱뉴스 전송이 지금 도는지, 방금 확인됐는지."""
+
+    cursor = _read_background_state(room_dir / "geeknews-rss-cursor.json")
+    posted = [
+        str(item)
+        for item in (cursor.get("posted_slots") or [])
+        if isinstance(item, str) and item
+    ]
+    updated_at = _bounded_epoch(cursor.get("updated_at"))
+    age = None if updated_at is None else max(0.0, now - updated_at)
+    if _queue_has_active_geeknews_job(room_dir / "reply-queue.sqlite3"):
+        state, activity = "sending", 0.9
+    elif age is not None and age <= GEEKNEWS_CONFIRMED_FRESH_SECONDS and posted:
+        state, activity = "confirmed", 0.8
+    else:
+        state, activity = "idle", 0.0
+    return {
+        "state": state,
+        "activity": activity,
+        "age_seconds": None if age is None else round(age, 3),
+        "posted_slots": len(posted),
+        "caption": BACKGROUND_CAPTIONS["geeknews"].get(state, ""),
+    }
+
+
+def _room_db_sync_background(room_dir: Path, now: float) -> dict[str, Any]:
+    """카카오톡 DB 동기화가 도는지, 뒤처졌는지, 멈췄는지."""
+
+    state = _read_background_state(room_dir / "db-watch-state.json")
+    capability = str(state.get("capability_state") or "").strip()[:32]
+    fence_reason = str(state.get("fence_reason") or "").strip()[:64]
+    synced_at = _bounded_epoch(state.get("context_sync_at"))
+    due_at = _bounded_epoch(state.get("context_sync_retry_at"))
+    heartbeat = _bounded_epoch(state.get("heartbeat_at"))
+    age = None if synced_at is None else max(0.0, now - synced_at)
+    live = (
+        heartbeat is not None
+        and now - heartbeat <= BACKGROUND_HEARTBEAT_FRESH_SECONDS
+    )
+    if capability and capability != "ready" and live:
+        # 다시 붙는 중이다. 아직 살아 있는 감시자가 도는 중이라는 뜻이다.
+        code, activity = "retrying", 0.3
+    elif capability and capability != "ready":
+        # 심장이 멈춘 방은 "도는 중"이 아니다. 코어를 계속 빠르게 두면
+        # 화면이 거짓말을 한다.
+        code, activity = "stalled", 0.0
+    elif age is not None and age <= BACKGROUND_SYNC_FRESH_SECONDS:
+        code, activity = "syncing", 0.6
+    elif due_at is not None and now - due_at > BACKGROUND_SYNC_FRESH_SECONDS:
+        code, activity = "behind", 0.5
+    else:
+        code, activity = "ready", 0.0
+    return {
+        "state": code,
+        "activity": activity,
+        "age_seconds": None if age is None else round(age, 3),
+        "capability_state": capability,
+        "fence_reason": fence_reason,
+        "caption": BACKGROUND_CAPTIONS["db_sync"].get(code, ""),
+    }
+
+
+def _background_sources(room_dir: Path | None, now: float) -> dict[str, Any]:
+    """한 방의 두 백그라운드 작업을 한 덩어리로 접는다."""
+
+    if room_dir is None or not room_dir.is_dir():
+        geeknews = _empty_background_source("geeknews")
+        db_sync = _empty_background_source("db_sync")
+    else:
+        geeknews = _room_geeknews_background(room_dir, now)
+        db_sync = _room_db_sync_background(room_dir, now)
+    return {
+        "activity": max(geeknews["activity"], db_sync["activity"]),
+        "caption": geeknews["caption"] or db_sync["caption"],
+        "geeknews": geeknews,
+        "db_sync": db_sync,
+    }
+
+
+def _attach_background_state(
+    snap: Any, state_root: Any, *, now: float | None = None
+) -> Any:
+    """스냅샷에 긱뉴스·DB 동기화 상태를 붙인다.
+
+    메인 화면 코어가 진짜 백그라운드 작업에 반응하려면, 메뉴가 이미 하는
+    조회에서 그 작업을 함께 알아야 한다. 모르는 호출자는 새 키를 무시한다
+    (2026-09-19).
+    """
+
+    if not isinstance(snap, dict) or "background" in snap:
+        return snap
+    root = _resolve_background_state_root(state_root)
+    if root is None:
+        return snap
+    try:
+        stamp = time.time() if now is None else float(now)
+    except (TypeError, ValueError):
+        stamp = time.time()
+    if not math.isfinite(stamp):
+        stamp = time.time()
+    rooms_root = root / "rooms"
+    entries: list[dict[str, Any]] = []
+    for room in snap.get("rooms") or []:
+        if not isinstance(room, dict):
+            continue
+        chat_id = room.get("chat_id")
+        if isinstance(chat_id, bool) or not isinstance(chat_id, int):
+            continue
+        entries.append(
+            {
+                "chat_id": chat_id,
+                **_background_sources(rooms_root / str(chat_id), stamp),
+            }
+        )
+    geeknews = _empty_background_source("geeknews")
+    db_sync = _empty_background_source("db_sync")
+    activity = 0.0
+    caption = ""
+    for entry in entries:
+        for kind, target in (("geeknews", geeknews), ("db_sync", db_sync)):
+            source = entry[kind]
+            if _background_rank(source) > _background_rank(target):
+                target.clear()
+                target.update(source)
+        if entry["activity"] > activity:
+            activity = entry["activity"]
+            caption = entry["caption"]
+    snap = dict(snap)
+    snap["background"] = {
+        "schema_version": 1,
+        "activity": activity,
+        "caption": caption,
+        "geeknews": geeknews,
+        "db_sync": db_sync,
+        "rooms": entries,
+    }
+    return snap
+
+
+def _patch_overlay_background(namespace: Any) -> bool:
+    """Wrap every snapshot builder the overlay namespace exposes."""
+
+    if not isinstance(namespace, dict):
+        return False
+    installed = False
+    for attr in _SNAPSHOT_ATTRS:
+        installed = (
+            _wrap_snapshot_owner(
+                namespace,
+                attr,
+                flag="_openkakao_background",
+                attach=_attach_background_state,
+            )
+            or installed
+        )
+    return installed
+
+
+def _install_background_snapshot_hook() -> None:
+    """Put background on every snapshot surface, after the other hooks."""
+
+    ensure = globals().get("_ensure_overlay")
+    if callable(ensure) and not getattr(ensure, "_openkakao_background_hook", False):
+
+        def _ensure_overlay_with_background(*args, **kwargs):
+            namespace = ensure(*args, **kwargs)
+            try:
+                _patch_overlay_background(namespace)
+            except Exception:
+                pass
+            return namespace
+
+        _ensure_overlay_with_background._openkakao_background_hook = True
+        globals()["_ensure_overlay"] = _ensure_overlay_with_background
+        return
+    for name in ("collect_menubar_model", "collect_snapshot"):
+        fn = globals().get(name)
+        owner = getattr(fn, "__globals__", None)
+        if _patch_overlay_background(owner):
+            return
+
+
+_install_background_snapshot_hook()
+
+
+def _resolve_background_state_root(state_root: Any) -> Path | None:
+    """백그라운드 상태를 읽을 루트를 고른다.
+
+    호출자가 준 값이 먼저고, 없으면 이 프로세스의 --state-root, 그다음 이
+    프로세스가 이미 쓰고 있는 루트를 본다. 캐시된 스냅샷 경로는 인자 없이
+    불리므로 마지막 두 단계가 필요하다(2026-09-19).
+    """
+
+    candidates = (
+        state_root,
+        _argv_flag_value("--state-root"),
+        globals().get("_ACTIVE_STATE_ROOT"),
+    )
+    for candidate in candidates:
+        if candidate is None or candidate == "":
+            continue
+        try:
+            return Path(candidate).expanduser()
+        except (TypeError, ValueError):
+            continue
+    default = globals().get("_DEFAULT_STATE_ROOT")
+    return default if isinstance(default, Path) else None
+
+
+_orig_snapshot_with_vector_status = globals().get("_snapshot_with_vector_status")
+
+
+def _install_background_cache_hook() -> None:
+    """캐시를 지나온 스냅샷에도 백그라운드 상태를 붙인다.
+
+    스냅샷은 상태 파일 지문으로 디스크에 캐시된다. 캐시가 맞으면 오버레이를
+    아예 다시 부르지 않아서, 오버레이 훅만으로는 이 경로가 비어 있었다.
+    백그라운드 작업의 나이는 매번 달라지므로 캐시 안에 넣으면 화면이 멈춘
+    것처럼 보인다. 그래서 캐시가 돌려준 값 위에 매번 새로 계산해 얹는다
+    (2026-09-19).
+    """
+
+    original = _orig_snapshot_with_vector_status
+    if not callable(original) or getattr(original, "_openkakao_background", False):
+        return
+
+    def _snapshot_with_background(vector_db, **kwargs):
+        root = _resolve_background_state_root(kwargs.get("state_root"))
+        # 캐시가 맞으면 이 함수는 스냅샷을 스스로 인쇄하고 0을 돌려준다.
+        # 그 인쇄를 잠시 붙잡아 두었다가 백그라운드 상태를 얹어 다시 낸다.
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            result = original(vector_db, **kwargs)
+        text = buffer.getvalue()
+        if isinstance(result, dict):
+            return _attach_background_state(result, root)
+        if not text:
+            return result
+        try:
+            payload = json.loads(text)
+        except (ValueError, UnicodeError):
+            sys.stdout.write(text)
+            return result
+        if not isinstance(payload, dict):
+            sys.stdout.write(text)
+            return result
+        print(
+            json.dumps(
+                _attach_background_state(payload, root),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return result
+
+    _snapshot_with_background._openkakao_background = True
+    globals()["_snapshot_with_vector_status"] = _snapshot_with_background
+
+
+_install_background_cache_hook()
+
+
 def _enrollment_room_ids(state_root: Path) -> set[int] | None:
     """Room ids this host is actually serving, from its enrollment file."""
 
@@ -2497,6 +2888,10 @@ def _scope_menubar_rooms_to_enrollment() -> None:
             state_root = args[0] if args else kwargs.get("state_root")
             if state_root is None:
                 return snap
+            # 코어 애니메이션이 반응할 긱뉴스·DB 동기화 상태. 오버레이 훅이
+            # 이미 붙였으면 그대로 두고, 이 경로만 도는 배치에서도 빠지지
+            # 않게 여기서도 붙인다(2026-09-19).
+            snap = _attach_background_state(snap, state_root)
             try:
                 models = collect_reply_models(Path(state_root))
             except Exception:

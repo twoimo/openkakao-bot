@@ -3570,6 +3570,250 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertEqual(payload["grounded_nodes"], 0)
 
 
+    def _background_room(self, root: Path, chat_id: int = 42) -> Path:
+        """A state root with one room directory the hooks can read."""
+
+        room = root / "rooms" / str(chat_id)
+        room.mkdir(parents=True, exist_ok=True)
+        return room
+
+    def _background_snap(self, root: Path, chat_id: int = 42) -> dict:
+        return {"rooms": [{"chat_id": chat_id, "selector": f"id:{chat_id}"}]}
+
+    def _write_background_json(self, path: Path, payload) -> None:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _background_queue(self, room: Path, statuses: tuple[str, ...]) -> None:
+        connection = sqlite3.connect(room / "reply-queue.sqlite3")
+        try:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS reply_jobs(event_id TEXT PRIMARY KEY,"
+                " reason TEXT, status TEXT)"
+            )
+            connection.execute("DELETE FROM reply_jobs")
+            for index, status in enumerate(statuses):
+                connection.execute(
+                    "INSERT INTO reply_jobs(event_id, reason, status)"
+                    " VALUES(?,?,?)",
+                    (f"event_{index}", "geeknews_rss", status),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_background_state_reports_a_fresh_db_sync(self):
+        """A sync that just finished has to move the core, and say so."""
+
+        module = load(f"auto_reply_menubar_bg_sync_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            self._write_background_json(
+                room / "db-watch-state.json",
+                {
+                    "capability_state": "ready",
+                    "fence_reason": "",
+                    "context_sync_at": now - 3.0,
+                    "context_sync_retry_at": now + 57.0,
+                    "heartbeat_at": now - 1.0,
+                },
+            )
+            self._write_background_json(
+                room / "geeknews-rss-cursor.json",
+                {"posted_slots": ["2026-05-18:morning"], "updated_at": now - 3600},
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            background = snap["background"]
+            self.assertEqual(background["db_sync"]["state"], "syncing")
+            self.assertEqual(background["activity"], 0.6)
+            self.assertEqual(background["caption"], "DB 동기화 중")
+            self.assertEqual(background["geeknews"]["state"], "idle")
+            self.assertEqual(background["rooms"][0]["chat_id"], 42)
+            self.assertEqual(background["schema_version"], 1)
+
+    def test_background_state_separates_a_retrying_room_from_a_dead_one(self):
+        """A fenced room is only "working" while its heartbeat is alive."""
+
+        module = load(f"auto_reply_menubar_bg_fence_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            self._write_background_json(
+                room / "db-watch-state.json",
+                {
+                    "capability_state": "starting",
+                    "fence_reason": "context_sync_transient",
+                    "heartbeat_at": now - 5.0,
+                },
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["db_sync"]["state"], "retrying")
+            self.assertEqual(snap["background"]["activity"], 0.3)
+
+            self._write_background_json(
+                room / "db-watch-state.json",
+                {
+                    "capability_state": "starting",
+                    "fence_reason": "context_sync_transient",
+                    "heartbeat_at": now - 3600.0,
+                },
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            # 심장이 멈춘 방을 "도는 중"으로 세면 코어가 계속 빨라진다.
+            self.assertEqual(snap["background"]["db_sync"]["state"], "stalled")
+            self.assertEqual(snap["background"]["activity"], 0.0)
+            self.assertEqual(snap["background"]["caption"], "")
+
+    def test_background_state_confirms_a_recent_geeknews_send(self):
+        """The cursor only counts as a send when a slot was actually posted."""
+
+        module = load(f"auto_reply_menubar_bg_geek_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            cursor = room / "geeknews-rss-cursor.json"
+            self._write_background_json(
+                cursor,
+                {"posted_slots": ["2026-05-18:morning"], "updated_at": now - 5.0},
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["geeknews"]["state"], "confirmed")
+            self.assertEqual(snap["background"]["activity"], 0.8)
+            self.assertEqual(snap["background"]["caption"], "긱뉴스 전송 확인")
+
+            # 새 항목만 훑고 아직 보낸 슬롯이 없으면 전송이 아니다.
+            self._write_background_json(
+                cursor, {"posted_slots": [], "updated_at": now - 5.0}
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["geeknews"]["state"], "idle")
+            self.assertEqual(snap["background"]["activity"], 0.0)
+
+    def test_background_state_sees_a_geeknews_job_in_the_queue(self):
+        """A job that is queued or going out is the strongest signal."""
+
+        module = load(f"auto_reply_menubar_bg_queue_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            self._background_queue(room, ("sent", "sending"))
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["geeknews"]["state"], "sending")
+            self.assertEqual(snap["background"]["activity"], 0.9)
+            self.assertEqual(snap["background"]["caption"], "긱뉴스 전송 중")
+
+            self._background_queue(room, ("sent", "skipped"))
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["geeknews"]["state"], "idle")
+
+    def test_background_state_survives_broken_and_missing_inputs(self):
+        """Every failure has to read as "모름", never as activity or an error."""
+
+        module = load(f"auto_reply_menubar_bg_broken_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            (room / "db-watch-state.json").write_text("{", encoding="utf-8")
+            self._write_background_json(
+                room / "geeknews-rss-cursor.json", ["not", "a", "mapping"]
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(snap["background"]["db_sync"]["state"], "ready")
+            self.assertEqual(snap["background"]["geeknews"]["state"], "idle")
+            self.assertEqual(snap["background"]["activity"], 0.0)
+
+            # 방 디렉터리가 없어도, 스냅샷이 dict가 아니어도 같은 조회가
+            # 죽으면 안 된다.
+            missing = module._attach_background_state(
+                self._background_snap(root, chat_id=7), root, now=now
+            )
+            self.assertEqual(missing["background"]["db_sync"]["state"], "unknown")
+            self.assertEqual(missing["background"]["geeknews"]["state"], "unknown")
+            self.assertIs(module._attach_background_state(None, root), None)
+
+            # 두 번 붙여도 값이 겹쳐 덮이지 않는다.
+            again = module._attach_background_state(snap, root, now=now)
+            self.assertIs(again, snap)
+
+    def test_background_state_ignores_a_nonsense_clock(self):
+        """A NaN or an infinity must not turn into activity."""
+
+        module = load(f"auto_reply_menubar_bg_clock_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            self._write_background_json(
+                room / "db-watch-state.json",
+                {
+                    "capability_state": "ready",
+                    "context_sync_at": float("nan"),
+                    "context_sync_retry_at": float("inf"),
+                    "heartbeat_at": -1,
+                },
+            )
+            snap = module._attach_background_state(
+                self._background_snap(root), root, now=2_000_000_000.0
+            )
+            self.assertEqual(snap["background"]["db_sync"]["state"], "ready")
+            self.assertEqual(snap["background"]["activity"], 0.0)
+
+    def test_the_cached_snapshot_path_still_carries_the_background_state(self):
+        """A cache hit prints the snapshot itself, so the hook has to wrap it."""
+
+        module = load(f"auto_reply_menubar_bg_cache_{id(self)}")
+        self.assertTrue(
+            getattr(module._snapshot_with_vector_status, "_openkakao_background", False)
+        )
+        source = MENUBAR.read_text(encoding="utf-8")
+        self.assertIn("_install_background_cache_hook", source)
+        # 백그라운드 나이는 매번 달라진다. 캐시 안에 넣으면 화면이 멈춘다.
+        self.assertIn("redirect_stdout", source)
+        capture_at = source.find("_orig_snapshot_with_vector_status = globals().get(")
+        hook_at = source.find("_install_background_cache_hook()")
+        self.assertGreater(capture_at, 0)
+        self.assertGreater(hook_at, capture_at)
+
+    def test_swift_panel_feeds_background_work_into_the_core(self):
+        """The panel has to pass the core's background value into the core."""
+
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("background: Double = 0", source)
+        self.assertIn("background: String? = nil", source)
+        self.assertIn("JarvisCoreView.background(model, chatId:", source)
+        self.assertIn("background: background.activity", source)
+        self.assertIn("background: background.caption", source)
+        self.assertIn("let background: BackgroundActivity?", source)
+        # 파이프라인 단계가 살아 있으면 그 설명이 먼저고, 백그라운드 한 줄은
+        # 그다음이다. 순서가 뒤집히면 답변 생성 중에 화면이 동기화만 말한다.
+        active_at = source.find('stages.first(where: { $0.state == "active" })')
+        background_at = source.find("if let text = background, !text.isEmpty {")
+        open_jobs_at = source.find("if openJobs > 0 {", background_at)
+        self.assertGreater(active_at, 0)
+        self.assertGreater(background_at, active_at)
+        self.assertGreater(open_jobs_at, background_at)
+
+
 def load_layout_check():
     spec = importlib.util.spec_from_file_location(
         "check_menubar_layout", SCRIPTS / "check-menubar-layout.py"

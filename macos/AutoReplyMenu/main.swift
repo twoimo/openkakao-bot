@@ -341,6 +341,23 @@ struct MenubarModel: Decodable {
     // 답변 기록 창: 코어(CLI)가 만든 턴 기록. 훅이 없는 구버전 스냅샷에는 없다.
     let reply_receipts: ReplyReceipts?
     let ondevice_hardware: OnDeviceHardware?
+    // 답변 생성 말고도 도는 백그라운드 작업(긱뉴스 전송, DB 동기화). 코어가
+    // 계산한 세기와 한 줄 설명만 들어 있다. 구버전 스냅샷에는 없다.
+    let background: BackgroundActivity?
+}
+
+/// 코어(파이썬)가 접어 보낸 백그라운드 작업. 화면은 숫자를 그리기만 한다.
+struct BackgroundActivity: Decodable {
+    let activity: Double?
+    let caption: String?
+    let rooms: [BackgroundRoom]?
+}
+
+/// 방 하나의 백그라운드 세기. 방을 고르면 이 값이 전체 값 대신 쓰인다.
+struct BackgroundRoom: Decodable {
+    let chat_id: Int?
+    let activity: Double?
+    let caption: String?
 }
 
 /// 모델 설정 창의 폴백 섹션이 그대로 그리는 값. 판단은 코어(파이썬)가 한다.
@@ -2746,7 +2763,8 @@ final class JarvisCoreView: NSView {
     static func activity(
         pipeline: PipelineModel?,
         openJobs: Int,
-        level: String
+        level: String,
+        background: Double = 0
     ) -> Double {
         var value = 0.0
         for stage in pipeline?.stages ?? [] {
@@ -2762,7 +2780,28 @@ final class JarvisCoreView: NSView {
         case "yellow": value = max(value, 0.25)
         default: break
         }
+        // 긱뉴스 전송과 DB 동기화는 답변 파이프라인 밖에서 돈다. 코어가 접어
+        // 보낸 세기를 그대로 얹어, 그 작업에도 같은 코어가 반응한다.
+        value = max(value, min(max(background, 0), 1))
         return value
+    }
+
+    /// 고른 방의 백그라운드 세기와 한 줄 설명.
+    ///
+    /// 방을 고르면 그 방의 값만 본다. 방 목록에 없는 방(전체 보기)이면
+    /// 코어가 접어 보낸 전체 값을 쓴다. 판단은 코어가 하고, 여기서는
+    /// 어느 값을 쓸지만 고른다.
+    static func background(
+        _ model: MenubarModel,
+        chatId: Int?
+    ) -> (activity: Double, caption: String?) {
+        let aggregate = model.background
+        let fallback = (aggregate?.activity ?? 0, aggregate?.caption)
+        guard let chatId, let rooms = aggregate?.rooms else { return fallback }
+        guard let room = rooms.first(where: { $0.chat_id == chatId }) else {
+            return fallback
+        }
+        return (room.activity ?? 0, room.caption)
     }
 
     /// 코어 아래 한 줄로 지금 무슨 일이 도는지 말한다.
@@ -2771,7 +2810,11 @@ final class JarvisCoreView: NSView {
     /// 읽어야 지금 상태를 알 수 있었고, 모두 초록이면 지금 도는 것인지
     /// 방금 끝난 것인지도 구분되지 않았다. 지금은 코어가 그 자리를 대신하고,
     /// 이 한 줄이 말로 확인해 준다 (2026-09-17).
-    static func caption(pipeline: PipelineModel?, openJobs: Int) -> String {
+    static func caption(
+        pipeline: PipelineModel?,
+        openJobs: Int,
+        background: String? = nil
+    ) -> String {
         let stages = pipeline?.stages ?? []
         if let active = stages.first(where: { $0.state == "active" }) {
             let name = stageTitles[active.id] ?? active.id
@@ -2780,6 +2823,9 @@ final class JarvisCoreView: NSView {
         if let failed = stages.first(where: { $0.state == "failed" || $0.state == "blocked" }) {
             let name = stageTitles[failed.id] ?? failed.id
             return "\(name)에서 멈춤"
+        }
+        if let text = background, !text.isEmpty {
+            return text
         }
         if openJobs > 0 {
             return "대기 \(openJobs)건"
@@ -3240,10 +3286,12 @@ final class MenuPanelView: NSView {
         )
         coreView.autoresizingMask = [.minXMargin, .maxXMargin]
         coreView.level = model.level
+        let background = JarvisCoreView.background(model, chatId: nil)
         coreView.activity = JarvisCoreView.activity(
             pipeline: model.pipeline,
             openJobs: model.open_jobs,
-            level: model.level
+            level: model.level,
+            background: background.activity
         )
         addSubview(coreView)
         coreCaption.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -3538,12 +3586,18 @@ final class MenuPanelView: NSView {
         let pipeline = room?.pipeline ?? model.pipeline
         coreView.level = room?.level ?? model.level
         let openJobs = room?.open_jobs ?? model.open_jobs
+        let background = JarvisCoreView.background(model, chatId: room?.chat_id)
         coreView.activity = JarvisCoreView.activity(
             pipeline: pipeline,
             openJobs: openJobs,
-            level: room?.level ?? model.level
+            level: room?.level ?? model.level,
+            background: background.activity
         )
-        coreCaption.stringValue = JarvisCoreView.caption(pipeline: pipeline, openJobs: openJobs)
+        coreCaption.stringValue = JarvisCoreView.caption(
+            pipeline: pipeline,
+            openJobs: openJobs,
+            background: background.caption
+        )
         rebuildRoomPopup()
         let selectedLive = room.map { choice in
             (model.rooms ?? []).contains { $0.chat_id == choice.chat_id && $0.live && $0.auto_reply }
@@ -9559,7 +9613,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             reply_model_providers: nil,
             reply_model_fallbacks: nil,
             reply_receipts: nil,
-            ondevice_hardware: nil
+            ondevice_hardware: nil,
+            background: nil
         )
     }
 
