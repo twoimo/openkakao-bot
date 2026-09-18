@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OpenKakao Auto-Reply Runtime",
+    "subtitle": "Operator menu, GraphRAG worker, and on-device Gemma",
+    "output": "docs/architecture/openkakao-auto-reply.html",
+    "visual_preset": "blueprint",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/twoimo/openkakao-bot",
+      "provider": "github",
+      "revision": "7d4b1262957cb0007a57d10654f812241e723d79"
+    },
+    "views": [
+      {
+        "id": "operator-surface",
+        "label": "Operator surface",
+        "focus": ["kakaotalk", "menu", "supervisor", "worker"],
+        "note": "The menu extra watches rooms and keeps the launchd worker alive."
+      },
+      {
+        "id": "grounded-reply",
+        "label": "Grounded reply path",
+        "focus": ["cli", "worker", "knowledge", "vectors", "gemma"],
+        "note": "Room events reach the worker, then GraphRAG and vector memory ground the local model."
+      },
+      {
+        "id": "fallback-path",
+        "label": "Local first, cloud fallback",
+        "focus": ["worker", "gemma", "cloud", "cli"],
+        "note": "Gemma answers on-device when weights verify; cloud models run when the local engine cannot."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "kakaotalk",
+      "type": "external",
+      "label": "KakaoTalk",
+      "sublabel": "rooms + AX host",
+      "pos": [40, 300],
+      "size": [128, 60]
+    },
+    {
+      "id": "menu",
+      "type": "frontend",
+      "label": "Menu Extra",
+      "sublabel": "status + models",
+      "pos": [250, 120],
+      "size": [132, 60],
+      "tag": "AppKit",
+      "sources": [
+        { "path": "macos/AutoReplyMenu/main.swift", "line": 5430, "label": "model window" }
+      ]
+    },
+    {
+      "id": "supervisor",
+      "type": "backend",
+      "label": "Supervisor",
+      "sublabel": "launchd keep-alive",
+      "pos": [460, 120],
+      "size": [136, 60],
+      "sources": [
+        { "path": "scripts/auto-reply-supervisor.py", "label": "supervisor" }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "openkakao-cli",
+      "sublabel": "container IO",
+      "pos": [250, 300],
+      "size": [132, 60],
+      "tag": "host"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Reply Worker",
+      "sublabel": "queue + generate",
+      "pos": [460, 300],
+      "size": [136, 62],
+      "tag": "core",
+      "sources": [
+        { "path": "scripts/auto-reply-worker.py", "line": 11301, "label": "GraphRAG inject" }
+      ]
+    },
+    {
+      "id": "knowledge",
+      "type": "database",
+      "label": "Knowledge Graph",
+      "sublabel": "hybrid GraphRAG",
+      "pos": [680, 180],
+      "size": [150, 62],
+      "sources": [
+        { "path": "scripts/auto_reply_knowledge_graph.py", "line": 2214, "label": "retrieve bundle" }
+      ]
+    },
+    {
+      "id": "vectors",
+      "type": "database",
+      "label": "Vector Memory",
+      "sublabel": "room-scoped RAG",
+      "pos": [680, 420],
+      "size": [150, 62]
+    },
+    {
+      "id": "gemma",
+      "type": "backend",
+      "label": "Local Gemma",
+      "sublabel": "MLX on-device",
+      "pos": [900, 180],
+      "size": [140, 62],
+      "tag": "read-only verify",
+      "sources": [
+        { "path": "scripts/auto_reply_ondevice.py", "line": 254, "label": "status snapshot" }
+      ]
+    },
+    {
+      "id": "cloud",
+      "type": "cloud",
+      "label": "Cloud Models",
+      "sublabel": "quota fallback",
+      "pos": [900, 420],
+      "size": [140, 62]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Operator Mac",
+      "wraps": ["menu", "supervisor", "cli", "worker", "knowledge", "vectors", "gemma"]
+    },
+    {
+      "kind": "security-group",
+      "label": "KakaoTalk container",
+      "wraps": ["kakaotalk"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "room-events",
+      "from": "kakaotalk",
+      "to": "cli",
+      "label": "AX events",
+      "variant": "emphasis"
+    },
+    {
+      "id": "queue-turn",
+      "from": "cli",
+      "to": "worker",
+      "label": "queued turn"
+      ,"labelDy": 38
+    },
+    {
+      "id": "hybrid-graph",
+      "from": "worker",
+      "to": "knowledge",
+      "label": "hybrid GraphRAG"
+    },
+    {
+      "id": "vector-retrieve",
+      "from": "worker",
+      "to": "vectors",
+      "label": "retrieve"
+    },
+    {
+      "id": "local-infer",
+      "from": "worker",
+      "to": "gemma",
+      "label": "on-device",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cloud-fallback",
+      "from": "worker",
+      "to": "cloud",
+      "label": "fallback",
+      "variant": "dashed"
+    },
+    {
+      "id": "deliver-reply",
+      "from": "worker",
+      "to": "cli",
+      "label": "reply"
+      ,"labelDy": -40
+    },
+    {
+      "id": "send-room",
+      "from": "cli",
+      "to": "kakaotalk",
+      "label": "send"
+      ,"labelDy": 28
+    },
+    {
+      "id": "menu-status",
+      "from": "menu",
+      "to": "supervisor",
+      "label": "health"
+    },
+    {
+      "id": "keep-alive",
+      "from": "supervisor",
+      "to": "worker",
+      "label": "keep-alive"
+      ,"labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Operator",
+      "items": [
+        "The menu extra shows room health and on-device verification",
+        "launchd restarts the worker without exposing extra gear menus"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Grounding",
+      "items": [
+        "GraphRAG keeps alias hits and ranks exact matches first",
+        "Vector memory stays room-scoped beside the graph"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Inference",
+      "items": [
+        "Gemma 4 is recommended by unified memory tier",
+        "Cloud models run only when the local engine cannot answer"
+      ]
+    }
+  ]
+}
