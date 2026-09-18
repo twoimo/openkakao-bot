@@ -426,6 +426,53 @@ class RealIndexPathTests(unittest.TestCase):
         self.assertEqual(stamped, "", "실패한 색인을 '색인했다'로 찍으면 안 된다")
 
 
+class IsolatedReadOnlyConnectionTests(unittest.TestCase):
+    def _write_source_db(self, root: Path) -> Path:
+        db = root / "context.sqlite3"
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            conn.execute("INSERT INTO sample (value) VALUES ('copied row')")
+            conn.commit()
+        finally:
+            conn.close()
+        return db
+
+    def test_isolated_copy_is_read_only_and_removed_after_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            with KG._open_isolated_ro_conn(db) as conn:
+                copied_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+                copied_dir = copied_path.parent
+                self.assertNotEqual(copied_path.resolve(), db.resolve())
+                self.assertTrue(copied_path.exists())
+                self.assertEqual(
+                    conn.execute("SELECT value FROM sample").fetchone()[0],
+                    "copied row",
+                )
+                self.assertEqual(conn.execute("PRAGMA query_only").fetchone()[0], 1)
+                with self.assertRaises(sqlite3.OperationalError):
+                    conn.execute("INSERT INTO sample (value) VALUES ('blocked write')")
+            self.assertFalse(copied_dir.exists(), "the temporary copy must be removed on close")
+
+    def test_isolated_copy_reads_while_source_database_is_exclusively_locked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            holder = sqlite3.connect(db)
+            try:
+                holder.execute("BEGIN EXCLUSIVE")
+                with KG._open_isolated_ro_conn(db) as conn:
+                    copied_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+                    self.assertNotEqual(copied_path.resolve(), db.resolve())
+                    self.assertEqual(
+                        conn.execute("SELECT value FROM sample").fetchone()[0],
+                        "copied row",
+                    )
+            finally:
+                holder.rollback()
+                holder.close()
+
+
 class MigrationTests(unittest.TestCase):
     def test_an_old_graph_gains_the_evidence_column_in_place(self):
         """An installed graph predates the column; it must not be rebuilt."""
