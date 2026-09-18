@@ -257,6 +257,94 @@ def ondevice_summary_dict() -> dict[str, Any]:
     return {
         "hardware": asdict(hw),
         "recommendation": asdict(rec),
+        "verification": verify_ondevice_setup(rec),
+    }
+
+
+def verify_ondevice_setup(rec: EngineRecommendation | None = None) -> dict[str, Any]:
+    """Verify that the recommended local runtime and weights are already usable.
+
+    Verification is deliberately read-only: it never downloads weights or runs
+    inference. Any failure is reported in the result envelope instead of being
+    allowed to terminate the caller.
+    """
+    engine = ""
+    model = ""
+    checks: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    def record(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail})
+        if not ok:
+            errors.append(detail)
+
+    try:
+        recommendation = rec or recommend_ondevice_setup()
+        engine = recommendation.primary_engine
+        model = recommendation.recommended_model
+        engine_path = recommendation.engine_paths.get(engine, "")
+        executable_ok = bool(
+            engine_path
+            and Path(engine_path).is_file()
+            and os.access(engine_path, os.X_OK)
+        )
+        record(
+            "engine_executable",
+            executable_ok,
+            (
+                f"{engine}: {engine_path}"
+                if executable_ok
+                else f"{engine}: 실행 가능한 엔진 경로를 찾지 못했습니다"
+            ),
+        )
+
+        if engine in {"mlx", "llama.cpp"}:
+            model_dir = Path.home() / "Models" / Path(model).name
+            model_ok = model_dir.is_dir()
+            record(
+                "model_directory",
+                model_ok,
+                (
+                    f"모델 디렉터리 확인: {model_dir}"
+                    if model_ok
+                    else f"모델 디렉터리가 없습니다: {model_dir}"
+                ),
+            )
+        elif engine == "ollama":
+            if executable_ok:
+                try:
+                    proc = subprocess.run(
+                        [engine_path, "list"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=5,
+                    )
+                    listed_models = {
+                        line.split()[0]
+                        for line in proc.stdout.splitlines()
+                        if line.split()
+                    }
+                    listed = proc.returncode == 0 and model in listed_models
+                    detail = (
+                        f"ollama 로컬 모델 확인: {model}"
+                        if listed
+                        else f"ollama 로컬 모델 목록에 없습니다: {model}"
+                    )
+                    if proc.returncode != 0:
+                        detail = f"ollama list 실패 (exit {proc.returncode})"
+                    record("ollama_model", listed, detail)
+                except Exception as exc:
+                    record("ollama_model", False, f"ollama list 확인 실패: {exc}")
+    except Exception as exc:
+        errors.append(f"온디바이스 검증 실패: {exc}")
+
+    return {
+        "ok": bool(checks) and all(check["ok"] for check in checks) and not errors,
+        "engine": engine,
+        "model": model,
+        "checks": checks,
+        "errors": errors,
     }
 
 

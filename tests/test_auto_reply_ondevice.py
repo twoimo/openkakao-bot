@@ -7,7 +7,11 @@ found in review, so they are pinned here (2026-09-17).
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from scripts.auto_reply_ondevice import (
     HardwareSpec,
@@ -19,6 +23,7 @@ from scripts.auto_reply_ondevice import (
     generate_command,
     ondevice_summary_dict,
     recommend_ondevice_setup,
+    verify_ondevice_setup,
 )
 
 
@@ -121,6 +126,55 @@ class TestCommands(unittest.TestCase):
         self.assertIn("recommendation", summary)
         self.assertIn("engine_paths", summary["recommendation"])
         self.assertIn("fallback_models", summary["recommendation"])
+        self.assertIn("verification", summary)
+
+
+class TestVerification(unittest.TestCase):
+    def test_verify_fails_when_engine_path_is_empty(self):
+        rec = recommend_ondevice_setup(_hw("Apple M5 Max", 128.0), engines={})
+
+        result = verify_ondevice_setup(rec)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["errors"])
+
+    def test_verify_fails_when_mlx_model_directory_is_missing(self):
+        rec = recommend_ondevice_setup(
+            _hw("Apple M5 Max", 128.0),
+            engines={"mlx": sys.executable},
+        )
+        with TemporaryDirectory() as temp_home:
+            with patch("scripts.auto_reply_ondevice.Path.home", return_value=Path(temp_home)):
+                result = verify_ondevice_setup(rec)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(any(check["name"] == "model_directory" and not check["ok"] for check in result["checks"]))
+
+    def test_verify_does_not_download_weights(self):
+        rec = recommend_ondevice_setup(
+            _hw("Apple M2", 32.0),
+            engines={"ollama": sys.executable},
+        )
+        with patch("scripts.auto_reply_ondevice.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = f"NAME ID SIZE MODIFIED\n{rec.recommended_model} abc 1 GB now\n"
+            result = verify_ondevice_setup(rec)
+
+        self.assertTrue(result["ok"])
+        run.assert_called_once_with(
+            [sys.executable, "list"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+
+    def test_verify_returns_stable_envelope(self):
+        rec = recommend_ondevice_setup(_hw("Apple M5 Max", 128.0), engines={})
+
+        result = verify_ondevice_setup(rec)
+
+        self.assertEqual({"ok", "engine", "model", "checks", "errors"}, set(result))
 
 
 if __name__ == "__main__":
