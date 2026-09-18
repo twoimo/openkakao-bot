@@ -4,6 +4,11 @@ The loop used to score hardcoded constants, which meant it always picked the
 same policy no matter what the room said. It now scores candidate replies
 against the golden answers, so these tests pin the similarity measure, the
 room-spread term, and the insufficient-data path (2026-09-17).
+
+The only rows that may score a candidate are the ones a person wrote or
+approved. A row holding the worker's own sent reply is the target the loop
+would otherwise converge toward, so the model-gold exclusion, its counters,
+and the policy_row allowlist are pinned here as well (2026-09-19).
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from scripts.auto_reply_dream_rsi import (
     DreamRsiSimulator,
@@ -70,9 +76,9 @@ class TestReplayRows(unittest.TestCase):
         _write_golden(
             self.root,
             [
-                {"prompt": "질문", "completion": "답변", "room": "a"},
-                {"prompt": "", "completion": "답변", "room": "a"},
-                {"prompt": "질문", "completion": "", "room": "a"},
+                {"prompt": "질문", "completion": "답변", "room": "a", "source": "self_history"},
+                {"prompt": "", "completion": "답변", "room": "a", "source": "self_history"},
+                {"prompt": "질문", "completion": "", "room": "a", "source": "self_history"},
                 "not json",
             ],
         )
@@ -83,9 +89,94 @@ class TestReplayRows(unittest.TestCase):
     def test_limit_is_respected(self):
         _write_golden(
             self.root,
-            [{"prompt": "질문" + str(i), "completion": "답변" + str(i)} for i in range(30)],
+            [
+                {"prompt": "질문" + str(i), "completion": "답변" + str(i), "source": "self_history"}
+                for i in range(30)
+            ],
         )
         self.assertEqual(len(load_replay_rows(self.root, limit=5)), 5)
+
+    def test_model_generated_gold_is_excluded_and_counted(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "사람 질문",
+                    "completion": "사람 답변",
+                    "room": "a",
+                    "source": "self_history",
+                },
+                {
+                    "prompt": "봇 질문",
+                    "completion": "모델이 보낸 답변",
+                    "room": "a",
+                    "source": "auto_reply_sent",
+                },
+            ],
+        )
+        counters: dict[str, int] = {}
+
+        rows = load_replay_rows(self.root, counters=counters)
+
+        self.assertEqual([row["gold"] for row in rows], ["사람 답변"])
+        self.assertEqual(counters["gold_rows"], 1)
+        self.assertEqual(counters["excluded_model_gold"], 1)
+
+    def test_allow_model_gold_keeps_the_sent_reply_explicitly(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "사람 질문",
+                    "completion": "사람 답변",
+                    "room": "a",
+                    "source": "self_history",
+                },
+                {
+                    "prompt": "봇 질문",
+                    "completion": "모델이 보낸 답변",
+                    "room": "a",
+                    "source": "auto_reply_sent",
+                },
+            ],
+        )
+        counters: dict[str, int] = {}
+
+        rows = load_replay_rows(self.root, allow_model_gold=True, counters=counters)
+
+        self.assertEqual([row["gold"] for row in rows], ["사람 답변", "모델이 보낸 답변"])
+        self.assertEqual(counters["gold_rows"], 2)
+        self.assertEqual(counters["excluded_model_gold"], 0)
+
+    def test_a_quality_field_decides_when_there_is_no_source(self):
+        _write_golden(
+            self.root,
+            [
+                {"prompt": "q1", "completion": "승인된 답변", "quality": "approved"},
+                {"prompt": "q2", "completion": "사람이 쓴 답변", "quality": "human_authored"},
+                {"prompt": "q3", "completion": "검토하지 않은 답변", "quality": "unreviewed"},
+                {"prompt": "q4", "completion": "모델이 쓴 답변", "quality": "model_generated"},
+            ],
+        )
+        counters: dict[str, int] = {}
+
+        rows = load_replay_rows(self.root, counters=counters)
+
+        self.assertEqual([row["gold"] for row in rows], ["승인된 답변", "사람이 쓴 답변"])
+        self.assertEqual(counters["gold_rows"], 2)
+        self.assertEqual(counters["excluded_model_gold"], 1)
+
+    def test_a_row_without_provenance_is_not_evaluation_gold(self):
+        _write_golden(
+            self.root, [{"prompt": "질문", "completion": "출처 없는 답변", "room": "a"}]
+        )
+        counters: dict[str, int] = {}
+
+        rows = load_replay_rows(self.root, counters=counters)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(counters["gold_rows"], 0)
+        self.assertEqual(counters["excluded_model_gold"], 0)
 
 
 class TestReplayPolicy(unittest.TestCase):
@@ -103,7 +194,14 @@ class TestReplayPolicy(unittest.TestCase):
     def test_a_perfect_policy_beats_a_blank_one(self):
         _write_golden(
             self.root,
-            [{"prompt": "질문", "completion": "정확한 답변", "room": "a"}],
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "정확한 답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
         )
         simulator = DreamRsiSimulator(self.root)
         perfect = simulator.replay_policy(lambda row: "정확한 답변")
@@ -121,7 +219,7 @@ class TestReplayPolicy(unittest.TestCase):
                     "prompt": "generation-time prompt",
                     "completion": sentinel,
                     "room": "a",
-                    "source": "auto_reply_sent",
+                    "source": "self_history",
                     "window": [{"message": "generation-time context"}],
                 }
             ],
@@ -141,12 +239,60 @@ class TestReplayPolicy(unittest.TestCase):
             with self.subTest(policy=name):
                 simulator.replay_policy(observed)
                 self.assertNotIn("gold", seen_rows[0])
+                self.assertNotIn("source", seen_rows[0])
                 self.assertNotEqual(returned[0], sentinel)
+
+    def test_policy_row_carries_only_generation_time_inputs(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
+        )
+        simulator = DreamRsiSimulator(self.root)
+        seen: list[dict[str, Any]] = []
+
+        simulator.replay_policy(lambda row: seen.append(dict(row)) or "")
+
+        self.assertEqual(list(seen[0]), ["prompt", "room", "window"])
+
+    def test_policy_row_hides_source_even_for_a_kept_model_gold_row(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "모델이 보낸 답변",
+                    "room": "a",
+                    "source": "auto_reply_sent",
+                }
+            ],
+        )
+        simulator = DreamRsiSimulator(self.root, allow_model_gold=True)
+        seen: list[dict[str, Any]] = []
+
+        result = simulator.replay_policy(lambda row: seen.append(dict(row)) or "")
+
+        self.assertEqual(result["evaluated_rows"], 1)
+        self.assertNotIn("source", seen[0])
+        self.assertNotIn("gold", seen[0])
 
     def test_a_policy_that_raises_is_counted_not_fatal(self):
         _write_golden(
             self.root,
-            [{"prompt": "질문", "completion": "답변", "room": "a"}],
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
         )
         simulator = DreamRsiSimulator(self.root)
 
@@ -162,7 +308,14 @@ class TestReplayPolicy(unittest.TestCase):
     def test_non_string_candidate_is_skipped_and_recorded(self):
         _write_golden(
             self.root,
-            [{"prompt": "질문", "completion": "답변", "room": "a"}],
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
         )
         simulator = DreamRsiSimulator(self.root)
         result = simulator.replay_policy(lambda row: 123)
@@ -177,8 +330,18 @@ class TestReplayPolicy(unittest.TestCase):
         _write_golden(
             self.root,
             [
-                {"prompt": "q1", "completion": "a1", "room": "room-a"},
-                {"prompt": "q2", "completion": "a2", "room": "room-b"},
+                {
+                    "prompt": "q1",
+                    "completion": "a1",
+                    "room": "room-a",
+                    "source": "self_history",
+                },
+                {
+                    "prompt": "q2",
+                    "completion": "a2",
+                    "room": "room-b",
+                    "source": "self_history",
+                },
             ],
         )
         simulator = DreamRsiSimulator(self.root)
@@ -188,16 +351,74 @@ class TestReplayPolicy(unittest.TestCase):
         self.assertEqual(result["room_spread"], 2)
 
 
+class TestCandidatePolicies(unittest.TestCase):
+    def test_longest_window_message_picks_the_longest_message(self):
+        row = {
+            "window": [
+                {"message": "짧은 말"},
+                {"message": "가장 긴 메시지입니다"},
+                {"message": "중간"},
+            ]
+        }
+
+        policy = _candidate_policies()["longest_window_message"]
+
+        self.assertEqual(policy(row), "가장 긴 메시지입니다")
+
+    def test_longest_window_message_prefers_the_earlier_message_on_a_tie(self):
+        row = {"window": [{"message": "가나다라"}, {"message": "마바사아"}]}
+
+        policy = _candidate_policies()["longest_window_message"]
+
+        self.assertEqual(policy(row), "가나다라")
+
+    def test_window_policies_tolerate_a_missing_or_odd_window(self):
+        policies = _candidate_policies()
+
+        for name in ("echo_last_message", "longest_window_message"):
+            with self.subTest(policy=name):
+                self.assertEqual(policies[name]({}), "")
+                self.assertEqual(policies[name]({"window": "not a list"}), "")
+                self.assertEqual(policies[name]({"window": ["not a dict"]}), "")
+
+
 class TestDreamLoop(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
 
+    def _write_human_and_model_gold(self) -> None:
+        """One row the operator wrote, one row the worker sent itself."""
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "사람 질문",
+                    "completion": "사람이 쓴 답변",
+                    "room": "a",
+                    "source": "self_history",
+                },
+                {
+                    "prompt": "봇 질문",
+                    "completion": "모델이 보낸 답변",
+                    "room": "a",
+                    "source": "auto_reply_sent",
+                },
+            ],
+        )
+
     def test_loop_picks_the_best_scoring_policy(self):
         _write_golden(
             self.root,
-            [{"prompt": "질문", "completion": "정확한 답변", "room": "a"}],
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "정확한 답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
         )
         result = dream_policy_evaluation(
             self.root,
@@ -228,6 +449,48 @@ class TestDreamLoop(unittest.TestCase):
         with self.assertRaises(OSError):
             dream_policy_evaluation(blocked_root, policies={"blank": lambda row: ""})
 
+    def test_checkpoint_records_the_gold_source_filter(self):
+        self._write_human_and_model_gold()
+
+        result = dream_policy_evaluation(self.root, policies={"blank": lambda row: ""})
+
+        self.assertEqual(result["replay_rows"], 1)
+        self.assertEqual(result["gold_rows"], 1)
+        self.assertEqual(result["excluded_model_gold"], 1)
+        self.assertEqual(result["gold_source_policy"], "human_only")
+        stored = json.loads(
+            (self.root / "dream-rsi-policy.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(stored["gold_rows"], 1)
+        self.assertEqual(stored["excluded_model_gold"], 1)
+        self.assertEqual(stored["gold_source_policy"], "human_only")
+
+    def test_checkpoint_records_an_opted_in_model_gold_run(self):
+        self._write_human_and_model_gold()
+
+        result = dream_policy_evaluation(
+            self.root,
+            policies={"blank": lambda row: ""},
+            allow_model_gold=True,
+        )
+
+        self.assertEqual(result["replay_rows"], 2)
+        self.assertEqual(result["excluded_model_gold"], 0)
+        self.assertEqual(result["gold_source_policy"], "human_and_model")
+
+    def test_the_loops_own_reply_is_not_the_target(self):
+        self._write_human_and_model_gold()
+
+        result = dream_policy_evaluation(
+            self.root, policies={"copy_sent_reply": lambda row: "모델이 보낸 답변"}
+        )
+
+        # The candidate reproduces the reply the worker already sent, which is
+        # only scored against the human answer instead of against itself.
+        scored = result["evaluations"]["copy_sent_reply"]
+        self.assertEqual(scored["evaluated_rows"], result["gold_rows"])
+        self.assertEqual(scored["evaluated_rows"], 1)
+
 
 class TestDistribution(unittest.TestCase):
     def test_distribution_describes_the_gold_answers(self):
@@ -236,7 +499,12 @@ class TestDistribution(unittest.TestCase):
             _write_golden(
                 root,
                 [
-                    {"prompt": "q" + str(i), "completion": "가" * (i + 1), "room": "a"}
+                    {
+                        "prompt": "q" + str(i),
+                        "completion": "가" * (i + 1),
+                        "room": "a",
+                        "source": "self_history",
+                    }
                     for i in range(10)
                 ],
             )
@@ -249,6 +517,32 @@ class TestDistribution(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             report = distribution_report(Path(tmp))
             self.assertEqual(report["status"], "insufficient_data")
+
+    def test_distribution_uses_the_same_human_only_filter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_golden(
+                root,
+                [
+                    {
+                        "prompt": "q1",
+                        "completion": "사람 답변",
+                        "room": "a",
+                        "source": "self_history",
+                    },
+                    {
+                        "prompt": "q2",
+                        "completion": "모델이 보낸 아주 긴 답변입니다",
+                        "room": "a",
+                        "source": "auto_reply_sent",
+                    },
+                ],
+            )
+            report = distribution_report(root)
+
+            self.assertEqual(report["rows"], 1)
+            self.assertEqual(report["excluded_model_gold"], 1)
+            self.assertAlmostEqual(report["mean_length"], float(len("사람 답변")))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ answers are what the operator actually typed, so a candidate reply can be
 scored against a real target rather than a hardcoded number. When no golden
 rows exist the module reports insufficient_data instead of inventing a score
 (2026-09-17).
+
+Only rows a person wrote or explicitly approved reach the scoring step. The
+worker's own sent replies also land in the golden file, and scoring candidates
+against those would let the loop converge on what the model already produced
+instead of on the operator's style, so they are counted and dropped unless the
+caller asks for them (2026-09-19).
 """
 
 from __future__ import annotations
@@ -24,9 +30,25 @@ import os
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
+
+try:  # Tests import scripts.*, a flat script run imports the sibling module.
+    from scripts.auto_reply_golden_dataset import (
+        QUALITY_MODEL_GENERATED,
+        gold_quality,
+        is_gold_quality,
+    )
+except ImportError:  # pragma: no cover - flat import path
+    from auto_reply_golden_dataset import (
+        QUALITY_MODEL_GENERATED,
+        gold_quality,
+        is_gold_quality,
+    )
 
 DEFAULT_SCHEMA_VERSION = 2
+# Which gold a run was allowed to learn from, recorded in the checkpoint.
+GOLD_SOURCE_HUMAN_ONLY = "human_only"
+GOLD_SOURCE_HUMAN_AND_MODEL = "human_and_model"
 # A candidate reply is compared with the gold answer by character overlap. The
 # measure is deliberately simple and deterministic: it ranks candidate
 # policies, and it never pretends to be a language-quality judge.
@@ -60,57 +82,97 @@ def answer_similarity(candidate: str, gold: str) -> float:
     return dot / (norm_left * norm_right)
 
 
-def load_replay_rows(state_root: Path, limit: int = MAX_EVAL_ROWS) -> list[dict[str, Any]]:
+def load_replay_rows(
+    state_root: Path,
+    limit: int = MAX_EVAL_ROWS,
+    allow_model_gold: bool = False,
+    counters: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     """Read golden rows for the replay simulator.
 
     Rows from the same room are kept together so a policy that only works in
     one room cannot win the whole evaluation on volume alone (2026-09-17).
+
+    A row the worker sent itself carries the model's own output as its gold
+    answer, so scoring candidates against it would grade the model on its own
+    habits. Those rows are excluded unless allow_model_gold asks for them, and
+    counters receives the excluded model-gold count plus the adopted row count
+    (2026-09-19).
     """
     golden = state_root / "golden" / "reply-golden.jsonl"
-    if not golden.is_file():
-        return []
     rows: list[dict[str, Any]] = []
+    excluded_model_gold = 0
     try:
         handle = golden.open("r", encoding="utf-8", errors="replace")
     except OSError:
-        return []
-    with handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            # A JSON line can be a bare string or list. Calling .get on it
-            # raises and would abort the whole read (2026-09-17).
-            if not isinstance(record, dict):
-                continue
-            prompt = str(record.get("prompt") or "").strip()
-            completion = str(record.get("completion") or "").strip()
-            if not prompt or not completion:
-                continue
-            rows.append(
-                {
-                    "prompt": prompt,
-                    "gold": completion,
-                    "room": str(record.get("room") or ""),
-                    "source": str(record.get("source") or ""),
-                    "window": record.get("window") or [],
-                }
-            )
-            if limit and len(rows) >= limit:
-                break
+        # A missing or unreadable golden set is an empty replay set, not an
+        # error for the caller (2026-09-17).
+        handle = None
+    if handle is not None:
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                # A JSON line can be a bare string or list. Calling .get on it
+                # raises and would abort the whole read (2026-09-17).
+                if not isinstance(record, dict):
+                    continue
+                prompt = str(record.get("prompt") or "").strip()
+                completion = str(record.get("completion") or "").strip()
+                if not prompt or not completion:
+                    continue
+                # Golden files written before the quality field existed are
+                # classified from their source, which is what the extractor
+                # already does when it writes a row (2026-09-19).
+                quality = gold_quality(record)
+                if not is_gold_quality(quality):
+                    model_gold = quality == QUALITY_MODEL_GENERATED
+                    if not (allow_model_gold and model_gold):
+                        if model_gold:
+                            excluded_model_gold += 1
+                        continue
+                rows.append(
+                    {
+                        "prompt": prompt,
+                        "gold": completion,
+                        "room": str(record.get("room") or ""),
+                        "source": str(record.get("source") or ""),
+                        "window": record.get("window") or [],
+                    }
+                )
+                if limit and len(rows) >= limit:
+                    break
+    if counters is not None:
+        counters["gold_rows"] = counters.get("gold_rows", 0) + len(rows)
+        counters["excluded_model_gold"] = (
+            counters.get("excluded_model_gold", 0) + excluded_model_gold
+        )
     return rows
 
 
 class DreamRsiSimulator:
     """Replay simulator built from the golden answers."""
 
-    def __init__(self, state_root: Path, *, limit: int = MAX_EVAL_ROWS):
+    def __init__(
+        self,
+        state_root: Path,
+        *,
+        limit: int = MAX_EVAL_ROWS,
+        allow_model_gold: bool = False,
+    ):
+        counters: dict[str, int] = {}
         self.state_root = state_root
-        self.rows = load_replay_rows(state_root, limit)
+        self.rows = load_replay_rows(
+            state_root, limit, allow_model_gold=allow_model_gold, counters=counters
+        )
+        # The two counts the checkpoint reports about the filter it applied.
+        self.gold_rows = counters["gold_rows"]
+        self.excluded_model_gold = counters["excluded_model_gold"]
         self.parse_errors = 0
 
     @property
@@ -157,13 +219,13 @@ class DreamRsiSimulator:
         rooms: set[str] = set()
         candidate_errors: Counter[str] = Counter()
         for row in self.rows:
-            # Candidate policies only receive generation-time inputs. Keeping
-            # this as an allowlist prevents future evaluation-only fields from
-            # becoming policy inputs by accident.
+            # Candidate policies only receive generation-time inputs. `gold` and
+            # `source` are written after the reply was generated, so a policy
+            # that read them would be scored on information the live worker
+            # never had; the allowlist keeps them out (2026-09-19).
             policy_row = {
                 "prompt": row.get("prompt", ""),
                 "room": row.get("room", ""),
-                "source": row.get("source", ""),
                 "window": row.get("window") or [],
             }
             try:
@@ -203,48 +265,44 @@ class DreamRsiSimulator:
         }
 
 
+def _last_window_message(row: dict[str, Any]) -> str:
+    """The newest message in the row's window, "" when there is none."""
+    window = row.get("window") or []
+    if isinstance(window, list) and window:
+        last = window[-1]
+        if isinstance(last, dict):
+            return str(last.get("message") or "")
+    return ""
+
+
+def _longest_window_message(row: dict[str, Any]) -> str:
+    """The longest message in the row's window, the earliest one on a tie."""
+    window = row.get("window") or []
+    if not isinstance(window, list):
+        return ""
+    longest = ""
+    for entry in window:
+        if not isinstance(entry, dict):
+            continue
+        message = str(entry.get("message") or "")
+        if len(message) > len(longest):
+            longest = message
+    return longest
+
+
 def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
     """The policies the dreaming loop compares.
 
     Each one is a deterministic function of the row, so the comparison is
     reproducible and needs no model call. They stand in for the retrieval and
-    prompting strategies the live worker can select (2026-09-17).
+    prompting strategies the live worker can select, and each one reads only
+    what generation-time code had: the inbound prompt and the window of
+    messages that preceded it (2026-09-19).
     """
-
-    def last_window_message(row: dict[str, Any]) -> str:
-        window = row.get("window") or []
-        if isinstance(window, list) and window:
-            last = window[-1]
-            if isinstance(last, dict):
-                return str(last.get("message") or "")
-        return ""
-
-    def echo_last() -> Callable[[dict[str, Any]], str]:
-        def policy(row: dict[str, Any]) -> str:
-            return last_window_message(row)
-
-        return policy
-
-    def mirror_prompt() -> Callable[[dict[str, Any]], str]:
-        def policy(row: dict[str, Any]) -> str:
-            return str(row.get("prompt") or "")[-60:]
-
-        return policy
-
-    def reuse_sent() -> Callable[[dict[str, Any]], str]:
-        def policy(row: dict[str, Any]) -> str:
-            # The send marker may gate a strategy, but the policy can only use
-            # context that was already available when generation happened.
-            if row.get("source") == "auto_reply_sent":
-                return last_window_message(row)
-            return ""
-
-        return policy
-
     return {
-        "echo_last_message": echo_last(),
-        "mirror_prompt_tail": mirror_prompt(),
-        "reuse_confirmed_send": reuse_sent(),
+        "echo_last_message": _last_window_message,
+        "mirror_prompt_tail": lambda row: str(row.get("prompt") or "")[-60:],
+        "longest_window_message": _longest_window_message,
     }
 
 
@@ -261,10 +319,11 @@ def dream_policy_evaluation(
     *,
     limit: int = MAX_EVAL_ROWS,
     policies: dict[str, Callable[[dict[str, Any]], Any]] | None = None,
+    allow_model_gold: bool = False,
 ) -> dict[str, Any]:
     """Run the offline dreaming loop and write the winning checkpoint."""
     root = state_root or _default_state_root()
-    simulator = DreamRsiSimulator(root, limit=limit)
+    simulator = DreamRsiSimulator(root, limit=limit, allow_model_gold=allow_model_gold)
     candidates = _candidate_policies() if policies is None else policies
 
     evaluations = {name: simulator.replay_policy(fn) for name, fn in candidates.items()}
@@ -277,6 +336,14 @@ def dream_policy_evaluation(
         "schema_version": DEFAULT_SCHEMA_VERSION,
         "dreamed_at": int(time.time()),
         "replay_rows": len(simulator.rows),
+        # Which gold the score came from, so a later reader can tell a
+        # human-gold result from one that included the worker's own replies
+        # (2026-09-19).
+        "gold_rows": simulator.gold_rows,
+        "excluded_model_gold": simulator.excluded_model_gold,
+        "gold_source_policy": (
+            GOLD_SOURCE_HUMAN_AND_MODEL if allow_model_gold else GOLD_SOURCE_HUMAN_ONLY
+        ),
         "parse_errors": simulator.parse_errors,
         "evaluations": evaluations,
         "selected_policy": winner,
@@ -296,15 +363,26 @@ def dream_policy_evaluation(
 def distribution_report(
     state_root: Path | None = None, *, limit: int = MAX_EVAL_ROWS
 ) -> dict[str, Any]:
-    """Describe the gold answer distribution the loop is converging toward."""
+    """Describe the gold answer distribution the loop is converging toward.
+
+    The report reads the replay set through the same human-only filter as the
+    evaluation, so a distribution the model wrote itself cannot pass for the
+    operator's own answers (2026-09-19).
+    """
     root = state_root or _default_state_root()
-    rows = load_replay_rows(root, limit)
+    counters: dict[str, int] = {}
+    rows = load_replay_rows(root, limit, counters=counters)
+    gold_filter = {
+        "excluded_model_gold": counters["excluded_model_gold"],
+        "gold_source_policy": GOLD_SOURCE_HUMAN_ONLY,
+    }
     if not rows:
-        return {"rows": 0, "status": "insufficient_data"}
+        return {"rows": 0, "status": "insufficient_data", **gold_filter}
     lengths = sorted(len(row["gold"]) for row in rows)
     rooms = Counter(str(row.get("room") or "") for row in rows)
     return {
         "rows": len(rows),
+        **gold_filter,
         "length_p10": lengths[len(lengths) // 10],
         "length_median": lengths[len(lengths) // 2],
         "length_p90": lengths[len(lengths) * 9 // 10],
@@ -318,4 +396,3 @@ if __name__ == "__main__":
     result = dream_policy_evaluation()
     result["distribution"] = distribution_report()
     print(json.dumps(result, ensure_ascii=False, indent=2))
-
