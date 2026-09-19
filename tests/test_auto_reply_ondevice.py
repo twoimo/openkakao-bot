@@ -127,6 +127,8 @@ class TestCommands(unittest.TestCase):
         self.assertIn("engine_paths", summary["recommendation"])
         self.assertIn("fallback_models", summary["recommendation"])
         self.assertIn("verification", summary)
+        self.assertIn("download_command", summary)
+        self.assertTrue(str(summary["download_command"]).startswith(("hf download ", "ollama pull ")))
         self.assertIn("status_label", summary)
         self.assertIn("status_detail", summary)
         self.assertTrue(str(summary["status_label"]).startswith("온디바이스 감지:"))
