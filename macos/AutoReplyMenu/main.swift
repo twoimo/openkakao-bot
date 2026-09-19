@@ -1633,6 +1633,15 @@ struct KnowledgeGraphReport: Decodable {
     let indexing_mode: String?
 }
 
+struct DreamRsiStatusReport: Decodable {
+    let ok: Bool
+    let status: String
+    let selected_policy: String?
+    let gold_rows: Int
+    let excluded_model_gold: Int
+    let gold_source_policy: String
+}
+
 struct KnowledgeGraphFocusReport: Decodable {
     let ok: Bool
     let facts: [String]
@@ -3624,7 +3633,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsSyncCopy: NSTextField?
     var settingsSyncMode: NSTextField?
     var settingsSyncIndex: NSTextField?
+    var settingsDreamRsiStatusLine: NSTextField?
+    var settingsDreamRsiGoldLine: NSTextField?
     var settingsGraphStatus: KnowledgeGraphReport?
+    var settingsDreamRsiStatus: DreamRsiStatusReport?
     var settingsSyncRefreshInFlight = false
     var settingsSyncLastRefreshAt: TimeInterval = 0
     var settingsSlotFields: [String: NSTextField] = [:]
@@ -6226,6 +6238,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
         syncCard.identifier = NSUserInterfaceItemIdentifier("settings-sync-card")
 
+        let dreamAmber = NSColor(
+            calibratedRed: 1.0,
+            green: 0.56,
+            blue: 0.12,
+            alpha: 1.0
+        )
+        let dreamTitle = Chrome.label("DREAM-RSI", size: 13, weight: .semibold, color: jarvisGold, lines: 1)
+        let dreamStatus = Chrome.label(
+            "status: 확인 중 · selected_policy: none",
+            size: 11,
+            color: dreamAmber,
+            lines: 1
+        )
+        let dreamGold = Chrome.label(
+            "gold_rows: 0 · excluded_model_gold: 0 · gold_source_policy: unknown",
+            size: 11,
+            color: dreamAmber,
+            lines: 1
+        )
+        dreamStatus.identifier = NSUserInterfaceItemIdentifier("settings-dream-rsi-status")
+        dreamGold.identifier = NSUserInterfaceItemIdentifier("settings-dream-rsi-gold")
+        let dreamCard = Chrome.card(
+            Chrome.vstack([dreamTitle, dreamStatus, dreamGold], spacing: 4),
+            padding: 12
+        )
+        dreamCard.identifier = NSUserInterfaceItemIdentifier("settings-dream-rsi-card")
+
         let slotsTitle = Chrome.label("GeekNews 슬롯", size: 13, weight: .semibold, lines: 1)
         let slotSpecs = [("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]
         var slotViews: [NSView] = []
@@ -6275,7 +6314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
-        let stack = Chrome.vstack([roomCard, healthCard, syncCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
+        let stack = Chrome.vstack([roomCard, healthCard, syncCard, dreamCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
         stack.alignment = .width
         Chrome.scrollable(stack, in: content)
         settingsRoomPopup = roomPopup
@@ -6285,6 +6324,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         settingsSyncCopy = syncCopy
         settingsSyncMode = syncMode
         settingsSyncIndex = syncIndex
+        settingsDreamRsiStatusLine = dreamStatus
+        settingsDreamRsiGoldLine = dreamGold
         settingsWindow = window
     }
 
@@ -6314,21 +6355,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return try? JSONDecoder().decode(KnowledgeGraphReport.self, from: data)
     }
 
+    func loadSettingsDreamRsiStatus() -> DreamRsiStatusReport? {
+        guard let data = runPython(["--action", "dream-rsi-status"], timeout: 2) else { return nil }
+        return try? JSONDecoder().decode(DreamRsiStatusReport.self, from: data)
+    }
+
     func refreshSettingsSyncStatus(force: Bool = false) {
         let now = Date().timeIntervalSince1970
         if settingsSyncRefreshInFlight { return }
         if !force && now - settingsSyncLastRefreshAt < 15 { return }
         settingsSyncRefreshInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let report = self?.loadSettingsSyncStatus()
+            let graphReport = self?.loadSettingsSyncStatus()
+            let dreamReport = self?.loadSettingsDreamRsiStatus()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.settingsSyncRefreshInFlight = false
                 self.settingsSyncLastRefreshAt = Date().timeIntervalSince1970
-                self.settingsGraphStatus = report
-                self.applySettingsSyncStatus(self.lastModel?.vector_memory, graph: report)
+                self.settingsGraphStatus = graphReport
+                self.settingsDreamRsiStatus = dreamReport
+                self.applySettingsSyncStatus(self.lastModel?.vector_memory, graph: graphReport)
+                self.applySettingsDreamRsiStatus(dreamReport)
             }
         }
+    }
+
+    func applySettingsDreamRsiStatus(_ report: DreamRsiStatusReport?) {
+        let gold = NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: 1.0)
+        let amber = NSColor(calibratedRed: 1.0, green: 0.56, blue: 0.12, alpha: 1.0)
+        guard let report else {
+            settingsDreamRsiStatusLine?.stringValue = "status: 확인 중 · selected_policy: none"
+            settingsDreamRsiStatusLine?.textColor = amber
+            settingsDreamRsiGoldLine?.stringValue = "gold_rows: 0 · excluded_model_gold: 0 · gold_source_policy: unknown"
+            settingsDreamRsiGoldLine?.textColor = amber
+            return
+        }
+
+        let selected = (report.selected_policy ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let policy = selected.isEmpty ? "none" : selected
+        settingsDreamRsiStatusLine?.stringValue = "status: \(report.status) · selected_policy: \(policy)"
+        settingsDreamRsiGoldLine?.stringValue = (
+            "gold_rows: \(max(report.gold_rows, 0)) · "
+            + "excluded_model_gold: \(max(report.excluded_model_gold, 0)) · "
+            + "gold_source_policy: \(report.gold_source_policy)"
+        )
+        let evaluated = report.ok && report.status == "evaluated" && policy != "none"
+        settingsDreamRsiStatusLine?.textColor = evaluated ? gold : amber
+        settingsDreamRsiGoldLine?.textColor = (
+            report.ok && report.gold_source_policy == "human_only" ? gold : amber
+        )
     }
 
     func applySettingsSyncStatus(_ memory: VectorMemory?, graph: KnowledgeGraphReport?) {
@@ -6453,6 +6528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             field.textColor = done ? .systemGreen : .secondaryLabelColor
         }
         applySettingsSyncStatus(model.vector_memory, graph: settingsGraphStatus)
+        applySettingsDreamRsiStatus(settingsDreamRsiStatus)
         if settingsWindow?.isVisible == true {
             refreshSettingsSyncStatus()
         }

@@ -565,6 +565,33 @@ class RealIndexPathTests(unittest.TestCase):
         self.assertEqual(stamped, "", "실패한 색인을 '색인했다'로 찍으면 안 된다")
 
 
+    def test_reindex_is_decoupled_from_dream_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._state_root(Path(tmp))
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                with mock.patch.multiple(
+                    KG,
+                    index_topic_entities=mock.DEFAULT,
+                    index_topic_relations=mock.DEFAULT,
+                    index_chat_entities=mock.DEFAULT,
+                    index_person_entities=mock.DEFAULT,
+                    index_membership_relations=mock.DEFAULT,
+                    prune_indexed_entities=mock.DEFAULT,
+                    _merge_seed_rooms=mock.DEFAULT,
+                    attach_ledger_evidence=mock.DEFAULT,
+                ), mock.patch(
+                    "auto_reply_dream_rsi.dream_policy_evaluation",
+                    side_effect=RuntimeError("dream failed"),
+                ) as dream:
+                    KG._reindex_all(conn, root, cycle_started_at=int(time.time()))
+                dream.assert_not_called()
+                self.assertEqual(KG.read_meta(conn, "last_index_error"), "")
+                self.assertNotEqual(KG.read_meta(conn, "last_indexed_at"), "")
+            finally:
+                conn.close()
+
 class IsolatedReadOnlyConnectionTests(unittest.TestCase):
     def _write_source_db(self, root: Path) -> Path:
         db = root / "context.sqlite3"

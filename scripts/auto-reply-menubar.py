@@ -113,6 +113,10 @@ def _default_state_root() -> Path:
 
 
 _DEFAULT_STATE_ROOT = _default_state_root()
+_DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
+_DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
+_DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
+
 OAUTH_KNOWN_RE = re.compile(
     r"Known:\s*([A-Za-z0-9][A-Za-z0-9._,\s-]*)",
     re.IGNORECASE,
@@ -1935,6 +1939,77 @@ def add_api_provider(
     return res
 
 
+def _dream_rsi_status_payload(state_root: Path) -> dict[str, Any]:
+    """Read only the DREAM-RSI checkpoint for the settings status card."""
+
+    def _unavailable(status: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "status": status,
+            "selected_policy": None,
+            "gold_rows": 0,
+            "excluded_model_gold": 0,
+            "gold_source_policy": "unknown",
+        }
+
+    path = state_root / _DREAM_RSI_CHECKPOINT_NAME
+    try:
+        if path.is_symlink():
+            return _unavailable("invalid")
+        if not path.is_file():
+            return _unavailable("missing")
+        size = path.stat().st_size
+        if size <= 0 or size > _DREAM_RSI_CHECKPOINT_MAX_BYTES:
+            return _unavailable("invalid")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return _unavailable("invalid")
+
+    if not isinstance(payload, dict):
+        return _unavailable("invalid")
+    if payload.get("schema_version") != _DREAM_RSI_CHECKPOINT_SCHEMA_VERSION:
+        return _unavailable("invalid")
+
+    status = str(payload.get("status") or "").strip()
+    if status not in {"evaluated", "insufficient_data"}:
+        return _unavailable("invalid")
+
+    selected = str(payload.get("selected_policy") or "").strip()
+    if len(selected) > 80:
+        return _unavailable("invalid")
+    if status == "evaluated":
+        evaluations = payload.get("evaluations")
+        selected_eval = evaluations.get(selected) if isinstance(evaluations, dict) else None
+        if not selected or not isinstance(selected_eval, dict) or selected_eval.get("status") != "evaluated":
+            return _unavailable("invalid")
+    elif selected:
+        return _unavailable("invalid")
+
+    gold_rows = payload.get("gold_rows")
+    excluded_model_gold = payload.get("excluded_model_gold")
+    if isinstance(gold_rows, bool) or not isinstance(gold_rows, int) or gold_rows < 0:
+        return _unavailable("invalid")
+    if (
+        isinstance(excluded_model_gold, bool)
+        or not isinstance(excluded_model_gold, int)
+        or excluded_model_gold < 0
+    ):
+        return _unavailable("invalid")
+
+    gold_source_policy = str(payload.get("gold_source_policy") or "").strip()
+    if gold_source_policy not in {"human_only", "human_and_model"}:
+        return _unavailable("invalid")
+
+    return {
+        "ok": True,
+        "status": status,
+        "selected_policy": selected or None,
+        "gold_rows": gold_rows,
+        "excluded_model_gold": excluded_model_gold,
+        "gold_source_policy": gold_source_policy,
+    }
+
+
 def main():
     try:
         _scope_menubar_rooms_to_enrollment()
@@ -1953,6 +2028,11 @@ def main():
         )
         return 0
     action = _argv_flag_value("--action")
+    if action == "dream-rsi-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(_dream_rsi_status_payload(state_root))
+        return 0
     if action == "knowledge-graph-status":
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT

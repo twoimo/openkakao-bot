@@ -1894,12 +1894,6 @@ def _reindex_all(
         attach_ledger_evidence(conn, state_root)
     except Exception as error:  # noqa: BLE001
         _note("evidence", error)
-    try:
-        from auto_reply_dream_rsi import dream_policy_evaluation
-
-        dream_policy_evaluation(state_root)
-    except Exception as error:  # noqa: BLE001
-        _note("dream-rsi", error)
     if failures:
         # 실패를 남기고 "색인했다"는 도장은 찍지 않는다. 찍으면 다음 폴링이
         # 같은 일을 다시 하지 않아 그래프가 영영 낡은 채로 남는다

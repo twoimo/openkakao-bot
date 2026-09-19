@@ -391,19 +391,14 @@ def _connect_readonly(db_path: Path) -> Iterator[sqlite3.Connection]:
             shutil.copy2(db_path, tmp_db)
             wal = db_path.with_name(db_path.name + "-wal")
             shm = db_path.with_name(db_path.name + "-shm")
-            if wal.exists():
-                try:
-                    shutil.copy2(wal, Path(tmpdir) / wal.name)
-                except OSError:
-                    pass
-            if shm.exists():
-                try:
-                    shutil.copy2(shm, Path(tmpdir) / shm.name)
-                except OSError:
-                    pass
+            for sidecar in (wal, shm):
+                if sidecar.exists():
+                    shutil.copy2(sidecar, Path(tmpdir) / sidecar.name)
             connection = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True, timeout=5.0)
-        except (OSError, sqlite3.Error):
-            connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+        except (OSError, sqlite3.Error) as exc:
+            raise sqlite3.OperationalError(
+                "isolated read-only snapshot unavailable"
+            ) from exc
 
         connection.row_factory = sqlite3.Row
         try:
@@ -887,17 +882,12 @@ def _db_has_transcript(path: Path) -> bool:
     if not path.is_file():
         return False
     try:
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        with _connect_readonly(path) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_messages'"
+            ).fetchone()
     except sqlite3.Error:
         return False
-    try:
-        row = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='context_messages'"
-        ).fetchone()
-    except sqlite3.Error:
-        return False
-    finally:
-        connection.close()
     return bool(row)
 
 

@@ -298,6 +298,9 @@ SQLITE_BUSY_OPERATIONAL_MESSAGES = (
 REPLY_MODEL_OVERRIDE_NAME = "reply-model.json"
 REPLY_IMAGE_MODEL_OVERRIDE_NAME = "reply-image-model.json"
 REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
+DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
+DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
+DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
 DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
 _REPLY_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}$")
 # 사용자가 모델 설정 창에서 고른 폴백 사슬. 저장된 목록이 없으면 아래 내장
@@ -10844,6 +10847,56 @@ def _operator_state_root() -> Path:
     return parent
 
 
+def _load_dream_rsi_checkpoint_metadata() -> dict | None:
+    path = _operator_state_root() / DREAM_RSI_CHECKPOINT_NAME
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        size = path.stat().st_size
+        if size <= 0 or size > DREAM_RSI_CHECKPOINT_MAX_BYTES:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema_version") != DREAM_RSI_CHECKPOINT_SCHEMA_VERSION:
+        return None
+    if payload.get("status") != "evaluated":
+        return None
+    selected = str(payload.get("selected_policy") or "").strip()
+    if not selected or len(selected) > 80:
+        return None
+    evaluations = payload.get("evaluations")
+    selected_eval = evaluations.get(selected) if isinstance(evaluations, dict) else None
+    if not isinstance(selected_eval, dict) or selected_eval.get("status") != "evaluated":
+        return None
+    gold_rows = payload.get("gold_rows")
+    excluded_model_gold = payload.get("excluded_model_gold")
+    if isinstance(gold_rows, bool) or not isinstance(gold_rows, int) or gold_rows < 0:
+        return None
+    if (
+        isinstance(excluded_model_gold, bool)
+        or not isinstance(excluded_model_gold, int)
+        or excluded_model_gold < 0
+    ):
+        return None
+    gold_source_policy = str(payload.get("gold_source_policy") or "").strip()
+    if gold_source_policy not in {"human_only", "human_and_model"}:
+        return None
+    dreamed_at = payload.get("dreamed_at")
+    if isinstance(dreamed_at, bool) or not isinstance(dreamed_at, int) or dreamed_at < 0:
+        dreamed_at = 0
+    return {
+        "status": "evaluated",
+        "selected_policy": selected,
+        "gold_rows": gold_rows,
+        "excluded_model_gold": excluded_model_gold,
+        "gold_source_policy": gold_source_policy,
+        "dreamed_at": dreamed_at,
+    }
+
+
 def _active_reply_model() -> str:
     path = _operator_state_root() / REPLY_MODEL_OVERRIDE_NAME
     try:
@@ -11233,6 +11286,7 @@ def generate_reply(
         conversation_target = None
     elif _preacquired_model_slot is not None:
         raise ValueError("pre-acquired model lease is probe-only")
+    dream_rsi_metadata = None if _capacity_probe else _load_dream_rsi_checkpoint_metadata()
     bounded_recent_conversation = list(recent_conversation or [])
     bounded_conversation_target = _prompt_conversation_target(
         conversation_target,
@@ -11479,7 +11533,7 @@ def generate_reply(
     )
 
     def with_prompt_receipt(payload: dict) -> dict:
-        return {
+        receipt = {
             **payload,
             "prompt_bytes": len(prompt_bytes),
             "prompt_sha256": prompt_digest,
@@ -11498,6 +11552,12 @@ def generate_reply(
                 else None
             ),
         }
+        if dream_rsi_metadata is not None:
+            # DREAM-RSI is an offline selector. The live worker records the
+            # winning policy as provenance only; it never substitutes replay
+            # stubs for model generation or changes the send safety gates.
+            receipt["dream_rsi_policy"] = dream_rsi_metadata
+        return receipt
 
     print(
         f"[reply-gen] start prompt_bytes={len(prompt_bytes)} "

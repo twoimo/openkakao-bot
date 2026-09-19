@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 import os
@@ -2241,6 +2242,111 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 "google-antigravity/gemini-3.6-flash-tiered",
             )
 
+
+    def test_worker_missing_dream_checkpoint_keeps_live_generation(self):
+        worker_path = SCRIPTS / "auto-reply-worker.py"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            state = root / "rooms" / "1" / "reply-state.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("{}", encoding="utf-8")
+            environment = {
+                "OPENKAKAO_REPLY_STATE": str(state),
+                "OPENKAKAO_AUTO_REPLY_STATE_ROOT": str(root),
+            }
+            with mock.patch.dict(os.environ, environment, clear=False):
+                spec = importlib.util.spec_from_file_location(
+                    "auto_reply_dream_checkpoint_worker", worker_path
+                )
+                worker = importlib.util.module_from_spec(spec)
+                assert spec.loader is not None
+                spec.loader.exec_module(worker)
+
+                decision = (
+                    0,
+                    json.dumps(
+                        {
+                            "should_reply": False,
+                            "reply": "",
+                            "reason": "low_information",
+                            "category": "uncertain",
+                            "evidence_ids": [],
+                        }
+                    ).encode("utf-8"),
+                    b"",
+                )
+                runner = mock.Mock(return_value=decision)
+                slot = {
+                    "allowed": True,
+                    "lease_token": "a" * 32,
+                    "retry_at": 9_999_999_999.0,
+                }
+                with contextlib.ExitStack() as stack:
+                    replacements = {
+                        "REPLY_RUNNER_KIND": "gjc",
+                        "_WORKER_HEALTH": None,
+                        "_generation_reply_model": mock.Mock(return_value="test/model"),
+                        "privacy_attestation_current": mock.Mock(return_value=True),
+                        "runner_is_trusted": mock.Mock(return_value=True),
+                        "record_learned_style_tells": mock.Mock(),
+                        "learned_style_tell_avoids": mock.Mock(return_value=[]),
+                        "_identity_policy_decision": mock.Mock(return_value=None),
+                        "_reply_decision_instructions": mock.Mock(return_value=[]),
+                        "_reply_decision_system_prompt": mock.Mock(return_value="Test decision"),
+                        "_queue_expected_chat_id": mock.Mock(return_value=1),
+                        "_ensure_omlx_model_resident": mock.Mock(),
+                        "_publish_model_status": mock.Mock(),
+                        "_active_journal_checkpoint": mock.Mock(),
+                        "_acquire_model_call_slot": mock.Mock(return_value=slot),
+                        "_finish_model_call_success": mock.Mock(return_value=True),
+                        "_run_bounded_process": runner,
+                        "reaction_register": mock.Mock(return_value={"evidence_id": "reaction:test"}),
+                        "youtube_reaction_register": mock.Mock(
+                            return_value={"evidence_id": "youtube:test"}
+                        ),
+                        "_room_laughter_allows": mock.Mock(return_value=False),
+                        "_room_awe_allows": mock.Mock(return_value=False),
+                    }
+                    for name, value in replacements.items():
+                        stack.enter_context(mock.patch.object(worker, name, value))
+                    stack.enter_context(
+                        mock.patch(
+                            "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                            return_value={},
+                        )
+                    )
+
+                    missing = worker.generate_reply("확인했어요", [], [], [], [])
+                    self.assertNotIn("dream_rsi_policy", missing)
+
+                    (root / "dream-rsi-policy.json").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": 2,
+                                "dreamed_at": 123,
+                                "status": "evaluated",
+                                "selected_policy": "echo_last_message",
+                                "gold_rows": 3,
+                                "excluded_model_gold": 1,
+                                "gold_source_policy": "human_only",
+                                "evaluations": {
+                                    "echo_last_message": {"status": "evaluated"}
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    selected = worker.generate_reply("확인했어요", [], [], [], [])
+
+                for key in ("should_reply", "reply", "reason", "category", "prompt_sha256"):
+                    self.assertEqual(selected[key], missing[key])
+                self.assertEqual(runner.call_count, 2)
+                self.assertEqual(
+                    selected["dream_rsi_policy"]["selected_policy"],
+                    "echo_last_message",
+                )
+
     def test_menubar_model_set_uses_stale_catalog_without_fetch(self):
         module = load("auto_reply_menubar_model_set_stale")
         with tempfile.TemporaryDirectory() as raw:
@@ -3616,6 +3722,64 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 audit.analyze(empty)
             with self.assertRaises(ValueError):
                 audit.analyze(directory / "missing")
+
+
+    def test_dream_rsi_status_reads_checkpoint_without_evaluation_or_copy(self):
+        module = load("auto_reply_menubar_dream_status")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "dream-rsi-policy.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "dreamed_at": 123,
+                        "status": "evaluated",
+                        "selected_policy": "mirror_prompt_tail",
+                        "gold_rows": 7,
+                        "excluded_model_gold": 2,
+                        "gold_source_policy": "human_only",
+                        "evaluations": {
+                            "mirror_prompt_tail": {"status": "evaluated"}
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch(
+                "auto_reply_dream_rsi.dream_policy_evaluation",
+                side_effect=AssertionError("status path must not evaluate DREAM-RSI"),
+            ) as evaluate, mock.patch(
+                "auto_reply_golden_dataset._connect_readonly",
+                side_effect=AssertionError("status path must not copy/read live DB"),
+            ) as copy_reader:
+                report = module._dream_rsi_status_payload(root)
+
+        evaluate.assert_not_called()
+        copy_reader.assert_not_called()
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["status"], "evaluated")
+        self.assertEqual(report["selected_policy"], "mirror_prompt_tail")
+        self.assertEqual(report["gold_rows"], 7)
+        self.assertEqual(report["excluded_model_gold"], 2)
+        self.assertEqual(report["gold_source_policy"], "human_only")
+
+        source = MENUBAR.read_text(encoding="utf-8")
+        helper_start = source.index("def _dream_rsi_status_payload(")
+        helper_end = source.index("\ndef main():", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertNotIn("dream_policy_evaluation", helper)
+        self.assertNotIn("context.sqlite3", helper)
+        swift = SWIFT.read_text(encoding="utf-8")
+        self.assertIn('"settings-sync-card"', swift)
+        self.assertIn('"settings-dream-rsi-card"', swift)
+        self.assertIn('["--action", "dream-rsi-status"]', swift)
+        apply_start = swift.index("func applySettingsDreamRsiStatus(")
+        apply_end = swift.index("\n    func applySettingsSyncStatus(", apply_start)
+        apply_body = swift[apply_start:apply_end]
+        self.assertIn("let gold = NSColor(", apply_body)
+        self.assertIn("let amber = NSColor(", apply_body)
+        self.assertNotIn(".systemGreen", apply_body)
 
     def test_menubar_exposes_the_knowledge_graph_action(self):
         """The action has to be answered before the frozen vector dispatch."""

@@ -17,6 +17,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 from scripts.auto_reply_golden_dataset import (
     APPROVAL_FILENAME,
@@ -396,6 +397,40 @@ class TestExtraction(unittest.TestCase):
         connection.close()
         self.assertFalse(_db_has_transcript(other))
         self.assertTrue(_db_has_transcript(self.db))
+
+
+    def test_copy_failure_is_fail_closed_and_never_opens_live_database(self):
+        real_connect = sqlite3.connect
+        opened: list[str] = []
+
+        def tracked_connect(target, *args, **kwargs):
+            opened.append(str(target))
+            return real_connect(target, *args, **kwargs)
+
+        with mock.patch(
+            "scripts.auto_reply_golden_dataset.shutil.copy2",
+            side_effect=OSError("copy refused"),
+        ), mock.patch(
+            "scripts.auto_reply_golden_dataset.sqlite3.connect",
+            side_effect=tracked_connect,
+        ):
+            with self.assertRaisesRegex(
+                sqlite3.OperationalError,
+                "isolated read-only snapshot unavailable",
+            ):
+                with _connect_readonly(self.db):
+                    self.fail("copy failure must not yield a connection")
+        self.assertEqual(opened, [])
+
+        with mock.patch(
+            "scripts.auto_reply_golden_dataset.shutil.copy2",
+            side_effect=OSError("copy refused"),
+        ), mock.patch(
+            "scripts.auto_reply_golden_dataset.sqlite3.connect",
+            side_effect=tracked_connect,
+        ):
+            self.assertFalse(_db_has_transcript(self.db))
+        self.assertEqual(opened, [])
 
     def test_extraction_combines_both_sources_and_dedupes(self):
         record_approval(
