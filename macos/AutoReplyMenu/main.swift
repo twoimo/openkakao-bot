@@ -3191,667 +3191,66 @@ final class JarvisCoreView: NSView {
 
 
 final class MenuPanelView: NSView {
-    var model: MenubarModel {
-        didSet { sync() }
-    }
+    var model: MenubarModel { didSet { sync() } }
     let coreView = JarvisCoreView(frame: .zero)
-    /// 코어 아래 한 줄. 지금 코어가 무엇을 하고 있는지 말로 알려 준다.
-    private let coreCaption = NSTextField(labelWithString: "")
-    weak var tileTarget: AnyObject?
-    weak var hamburgerTarget: AnyObject?
-    /// 우측 상단 톱니바퀴. 모든 제어와 설정은 이 단추 하나로 연다.
     let gearButton = NSButton(title: "", target: nil, action: #selector(AppDelegate.gearClicked(_:)))
-    let roomButton = NSButton(title: "방", target: nil, action: #selector(AppDelegate.roomPickerClicked(_:)))
-    var roomTitle = ""
-    var selectedRoomId = 0
-    static let panelWidth: CGFloat = 360
-    static let roomGridColumns = 2
-    static let roomCellHeight: CGFloat = 28
-    static let roomGridGap: CGFloat = 6
-    /// 위에서부터의 세로 리듬. 값 하나만 바꾸면 아래가 따라 움직이도록
-    /// 조각을 이어 붙여 계산한다. 예전에는 7/36/94/98/158/186이 따로 박혀
-    /// 있어 조각 사이 간격이 제각각이었다 (2026-09-16).
-    /// 패널 바깥 여백과 상단 상태/코어 사이에 쓰는 기본 간격.
-    static let gap: CGFloat = 8
-    /// 코어 설명 아래의 손배치 구간은 이 간격 하나로 이어 붙인다. 램프 줄이
-    /// 타일과 동작 단추 사이 높이를 따로 먹던 때에는 감사에서 8/34pt로
-    /// 보였다. 램프를 코어 옆으로 옮긴 뒤 설명/방 목록/타일/동작 단추는
-    /// 모두 같은 간격으로 흐른다 (2026-09-18).
-    // 캡션 아래·타일·동작 단추 간격을 8pt로 맞춰 손배치 감사와 빈 여백을 함께 잡는다.
-    static let sectionGap: CGFloat = 8
-    static let panelTop: CGFloat = gap
-    static let sideInset: CGFloat = 16
-    static let statusPillHeight: CGFloat = 22
-    static let afterStatusGap: CGFloat = gap
-    /// 자비스 홀로그램 코어가 차지하는 정사각형의 한 변.
-    ///
-    /// 이 코어가 이 화면의 주인공이다. 예전에는 여기에 8단계 파이프라인
-    /// 띠가 들어 있었는데, 단계 이름 여덟 개를 읽어야 현재 상태를 알 수
-    /// 있어 한눈에 들어오지 않았다. 지금은 코어 하나가 상태를 대신하고,
-    /// 단계는 창에서 본다 (2026-09-17).
-    static let coreSize: CGFloat = 168
-    static let tileHeight: CGFloat = 52
-    static let actionHeight: CGFloat = 28
-    static let bottomInset: CGFloat = gap
-    /// 코어가 놓이는 위쪽 좌표(패널 위에서부터).
-    static let coreTop: CGFloat = panelTop + statusPillHeight + afterStatusGap
-    /// 코어 아래 한 줄이 차지하는 높이.
-    static let coreCaptionHeight: CGFloat = 15
-    /// 코어 아래 상태 줄의 높이와 그 안쪽 치수.
-    static let statusRowHeight: CGFloat = 22
-    static let statusDotSize: CGFloat = 9
-    static let statusDotGap: CGFloat = 6
-    static let statusChipPadding: CGFloat = 8
-    /// 코어 아래 점등 묶음 앞에 붙는 한 마디. 이름표 다섯 개를 대신한다.
-    static let statusRowTitle = "구성"
-    /// 점등 묶음과 슬롯 묶음 사이. 한 줄 안의 다른 두 간격과 구분된다.
-    static let statusGroupGap: CGFloat = 16
-    /// 코어 아래 상태 줄이 놓이는 위쪽 좌표.
-    ///
-    /// 예전에는 구성 요소 점등과 긱뉴스 슬롯이 코어 좌우에 세로로 늘어서
-    /// 있었다. 왼쪽 이름표 다섯 개를 한 줄씩 읽어야 상태를 알 수 있었고,
-    /// 그 좌우를 채우려고 패널이 408pt까지 넓어져 정작 주인공인 코어가
-    /// 작아 보였다. 지금은 코어 아래 한 줄에 모으고, 이름표는 툴팁으로
-    /// 옮기고, 코어를 168pt로 키우고, 패널을 360pt로 좁혔다 (2026-09-19).
-    static let statusRowTop: CGFloat = coreTop + coreSize + coreCaptionHeight + sectionGap
-    /// 방 목록 격자가 시작하는 위쪽 좌표. 상태 줄 아래에 같은 간격으로 붙는다.
-    static let roomGridTop: CGFloat = statusRowTop + statusRowHeight + sectionGap
-    /// 지표 타일은 방 목록이 접혀 있을 때 격자 자리에서 바로 시작한다.
-    static let tileTop: CGFloat = roomGridTop
-    static let actionTop: CGFloat = tileTop + tileHeight + sectionGap
-    /// 상태 알약 + 홀로그램 코어 + 지표 타일 + 동작 버튼 + 아래 여백.
-    static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset
-    var roomsExpanded = false {
-        didSet {
-            guard roomsExpanded != oldValue else { return }
-            rebuildRoomPopup()
-            invalidateIntrinsicContentSize()
-            needsLayout = true
-        }
-    }
-    var roomRowButtons: [NSButton] = []
-    /// 방 목록이 넘칠 때 굴리는 스크롤 뷰. 방이 적으면 만들지 않는다.
-    private var roomGridScroll: NSScrollView?
-    private var roomGridContent: NSView?
-    var tileButtons: [NSButton] = []
-    /// 코어 아래 상태 줄 위에 얹는 투명한 단추. 칩은 직접 그리고, 이 단추가
-    /// 툴팁과 클릭을 받는다. 감사도 이 줄을 하나의 구간으로 재야 하므로
-    /// 그리기만 하고 끝내지 않고 실제 뷰를 둔다 (2026-09-19).
-    let healthButton = NSButton(title: "", target: nil, action: nil)
-    var slotButtons: [NSButton] = []
-    /// 오늘 보낸 슬롯을 표시하는 세 칸. 이름과 키는 긱뉴스 발송기와 같다.
-    static let geeknewsSlots: [(String, String)] = [
-        ("아침", "morning"),
-        ("점심", "lunch"),
-        ("저녁", "evening"),
-    ]
-    let autoButton = NSButton(title: "즉시 답장 보내기", target: nil, action: #selector(AppDelegate.instantAutoReplyClicked))
-    let geekButton = NSButton(title: "긱뉴스 바로 전송", target: nil, action: #selector(AppDelegate.instantGeekNewsClicked))
+    weak var operatorTarget: AnyObject? { didSet { gearButton.target = operatorTarget } }
+    var selectedRoomId = 0 { didSet { if selectedRoomId != oldValue { sync() } } }
+
+    static let panelWidth: CGFloat = 276
+    static let panelBaseHeight: CGFloat = 260
+    static let panelInset: CGFloat = 12
+    static let coreSize: CGFloat = 236
+    static let gearSize: CGFloat = 28
 
     init(model: MenubarModel, frame: NSRect) {
         self.model = model
         super.init(frame: frame)
-        coreView.frame = NSRect(
-            x: (frame.width - Self.coreSize) / 2,
-            y: Self.coreTop,
-            width: Self.coreSize,
-            height: Self.coreSize
-        )
-        coreView.autoresizingMask = [.minXMargin, .maxXMargin]
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
         coreView.level = model.level
-        let background = JarvisCoreView.background(model, chatId: nil)
-        coreView.activity = JarvisCoreView.activity(
-            pipeline: model.pipeline,
-            openJobs: model.open_jobs,
-            level: model.level,
-            background: background.activity
-        )
         addSubview(coreView)
-        coreCaption.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        coreCaption.textColor = NSColor.secondaryLabelColor
-        coreCaption.alignment = .center
-        coreCaption.lineBreakMode = .byTruncatingTail
-        addSubview(coreCaption)
         gearButton.bezelStyle = .inline
         gearButton.isBordered = false
         gearButton.controlSize = .regular
-        gearButton.image = NSImage(
-            systemSymbolName: "gearshape.fill",
-            accessibilityDescription: "설정"
-        )
+        gearButton.image = NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: "설정")
         gearButton.imagePosition = .imageOnly
         gearButton.contentTintColor = NSColor.secondaryLabelColor
-        gearButton.toolTip = "모든 설정과 제어를 엽니다"
+        gearButton.toolTip = "설정과 운영 도구 열기"
         gearButton.identifier = NSUserInterfaceItemIdentifier("gear")
         addSubview(gearButton)
-        roomButton.bezelStyle = .inline
-        roomButton.controlSize = .small
-        roomButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        roomButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "방 고르기")
-        roomButton.imagePosition = .imageTrailing
-        roomButton.imageHugsTitle = true
-        roomButton.toolTip = "지금 보고 있는 채팅방 워커를 고릅니다"
-        roomButton.identifier = NSUserInterfaceItemIdentifier("room-popup")
-        addSubview(roomButton)
-        let kinds = AppDelegate.jobKinds
-        let titles = ["대기", "전송", "건너뜀", "미확인"]
-        for (index, kind) in kinds.enumerated() {
-            let button = NSButton(title: "", target: nil, action: #selector(AppDelegate.tileClicked(_:)))
-            button.bezelStyle = .regularSquare
-            button.isBordered = false
-            button.tag = index
-            button.identifier = NSUserInterfaceItemIdentifier(kind)
-            button.toolTip = "\(titles[index]) 목록 열기"
-            addSubview(button)
-            tileButtons.append(button)
-        }
-        healthButton.bezelStyle = .inline
-        healthButton.isBordered = false
-        healthButton.title = ""
-        healthButton.identifier = NSUserInterfaceItemIdentifier("health-row")
-        healthButton.target = tileTarget
-        healthButton.action = #selector(AppDelegate.showLogWindow)
-        addSubview(healthButton)
-        for slot in Self.geeknewsSlots {
-            let button = NSButton(title: "", target: nil, action: nil)
-            button.bezelStyle = .inline
-            button.isBordered = false
-            button.title = ""
-            button.identifier = NSUserInterfaceItemIdentifier("geeknews-\(slot.1)")
-            addSubview(button)
-            slotButtons.append(button)
-        }
-        styleAction(autoButton)
-        styleAction(geekButton)
-        autoButton.toolTip = "이 방의 예약된 자동 답변을 지금 보냅니다. 메뉴에서 직접 보내지는 않습니다."
-        geekButton.toolTip = "이 방에 지금 긱뉴스를 보냅니다. 카카오톡 창이 열려 있어야 합니다."
-        addSubview(autoButton)
-        addSubview(geekButton)
         sync()
     }
 
-    func styleAction(_ button: NSButton) {
-        button.bezelStyle = .rounded
-        button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        button.controlSize = .regular
-    }
+    required init?(coder: NSCoder) { return nil }
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: Self.panelWidth, height: Self.panelBaseHeight) }
 
-    static func roomGridExtra(count: Int, expanded: Bool) -> CGFloat {
-        guard expanded else { return 0 }
-        return min(roomGridHeight(count: count), roomGridSpan(rows: maxRoomGridRows))
-            + sectionGap
-    }
-
-    /// 방 목록이 차지할 수 있는 최대 줄 수.
-    ///
-    /// 방이 늘어날수록 패널이 그만큼 길어져 화면 아래로 넘어갔다. 넘어간
-    /// 부분은 클릭할 수도 없어, 방을 여러 개 등록한 사람은 아래쪽 방을 아예
-    /// 고를 수 없었다. 여섯 줄로 묶고 나머지는 스크롤로 본다 (2026-09-16).
-    static let maxRoomGridRows = 6
-
-    /// 방 목록 격자가 실제로 차지하는 높이.
-    static func roomGridHeight(count: Int) -> CGFloat {
-        let rooms = max(count, 1)
-        let rows = min((rooms + roomGridColumns - 1) / roomGridColumns, maxRoomGridRows)
-        return roomGridSpan(rows: rows)
-    }
-
-    /// 방 목록 격자 자체의 높이(배경 카드 여백은 뺀 값).
-    static func roomGridSpan(rows: Int) -> CGFloat {
-        CGFloat(rows) * roomCellHeight + CGFloat(max(rows - 1, 0)) * roomGridGap
-    }
-
-    func roomGridExtra() -> CGFloat {
-        Self.roomGridExtra(count: AppDelegate.inspectableRooms(in: model).count, expanded: roomsExpanded)
-    }
-
-    func layoutWidth() -> CGFloat {
-        max(bounds.width, Self.panelWidth)
-    }
-
-    /// 톱니바퀴가 차지하는 폭. 상태 알약 오른쪽 끝에 붙는다.
-    static let gearWidth: CGFloat = 26
-
-    /// 방 고르기 단추가 차지하는 폭.
-    ///
-    /// 예전에는 100pt로 박아 두어 "▸ 부자멘토멘티" 같은 제목이 56pt 잘렸다.
-    /// 제목이 필요로 하는 만큼 주되, 설명 줄을 남겨 두고 패널 밖으로는
-    /// 나가지 않게 한다 (2026-09-16).
-    func roomButtonWidth() -> CGFloat {
-        let needed = roomButton.attributedTitle.size().width + 24
-        let room = max(96, layoutWidth() - Self.sideInset * 2 - 168 - Self.gearWidth)
-        return min(max(needed, 96), room)
-    }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.panelWidth, height: Self.panelBaseHeight + roomGridExtra())
-    }
-
-    func rebuildRoomPopup() {
-        let rooms = AppDelegate.inspectableRooms(in: model)
-        let title = roomTitle.isEmpty ? "방" : roomTitle
-        let mark = roomsExpanded ? "▾" : "▸"
-        roomButton.isHidden = rooms.isEmpty
-        roomButton.isEnabled = !rooms.isEmpty
-        roomButton.title = "\(mark) \(title)"
-        roomButton.bezelStyle = .recessed
-        roomButton.controlSize = .small
-        roomButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        roomButton.image = nil
-        roomButton.target = hamburgerTarget
-        roomButton.action = #selector(AppDelegate.toggleRoomListClicked(_:))
-        for button in roomRowButtons {
-            button.removeFromSuperview()
-        }
-        roomRowButtons.removeAll()
-        roomGridScroll?.removeFromSuperview()
-        roomGridScroll = nil
-        roomGridContent = nil
-        guard roomsExpanded else { return }
-        // 방이 한 화면에 다 들어가면 스크롤 뷰를 만들지 않는다. 늘 스크롤
-        // 뷰를 두면 방 두 개짜리 패널에도 스크롤 틀이 생겨 지저분하다
-        // (2026-09-16).
-        let needed = Self.roomGridHeight(count: rooms.count)
-        let visible = Self.roomGridHeight(count: min(rooms.count, Self.maxRoomGridRows * Self.roomGridColumns))
-        let scrolls = needed > visible + 0.5
-        let gridHost: NSView
-        if scrolls {
-            let scroll = NSScrollView()
-            scroll.translatesAutoresizingMaskIntoConstraints = true
-            scroll.hasVerticalScroller = true
-            scroll.hasHorizontalScroller = false
-            scroll.autohidesScrollers = true
-            scroll.drawsBackground = false
-            scroll.borderType = .noBorder
-            let content = FlippedContainerView(frame: NSRect(x: 0, y: 0, width: layoutWidth(), height: needed))
-            scroll.documentView = content
-            addSubview(scroll)
-            roomGridScroll = scroll
-            roomGridContent = content
-            gridHost = content
-        } else {
-            gridHost = self
-        }
-        for room in rooms {
-            let selected = room.chat_id == selectedRoomId
-            let button = NSButton(
-                title: selected ? "✓ \(room.title)" : room.title,
-                target: hamburgerTarget,
-                action: #selector(AppDelegate.inspectRoomButtonClicked(_:))
-            )
-            button.bezelStyle = .inline
-            button.isBordered = false
-            button.controlSize = .small
-            button.font = NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .medium)
-            button.alignment = .center
-            button.tag = room.chat_id
-            button.toolTip = "이 방 워커를 봅니다"
-            button.contentTintColor = selected ? NSColor.controlAccentColor : NSColor.labelColor
-            if let cell = button.cell as? NSButtonCell {
-                cell.lineBreakMode = .byTruncatingTail
-            }
-            button.isHidden = true
-            gridHost.addSubview(button)
-            roomRowButtons.append(button)
-        }
-        layoutRoomGrid()
-        for button in roomRowButtons {
-            button.isHidden = false
-        }
-    }
-
-    func layoutRoomGrid() {
-        let extra = roomGridExtra()
-        let width = layoutWidth()
-        let pickerWidth = roomButtonWidth()
-        gearButton.frame = NSRect(
-            x: width - Self.sideInset - Self.gearWidth,
-            y: Self.panelTop,
-            width: Self.gearWidth,
-            height: Self.statusPillHeight
-        )
-        roomButton.frame = NSRect(
-            x: width - Self.sideInset - Self.gearWidth - 6 - pickerWidth,
-            y: Self.panelTop,
-            width: pickerWidth,
-            height: Self.statusPillHeight
-        )
-        coreView.frame = NSRect(
-            x: (width - Self.coreSize) / 2,
-            y: Self.coreTop,
-            width: Self.coreSize,
-            height: Self.coreSize
-        )
-        coreCaption.frame = NSRect(
-            x: Self.sideInset,
-            y: Self.coreTop + Self.coreSize,
-            width: width - Self.sideInset * 2,
-            height: Self.coreCaptionHeight
-        )
-        let chips = statusRowRects(width: width)
-        healthButton.frame = chips.health
-        for (index, button) in slotButtons.enumerated() where index < chips.slots.count {
-            button.frame = chips.slots[index]
-        }
-        let columns = Self.roomGridColumns
-        let gap = Self.roomGridGap
-        let cellH = Self.roomCellHeight
-        let cellW = max(80, (width - 32 - gap) / CGFloat(columns))
-        // 방 목록이 넘치면 스크롤 뷰가 그 자리를 차지하고, 단추들은 그 안쪽
-        // 문서 좌표계에 놓인다. 스크롤 뷰 자체는 늘 보이는 만큼만 차지한다
-        // (2026-09-16).
-        let gridHeight = Self.roomGridHeight(count: max(roomRowButtons.count, 1))
-        let visibleHeight = min(gridHeight, Self.roomGridSpan(rows: Self.maxRoomGridRows))
-        if let scroll = roomGridScroll {
-            scroll.frame = NSRect(
-                x: Self.sideInset,
-                y: Self.roomGridTop,
-                width: width - Self.sideInset * 2,
-                height: visibleHeight
-            )
-            roomGridContent?.frame = NSRect(
-                x: 0,
-                y: 0,
-                width: width - Self.sideInset * 2,
-                height: gridHeight
-            )
-        }
-        let gridOriginX = roomGridScroll == nil ? Self.sideInset : 0
-        let gridOriginY = roomGridScroll == nil ? Self.roomGridTop : 0
-        for (index, button) in roomRowButtons.enumerated() {
-            let col = index % columns
-            let row = index / columns
-            button.frame = NSRect(
-                x: gridOriginX + CGFloat(col) * (cellW + gap),
-                y: gridOriginY + CGFloat(row) * (cellH + gap),
-                width: cellW,
-                height: cellH
-            )
-        }
-        let tileY: CGFloat = Self.tileTop + extra
-        let actionY: CGFloat = Self.actionTop + extra
-        let tileW = (width - Self.sideInset * 2 - 18) / 4
-        for (index, button) in tileButtons.enumerated() {
-            button.target = tileTarget
-            button.frame = NSRect(
-                x: Self.sideInset + CGFloat(index) * (tileW + 6),
-                y: tileY,
-                width: tileW,
-                height: Self.tileHeight
-            )
-        }
-        autoButton.target = tileTarget
-        geekButton.target = tileTarget
-        let buttonW = (width - Self.sideInset * 2 - 8) / 2
-        autoButton.frame = NSRect(x: Self.sideInset, y: actionY, width: buttonW, height: Self.actionHeight)
-        geekButton.frame = NSRect(
-            x: Self.sideInset + buttonW + 8,
-            y: actionY,
-            width: buttonW,
-            height: Self.actionHeight
-        )
+    override func layout() {
+        super.layout()
+        let width = max(bounds.width, Self.panelWidth)
+        let height = max(bounds.height, Self.panelBaseHeight)
+        coreView.frame = NSRect(x: (width - Self.coreSize) / 2, y: (height - Self.coreSize) / 2, width: Self.coreSize, height: Self.coreSize)
+        gearButton.frame = NSRect(x: width - Self.panelInset - Self.gearSize, y: Self.panelInset, width: Self.gearSize, height: Self.gearSize)
     }
 
     func sync() {
         let room = AppDelegate.selectedRoom(in: model, preferred: selectedRoomId)
-        selectedRoomId = room?.chat_id ?? 0
-        roomTitle = room?.title ?? "전체"
         let pipeline = room?.pipeline ?? model.pipeline
-        coreView.level = room?.level ?? model.level
         let openJobs = room?.open_jobs ?? model.open_jobs
+        let level = room?.level ?? model.level
         let background = JarvisCoreView.background(model, chatId: room?.chat_id)
-        coreView.activity = JarvisCoreView.activity(
-            pipeline: pipeline,
-            openJobs: openJobs,
-            level: room?.level ?? model.level,
-            background: background.activity
-        )
-        coreCaption.stringValue = JarvisCoreView.caption(
-            pipeline: pipeline,
-            openJobs: openJobs,
-            background: background.caption
-        )
-        rebuildRoomPopup()
-        let selectedLive = room.map { choice in
-            (model.rooms ?? []).contains { $0.chat_id == choice.chat_id && $0.live && $0.auto_reply }
-        } ?? false
-        let selectedGeek = room.map { choice in
-            (model.rooms ?? []).contains { $0.chat_id == choice.chat_id && $0.live && $0.geeknews }
-        } ?? false
-        autoButton.isEnabled = selectedLive
-        geekButton.isEnabled = selectedGeek
-        healthButton.toolTip = Self.healthTooltip(model.health ?? [:])
-        let posted = Set(room?.geeknews_slots ?? [])
-        let day = Self.kstDay()
-        for (index, button) in slotButtons.enumerated() {
-            guard index < Self.geeknewsSlots.count else { break }
-            let slot = Self.geeknewsSlots[index]
-            button.toolTip = posted.contains("\(day):\(slot.1)")
-                ? "오늘 \(slot.0) 긱뉴스를 보냈습니다"
-                : "오늘 \(slot.0) 긱뉴스는 아직 보내지 않았습니다"
-        }
+        coreView.level = level
+        coreView.activity = JarvisCoreView.activity(pipeline: pipeline, openJobs: openJobs, level: level, background: background.activity)
         needsDisplay = true
-    }
-
-    required init?(coder: NSCoder) {
-        return nil
-    }
-
-    override var isFlipped: Bool { true }
-
-    override func layout() {
-        super.layout()
-        layoutRoomGrid()
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let bounds = self.bounds
-        let width = layoutWidth()
         NSColor.clear.setFill()
         bounds.fill()
-
-        let room = AppDelegate.selectedRoom(in: model, preferred: selectedRoomId)
-        let level = room?.level ?? model.level
-        let color = Palette.level(level)
-        let titleAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: color,
-        ]
-        let title = NSString(string: Palette.title(level: level))
-        let titleSize = title.size(withAttributes: titleAttrs)
-        let statusPill = NSRect(
-            x: Self.sideInset,
-            y: Self.panelTop,
-            width: 24 + titleSize.width,
-            height: Self.statusPillHeight
-        )
-        color.withAlphaComponent(0.16).setFill()
-        NSBezierPath(roundedRect: statusPill, xRadius: 11, yRadius: 11).fill()
-        color.setFill()
-        NSBezierPath(ovalIn: NSRect(x: statusPill.minX + 6, y: statusPill.minY + 6, width: 10, height: 10)).fill()
-        let titleY = statusPill.midY - titleSize.height / 2
-        title.draw(
-            at: CGPoint(x: statusPill.minX + 20, y: titleY),
-            withAttributes: titleAttrs
-        )
-        let captionX = statusPill.maxX + 8
-        // 방 고르기 단추가 방 이름을 이미 보여 주므로 설명 줄에서는 뺀다.
-        // 예전에는 같은 이름이 "▸ 부자멘토멘티"와 "부자멘토멘티 · …"로 두 번
-        // 나와서 한 줄을 두 번 읽어야 했다 (2026-09-16).
-        let pickerWidth = roomButton.isHidden
-            ? Self.gearWidth
-            : roomButtonWidth() + 6 + Self.gearWidth
-        let captionMax = max(40, width - Self.sideInset - pickerWidth - captionX)
-        let status = Palette.caption(code: room?.codes.first ?? model.primary_code)
-        let caption = NSString(string: roomButton.isHidden ? "\(roomTitle) · \(status)" : status)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        paragraph.alignment = .left
-        let captionAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraph,
-        ]
-        let captionSize = caption.size(withAttributes: captionAttrs)
-        let captionY = statusPill.midY - captionSize.height / 2
-        NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: NSRect(x: captionX, y: statusPill.minY, width: captionMax, height: statusPill.height)).addClip()
-        caption.draw(
-            at: CGPoint(x: captionX, y: captionY),
-            withAttributes: captionAttrs
-        )
-        NSGraphicsContext.restoreGraphicsState()
-
-        let extra = roomGridExtra()
-        let tileY: CGFloat = Self.tileTop + extra
-        if roomsExpanded {
-            let rows = (max(AppDelegate.inspectableRooms(in: model).count, 1) + Self.roomGridColumns - 1) / Self.roomGridColumns
-            let card = NSRect(
-                x: 12,
-                y: Self.roomGridTop - 4,
-                width: width - 24,
-                height: Self.roomGridSpan(rows: rows) + 8
-            )
-            NSColor.labelColor.withAlphaComponent(0.045).setFill()
-            NSBezierPath(roundedRect: card, xRadius: 10, yRadius: 10).fill()
-        }
-        let metrics: [(String, Int, NSColor)] = [
-            ("대기", room?.open_jobs ?? 0, (room?.open_jobs ?? 0) > 0 ? NSColor.systemBlue : NSColor.tertiaryLabelColor),
-            ("전송", room?.sent ?? 0, NSColor.labelColor),
-            ("건너뜀", room?.skipped ?? 0, NSColor.secondaryLabelColor),
-            ("미확인", room?.delivery_unknown ?? 0, (room?.delivery_unknown ?? 0) > 0 ? NSColor.systemRed : NSColor.tertiaryLabelColor),
-        ]
-        let tileW = (width - 32 - 18) / 4
-        for (index, metric) in metrics.enumerated() {
-            let x = 16 + CGFloat(index) * (tileW + 6)
-            let rect = NSRect(x: x, y: tileY, width: tileW, height: Self.tileHeight)
-            NSColor.labelColor.withAlphaComponent(0.055).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill()
-            let value = NSString(string: Self.compact(metric.1))
-            let valueAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 18, weight: .semibold),
-                .foregroundColor: metric.2,
-            ]
-            let valueSize = value.size(withAttributes: valueAttrs)
-            value.draw(
-                at: CGPoint(x: rect.midX - valueSize.width / 2, y: rect.minY + 8),
-                withAttributes: valueAttrs
-            )
-            let name = NSString(string: metric.0)
-            let nameAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .medium),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-            let nameSize = name.size(withAttributes: nameAttrs)
-            name.draw(
-                at: CGPoint(x: rect.midX - nameSize.width / 2, y: rect.minY + 32),
-                withAttributes: nameAttrs
-            )
-        }
-
-        drawStatusRow(width: width, health: model.health ?? [:], room: room)
     }
 
-    /// 구성 요소 점등 다섯 개와 오늘의 긱뉴스 슬롯 세 칸을 한 줄에 그린다.
-    ///
-    /// 이름표를 화면에서 뺀 이유는 그 다섯 줄이 상태를 읽는 유일한 방법이
-    /// 아니기 때문이다. 위쪽 알약이 이미 "정상 작동/처리 중/확인 필요"를
-    /// 말하고, 어느 구성 요소가 꺼졌는지는 이 줄의 툴팁이 이름으로 알려
-    /// 준다. 점등은 자리로, 이름은 툴팁으로 나눠 맡긴다 (2026-09-19).
-    func drawStatusRow(width: CGFloat, health: [String: String], room: RoomChoice?) {
-        let chips = statusRowRects(width: width)
-        NSColor.labelColor.withAlphaComponent(0.05).setFill()
-        NSBezierPath(roundedRect: chips.health, xRadius: 9, yRadius: 9).fill()
-        // 이름표 다섯 개를 뺀 자리에 "구성" 한 마디만 남긴다. 이 글자가
-        // 없으면 점 다섯 개가 무엇을 뜻하는지 알 길이 없다 (2026-09-19).
-        let titleAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        let title = NSString(string: Self.statusRowTitle)
-        let titleSize = title.size(withAttributes: titleAttrs)
-        title.draw(
-            at: CGPoint(
-                x: chips.health.minX + Self.statusChipPadding,
-                y: chips.health.midY - titleSize.height / 2
-            ),
-            withAttributes: titleAttrs
-        )
-        let lamps: [(String, String)] = [
-            ("감시", health["watchdog"] ?? "off"),
-            ("감독", health["supervisor"] ?? "off"),
-            ("창", health["ax"] ?? "off"),
-            ("워커", health["worker"] ?? "off"),
-            ("모델", health["model"] ?? "off"),
-        ]
-        var dotX = chips.health.minX + Self.statusChipPadding + titleSize.width + Self.statusDotGap
-        for lamp in lamps {
-            let dot = NSRect(
-                x: dotX,
-                y: chips.health.midY - Self.statusDotSize / 2,
-                width: Self.statusDotSize,
-                height: Self.statusDotSize
-            )
-            Palette.lamp(lamp.1).setFill()
-            NSBezierPath(ovalIn: dot).fill()
-            dotX = dot.maxX + Self.statusDotGap
-        }
-        let posted = Set(room?.geeknews_slots ?? [])
-        let day = Self.kstDay()
-        let slotFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        for (index, slot) in Self.geeknewsSlots.enumerated() {
-            guard index < chips.slots.count else { break }
-            let rect = chips.slots[index]
-            let filled = posted.contains("\(day):\(slot.1)")
-            (filled ? NSColor.systemGreen : NSColor.labelColor.withAlphaComponent(0.08)).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9).fill()
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: slotFont,
-                .foregroundColor: filled ? NSColor.white : NSColor.secondaryLabelColor,
-            ]
-            let label = NSString(string: slot.0)
-            let size = label.size(withAttributes: attrs)
-            label.draw(
-                at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
-                withAttributes: attrs
-            )
-        }
-    }
-
-    /// 상태 줄에서 각 칩이 차지하는 자리. 가운데 정렬이라 패널 폭이 바뀌어도
-    /// 좌우 여백이 같다.
-    func statusRowRects(width: CGFloat) -> (health: NSRect, slots: [NSRect]) {
-        let lampCount = 5
-        let titleFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        let healthWidth = Self.statusChipPadding * 2
-            + NSString(string: Self.statusRowTitle).size(withAttributes: [.font: titleFont]).width
-            + Self.statusDotGap
-            + CGFloat(lampCount) * Self.statusDotSize
-            + CGFloat(max(lampCount - 1, 0)) * Self.statusDotGap
-        let slotFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        var widths: [CGFloat] = [healthWidth]
-        for slot in Self.geeknewsSlots {
-            widths.append(
-                Self.statusChipPadding * 2
-                    + NSString(string: slot.0).size(withAttributes: [.font: slotFont]).width
-            )
-        }
-        let total = widths.reduce(0, +)
-            + Self.statusGroupGap
-            + CGFloat(Self.geeknewsSlots.count - 1) * Self.statusDotGap
-        var x = max(Self.sideInset, (width - total) / 2)
-        var rects: [NSRect] = []
-        for (index, item) in widths.enumerated() {
-            rects.append(
-                NSRect(x: x, y: Self.statusRowTop, width: item, height: Self.statusRowHeight)
-            )
-            x += item + (index == 0 ? Self.statusGroupGap : Self.statusDotGap)
-        }
-        return (rects[0], Array(rects.dropFirst()))
-    }
-
-    /// 점등 다섯 개를 이름으로 읽어 주는 설명. 화면에서 뺀 이름표가 여기 남는다.
     static func healthTooltip(_ health: [String: String]) -> String {
         let lamps: [(String, String)] = [
             ("감시", health["watchdog"] ?? "off"),
@@ -3861,17 +3260,12 @@ final class MenuPanelView: NSView {
             ("AI 모델", health["model"] ?? "off"),
         ]
         let off = lamps.filter { $0.1 != "ok" }.map { $0.0 }
-        if off.isEmpty {
-            return "구성 요소 다섯이 모두 켜져 있습니다. 눌러서 처리 기록을 엽니다."
-        }
+        if off.isEmpty { return "구성 요소 다섯이 모두 켜져 있습니다." }
         return "점검이 필요한 구성 요소: " + off.joined(separator: " · ")
-            + " — 눌러서 처리 기록을 엽니다."
     }
 
     static func compact(_ value: Int) -> String {
-        if value >= 1000 {
-            return String(format: "%.1fk", Double(value) / 1000.0)
-        }
+        if value >= 1000 { return String(format: "%.1fk", Double(value) / 1000.0) }
         return String(value)
     }
 
@@ -3882,6 +3276,7 @@ final class MenuPanelView: NSView {
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 }
+
 final class CenteredLabelCell: NSTableCellView {
     let label: NSTextField
 
@@ -4182,7 +3577,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelFallbackMenuSignature = ""
     var menuPanel: MenuPanelView?
     var inspectedRoomId = 0
-    var roomsListExpanded = false
+    var settingsWindow: NSWindow?
+    var settingsRoomPopup: NSPopUpButton?
+    var settingsRoomSummary: NSTextField?
+    var settingsHealthLamps: [String: LampCell] = [:]
+    var settingsHealthSummary: NSTextField?
+    var settingsSlotFields: [String: NSTextField] = [:]
+    var settingsJobButtons: [NSButton] = []
+    var settingsAutoButton: NSButton?
+    var settingsGeekButton: NSButton?
     var menuTracking = false
     var refreshInFlight = false
     var refreshQueued = false
@@ -4303,7 +3706,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         menuTracking = false
-        roomsListExpanded = false
         statusItem.button?.highlight(false)
         if let model = lastModel {
             statusItem.menu = buildMenu(model)
@@ -4507,6 +3909,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let window = roomsWindow, window.isVisible {
             updateRoomsWindow(model)
         }
+        if let window = settingsWindow, window.isVisible {
+            updateUnifiedSettingsWindow(model)
+        }
         if let window = vectorWindow, window.isVisible {
             applyVectorStatus(model.vector_memory)
         }
@@ -4520,25 +3925,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
-        let rooms = Self.inspectableRooms(in: model)
-        let extra = MenuPanelView.roomGridExtra(count: rooms.count, expanded: roomsListExpanded)
         let graphic = NSMenuItem()
-        let panel = MenuPanelView(model: model, frame: NSRect(x: 0, y: 0, width: MenuPanelView.panelWidth, height: MenuPanelView.panelBaseHeight + extra))
-        panel.tileTarget = self
-        panel.hamburgerTarget = self
+        let panel = MenuPanelView(
+            model: model,
+            frame: NSRect(x: 0, y: 0, width: MenuPanelView.panelWidth, height: MenuPanelView.panelBaseHeight)
+        )
+        panel.operatorTarget = self
         panel.selectedRoomId = inspectedRoomId
-        panel.roomsExpanded = roomsListExpanded
         graphic.view = panel
         graphic.isEnabled = true
         menu.addItem(graphic)
         menuPanel = panel
-        // 이 메뉴에는 패널 하나만 들어갑니다.
-        //
-        // 예전에는 패널 아래에 "답변 기록 보기…", "AI 모델 설정…", "채팅방
-        // 관리…", "지식 그래프 (대화 기억)…", "메뉴 종료"가 줄줄이 늘어서
-        // 있었습니다. 메뉴를 열 때마다 이 다섯 줄을 다시 읽어야 했고, 무엇을
-        // 먼저 눌러야 하는지도 알 수 없었습니다. 지금은 패널 우측 상단
-        // 톱니바퀴 하나가 그 창들을 모두 엽니다 (2026-09-17).
         return menu
     }
 
@@ -6190,19 +5587,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func instantAutoReplyClicked() {
-        runOperatorAction("auto-reply-now", chatId: inspectedRoomId)
+        guard let model = lastModel,
+              let room = Self.selectedRoom(in: model, preferred: inspectedRoomId) else {
+            traceOperatorSurface("instant auto-reply blocked: no room")
+            alertOperator(title: "보낼 채팅방이 없습니다", message: "채팅방 관리에서 방을 등록한 뒤 다시 시도해 주세요.")
+            return
+        }
+        inspectedRoomId = room.chat_id
+        runOperatorAction("auto-reply-now", chatId: room.chat_id)
     }
 
     @objc func instantGeekNewsClicked() {
-        runOperatorAction("geeknews-now", chatId: inspectedRoomId)
+        guard let model = lastModel,
+              let room = Self.selectedRoom(in: model, preferred: inspectedRoomId) else {
+            traceOperatorSurface("instant GeekNews blocked: no room")
+            alertOperator(title: "보낼 채팅방이 없습니다", message: "채팅방 관리에서 방을 등록한 뒤 다시 시도해 주세요.")
+            return
+        }
+        inspectedRoomId = room.chat_id
+        runOperatorAction("geeknews-now", chatId: room.chat_id)
     }
 
     func runOperatorAction(_ action: String, chatId: Int = 0) {
+        if (action == "auto-reply-now" || action == "geeknews-now") && chatId <= 0 {
+            traceOperatorSurface("operator action rejected: missing chat id")
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var extra = ["--action", action]
-            if chatId != 0 {
-                extra.append(contentsOf: ["--chat-id", String(chatId)])
-            }
+            if chatId > 0 { extra.append(contentsOf: ["--chat-id", String(chatId)]) }
             let data = self?.runPython(extra)
             DispatchQueue.main.async {
                 self?.presentOperatorResult(action: action, data: data)
@@ -6212,8 +5625,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func presentOperatorResult(action: String, data: Data?) {
-        guard let data,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let data else {
+            traceOperatorSurface("operator action failed without response: \(action)")
+            alertOperator(title: "요청 실패", message: "운영 도구의 응답을 받지 못했습니다.")
+            return
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            traceOperatorSurface("operator action returned invalid response: \(action)")
+            alertOperator(title: "요청 실패", message: "운영 도구의 응답 형식을 읽지 못했습니다.")
             return
         }
         let ok = object["ok"] as? Bool ?? false
@@ -6301,41 +5720,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ensureLogWindow()
         ensureRoomsWindow()
         ensureVectorWindow()
-        // 메뉴를 눌렀을 때 가장 먼저 보이는 화면도 같은 기준으로 잰다.
-        // 메뉴를 눌렀을 때 보이는 패널은 접힌 상태와 펼친 상태의 높이가
-        // 다르다. 둘 다 재야 어느 쪽에 빈 띠가 생기는지 알 수 있다.
+        ensureUnifiedSettingsWindow()
+        // 메뉴 extra는 JarvisCoreView와 우측 상단 gear 하나만 렌더한다.
         layoutAuditPanels = []
-        for expanded in [false, true] {
-            // 상태를 읽지 못해도 패널은 사용자가 가장 먼저 보는 화면이다.
-            // 감사는 그 경우까지 재야 한다 (2026-09-16).
-            let model = loadModel() ?? Self.unavailableModel()
-            let rooms = Self.inspectableRooms(in: model)
-            let extra = MenuPanelView.roomGridExtra(count: rooms.count, expanded: expanded)
-            let panel = MenuPanelView(
-                model: model,
-                frame: NSRect(
-                    x: 0,
-                    y: 0,
-                    width: MenuPanelView.panelWidth,
-                    height: MenuPanelView.panelBaseHeight + extra
-                )
-            )
-            panel.selectedRoomId = inspectedRoomId
-            panel.roomsExpanded = expanded
-            let host = NSWindow(
-                contentRect: panel.frame,
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
-            )
-            host.contentView = panel
-            layoutAuditPanels.append((expanded ? "menu-panel-rooms" : "menu-panel", host, panel))
-        }
+        let auditModel = loadModel() ?? Self.unavailableModel()
+        let panel = MenuPanelView(
+            model: auditModel,
+            frame: NSRect(x: 0, y: 0, width: MenuPanelView.panelWidth, height: MenuPanelView.panelBaseHeight)
+        )
+        panel.operatorTarget = self
+        panel.selectedRoomId = inspectedRoomId
+        let host = NSWindow(contentRect: panel.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        host.contentView = panel
+        layoutAuditPanels.append(("menu-panel", host, panel))
         let windows: [(String, NSWindow?)] = [
             ("model", modelWindow),
             ("jobs", jobsWindow),
             ("log", logWindow),
             ("rooms", roomsWindow),
+            ("settings", settingsWindow),
             ("vector", vectorWindow),
         ]
         var rows: [[String: Any]] = []
@@ -6346,6 +5749,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             lastModel = model
             updateModelSettingsWindow()
             updateRoomsWindow(model)
+            updateUnifiedSettingsWindow(model)
             // 창을 열 때 실제로 타는 경로를 그대로 쓴다. 예전에는
             // applyLogReceipts만 불러서, 기록 창의 머리말이 초기 문구인
             // "상태를 읽는 중"에 머문 채로 찍혔다. 그 그림을 근거로 창이
@@ -6650,137 +6054,226 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return catalog.first(where: { $0.live }) ?? catalog.first
     }
 
-    func roomPickerMenu(from model: MenubarModel) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let rooms = Self.inspectableRooms(in: model)
-        if rooms.isEmpty {
-            let empty = NSMenuItem(title: "고를 방이 없습니다", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-        for room in rooms {
-            let busy = room.open_jobs > 0 ? " · 처리중" : ""
-            let live = room.live ? "" : " · 꺼짐"
-            let item = NSMenuItem(
-                title: "\(room.title)\(busy)\(live)",
-                action: #selector(inspectRoomClicked(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = room.chat_id
-            let selectedId = inspectedRoomId == 0 ? Self.selectedRoom(in: model, preferred: 0)?.chat_id : inspectedRoomId
-            item.state = room.chat_id == selectedId ? .on : .off
-            item.toolTip = room.live ? "이 방 워커를 봅니다" : "카탈로그에 있는 방입니다. 워커는 다음 기동부터 붙습니다"
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    @objc func toggleRoomListClicked(_ sender: NSButton) {
-        _ = sender
-        roomsListExpanded.toggle()
-        if let panel = menuPanel, let model = lastModel {
-            applyRoomList(to: panel, model: model)
-        }
-    }
-
-    @objc func inspectRoomButtonClicked(_ sender: NSButton) {
-        inspectRoom(sender.tag)
-    }
-
-    @objc func roomPickerClicked(_ sender: NSButton) {
-        toggleRoomListClicked(sender)
-    }
-
-    @objc func hamburgerClicked(_ sender: NSButton) {
-        toggleRoomListClicked(sender)
-    }
-
-    @objc func inspectRoomClicked(_ sender: NSMenuItem) {
-        guard let chatId = sender.representedObject as? Int else { return }
-        inspectRoom(chatId)
-    }
-
-    func applyRoomList(to panel: MenuPanelView, model: MenubarModel) {
-        let rooms = Self.inspectableRooms(in: model)
-        let extra = MenuPanelView.roomGridExtra(count: rooms.count, expanded: roomsListExpanded)
-        panel.roomsExpanded = roomsListExpanded
-        panel.selectedRoomId = inspectedRoomId
-        panel.model = model
-        panel.setFrameSize(NSSize(width: MenuPanelView.panelWidth, height: MenuPanelView.panelBaseHeight + extra))
-        panel.layoutRoomGrid()
-        panel.needsDisplay = true
-        if let item = statusItem.menu?.items.first {
-            item.view = panel
-        }
-    }
-
     func inspectRoom(_ chatId: Int) {
         inspectedRoomId = chatId
         if let panel = menuPanel, let model = lastModel {
-            applyRoomList(to: panel, model: model)
+            panel.selectedRoomId = chatId
+            panel.model = model
         }
+        if let model = lastModel, settingsWindow?.isVisible == true { updateUnifiedSettingsWindow(model) }
         if let window = roomsWindow, window.isVisible, let model = lastModel {
             roomsSelectedChatId = chatId
             updateRoomsWindow(model)
         }
-        if let window = logWindow, window.isVisible, let model = lastModel {
-            updateLogWindow(model)
-        }
-        if let window = jobsWindow, window.isVisible {
-            refreshJobs(status: jobsStatus)
-        }
+        if let window = logWindow, window.isVisible, let model = lastModel { updateLogWindow(model) }
+        if let window = jobsWindow, window.isVisible { refreshJobs(status: jobsStatus) }
     }
 
-    /// 우측 상단 톱니바퀴 하나로 모든 제어와 설정을 연다.
-    ///
-    /// 예전에는 메뉴 아래에 "답변 기록 보기…", "AI 모델 설정…", "채팅방
-    /// 관리…", "지식 그래프 (대화 기억)…" 네 줄이 따로 늘어서 있었다.
-    /// 무엇을 먼저 눌러야 하는지 알 수 없었고, 같은 설정이 두 곳에 나뉘어
-    /// 있기도 했다. 지금은 톱니바퀴 하나가 그 네 창을 모두 연다
-    /// (2026-09-17).
     @objc func gearClicked(_ sender: NSButton) {
         _ = sender
-        // 메뉴 안의 단추를 누르면 AppKit이 먼저 메뉴를 닫는다. 그 닫는
-        // 동작이 끝나기 전에 새 메뉴를 열면 곧바로 닫혀 버리므로, 한 바퀴
-        // 돌린 뒤에 연다 (2026-09-17).
-        DispatchQueue.main.async { [weak self] in
-            self?.presentGearMenu()
-        }
+        DispatchQueue.main.async { [weak self] in self?.showUnifiedSettingsWindow() }
     }
 
-    /// 톱니바퀴를 누르면 열리는 목록. 창을 여는 유일한 입구다.
-    func presentGearMenu() {
-        statusItem.button?.highlight(false)
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let entries: [(String, Selector)] = [
-            ("AI 모델 설정…", #selector(showModelSettingsWindow)),
-            ("채팅방 관리…", #selector(showRoomsWindow)),
-            ("답변 기록 보기…", #selector(showLogWindow)),
-            ("지식 그래프…", #selector(showVectorWindow)),
-        ]
-        for (title, action) in entries {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = self
-            item.isEnabled = true
-            menu.addItem(item)
+    @objc func showUnifiedSettingsWindow() {
+        ensureUnifiedSettingsWindow()
+        guard let window = settingsWindow else {
+            traceOperatorSurface("settings-window unavailable")
+            alertOperator(title: "설정 창을 열지 못했어요", message: "잠시 뒤 톱니바퀴를 다시 눌러 주세요. 현재 실행 상태는 그대로 유지됩니다.")
+            return
         }
-        menu.addItem(.separator())
-        let quit = NSMenuItem(
-            title: "메뉴 종료",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
+        if let model = lastModel ?? loadModel() {
+            lastModel = model
+            updateUnifiedSettingsWindow(model)
+        } else {
+            updateUnifiedSettingsWindow(Self.unavailableModel())
+        }
+        presentOperatorWindow(window)
+    }
+
+    func ensureUnifiedSettingsWindow() {
+        guard settingsWindow == nil else { return }
+        let window = Chrome.operatorWindow(
+            title: "Jarvis 운영 설정",
+            size: NSSize(width: 640, height: 610),
+            autosave: "openkakao.unified-settings",
+            minimum: NSSize(width: 600, height: 520)
         )
-        quit.isEnabled = true
-        menu.addItem(quit)
-        guard let button = statusItem.button, button.window != nil else { return }
-        let origin = NSPoint(x: 0, y: button.bounds.height + 4)
-        menu.popUp(positioning: nil, at: origin, in: button)
+        window.delegate = self
+        guard let content = window.contentView else {
+            traceOperatorSurface("settings-window missing content view")
+            return
+        }
+
+        let roomTitle = Chrome.label("대상 채팅방", size: 13, weight: .semibold, lines: 1)
+        let roomPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        roomPopup.translatesAutoresizingMaskIntoConstraints = false
+        roomPopup.target = self
+        roomPopup.action = #selector(settingsRoomChanged(_:))
+        roomPopup.identifier = NSUserInterfaceItemIdentifier("settings-room-popup")
+        let roomSummary = Chrome.statusLabel(size: 11, lines: 2)
+        let roomCard = Chrome.card(
+            Chrome.vstack([Chrome.hstack([roomTitle, roomPopup, Chrome.spacer()], spacing: 10), roomSummary], spacing: 6),
+            padding: 12
+        )
+
+        let healthTitle = Chrome.label("상태", size: 13, weight: .semibold, lines: 1)
+        let healthSpecs: [(String, String)] = [
+            ("watchdog", "감시"), ("supervisor", "감독"), ("ax", "카톡창"),
+            ("worker", "답변 워커"), ("model", "AI 모델"),
+        ]
+        var healthViews: [NSView] = []
+        settingsHealthLamps = [:]
+        for (key, title) in healthSpecs {
+            let lamp = LampCell(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+            lamp.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                lamp.widthAnchor.constraint(equalToConstant: 18),
+                lamp.heightAnchor.constraint(equalToConstant: 18),
+            ])
+            settingsHealthLamps[key] = lamp
+            healthViews.append(Chrome.hstack([lamp, Chrome.label(title, size: 11, lines: 1)], spacing: 3))
+        }
+        let healthSummary = Chrome.statusLabel(size: 11, lines: 2)
+        let healthCard = Chrome.card(
+            Chrome.vstack([healthTitle, Chrome.hstack(healthViews + [Chrome.spacer()], spacing: 10), healthSummary], spacing: 6),
+            padding: 12
+        )
+
+        let slotsTitle = Chrome.label("GeekNews 슬롯", size: 13, weight: .semibold, lines: 1)
+        let slotSpecs = [("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]
+        var slotViews: [NSView] = []
+        settingsSlotFields = [:]
+        for (key, title) in slotSpecs {
+            let value = Chrome.label("대기", size: 11, color: .secondaryLabelColor, lines: 1)
+            value.identifier = NSUserInterfaceItemIdentifier("settings-slot-\(key)")
+            settingsSlotFields[key] = value
+            slotViews.append(Chrome.hstack([Chrome.label(title, size: 11, weight: .semibold, lines: 1), value], spacing: 4))
+        }
+        let slotsCard = Chrome.card(
+            Chrome.vstack([slotsTitle, Chrome.hstack(slotViews + [Chrome.spacer()], spacing: 14)], spacing: 6),
+            padding: 12
+        )
+
+        let primaryButtons: [NSButton] = [
+            Chrome.roundedButton("AI 모델 설정", target: self, action: #selector(showModelSettingsWindow)),
+            Chrome.roundedButton("채팅방 관리", target: self, action: #selector(showRoomsWindow)),
+            Chrome.roundedButton("답변 기록", target: self, action: #selector(showLogWindow)),
+            Chrome.roundedButton("지식 그래프", target: self, action: #selector(showVectorWindow)),
+        ]
+        let primaryActions = Chrome.actionRow(primaryButtons.map { $0 as NSView }, spacing: 8)
+
+        let jobsTitle = Chrome.label("작업 목록", size: 13, weight: .semibold, lines: 1)
+        let jobTitles = ["열림", "전송", "건너뜀", "미확인"]
+        settingsJobButtons = []
+        for (index, title) in jobTitles.enumerated() {
+            let button = Chrome.roundedButton(title, target: self, action: #selector(settingsJobClicked(_:)))
+            button.tag = index
+            button.identifier = NSUserInterfaceItemIdentifier("settings-job-\(Self.jobKinds[index])")
+            settingsJobButtons.append(button)
+        }
+        let jobsCard = Chrome.card(
+            Chrome.vstack([jobsTitle, Chrome.actionRow(settingsJobButtons.map { $0 as NSView }, spacing: 8)], spacing: 6),
+            padding: 12
+        )
+
+        let instantTitle = Chrome.label("바로 실행", size: 13, weight: .semibold, lines: 1)
+        let auto = Chrome.roundedButton("즉시 답장 보내기", target: self, action: #selector(instantAutoReplyClicked))
+        let geek = Chrome.roundedButton("긱뉴스 바로 전송", target: self, action: #selector(instantGeekNewsClicked))
+        auto.identifier = NSUserInterfaceItemIdentifier("settings-instant-auto")
+        geek.identifier = NSUserInterfaceItemIdentifier("settings-instant-geek")
+        settingsAutoButton = auto
+        settingsGeekButton = geek
+        let instantCard = Chrome.card(
+            Chrome.vstack([instantTitle, Chrome.actionRow([auto as NSView, geek as NSView], spacing: 8)], spacing: 6),
+            padding: 12
+        )
+
+        let stack = Chrome.vstack([roomCard, healthCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
+        Chrome.fill(stack, in: content)
+        settingsRoomPopup = roomPopup
+        settingsRoomSummary = roomSummary
+        settingsHealthSummary = healthSummary
+        settingsWindow = window
     }
 
+    @objc func settingsRoomChanged(_ sender: NSPopUpButton) {
+        guard let item = sender.selectedItem,
+              let chatId = item.representedObject as? Int,
+              chatId > 0 else {
+            traceOperatorSurface("settings-room invalid selection")
+            inspectedRoomId = 0
+            if let model = lastModel { updateUnifiedSettingsWindow(model) }
+            return
+        }
+        inspectRoom(chatId)
+    }
+
+    @objc func settingsJobClicked(_ sender: NSButton) {
+        let tag = sender.tag
+        guard tag >= 0, tag < Self.jobKinds.count else {
+            traceOperatorSurface("settings-job invalid tag=\(tag)")
+            return
+        }
+        showJobsWindow(status: Self.jobKinds[tag])
+    }
+
+    func updateUnifiedSettingsWindow(_ model: MenubarModel) {
+        guard settingsWindow != nil else { return }
+        let rooms = Self.inspectableRooms(in: model)
+        let selected = Self.selectedRoom(in: model, preferred: inspectedRoomId)
+        inspectedRoomId = selected?.chat_id ?? 0
+
+        if let popup = settingsRoomPopup {
+            popup.removeAllItems()
+            if rooms.isEmpty {
+                popup.addItem(withTitle: "고를 방이 없습니다")
+                popup.lastItem?.representedObject = nil
+                popup.isEnabled = false
+            } else {
+                for room in rooms {
+                    popup.addItem(withTitle: room.title)
+                    popup.lastItem?.representedObject = room.chat_id
+                }
+                popup.isEnabled = true
+                if let selected,
+                   let index = rooms.firstIndex(where: { $0.chat_id == selected.chat_id }) {
+                    popup.selectItem(at: index)
+                } else {
+                    popup.selectItem(at: 0)
+                }
+            }
+        }
+
+        let hasRoom = selected != nil
+        settingsAutoButton?.isEnabled = hasRoom
+        settingsGeekButton?.isEnabled = hasRoom
+        settingsRoomSummary?.stringValue = selected.map {
+            "\($0.title) · \($0.live ? "동작 중" : "동작 꺼짐")"
+        } ?? "등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다."
+
+        let health = model.health ?? [:]
+        for (key, lamp) in settingsHealthLamps {
+            let value = health[key] ?? "off"
+            lamp.on = value == "ok"
+            lamp.color = Palette.lamp(value)
+            lamp.toolTip = "\(key): \(value)"
+            lamp.needsDisplay = true
+        }
+        settingsHealthSummary?.stringValue = MenuPanelView.healthTooltip(health)
+
+        let day = MenuPanelView.kstDay()
+        let posted = Set(selected?.geeknews_slots ?? [])
+        for (key, field) in settingsSlotFields {
+            let done = posted.contains("\(day):\(key)")
+            field.stringValue = done ? "완료" : "대기"
+            field.textColor = done ? .systemGreen : .secondaryLabelColor
+        }
+    }
+
+    func traceOperatorSurface(_ message: String) {
+        let safe = String(message.replacingOccurrences(of: "\n", with: " ").prefix(240))
+        FileHandle.standardError.write(Data("[AutoReplyMenu operator] \(safe)\n".utf8))
+    }
 
     @objc func showRoomsWindow() {
         ensureRoomsWindow()
@@ -6832,13 +6325,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else if window === roomsWindow {
             roomsWindowUserResized = true
         }
-    }
-
-    @objc func tileClicked(_ sender: NSButton) {
-        let kinds = Self.jobKinds
-        let tag = sender.tag
-        guard tag >= 0, tag < kinds.count else { return }
-        showJobsWindow(status: kinds[tag])
     }
 
     @objc func jobsFilterChanged(_ sender: NSSegmentedControl) {
