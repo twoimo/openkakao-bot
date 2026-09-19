@@ -1413,7 +1413,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("settingsGeekButton?.isEnabled = canGeek", settings)
         room_choice = source[
             source.index("struct RoomChoice"):
-            source.index("struct AvailableChat"),
+            source.index("struct AvailableChat")
         ]
         self.assertIn("let auto_reply: Bool", room_choice)
         self.assertIn("let geeknews: Bool", room_choice)

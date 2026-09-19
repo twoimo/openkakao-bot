@@ -18,7 +18,7 @@
         "id": "operator-surface",
         "label": "Operator surface",
         "focus": ["kakaotalk", "menu", "supervisor", "worker"],
-        "note": "The menu extra watches rooms and keeps the launchd worker alive."
+        "note": "The menu extra is a Jarvis core hero with one top-right gear that opens the unified operator window."
       },
       {
         "id": "grounded-reply",
