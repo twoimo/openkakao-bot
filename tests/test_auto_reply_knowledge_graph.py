@@ -796,7 +796,10 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
         """오타·붙여쓰기·시간 표현을 표준형으로 모은다."""
 
         self.assertEqual(KG.normalize_text_query('러닝박에   뛰었어'), '러닝밖에 뛰었어')
-        self.assertEqual(KG.normalize_text_query('오늘 아침 봤어'), '아침(8시) 봤어')
+        self.assertEqual(
+            KG.normalize_text_query('오늘 아침 봤어'),
+            '오늘(UTC+09:00) 아침(8시) 봤어',
+        )
         self.assertEqual(KG.normalize_text_query('점심 때 얘기'), '점심(12시) 얘기')
         self.assertEqual(KG.normalize_text_query('채팅내용 정리'), '채팅 내용 정리')
         # 같은 질의를 여러 번 정규화해 쓴다. 두 번째가 첫 번째를 바꾸면
@@ -806,6 +809,61 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
         self.assertEqual(KG.normalize_text_query(None), '')
         self.assertEqual(KG.normalize_text_query('   '), '')
 
+    def test_empty_and_malformed_triples_are_rejected(self):
+        cases = [
+            {},
+            {
+                "subject": "",
+                "predicate": "DISCUSSED",
+                "object": "topic:ai",
+                "weight": 50,
+                "room": "",
+                "time": "",
+            },
+            {
+                "subject": "chat:a",
+                "predicate": "",
+                "object": "topic:ai",
+                "weight": 50,
+                "room": "",
+                "time": "",
+            },
+            {
+                "subject": "chat:a",
+                "predicate": "DISCUSSED",
+                "object": "topic:ai",
+                "weight": True,
+                "room": "",
+                "time": "",
+            },
+            {
+                "subject": "chat:a",
+                "predicate": "DISCUSSED",
+                "object": "topic:ai",
+                "weight": 50,
+                "room": "",
+            },
+        ]
+        for triple in cases:
+            with self.subTest(triple=triple):
+                self.assertIsNone(KG.normalize_knowledge_triple(triple))
+
+    def test_timezone_expressions_normalize_to_explicit_offsets(self):
+        self.assertEqual(
+            KG.normalize_text_query('어제 KST 기준'),
+            '어제(UTC+09:00) UTC+09:00 기준',
+        )
+        self.assertEqual(
+            KG.normalize_text_query('내일 UTC+9 회의'),
+            '내일(UTC+09:00) UTC+09:00 회의',
+        )
+        self.assertEqual(
+            KG.normalize_text_query('오늘 UTC-0530 기록'),
+            '오늘(UTC+09:00) UTC-05:30 기록',
+        )
+        once = KG.normalize_text_query('어제 KST 기준')
+        self.assertEqual(KG.normalize_text_query(once), once)
+
     def test_query_haystacks_keep_the_raw_and_the_normalized_form(self):
         """원문을 지우면 오타 사전이 모르는 표기가 사라진다."""
 
@@ -813,7 +871,10 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
             KG.query_haystacks('러닝박에 뛰었어'),
             ['러닝박에 뛰었어', '러닝밖에 뛰었어'],
         )
-        self.assertEqual(KG.query_haystacks('', ['오늘 아침']), ['오늘 아침', '아침(8시)'])
+        self.assertEqual(
+            KG.query_haystacks('', ['오늘 아침']),
+            ['오늘 아침', '오늘(UTC+09:00) 아침(8시)'],
+        )
         self.assertEqual(KG.query_haystacks('   '), [])
 
     def test_a_typo_and_a_particle_still_find_the_entity(self):
