@@ -1679,12 +1679,16 @@ final class KnowledgeGraphView: NSView {
     /// 수 없어, 고른 뉴런의 이웃을 화면 가득 펼치는 편이 훨씬 잘 읽힌다
     /// (2026-09-17, 사용자 지시).
     private var focusNodeId: String?
+    private var focusHop = 2
     /// 0이면 전체 그림, 1이면 포커스에 완전히 다가간 상태.
     private var focusProgress: Double = 0
     private var focusTimer: Timer?
     private var focusAnimationStart: Double = 0
     /// 확대 전환에 걸리는 시간(초).
     static let focusDuration: Double = 0.32
+    static let defaultFocusHop = 2
+    static let maxFocusHop = 3
+    static let cameraZoomScale: CGFloat = 1.08
     /// 포커스 애니메이션의 프레임 상한. 코어와 같은 이유로 60fps를 쓰지 않는다.
     static let focusFramesPerSecond: Double = 60
 
@@ -1819,29 +1823,47 @@ final class KnowledgeGraphView: NSView {
     /// 있는 뉴런에서 B를 눌렀을 때 A가 사라져, 정작 이어져 있던 상대가
     /// 화면에서 빠진다 (2026-09-17).
     func focusGroup(around nodeId: String) -> [KnowledgeNode] {
-        // 굵은 시냅스부터 센다. 같은 뉴런으로 가는 시냅스가 여럿이면
-        // 가장 굵은 것 하나만 그 뉴런의 세기로 본다.
-        var strongest: [String: Int] = [:]
-        for edge in edges {
-            let other: String
-            if edge.source == nodeId {
-                other = edge.target
-            } else if edge.target == nodeId {
-                other = edge.source
-            } else {
-                continue
+        let hops = focusNodeId == nodeId ? focusHop : Self.defaultFocusHop
+        let ordered = kHopNodeIds(around: nodeId, hops: hops)
+        let byId = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+        return ordered.compactMap { byId[$0] }
+    }
+
+    /// 매 hop마다 가장 강한 이웃 최대 10개만 연다. 허브가 연속으로 나와도
+    /// k=3에서 31개를 넘지 않아 클릭 한 번으로 노드가 폭증하지 않는다.
+    private func kHopNodeIds(around nodeId: String, hops: Int) -> [String] {
+        guard nodes.contains(where: { $0.id == nodeId }) else { return [] }
+        let boundedHops = min(max(hops, 0), Self.maxFocusHop)
+        var ordered = [nodeId]
+        var visited: Set<String> = [nodeId]
+        var frontier: Set<String> = [nodeId]
+        for _ in 0..<boundedHops {
+            if frontier.isEmpty { break }
+            var strongest: [String: Int] = [:]
+            for edge in edges {
+                let other: String
+                if frontier.contains(edge.source) {
+                    other = edge.target
+                } else if frontier.contains(edge.target) {
+                    other = edge.source
+                } else {
+                    continue
+                }
+                guard !visited.contains(other) else { continue }
+                strongest[other] = max(strongest[other] ?? 0, edge.weight)
             }
-            strongest[other] = max(strongest[other] ?? 0, edge.weight)
+            let next = strongest.sorted { left, right in
+                if left.value != right.value { return left.value > right.value }
+                return left.key < right.key
+            }.prefix(Self.focusNeighborLimit).map { $0.key }
+            if next.isEmpty { break }
+            for id in next {
+                visited.insert(id)
+                ordered.append(id)
+            }
+            frontier = Set(next)
         }
-        var keep: Set<String> = [nodeId]
-        let ranked = strongest.sorted { left, right in
-            if left.value != right.value { return left.value > right.value }
-            return left.key < right.key
-        }
-        for (id, _) in ranked.prefix(Self.focusNeighborLimit) {
-            keep.insert(id)
-        }
-        return nodes.filter { keep.contains($0.id) }
+        return ordered
     }
 
     private func fitTransform(
@@ -1946,7 +1968,7 @@ final class KnowledgeGraphView: NSView {
             min(
                 (bounds.width - 80) / 2,
                 (bounds.height - labelRoom * 2) / 2
-            ),
+            ) * 0.84,
             60
         )
         let step = (2 * Double.pi) / Double(max(ring.count, 1))
@@ -1971,31 +1993,24 @@ final class KnowledgeGraphView: NSView {
         // 멈출 때가 툭 끊겨 보인다.
         let t = CGFloat(min(max(focusProgress, 0), 1))
         let eased = t * t * (3 - 2 * t)
-        return CGPoint(
+        let interpolated = CGPoint(
             x: global.x + (target.x - global.x) * eased,
             y: global.y + (target.y - global.y) * eased
+        )
+        // 위치 보간과 별개로 실제 카메라 배율을 적용한다. 선택 노드는
+        // focusPoint에서 항상 중심에 있으므로 확대가 끝나도 중심이 흔들리지 않는다.
+        let zoom = 1 + (Self.cameraZoomScale - 1) * eased
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        return CGPoint(
+            x: center.x + (interpolated.x - center.x) * zoom,
+            y: center.y + (interpolated.y - center.y) * zoom
         )
     }
 
     /// 포커스 중에 둘레에 펼 뉴런의 순서. 무거운 시냅스부터다.
     private func focusRing() -> [String] {
         guard let focusId = focusNodeId else { return [] }
-        var strongest: [String: Int] = [:]
-        for edge in edges {
-            let other: String
-            if edge.source == focusId {
-                other = edge.target
-            } else if edge.target == focusId {
-                other = edge.source
-            } else {
-                continue
-            }
-            strongest[other] = max(strongest[other] ?? 0, edge.weight)
-        }
-        return strongest.sorted { left, right in
-            if left.value != right.value { return left.value > right.value }
-            return left.key < right.key
-        }.prefix(Self.focusNeighborLimit).map { $0.key }
+        return Array(kHopNodeIds(around: focusId, hops: focusHop).dropFirst())
     }
 
     /// A small force-directed relaxation. Repulsion between every pair is
@@ -2151,9 +2166,26 @@ final class KnowledgeGraphView: NSView {
 
     /// 드릴다운 확대를 시작한다. 이미 그 뉴런을 보고 있으면 다시 시작하지 않는다.
     func beginFocus(on nodeId: String?) {
-        let target = (nodeId == nil || focusGroup(around: nodeId!).count <= 1) ? nil : nodeId
-        if target == focusNodeId { return }
+        guard let nodeId, nodes.contains(where: { $0.id == nodeId }) else {
+            if focusNodeId == nil { return }
+            focusNodeId = nil
+            focusHop = Self.defaultFocusHop
+            focusAnimationStart = Date().timeIntervalSince1970
+            startFocusTimer()
+            return
+        }
+        let target = kHopNodeIds(around: nodeId, hops: Self.defaultFocusHop).count > 1 ? nodeId : nil
+        if target == focusNodeId {
+            guard focusHop < Self.maxFocusHop else { return }
+            focusHop += 1
+            focusProgress = min(focusProgress, 0.55)
+            focusAnimationStart = Date().timeIntervalSince1970
+            startFocusTimer()
+            needsDisplay = true
+            return
+        }
         focusNodeId = target
+        focusHop = Self.defaultFocusHop
         // 확대를 풀 때는 지금 배율에서, 걸 때는 전체 그림에서 출발한다.
         focusAnimationStart = Date().timeIntervalSince1970
         startFocusTimer()
@@ -2172,6 +2204,13 @@ final class KnowledgeGraphView: NSView {
         focusTimer = nil
         focusProgress = focusNodeId == nil ? 0 : 1
         needsDisplay = true
+    }
+
+    /// 레이아웃 감사가 애니메이션 종료 후 선택 노드가 화면 중심에 왔는지와
+    /// 현재 hop을 기계적으로 확인할 수 있는 읽기 전용 상태다.
+    func focusAuditState() -> (nodeId: String?, hop: Int, center: CGPoint?) {
+        guard let focusId = focusNodeId else { return (nil, 0, nil) }
+        return (focusId, focusHop, layoutPoint(for: focusId, ring: focusRing()))
     }
 
     /// 포커스 중인 뉴런의 이름. 힌트 줄이 무엇을 보고 있는지 말한다.
@@ -2238,10 +2277,8 @@ final class KnowledgeGraphView: NSView {
     /// 보인다 (2026-09-17, 사용자 지시).
     private func focusKeeps(edge: KnowledgeEdge) -> Bool {
         guard let focusId = focusNodeId, focusProgress > 0.01 else { return true }
-        if edge.source != focusId, edge.target != focusId { return false }
-        // 반대쪽 끝이 둘레에 남았는지 본다. 포커스 뉴런 자신은 언제나 남는다.
-        let other = edge.source == focusId ? edge.target : edge.source
-        return focusGroup(around: focusId).contains { $0.id == other }
+        let visible = Set(kHopNodeIds(around: focusId, hops: focusHop))
+        return visible.contains(edge.source) && visible.contains(edge.target)
     }
 
     override func mouseMoved(with event: NSEvent) {

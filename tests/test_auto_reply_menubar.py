@@ -3309,6 +3309,39 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("Int.random", source[source.find("final class KnowledgeGraphView"):])
         self.assertNotIn("arc4random", source[source.find("final class KnowledgeGraphView"):])
 
+    def test_swift_khop_focus_has_bounded_zoom_and_auditable_center(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn("private func kHopNodeIds(around nodeId: String, hops: Int)", graph)
+        self.assertIn(".prefix(Self.focusNeighborLimit)", graph)
+        self.assertIn("guard focusHop < Self.maxFocusHop else { return }", graph)
+        self.assertIn("focusHop += 1", graph)
+        self.assertIn("func focusAuditState() -> (nodeId: String?, hop: Int, center: CGPoint?)", graph)
+        self.assertIn("x: center.x + (interpolated.x - center.x) * zoom", graph)
+
+    def test_khop_graph_change_preserves_core_gear_extra_contract(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
+        self.assertNotIn("KnowledgeGraphView", panel)
+        self.assertIn("func ensureUnifiedSettingsWindow()", source)
+
     def test_swift_applies_a_graph_snapshot_in_one_layout_pass(self):
         """A snapshot must not settle the force layout twice.
 

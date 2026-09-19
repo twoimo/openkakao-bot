@@ -27,6 +27,10 @@ from typing import Any
 
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
+DEFAULT_K_HOP = 2
+MAX_K_HOP = 3
+K_HOP_NEIGHBOR_LIMIT = 10
+GRAPH_ENTITY_PREFIXES = ("ent:", "chat:", "person:", "topic:")
 
 # Provenance kinds. "seed" is a hand-written starting node that no message
 # backs yet; "ledger" means a real room message was found to mention the node.
@@ -36,6 +40,42 @@ GRAPH_SOURCE_KIND = "knowledge_graph"
 PROVENANCE_SEED = "seed"
 PROVENANCE_LEDGER = "ledger"
 MAX_EVIDENCE_PER_NODE = 8
+
+
+def _trace_graph(event: str, **fields: Any) -> None:
+    safe = {
+        str(key): value
+        for key, value in fields.items()
+        if isinstance(value, (str, int, float, bool)) or value is None
+    }
+    try:
+        payload = json.dumps(safe, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        payload = "{}"
+    print(f"knowledge-graph {event} {payload}", file=sys.stderr)
+
+
+def _is_graph_entity_id(entity_id: Any) -> bool:
+    value = str(entity_id or "").strip()
+    return bool(value) and value.startswith(GRAPH_ENTITY_PREFIXES)
+
+
+def _bounded_k(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        _trace_graph("khop_invalid_k", fallback=DEFAULT_K_HOP)
+        return DEFAULT_K_HOP
+    return min(max(parsed, 0), MAX_K_HOP)
+
+
+def _bounded_neighbor_limit(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        _trace_graph("khop_invalid_limit", fallback=K_HOP_NEIGHBOR_LIMIT)
+        return K_HOP_NEIGHBOR_LIMIT
+    return min(max(parsed, 0), K_HOP_NEIGHBOR_LIMIT)
 
 
 def stable_node_id(entity_id: str) -> int:
@@ -412,24 +452,153 @@ def _open_isolated_ro_conn(db_path: Path):
             shutil.copy2(db_path, tmp_db)
             wal = db_path.with_name(db_path.name + "-wal")
             shm = db_path.with_name(db_path.name + "-shm")
-            if wal.exists():
-                try:
-                    shutil.copy2(wal, Path(tmpdir) / wal.name)
-                except OSError:
-                    pass
-            if shm.exists():
-                try:
-                    shutil.copy2(shm, Path(tmpdir) / shm.name)
-                except OSError:
-                    pass
+            for sidecar in (wal, shm):
+                if sidecar.exists():
+                    shutil.copy2(sidecar, Path(tmpdir) / sidecar.name)
             conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
-        except (OSError, sqlite3.Error):
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except (OSError, sqlite3.Error) as error:
+            _trace_graph("isolated_copy_failed", error=type(error).__name__)
+            raise sqlite3.OperationalError("isolated read-only snapshot unavailable") from error
 
         try:
             conn.execute("PRAGMA query_only = ON")
             yield conn
         finally:
+            conn.close()
+
+
+def _k_hop_neighborhood_conn(
+    conn: sqlite3.Connection,
+    node_id: str,
+    k: int,
+    limit: int,
+) -> dict[str, Any]:
+    """Return a bounded entity-relation-entity neighborhood from one graph DB."""
+    root = str(node_id or "").strip()
+    bounded_k = _bounded_k(k)
+    bounded_limit = _bounded_neighbor_limit(limit)
+    empty = {
+        "root_id": root,
+        "k": bounded_k,
+        "limit": bounded_limit,
+        "node_ids": [],
+        "depth_by_node": {},
+        "edges": [],
+    }
+    if not _is_graph_entity_id(root):
+        if root:
+            _trace_graph("khop_invalid_node_id", k=bounded_k, limit=bounded_limit)
+        return empty
+
+    valid_ids = {
+        str(row[0])
+        for row in conn.execute("SELECT entity_id FROM kg_entities")
+        if _is_graph_entity_id(row[0])
+    }
+    if root not in valid_ids:
+        _trace_graph("khop_missing_node", k=bounded_k, limit=bounded_limit)
+        return empty
+
+    ordered = [root]
+    depth_by_node: dict[str, int] = {root: 0}
+    visited = {root}
+    frontier = {root}
+    for depth in range(1, bounded_k + 1):
+        if not frontier or bounded_limit == 0:
+            break
+        marks = ",".join("?" for _ in frontier)
+        params = list(frontier) + list(frontier)
+        rows = conn.execute(
+            f"SELECT source_id, target_id, weight FROM kg_relations"
+            f" WHERE source_id IN ({marks}) OR target_id IN ({marks})"
+            f" ORDER BY weight DESC, id ASC",
+            params,
+        ).fetchall()
+        strongest: dict[str, int] = {}
+        for source, target, weight in rows:
+            source = str(source)
+            target = str(target)
+            other = target if source in frontier else source if target in frontier else ""
+            if not other or other in visited or other not in valid_ids:
+                continue
+            strongest[other] = max(strongest.get(other, 0), int(weight or 0))
+        next_ids = [
+            item[0]
+            for item in sorted(strongest.items(), key=lambda item: (-item[1], item[0]))[
+                :bounded_limit
+            ]
+        ]
+        if not next_ids:
+            break
+        for entity_id in next_ids:
+            visited.add(entity_id)
+            ordered.append(entity_id)
+            depth_by_node[entity_id] = depth
+        frontier = set(next_ids)
+
+    marks = ",".join("?" for _ in ordered)
+    edge_rows = conn.execute(
+        f"SELECT source_id, relation, target_id, weight FROM kg_relations"
+        f" WHERE source_id IN ({marks}) AND target_id IN ({marks})"
+        f" ORDER BY weight DESC, id ASC",
+        ordered + ordered,
+    ).fetchall()
+    edges = [
+        {
+            "source": str(source),
+            "relation": str(relation),
+            "target": str(target),
+            "weight": int(weight or 0),
+        }
+        for source, relation, target, weight in edge_rows
+        if source in valid_ids and target in valid_ids
+    ]
+    return {
+        "root_id": root,
+        "k": bounded_k,
+        "limit": bounded_limit,
+        "node_ids": ordered,
+        "depth_by_node": depth_by_node,
+        "edges": edges,
+    }
+
+
+def k_hop_neighborhood(
+    node_id: str,
+    k: int,
+    limit: int,
+    *,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
+    """Read a bounded k-hop subgraph; invalid input returns an empty result."""
+    root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
+    kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
+    if not kg_path.exists():
+        return {
+            "root_id": str(node_id or "").strip(),
+            "k": _bounded_k(k),
+            "limit": _bounded_neighbor_limit(limit),
+            "node_ids": [],
+            "depth_by_node": {},
+            "edges": [],
+        }
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only = ON")
+        return _k_hop_neighborhood_conn(conn, node_id, k, limit)
+    except (OSError, sqlite3.Error, ValueError) as error:
+        _trace_graph("khop_failed", error=type(error).__name__)
+        return {
+            "root_id": str(node_id or "").strip(),
+            "k": _bounded_k(k),
+            "limit": _bounded_neighbor_limit(limit),
+            "node_ids": [],
+            "depth_by_node": {},
+            "edges": [],
+        }
+    finally:
+        if conn is not None:
             conn.close()
 
 
@@ -1674,6 +1843,9 @@ def collect_knowledge_graph(
     *,
     state_root: Path | None = None,
     chat: str = "",
+    focus_node_id: str = "",
+    focus_k: int = DEFAULT_K_HOP,
+    focus_limit: int = K_HOP_NEIGHBOR_LIMIT,
     force_reindex: bool = False,
     reindex_interval_seconds: int = 300,
     wait_for_reindex: bool = False,
@@ -1784,6 +1956,8 @@ def collect_knowledge_graph(
             """
         ):
             entity_id, name, category, description, facts_json, importance, evidence_json, updated_at = row
+            if not _is_graph_entity_id(entity_id):
+                continue
             try:
                 facts = json.loads(facts_json)
             except (TypeError, ValueError):
@@ -1803,6 +1977,7 @@ def collect_knowledge_graph(
                     "updated_at": int(updated_at or 0),
                 }
             )
+        node_ids = {node["id"] for node in nodes}
         edges: list[dict[str, Any]] = []
         for row in conn.execute(
             """
@@ -1812,6 +1987,8 @@ def collect_knowledge_graph(
             """
         ):
             source_id, relation, target_id, context, weight, evidence_json = row
+            if source_id not in node_ids or target_id not in node_ids:
+                continue
             edges.append(
                 {
                     "source": source_id,
@@ -1824,6 +2001,16 @@ def collect_knowledge_graph(
                     ),
                 }
             )
+        focus = None
+        if str(focus_node_id or "").strip():
+            focus = _k_hop_neighborhood_conn(conn, focus_node_id, focus_k, focus_limit)
+            keep = set(focus["node_ids"])
+            nodes = [node for node in nodes if node["id"] in keep]
+            edges = [
+                edge
+                for edge in edges
+                if edge["source"] in keep and edge["target"] in keep
+            ]
         return {
             "ok": True,
             "nodes": nodes,
@@ -1832,6 +2019,7 @@ def collect_knowledge_graph(
             "stale": bool(result_meta.get("stale")),
             "indexed_count": int(result_meta.get("indexed_count") or 0),
             "indexed_at": int(result_meta.get("indexed_at") or 0),
+            "focus": focus,
             "node_count": len(nodes),
             "edge_count": len(edges),
             "grounded_nodes": sum(
@@ -2172,6 +2360,77 @@ def _hybrid_score(keyword_score: float, vector_score: float) -> float:
     return HYBRID_KEYWORD_WEIGHT * keyword_score + HYBRID_VECTOR_WEIGHT * vector_score
 
 
+def _focused_relation_facts(
+    focus: dict[str, Any],
+    *,
+    state_root: Path,
+    chat_id: "int | str | None",
+    limit: int,
+) -> list[str]:
+    """Render relation facts only from one bounded focus subgraph."""
+    node_ids = [str(value) for value in focus.get("node_ids", []) if _is_graph_entity_id(value)]
+    if not node_ids or limit <= 0:
+        return []
+    kg_path = state_root / KNOWLEDGE_GRAPH_DB_NAME
+    if not kg_path.exists():
+        return []
+
+    chat_str = str(chat_id or "").strip()
+    allowed_rooms: set[str] = set()
+    if chat_str:
+        for variant in (chat_str, _room_key(state_root, chat_str), _chat_label(chat_str)):
+            if variant:
+                allowed_rooms.add(str(variant))
+        allowed_rooms = {_room_key(state_root, room) or room for room in allowed_rooms}
+
+    def in_scope(entity_id: str) -> bool:
+        if not allowed_rooms:
+            return True
+        if not (entity_id.startswith("chat:") or entity_id.startswith("person:")):
+            return True
+        parts = entity_id.split(":")
+        room = parts[1] if len(parts) > 1 else ""
+        return (_room_key(state_root, room) or room) in allowed_rooms
+
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only = ON")
+        marks = ",".join("?" for _ in node_ids)
+        names = {
+            str(entity_id): str(name)
+            for entity_id, name in conn.execute(
+                f"SELECT entity_id, name FROM kg_entities WHERE entity_id IN ({marks})",
+                node_ids,
+            )
+            if in_scope(str(entity_id))
+        }
+        rows = conn.execute(
+            f"SELECT source_id, relation, target_id, context, weight FROM kg_relations"
+            f" WHERE source_id IN ({marks}) AND target_id IN ({marks})"
+            f" ORDER BY weight DESC, id ASC",
+            node_ids + node_ids,
+        ).fetchall()
+        facts: list[str] = []
+        for source, relation, target, context, _weight in rows:
+            source = str(source)
+            target = str(target)
+            if source not in names or target not in names:
+                continue
+            facts.append(
+                f"[관계] {names[source]} —({relation})→ {names[target]}: {str(context or '')}"
+            )
+            if len(facts) >= limit:
+                break
+        return facts
+    except (OSError, sqlite3.Error, ValueError) as error:
+        _trace_graph("focus_relation_failed", error=type(error).__name__)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def retrieve_knowledge_bundle(
     query_text: str,
     state_root: Path | None = None,
@@ -2192,6 +2451,30 @@ def retrieve_knowledge_bundle(
         chat_id=chat_id,
         also=also,
     )
+    focus: dict[str, Any] | None = None
+    if candidates:
+        root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
+        focus = k_hop_neighborhood(
+            candidates[0],
+            DEFAULT_K_HOP,
+            K_HOP_NEIGHBOR_LIMIT,
+            state_root=root,
+        )
+        focused_ids = set(focus.get("node_ids", []))
+        if focused_ids:
+            entity_facts = [
+                fact
+                for entity_id, fact in zip(candidates, entity_facts)
+                if entity_id in focused_ids
+            ]
+            focused_relations = _focused_relation_facts(
+                focus,
+                state_root=root,
+                chat_id=chat_id,
+                limit=max_relations,
+            )
+            if focused_relations:
+                relation_facts = focused_relations
     balanced_facts = entity_facts[:max_entities] + relation_facts[:max_relations]
     return {
         "query": query_text,
@@ -2201,6 +2484,10 @@ def retrieve_knowledge_bundle(
         "candidate_count": len(candidates),
         "entities_count": len(entity_facts),
         "relations_count": len(relation_facts),
+        "focus_node_id": str((focus or {}).get("root_id") or ""),
+        "focus_k": int((focus or {}).get("k") or 0),
+        "focus_node_count": len((focus or {}).get("node_ids", [])),
+        "focus_edge_count": len((focus or {}).get("edges", [])),
     }
 
 def query_knowledge_context(

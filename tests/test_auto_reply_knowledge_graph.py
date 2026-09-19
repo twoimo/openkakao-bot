@@ -112,6 +112,119 @@ class GraphShapeTests(unittest.TestCase):
         self.assertEqual(report["grounded_nodes"], 0)
 
 
+class KHopNeighborhoodTests(unittest.TestCase):
+    def _add_entity(self, conn, entity_id: str, name: str) -> None:
+        conn.execute(
+            "INSERT INTO kg_entities (entity_id, name, category, aliases_json, description,"
+            " key_facts_json, importance, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (entity_id, name, "entity", "[]", name, "[]", 50, 1),
+        )
+
+    def _add_relation(self, conn, source: str, target: str, weight: int) -> None:
+        conn.execute(
+            "INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (source, "RELATED_TO", target, "bounded triple", weight, 1),
+        )
+
+    def test_k_hop_caps_depth_neighbors_and_invalid_nodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._add_entity(conn, "ent:test:root", "root")
+                for index in range(25):
+                    entity_id = f"ent:test:n{index:02d}"
+                    self._add_entity(conn, entity_id, entity_id)
+                    self._add_relation(conn, "ent:test:root", entity_id, 100 - index)
+                conn.commit()
+            finally:
+                conn.close()
+
+            result = KG.k_hop_neighborhood(
+                "ent:test:root", 99, 99, state_root=root
+            )
+            self.assertEqual(result["k"], KG.MAX_K_HOP)
+            self.assertEqual(result["limit"], KG.K_HOP_NEIGHBOR_LIMIT)
+            self.assertLessEqual(
+                len(result["node_ids"]),
+                1 + KG.MAX_K_HOP * KG.K_HOP_NEIGHBOR_LIMIT,
+            )
+            self.assertEqual(len(result["node_ids"]), 11)
+            self.assertEqual(
+                KG.k_hop_neighborhood("", 2, 10, state_root=root)["node_ids"], []
+            )
+            self.assertEqual(
+                KG.k_hop_neighborhood("message:raw:1", 2, 10, state_root=root)["node_ids"], []
+            )
+            self.assertEqual(
+                KG.k_hop_neighborhood("ent:test:missing", 2, 10, state_root=root)["node_ids"], []
+            )
+
+    def test_collect_focus_never_materializes_message_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._add_entity(conn, "ent:test:root", "root")
+                self._add_entity(conn, "topic:test:child", "child")
+                self._add_entity(conn, "message:raw:1", "raw message")
+                self._add_relation(conn, "ent:test:root", "topic:test:child", 90)
+                self._add_relation(conn, "ent:test:root", "message:raw:1", 100)
+                conn.commit()
+            finally:
+                conn.close()
+
+            report = KG.collect_knowledge_graph(
+                root / "context.sqlite3",
+                focus_node_id="ent:test:root",
+                focus_k=2,
+                focus_limit=10,
+            )
+            node_ids = {node["id"] for node in report["nodes"]}
+            self.assertEqual(node_ids, {"ent:test:root", "topic:test:child"})
+            self.assertEqual(len(report["edges"]), 1)
+            self.assertEqual(report["edges"][0]["target"], "topic:test:child")
+
+    def test_retrieve_bundle_uses_default_two_hop_focus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                for entity_id, name, aliases in (
+                    ("ent:test:alpha", "Alpha", ["alpha"]),
+                    ("topic:test:beta", "Beta", []),
+                    ("ent:test:gamma", "Gamma", []),
+                ):
+                    conn.execute(
+                        "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                        " description, key_facts_json, importance, updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            entity_id,
+                            name,
+                            "entity",
+                            json.dumps(aliases),
+                            name,
+                            json.dumps([name + " fact"]),
+                            50,
+                            1,
+                        ),
+                    )
+                self._add_relation(conn, "ent:test:alpha", "topic:test:beta", 90)
+                self._add_relation(conn, "topic:test:beta", "ent:test:gamma", 80)
+                conn.commit()
+            finally:
+                conn.close()
+
+            bundle = KG.retrieve_knowledge_bundle("alpha", state_root=root)
+            self.assertEqual(bundle["focus_node_id"], "ent:test:alpha")
+            self.assertEqual(bundle["focus_k"], KG.DEFAULT_K_HOP)
+            self.assertEqual(bundle["focus_node_count"], 3)
+            self.assertEqual(bundle["focus_edge_count"], 2)
+            self.assertTrue(any(fact.startswith("[관계]") for fact in bundle["facts"]))
+
+
 class EvidenceTests(unittest.TestCase):
     def test_a_node_mentioned_in_the_ledger_is_grounded(self):
         with tempfile.TemporaryDirectory() as tmp:
