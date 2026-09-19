@@ -17,19 +17,35 @@
       {
         "id": "operator-surface",
         "label": "Operator surface",
-        "focus": ["kakaotalk", "menu", "supervisor", "worker"],
-        "note": "The menu extra is a Jarvis core hero with one top-right gear that opens the unified operator window."
+        "focus": [
+          "kakaotalk",
+          "menu",
+          "supervisor",
+          "worker"
+        ],
+        "note": "The menu extra is a Jarvis core hero with one top-right gear that opens the unified operator window, including KakaoTalk DB sync status."
       },
       {
         "id": "grounded-reply",
         "label": "Grounded reply path",
-        "focus": ["cli", "worker", "knowledge", "vectors", "gemma"],
+        "focus": [
+          "cli",
+          "worker",
+          "knowledge",
+          "vectors",
+          "gemma"
+        ],
         "note": "Room events reach the worker, then GraphRAG and vector memory ground the local model."
       },
       {
         "id": "fallback-path",
         "label": "Local first, cloud fallback",
-        "focus": ["worker", "gemma", "cloud", "cli"],
+        "focus": [
+          "worker",
+          "gemma",
+          "cloud",
+          "cli"
+        ],
         "note": "Gemma answers on-device when weights verify; cloud models run when the local engine cannot."
       }
     ]
@@ -40,19 +56,34 @@
       "type": "external",
       "label": "KakaoTalk",
       "sublabel": "rooms + AX host",
-      "pos": [40, 300],
-      "size": [128, 60]
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        128,
+        60
+      ]
     },
     {
       "id": "menu",
       "type": "frontend",
       "label": "Menu Extra",
       "sublabel": "Jarvis core + gear",
-      "pos": [250, 120],
-      "size": [132, 60],
+      "pos": [
+        250,
+        120
+      ],
+      "size": [
+        132,
+        60
+      ],
       "tag": "AppKit",
       "sources": [
-        { "path": "macos/AutoReplyMenu/main.swift", "label": "core + unified settings" }
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "label": "core + unified settings + DB sync"
+        }
       ]
     },
     {
@@ -60,10 +91,19 @@
       "type": "backend",
       "label": "Supervisor",
       "sublabel": "launchd keep-alive",
-      "pos": [460, 120],
-      "size": [136, 60],
+      "pos": [
+        460,
+        120
+      ],
+      "size": [
+        136,
+        60
+      ],
       "sources": [
-        { "path": "scripts/auto-reply-supervisor.py", "label": "supervisor" }
+        {
+          "path": "scripts/auto-reply-supervisor.py",
+          "label": "supervisor"
+        }
       ]
     },
     {
@@ -71,8 +111,14 @@
       "type": "backend",
       "label": "openkakao-cli",
       "sublabel": "container IO",
-      "pos": [250, 300],
-      "size": [132, 60],
+      "pos": [
+        250,
+        300
+      ],
+      "size": [
+        132,
+        60
+      ],
       "tag": "host"
     },
     {
@@ -80,11 +126,21 @@
       "type": "backend",
       "label": "Reply Worker",
       "sublabel": "queue + generate",
-      "pos": [460, 300],
-      "size": [136, 62],
+      "pos": [
+        460,
+        300
+      ],
+      "size": [
+        136,
+        62
+      ],
       "tag": "core",
       "sources": [
-        { "path": "scripts/auto-reply-worker.py", "line": 11301, "label": "GraphRAG inject" }
+        {
+          "path": "scripts/auto-reply-worker.py",
+          "line": 11301,
+          "label": "GraphRAG inject"
+        }
       ]
     },
     {
@@ -92,10 +148,20 @@
       "type": "database",
       "label": "Knowledge Graph",
       "sublabel": "hybrid GraphRAG",
-      "pos": [680, 180],
-      "size": [150, 62],
+      "pos": [
+        680,
+        180
+      ],
+      "size": [
+        150,
+        62
+      ],
       "sources": [
-        { "path": "scripts/auto_reply_knowledge_graph.py", "line": 2214, "label": "retrieve bundle" }
+        {
+          "path": "scripts/auto_reply_knowledge_graph.py",
+          "line": 2321,
+          "label": "bounded triples + retrieve"
+        }
       ]
     },
     {
@@ -103,19 +169,35 @@
       "type": "database",
       "label": "Vector Memory",
       "sublabel": "room-scoped RAG",
-      "pos": [680, 420],
-      "size": [150, 62]
+      "pos": [
+        680,
+        420
+      ],
+      "size": [
+        150,
+        62
+      ]
     },
     {
       "id": "gemma",
       "type": "backend",
       "label": "Local Gemma",
       "sublabel": "MLX on-device",
-      "pos": [900, 180],
-      "size": [140, 62],
+      "pos": [
+        900,
+        180
+      ],
+      "size": [
+        140,
+        62
+      ],
       "tag": "read-only verify",
       "sources": [
-        { "path": "scripts/auto_reply_ondevice.py", "line": 254, "label": "status snapshot" }
+        {
+          "path": "scripts/auto_reply_ondevice.py",
+          "line": 254,
+          "label": "status snapshot"
+        }
       ]
     },
     {
@@ -123,20 +205,36 @@
       "type": "cloud",
       "label": "Cloud Models",
       "sublabel": "quota fallback",
-      "pos": [900, 420],
-      "size": [140, 62]
+      "pos": [
+        900,
+        420
+      ],
+      "size": [
+        140,
+        62
+      ]
     }
   ],
   "boundaries": [
     {
       "kind": "region",
       "label": "Operator Mac",
-      "wraps": ["menu", "supervisor", "cli", "worker", "knowledge", "vectors", "gemma"]
+      "wraps": [
+        "menu",
+        "supervisor",
+        "cli",
+        "worker",
+        "knowledge",
+        "vectors",
+        "gemma"
+      ]
     },
     {
       "kind": "security-group",
       "label": "KakaoTalk container",
-      "wraps": ["kakaotalk"]
+      "wraps": [
+        "kakaotalk"
+      ]
     }
   ],
   "connections": [
@@ -151,8 +249,8 @@
       "id": "queue-turn",
       "from": "cli",
       "to": "worker",
-      "label": "queued turn"
-      ,"labelDy": 38
+      "label": "queued turn",
+      "labelDy": 38
     },
     {
       "id": "hybrid-graph",
@@ -184,15 +282,15 @@
       "id": "deliver-reply",
       "from": "worker",
       "to": "cli",
-      "label": "reply"
-      ,"labelDy": -40
+      "label": "reply",
+      "labelDy": -40
     },
     {
       "id": "send-room",
       "from": "cli",
       "to": "kakaotalk",
-      "label": "send"
-      ,"labelDy": 28
+      "label": "send",
+      "labelDy": 28
     },
     {
       "id": "menu-status",
@@ -204,8 +302,8 @@
       "id": "keep-alive",
       "from": "supervisor",
       "to": "worker",
-      "label": "keep-alive"
-      ,"labelDy": 24
+      "label": "keep-alive",
+      "labelDy": 24
     }
   ],
   "cards": [
@@ -214,14 +312,14 @@
       "title": "Operator",
       "items": [
         "The menu extra renders only the Jarvis core and top-right gear",
-        "The gear opens one operator window for models, rooms, logs, jobs, graph, health, slots, and instant actions"
+        "The gear opens one operator window for models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions"
       ]
     },
     {
       "dot": "emerald",
       "title": "Grounding",
       "items": [
-        "GraphRAG keeps alias hits and ranks exact matches first",
+        "GraphRAG stores bounded entity-relation-entity triples and ranks exact matches first",
         "Vector memory stays room-scoped beside the graph"
       ]
     },
