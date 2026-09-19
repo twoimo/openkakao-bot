@@ -313,7 +313,7 @@
       "items": [
         "The menu extra renders only the Jarvis core and top-right gear",
         "The unified hub keeps models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions",
-        "Jobs, logs, and rooms use one flat list surface; the graph window renders one hologram plus the focused-node detail"
+        "Jobs and logs keep one empty-state surface; the graph window renders one hologram plus focused-node detail"
       ]
     },
     {
