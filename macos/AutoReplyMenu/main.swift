@@ -1618,6 +1618,10 @@ struct KnowledgeGraphReport: Decodable {
     let indexed_count: Int?
     /// 이 응답이 저장된 그림인지(=재색인이 뒤에서 도는 중인지).
     let stale: Bool?
+    /// 마지막 카카오 DB 격리 복제가 성공했는지, 원본 DB 폴백 없이 닫혔는지.
+    let snapshot_status: String?
+    /// 설정 화면에 노출하는 저장소/원본 읽기 모드.
+    let indexing_mode: String?
 }
 
 /// Draws the knowledge graph the way a brain scan shows neurons and synapses:
@@ -3583,6 +3587,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsRoomSummary: NSTextField?
     var settingsHealthLamps: [String: LampCell] = [:]
     var settingsHealthSummary: NSTextField?
+    var settingsSyncSource: NSTextField?
+    var settingsSyncCopy: NSTextField?
+    var settingsSyncMode: NSTextField?
+    var settingsSyncIndex: NSTextField?
+    var settingsGraphStatus: KnowledgeGraphReport?
+    var settingsSyncRefreshInFlight = false
+    var settingsSyncLastRefreshAt: TimeInterval = 0
     var settingsSlotFields: [String: NSTextField] = [:]
     var settingsJobButtons: [NSButton] = []
     var settingsAutoButton: NSButton?
@@ -5757,6 +5768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 고장 났다고 판단하면 멀쩡한 곳을 고치게 된다 (2026-09-16).
             updateLogWindow(model)
         }
+        settingsGraphStatus = loadSettingsSyncStatus()
+        applySettingsSyncStatus((lastModel ?? auditModel).vector_memory, graph: settingsGraphStatus)
         if let report = loadJobs(status: jobsStatus) {
             jobsReadFailed = false
             applyJobs(report)
@@ -6097,6 +6110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             updateUnifiedSettingsWindow(Self.unavailableModel())
         }
+        refreshSettingsSyncStatus(force: true)
         presentOperatorWindow(window)
     }
 
@@ -6149,6 +6163,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
+        let jarvisGold = NSColor(
+            calibratedRed: 1.0,
+            green: 0.78,
+            blue: 0.36,
+            alpha: 1.0
+        )
+        let syncTitle = Chrome.label("카카오 DB 동기화 · 색인", size: 13, weight: .semibold, color: jarvisGold, lines: 1)
+        let syncSource = Chrome.label("동기화: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
+        let syncCopy = Chrome.label("격리 복제: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
+        let syncMode = Chrome.label("색인 모드: WAL · 격리 복제 · mode=ro · query_only", size: 11, color: .secondaryLabelColor, lines: 1)
+        let syncIndex = Chrome.label("마지막 색인: 확인 중", size: 11, color: .secondaryLabelColor, lines: 2)
+        syncSource.identifier = NSUserInterfaceItemIdentifier("settings-sync-source")
+        syncCopy.identifier = NSUserInterfaceItemIdentifier("settings-sync-copy")
+        syncMode.identifier = NSUserInterfaceItemIdentifier("settings-sync-mode")
+        syncIndex.identifier = NSUserInterfaceItemIdentifier("settings-sync-index")
+        let syncCard = Chrome.card(
+            Chrome.vstack([syncTitle, syncSource, syncCopy, syncMode, syncIndex], spacing: 4),
+            padding: 12
+        )
+        syncCard.identifier = NSUserInterfaceItemIdentifier("settings-sync-card")
+
         let slotsTitle = Chrome.label("GeekNews 슬롯", size: 13, weight: .semibold, lines: 1)
         let slotSpecs = [("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]
         var slotViews: [NSView] = []
@@ -6198,12 +6233,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
-        let stack = Chrome.vstack([roomCard, healthCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
+        let stack = Chrome.vstack([roomCard, healthCard, syncCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
         stack.alignment = .width
         Chrome.scrollable(stack, in: content)
         settingsRoomPopup = roomPopup
         settingsRoomSummary = roomSummary
         settingsHealthSummary = healthSummary
+        settingsSyncSource = syncSource
+        settingsSyncCopy = syncCopy
+        settingsSyncMode = syncMode
+        settingsSyncIndex = syncIndex
         settingsWindow = window
     }
 
@@ -6226,6 +6265,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         showJobsWindow(status: Self.jobKinds[tag])
+    }
+
+    func loadSettingsSyncStatus() -> KnowledgeGraphReport? {
+        guard let data = runPython(["--action", "knowledge-graph-status"], timeout: 5) else { return nil }
+        return try? JSONDecoder().decode(KnowledgeGraphReport.self, from: data)
+    }
+
+    func refreshSettingsSyncStatus(force: Bool = false) {
+        let now = Date().timeIntervalSince1970
+        if settingsSyncRefreshInFlight { return }
+        if !force && now - settingsSyncLastRefreshAt < 15 { return }
+        settingsSyncRefreshInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let report = self?.loadSettingsSyncStatus()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.settingsSyncRefreshInFlight = false
+                self.settingsSyncLastRefreshAt = Date().timeIntervalSince1970
+                self.settingsGraphStatus = report
+                self.applySettingsSyncStatus(self.lastModel?.vector_memory, graph: report)
+            }
+        }
+    }
+
+    func applySettingsSyncStatus(_ memory: VectorMemory?, graph: KnowledgeGraphReport?) {
+        let gold = NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: 1.0)
+        let amber = NSColor(calibratedRed: 1.0, green: 0.56, blue: 0.12, alpha: 1.0)
+        let sync = (memory?.sync_status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        switch sync {
+        case "ready":
+            settingsSyncSource?.stringValue = "동기화: 준비됨"
+            settingsSyncSource?.textColor = gold
+        case "partial":
+            settingsSyncSource?.stringValue = "동기화: 부분 반영"
+            settingsSyncSource?.textColor = amber
+        case "stale":
+            settingsSyncSource?.stringValue = "동기화: 재동기화 필요"
+            settingsSyncSource?.textColor = amber
+        default:
+            settingsSyncSource?.stringValue = sync.isEmpty ? "동기화: 상태 없음" : "동기화: \(sync)"
+            settingsSyncSource?.textColor = amber
+        }
+
+        guard let graph else {
+            settingsSyncCopy?.stringValue = "격리 복제: 확인 중"
+            settingsSyncCopy?.textColor = amber
+            settingsSyncMode?.stringValue = "색인 모드: 확인 중"
+            settingsSyncMode?.textColor = amber
+            settingsSyncIndex?.stringValue = "마지막 색인: 확인 중"
+            settingsSyncIndex?.textColor = amber
+            return
+        }
+
+        switch graph.snapshot_status ?? "unknown" {
+        case "copy_ok":
+            settingsSyncCopy?.stringValue = "격리 복제: 정상"
+            settingsSyncCopy?.textColor = gold
+        case "fail_closed":
+            settingsSyncCopy?.stringValue = "격리 복제: fail-closed · 원본 DB 미개방"
+            settingsSyncCopy?.textColor = amber
+        default:
+            settingsSyncCopy?.stringValue = "격리 복제: 확인 전"
+            settingsSyncCopy?.textColor = amber
+        }
+        if graph.indexing_mode == "wal+isolated-copy+mode=ro+query_only" {
+            settingsSyncMode?.stringValue = "색인 모드: WAL · 격리 복제 · mode=ro · query_only"
+            settingsSyncMode?.textColor = gold
+        } else {
+            settingsSyncMode?.stringValue = "색인 모드: 상태 확인 필요"
+            settingsSyncMode?.textColor = amber
+        }
+
+        let indexedAt = graph.indexed_at ?? 0
+        let indexedCount = max(graph.indexed_count ?? 0, 0)
+        let when: String
+        if indexedAt > 0 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            when = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(indexedAt)))
+        } else {
+            when = "없음"
+        }
+        let stale = graph.stale ?? true
+        if graph.snapshot_status == "fail_closed" && indexedCount == 0 {
+            settingsSyncIndex?.stringValue = "마지막 색인: \(when) · 0건 · fail-closed 빈 색인 · 재색인 필요"
+        } else {
+            settingsSyncIndex?.stringValue = "마지막 색인: \(when) · \(indexedCount)건 · \(stale ? "재색인 필요" : "최신")"
+        }
+        settingsSyncIndex?.textColor = stale ? amber : gold
     }
 
     func updateUnifiedSettingsWindow(_ model: MenubarModel) {
@@ -6279,6 +6409,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let done = posted.contains("\(day):\(key)")
             field.stringValue = done ? "완료" : "대기"
             field.textColor = done ? .systemGreen : .secondaryLabelColor
+        }
+        applySettingsSyncStatus(model.vector_memory, graph: settingsGraphStatus)
+        if settingsWindow?.isVisible == true {
+            refreshSettingsSyncStatus()
         }
     }
 

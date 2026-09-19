@@ -3342,6 +3342,43 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("KnowledgeGraphView", panel)
         self.assertIn("func ensureUnifiedSettingsWindow()", source)
 
+    def test_settings_sync_status_card_uses_existing_status_and_keeps_jarvis_constants(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func settingsRoomChanged")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        graph_python = (SCRIPTS / "auto_reply_knowledge_graph.py").read_text(encoding="utf-8")
+
+        self.assertIn('Chrome.label("카카오 DB 동기화 · 색인"', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-card")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-copy")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-mode")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-index")', settings)
+        self.assertIn('applySettingsSyncStatus(model.vector_memory, graph: settingsGraphStatus)', source)
+        self.assertIn('graph.indexing_mode == "wal+isolated-copy+mode=ro+query_only"', source)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn("DEFAULT_K_HOP = 2", graph_python)
+        self.assertIn("MAX_K_HOP = 3", graph_python)
+        self.assertIn("K_HOP_NEIGHBOR_LIMIT = 10", graph_python)
+
     def test_swift_applies_a_graph_snapshot_in_one_layout_pass(self):
         """A snapshot must not settle the force layout twice.
 

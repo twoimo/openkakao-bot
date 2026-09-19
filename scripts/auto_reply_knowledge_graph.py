@@ -31,6 +31,7 @@ DEFAULT_K_HOP = 2
 MAX_K_HOP = 3
 K_HOP_NEIGHBOR_LIMIT = 10
 GRAPH_ENTITY_PREFIXES = ("ent:", "chat:", "person:", "topic:")
+INDEX_STATUS_STALE_SECONDS = 300
 
 # Provenance kinds. "seed" is a hand-written starting node that no message
 # backs yet; "ledger" means a real room message was found to mention the node.
@@ -287,6 +288,80 @@ def write_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         conn.commit()
     except sqlite3.Error:
         pass
+
+
+def collect_knowledge_graph_status(
+    db_path: Path,
+    *,
+    state_root: Path | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Return the persisted Kakao snapshot/index state without starting an index.
+
+    The settings window polls this path, so it must never copy the live Kakao DB
+    or trigger a reindex. It reads only the existing graph store in mode=ro with
+    query_only enabled and reports the same indexed_at/indexed_count/stale fields
+    as ``collect_knowledge_graph``.
+    """
+    root = state_root if state_root is not None else db_path.parent
+    kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
+    empty = {
+        "ok": True,
+        "nodes": [],
+        "edges": [],
+        "node_count": 0,
+        "edge_count": 0,
+        "grounded_nodes": 0,
+        "indexed_at": 0,
+        "indexed_count": 0,
+        "stale": True,
+        "snapshot_status": "unknown",
+        "indexing_mode": "wal+isolated-copy+mode=ro+query_only",
+    }
+    if not kg_path.exists():
+        return empty
+
+    try:
+        conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only = ON")
+    except sqlite3.Error as error:
+        return {**empty, "ok": False, "reason": str(error) or "knowledge_graph_status_unavailable"}
+
+    try:
+        try:
+            indexed_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM kg_entities"
+                    " WHERE entity_id LIKE 'chat:%' OR entity_id LIKE 'topic:%'"
+                ).fetchone()[0]
+                or 0
+            )
+        except sqlite3.Error:
+            indexed_count = 0
+        try:
+            indexed_at = int(read_meta(conn, "last_indexed_at") or 0)
+        except ValueError:
+            indexed_at = 0
+        last_error = read_meta(conn, "last_index_error")
+        snapshot_status = read_meta(conn, "last_snapshot_status")
+        if not snapshot_status:
+            if "isolated read-only snapshot unavailable" in last_error:
+                snapshot_status = "fail_closed"
+            elif indexed_at > 0:
+                snapshot_status = "copy_ok"
+            else:
+                snapshot_status = "unknown"
+        stamp = int(time.time()) if now is None else int(now)
+        stale = bool(last_error) or indexed_at <= 0 or stamp - indexed_at >= INDEX_STATUS_STALE_SECONDS
+        return {
+            **empty,
+            "indexed_at": indexed_at,
+            "indexed_count": indexed_count,
+            "stale": stale,
+            "snapshot_status": snapshot_status,
+        }
+    finally:
+        conn.close()
 
 
 def ensure_seeded(conn: sqlite3.Connection) -> None:
@@ -1830,8 +1905,13 @@ def _reindex_all(
         # 같은 일을 다시 하지 않아 그래프가 영영 낡은 채로 남는다
         # (2026-09-17).
         write_meta(conn, "last_index_error", " | ".join(failures))
+        if any("isolated read-only snapshot unavailable" in failure for failure in failures):
+            # 카카오 원본 DB로 폴백하지 않았음을 상태 화면에서도 확인할 수
+            # 있게 남긴다. 이 값은 다음 정상 색인이 성공할 때만 해제된다.
+            write_meta(conn, "last_snapshot_status", "fail_closed")
         return
     write_meta(conn, "last_index_error", "")
+    write_meta(conn, "last_snapshot_status", "copy_ok")
     # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
     # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
     write_meta(conn, "last_indexed_at", str(int(time.time())))

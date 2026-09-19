@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -609,6 +610,50 @@ class IsolatedReadOnlyConnectionTests(unittest.TestCase):
             finally:
                 holder.rollback()
                 holder.close()
+
+    def test_copy_failure_is_fail_closed_and_never_opens_the_live_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            real_connect = sqlite3.connect
+            opened: list[str] = []
+
+            def tracked_connect(target, *args, **kwargs):
+                opened.append(str(target))
+                return real_connect(target, *args, **kwargs)
+
+            with mock.patch.object(KG.shutil, "copy2", side_effect=OSError("copy refused")):
+                with mock.patch.object(KG.sqlite3, "connect", side_effect=tracked_connect):
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError,
+                        "isolated read-only snapshot unavailable",
+                    ):
+                        with KG._open_isolated_ro_conn(db):
+                            self.fail("copy failure must not yield a connection")
+
+            self.assertEqual(opened, [], "copy failure must not fall back to the live Kakao DB")
+
+    def test_status_reports_fail_closed_empty_index_from_persisted_index_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.write_meta(conn, "last_index_error", "rooms: OperationalError: isolated read-only snapshot unavailable")
+                KG.write_meta(conn, "last_snapshot_status", "fail_closed")
+            finally:
+                conn.close()
+
+            status = KG.collect_knowledge_graph_status(
+                root / "context.sqlite3",
+                state_root=root,
+                now=2_000_000_000,
+            )
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["snapshot_status"], "fail_closed")
+        self.assertEqual(status["indexed_count"], 0)
+        self.assertEqual(status["indexed_at"], 0)
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["indexing_mode"], "wal+isolated-copy+mode=ro+query_only")
 
 
 class MigrationTests(unittest.TestCase):

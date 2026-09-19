@@ -1903,6 +1903,32 @@ def main():
         )
         return 0
     action = _argv_flag_value("--action")
+    if action == "knowledge-graph-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        try:
+            from auto_reply_knowledge_graph import collect_knowledge_graph_status
+
+            payload = collect_knowledge_graph_status(
+                state_root / "context.sqlite3", state_root=state_root
+            )
+        except Exception as exc:  # settings status must stay fail-closed
+            payload = {
+                "ok": False,
+                "nodes": [],
+                "edges": [],
+                "node_count": 0,
+                "edge_count": 0,
+                "grounded_nodes": 0,
+                "indexed_at": 0,
+                "indexed_count": 0,
+                "stale": True,
+                "snapshot_status": "fail_closed",
+                "indexing_mode": "wal+isolated-copy+mode=ro+query_only",
+                "reason": str(exc) or "knowledge_graph_status_unavailable",
+            }
+        _print_json(payload)
+        return 0
     if action == "knowledge-graph":
         # The graph view needs the whole node/edge set at once, which the
         # paginated vector-list cannot express. Handled before the frozen
