@@ -1499,6 +1499,90 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("menu.addItem(graphic)", build)
         self.assertNotIn("NSMenuItem(title:", build)
 
+
+    def test_swift_operator_windows_are_flat_single_purpose_surfaces(self):
+        source = SWIFT.read_text(encoding="utf-8")
+
+        def block(start, end):
+            start_at = source.index(start)
+            return source[start_at:source.index(end, start_at)]
+
+        jobs = block("    func ensureJobsWindow() {", "    func ensureLogWindow() {")
+        log = block("    func ensureLogWindow() {", "    /// 기록 표는 실제 행 수만큼만 높이를 쓴다.")
+        rooms = block("    func ensureRoomsWindow() {", "    /// 저장된 큰 창 크기가 표의 빈 영역으로 흘러 들어가지 않게")
+        vector = block("    func ensureVectorWindow() {", "    func vectorChatName() -> String {")
+
+        for window in (jobs, log, rooms, vector):
+            self.assertNotIn("presentGearMenu", window)
+            self.assertNotIn("tileButtons", window)
+
+        self.assertIn("[summary, filterRow, emptyState, scroll, traceCard, actions]", jobs)
+        self.assertNotIn("jobsHint", jobs)
+        self.assertNotIn("jobsEmptyLabel", jobs)
+        self.assertNotIn("Chrome.statusLabel", jobs)
+        self.assertIn("traceCard.isHidden = true", jobs)
+        self.assertIn("actions.isHidden = true", jobs)
+
+        self.assertIn("[summary, toolbar, emptyState, scroll, detailContent]", log)
+        self.assertNotIn("logHint", log)
+        self.assertNotIn("Chrome.statusLabel", log)
+
+        self.assertIn("Chrome.vstack([toolbar, scroll], spacing: 10)", rooms)
+        self.assertNotIn("Chrome.card(", rooms)
+
+        self.assertIn("KnowledgeGraphView(frame: .zero)", vector)
+        self.assertIn("vectorEditCard = focusedDetail", vector)
+        self.assertNotIn("Chrome.table()", vector)
+        self.assertNotIn("Chrome.card(", vector)
+        self.assertNotIn("vectorPager", vector)
+        self.assertNotIn("vectorSummary", vector)
+
+    def test_swift_operator_empty_states_and_graph_failure_are_fail_closed(self):
+        source = SWIFT.read_text(encoding="utf-8")
+
+        jobs_start = source.index("    func updateJobsEmptyState() {")
+        jobs = source[jobs_start:source.index("    /// 목록이 비면 창을", jobs_start)]
+        self.assertIn("jobsTableScroll?.isHidden = empty", jobs)
+        self.assertIn("jobsEmptyState?.isHidden = !empty", jobs)
+
+        log_start = source.index("    func applyLogFilter(reload: Bool = true)")
+        log_filter = source[log_start:source.index("    func rememberLogSelection()", log_start)]
+        self.assertIn("logTableScroll?.isHidden = empty", log_filter)
+        self.assertIn("logEmptyState?.isHidden = !empty", log_filter)
+
+        graph_start = source.index("    func refreshKnowledgeGraph() {")
+        graph = source[graph_start:source.index("    func applyVectorGraphHint", graph_start)]
+        self.assertIn("try? JSONDecoder().decode(KnowledgeGraphReport.self", graph)
+        self.assertIn(
+            'traceOperatorSurface("knowledge-graph snapshot missing or malformed")',
+            graph,
+        )
+        self.assertIn("applySnapshot(nodes: [], edges: [])", graph)
+        self.assertIn("beginFocus(on: nil)", graph)
+        self.assertIn("presentVectorGraphError(hasPreviousPicture: false)", graph)
+        self.assertIn("self.applyVectorLayout()", graph)
+
+    def test_swift_operator_surfaces_keep_single_hub_and_payload_free_trace(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        self.assertNotIn("tileButtons", panel)
+        self.assertNotIn("func presentGearMenu()", source)
+        self.assertIn("self?.showUnifiedSettingsWindow()", source)
+        self.assertIn('Chrome.roundedButton("지식 그래프"', source)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-status")', source)
+
+        trace = source[
+            source.index("func traceOperatorSurface"):
+            source.index("@objc func showRoomsWindow")
+        ]
+        self.assertIn(".prefix(240)", trace)
+        self.assertNotIn("JSONSerialization", trace)
+        self.assertNotIn("api_key", trace.lower())
+        self.assertNotIn("token", trace.lower())
+
     def test_swift_unified_settings_empty_room_disables_send(self):
         source = SWIFT.read_text(encoding="utf-8")
         settings = source[

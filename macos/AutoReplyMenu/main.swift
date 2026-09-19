@@ -3457,14 +3457,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var lastModel: MenubarModel?
     var logWindow: NSWindow?
     var logSummary: NSTextField?
-    var logHint: NSTextField?
     var logTable: NSTableView?
     var logTableScroll: NSScrollView?
     var logScopeButton: NSPopUpButton?
     var logRoomButton: NSPopUpButton?
     var logStatusField: NSTextField?
     var logStatusMinWidthConstraint: NSLayoutConstraint?
-    var logEmptyLabel: NSTextField?
     var logEmptyState: EmptyStateView?
     var logDetailView: NSTextView?
     var logDetailCard: NSView?
@@ -3504,8 +3502,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var jobsStatus = "open"
     var jobsSkipButton: NSButton?
     var jobsAckButton: NSButton?
-    var jobsHint: NSTextField?
-    var jobsEmptyLabel: NSTextField?
     var jobsEmptyState: EmptyStateView?
     /// 작업 목록 창의 세로 스택. 내용에 맞춰 창을 줄일 때 쓴다.
     var jobsStack: NSStackView?
@@ -6432,18 +6428,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func showVectorWindow() {
         ensureVectorWindow()
-        vectorOffset = 0
-        displayedVectors = []
+        vectorSourceKind = "knowledge_graph"
         selectedVectorId = 0
         selectedVectorChat = ""
         selectedVectorKey = ""
-        vectorEmbeddingField?.stringValue = ""
-        vectorTopicsField?.stringValue = ""
-        vectorSummary?.stringValue = "기억을 불러오는 중…"
-        vectorTable?.reloadData()
+        selectVectorRow(forKnowledgeNode: nil)
         presentOperatorWindow(vectorWindow)
         DispatchQueue.main.async { [weak self] in
-            self?.refreshVectorList()
+            self?.refreshKnowledgeGraph()
         }
     }
 
@@ -6543,19 +6535,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateJobsEmptyState()
     }
 
-    /// 표가 비면 회색 띠 대신 이유를 적는다. 자리를 미리 차지하지 않도록
-    /// AutoHidingLabel을 쓰므로, 채워지면 스스로 사라진다 (2026-09-16).
+    /// 표가 비면 빈 상태가 표 자리를 대신한다.
     func updateJobsEmptyState() {
-        guard let label = jobsEmptyLabel else { return }
         let empty = displayedJobs.isEmpty
-        label.stringValue = ""
         jobsTableScroll?.isHidden = empty
         jobsEmptyState?.isHidden = !empty
-        guard empty else { return }
+        guard empty else {
+            fitJobsWindow()
+            return
+        }
         if jobsReadFailed {
-            // 조회가 넘겼을 때 "0건"이라고 적으면 운영자는 할 일이 없다고
-            // 믿고 창을 닫는다. 다시 눌러 볼 수 있게 사실대로 적는다
-            // (2026-09-16).
             jobsEmptyState?.titleText = "목록을 읽지 못했습니다"
             jobsEmptyState?.detailText = "잠시 뒤 상태를 다시 눌러 주세요."
         } else {
@@ -6672,16 +6661,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 자리째 빼므로 목록이 그만큼 넓어진다 (2026-09-16, 6 Pro 지적).
         jobsTraceCard?.isHidden = job == nil
         jobsActions?.isHidden = job == nil
-        switch jobsStatus {
-        case "sent":
-            jobsHint?.stringValue = "이미 보낸 기록입니다. 다시 보내지 않습니다."
-        case "skipped":
-            jobsHint?.stringValue = "건너뛴 작업입니다. 다시 보내지 않습니다."
-        case "unknown":
-            jobsHint?.stringValue = "결과를 모르는 작업입니다. 확인은 카카오톡에 이미 올라간 경우만 기록합니다."
-        default:
-            jobsHint?.stringValue = "시간 순서입니다. 어느 쪽을 눌러도 다시 보내지 않습니다."
-        }
         if let view = jobsTrace {
             if let job {
                 let body = [
@@ -6728,10 +6707,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if jobsWindow != nil {
             return
         }
-        // 표 200 + 머리말에 단추 줄까지 더하면 400pt가 필요하다. 예전에는
-        // 과정 카드 152pt까지 미리 잡아 508pt로 두었는데, 그 카드는 고른
-        // 작업이 있을 때만 나오므로 목록만 볼 때는 필요 없는 높이였다
-        // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "작업 목록",
             size: NSSize(width: 640, height: 220),
@@ -6754,37 +6729,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         filter.segmentStyle = .rounded
         filter.selectedSegment = 0
         jobsFilterControl = filter
+        let filterRow = Chrome.hstack([filter, Chrome.spacer()], spacing: 8)
 
-        // 창의 규칙을 길게 설명하던 자리다. 운영자가 알아야 하는 것은 표가
-        // 시간 순서라는 것과 두 단추가 다시 보내지 않는다는 것뿐이라 한
-        // 줄로 줄인다 (2026-09-16).
-        let hint = Chrome.hint("시간 순서입니다. 어느 쪽을 눌러도 다시 보내지 않습니다.")
-        jobsHint = hint
-
-        // 표가 비면 회색 띠만 남아 창 아래가 통째로 비어 보인다. 표 대신
-        // 이유를 적어 준다. 자리는 보통 라벨처럼 15pt를 미리 차지하지
-        // 않도록 AutoHidingLabel을 쓴다 (2026-09-16).
-        let jobsEmpty = Chrome.statusLabel(size: 12, lines: 3)
-        jobsEmptyLabel = jobsEmpty
-        // 표가 빈 자리를 이유 한 줄로 대신한다.
-        //
-        // 표를 그대로 두고 위에 한 줄만 얹으면 빈 표의 교차 줄무늬가 창
-        // 아래까지 늘어선다. 실제로 그렇게 만들어 보니 회색 줄이 다섯 줄
-        // 남아, 목록이 비었다는 한 줄보다 그 줄무늬가 먼저 눈에 들어왔다.
-        // 표를 숨기고 같은 자리에 이유를 적되, 판은 한 줄 높이로 둔다
-        // (2026-09-16).
-        let jobsEmptyState = EmptyStateView(symbolName: "tray", compact: true)
-        jobsEmptyState.isHidden = true
-        self.jobsEmptyState = jobsEmptyState
-        let skip = Chrome.roundedButton("미확인 건너뛰기", target: self, action: #selector(jobsSkipClicked))
-        skip.isEnabled = false
-        jobsSkipButton = skip
-        let ack = Chrome.roundedButton("전송된 것으로 확인", target: self, action: #selector(jobsAckClicked))
-        ack.isEnabled = false
-        jobsAckButton = ack
-        // 단추 둘이 왼쪽에 몰려 오른쪽 절반이 빈 자리로 남던 것을, 같은
-        // 폭으로 나눠 창 끝까지 채운다 (2026-09-16).
-        let actions = Chrome.actionRow([skip, ack])
+        let emptyState = EmptyStateView(symbolName: "tray", compact: true)
+        emptyState.isHidden = true
+        jobsEmptyState = emptyState
 
         let (scroll, table) = Chrome.table()
         scroll.setContentHuggingPriority(.required, for: .vertical)
@@ -6795,9 +6744,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("status", "상태", 88.0),
             ("reason", "구분", 340.0),
         ] as [(String, String, CGFloat)] {
-            // 머리글은 본문과 같은 쪽에 붙는다. 예전에는 본문이 왼쪽인
-            // "구분" 열의 머리글만 가운데라 제목이 칸 가운데에 떠 보였다
-            // (2026-09-16).
             Chrome.addColumn(
                 table,
                 id: spec.0,
@@ -6826,59 +6772,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         trace.isVerticallyResizable = true
         trace.textContainerInset = NSSize(width: 8, height: 8)
         trace.textContainer?.widthTracksTextView = true
-        trace.string = "작업을 선택하면 프롬프트·검색·전송 과정이 여기 표시됩니다."
         traceScroll.documentView = trace
         jobsTrace = trace
 
-        // 목록 요약과 안내는 한 카드로 묶고, 필터는 바로 아래 한 줄에 둔다.
-        // 예전에는 여섯 줄이 각자 한 줄씩 차지해 창마다 위아래 여백만 남았다
-        // (2026-09-16).
-        let headerContent = Chrome.vstack([summary, hint], spacing: 4)
-        let headerCard = Chrome.card(headerContent, padding: 12)
-
-        let filterRow = Chrome.hstack([filter, Chrome.spacer()], spacing: 8)
-
-        let traceTitle = Chrome.label("선택한 작업의 과정", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
+        let traceTitle = Chrome.label(
+            "선택한 작업의 과정",
+            size: 11,
+            weight: .semibold,
+            color: .secondaryLabelColor,
+            lines: 1
+        )
         let traceContent = Chrome.vstack([traceTitle, traceScroll], spacing: 6)
         let traceCard = Chrome.card(traceContent, padding: 10)
-
-        // 과정 카드와 조치 단추는 고른 작업이 있을 때만 나온다.
-        //
-        // 예전에는 둘 다 늘 자리를 차지했다. 목록이 비었거나 아무것도 고르지
-        // 않았을 때 화면의 절반이 "작업을 선택하면…" 한 줄과 누를 수 없는
-        // 단추로 채워졌다. 고르면 그때 펼친다 (2026-09-16, 6 Pro 지적).
         traceCard.isHidden = true
-        actions.isHidden = true
         jobsTraceCard = traceCard
+
+        let skip = Chrome.roundedButton(
+            "미확인 건너뛰기",
+            target: self,
+            action: #selector(jobsSkipClicked)
+        )
+        skip.isEnabled = false
+        jobsSkipButton = skip
+        let ack = Chrome.roundedButton(
+            "전송된 것으로 확인",
+            target: self,
+            action: #selector(jobsAckClicked)
+        )
+        ack.isEnabled = false
+        jobsAckButton = ack
+        let actions = Chrome.actionRow([skip, ack])
+        actions.isHidden = true
         jobsActions = actions
 
-        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
-        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
-        let stack = Chrome.vstack([headerCard, filterRow, jobsEmpty, jobsEmptyState, scroll, traceCard, actions], spacing: 10)
+        let stack = Chrome.vstack(
+            [summary, filterRow, emptyState, scroll, traceCard, actions],
+            spacing: 10
+        )
         jobsStack = stack
         Chrome.fill(stack, in: content)
-        let tableHeight = scroll.heightAnchor.constraint(
-            equalToConstant: 72
-        )
+
+        let tableHeight = scroll.heightAnchor.constraint(equalToConstant: 72)
         jobsTableHeight = tableHeight
         NSLayoutConstraint.activate([
-            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
-            summary.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
             filterRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             filter.widthAnchor.constraint(lessThanOrEqualTo: filterRow.widthAnchor),
-            jobsEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            jobsEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 빈 상태 판은 스스로 높이를 갖지 않아, 창을 내용에 맞추면 0으로
-            // 붕괴해 안내문이 통째로 사라진다. 예전에는 창의 최소 높이가
-            // 240으로 버텨 주었을 뿐이다 (2026-09-17, 감사 지적).
-            jobsEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
+            emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 표의 최소 높이는 줄 수에 맞춰 바뀐다. 고정 200으로 두면
-            // 작업이 한 줄뿐일 때도 창이 그 높이에 묶여 아래가 빈 판으로
-            // 남는다 (2026-09-17, 감사 지적).
             tableHeight,
             traceCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             traceContent.widthAnchor.constraint(equalTo: traceCard.widthAnchor, constant: -20),
@@ -6893,11 +6836,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if logWindow != nil {
             return
         }
-        // 여섯 열의 최소 너비 합(624pt)에 창 여백을 더한 값보다 좁아지면
-        // 마지막 "답변" 열이 표 밖으로 밀려나고 가로 스크롤이 없어 읽을 수
-        // 없다. 세로는 머리말 117 + 스크롤 260 + 상세 208에 사이 여백을
-        // 더해 650pt가 필요하다. 처음 여는 크기도 그보다 커야 표가 눌리지
-        // 않는다 (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "답변 기록",
             size: NSSize(width: 1000, height: 620),
@@ -6909,11 +6847,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let summary = Chrome.summary("상태를 읽는 중")
         logSummary = summary
-        // 표가 무엇을 보여 주지 않는지만 한 줄로 남긴다. 원문이 나오지
-        // 않는다는 사실은 운영자가 오해하면 안 되는 부분이라 지우지 않는다
-        // (2026-09-16).
-        let hint = Chrome.hint("턴마다 한 줄입니다. 원문은 나오지 않습니다.")
-        logHint = hint
 
         let scope = NSPopUpButton(frame: .zero, pullsDown: false)
         scope.translatesAutoresizingMaskIntoConstraints = false
@@ -6928,7 +6861,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         room.lineBreakMode = .byTruncatingTail
         logRoomButton = room
 
-        let status = Chrome.label("기록을 읽는 중", size: 11, color: .secondaryLabelColor, lines: 1)
+        let status = Chrome.label(
+            "기록을 읽는 중",
+            size: 11,
+            color: .secondaryLabelColor,
+            lines: 1
+        )
         status.alignment = .right
         status.usesSingleLineMode = true
         status.lineBreakMode = .byTruncatingTail
@@ -6940,23 +6878,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         status.setContentHuggingPriority(.required, for: .horizontal)
         let statusMinWidth = status.widthAnchor.constraint(greaterThanOrEqualToConstant: 164)
         logStatusMinWidthConstraint = statusMinWidth
-        // 필터는 한 줄로 붙이고, 남는 가로 공간은 spacer가 먹는다. 예전에는
-        // 팝업 둘과 상태가 각자 폭을 요구해 가운데가 벌어졌다 (2026-09-16).
+
         scope.setContentHuggingPriority(.required, for: .horizontal)
         room.setContentHuggingPriority(.required, for: .horizontal)
         let scopeTitle = Chrome.label("결과", size: 11, color: .secondaryLabelColor, lines: 1)
         scopeTitle.setContentHuggingPriority(.required, for: .horizontal)
         let roomTitle = Chrome.label("채팅방", size: 11, color: .secondaryLabelColor, lines: 1)
         roomTitle.setContentHuggingPriority(.required, for: .horizontal)
-        let toolbar = Chrome.hstack([scopeTitle, scope, roomTitle, room, Chrome.spacer(), status], spacing: 8)
+        let toolbar = Chrome.hstack(
+            [scopeTitle, scope, roomTitle, room, Chrome.spacer(), status],
+            spacing: 8
+        )
 
-        // 기록을 읽기 전에는 빈 글자다. 보통 라벨이면 15pt를 차지해 창
-        // 가운데에 아무것도 없는 띠가 생긴다 (2026-09-16).
-        let empty = Chrome.statusLabel(size: 12, lines: 3)
-        logEmptyLabel = empty
         let emptyState = EmptyStateView(symbolName: "clock.arrow.circlepath")
         emptyState.isHidden = true
-        self.logEmptyState = emptyState
+        logEmptyState = emptyState
 
         let (scroll, table) = Chrome.table()
         scroll.setContentHuggingPriority(.required, for: .vertical)
@@ -6977,7 +6913,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         detailScroll.hasHorizontalScroller = false
         detailScroll.autohidesScrollers = true
         detailScroll.borderType = .bezelBorder
-        detailScroll.drawsBackground = true
         let detail = NSTextView(frame: .zero)
         detail.isEditable = false
         detail.isSelectable = true
@@ -6985,29 +6920,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         detail.textColor = NSColor.labelColor
         detail.backgroundColor = NSColor.textBackgroundColor
         detail.minSize = NSSize(width: 0, height: 0)
-        detail.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        detail.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         detail.isHorizontallyResizable = false
         detail.isVerticallyResizable = true
         detail.textContainerInset = NSSize(width: 10, height: 8)
         detail.textContainer?.widthTracksTextView = true
-        detail.string = ""
         detailScroll.documentView = detail
         logDetailView = detail
 
-        // 중첩 테두리를 제거하고 불필요한 설명 대신 요약과 도구줄을 단일 카드로 정돈한다 (2026-09-17).
-        let headerContent = Chrome.vstack([summary, toolbar], spacing: 10)
-        let headerCard = Chrome.card(headerContent, padding: 12)
-
-        let detailTitle = Chrome.label("선택한 턴의 자세한 기록", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
+        let detailTitle = Chrome.label(
+            "선택한 턴의 자세한 기록",
+            size: 11,
+            weight: .semibold,
+            color: .secondaryLabelColor,
+            lines: 1
+        )
         let detailContent = Chrome.vstack([detailTitle, detailScroll], spacing: 6)
-        let detailCard = Chrome.card(detailContent, padding: 10)
-        logDetailCard = detailCard
+        detailContent.isHidden = true
+        logDetailCard = detailContent
 
-        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
-        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
-        let stack = Chrome.vstack([headerCard, empty, emptyState, scroll, detailCard], spacing: 10)
+        let stack = Chrome.vstack(
+            [summary, toolbar, emptyState, scroll, detailContent],
+            spacing: 10
+        )
         logStack = stack
         Chrome.fill(stack, in: content)
+
         let tableHeight = scroll.heightAnchor.constraint(
             equalToConstant: Self.logTableMaximumHeight
         )
@@ -7015,18 +6956,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let detailHeight = detailScroll.heightAnchor.constraint(equalToConstant: 168)
         logDetailHeight = detailHeight
         NSLayoutConstraint.activate([
-            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
-            summary.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 빈 상태도 짧은 표와 같은 정도의 높이만 차지한다. 260pt를
-            // 고정하면 기록이 없을 때 안내 한 줄 아래가 빈 판으로 늘어난다.
             emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 108),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailContent.widthAnchor.constraint(equalTo: detailCard.widthAnchor, constant: -20),
+            detailContent.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailTitle.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
             detailScroll.widthAnchor.constraint(equalTo: detailContent.widthAnchor),
             tableHeight,
@@ -7105,27 +7040,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func updateLogWindow(_ model: MenubarModel) {
-        let inspected = Self.selectedRoom(in: model, preferred: inspectedRoomId)
-        // 이 창은 기록 목록을 보여 주는 곳이다. 예전에는 창 맨 위에 방의
-        // 8단계 파이프라인 띠를 늘 붙여 두었다. 그 띠는 지금 고른 방의
-        // 진행 상황인데 목록은 결과·채팅방 필터로 따로 걸러, 같은 화면에서
-        // 두 가지 다른 기준이 섞였다. 파이프라인은 메뉴 패널에 이미 있고,
-        // 여기서는 목록이 곧 답이다 (2026-09-16, 6 Pro 지적).
-        _ = inspected
         let summary = model.log_summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // 이 창의 머리말은 이 창의 목록을 설명한다.
-        //
-        // 코어의 시스템 요약은 한 상태를 여러 문장으로 늘어놓을 때가 있다.
-        // 그대로 넣으면 창을 최소 크기로 줄였을 때 세 줄을 넘겨 뒷문장이
-        // 화면에서 사라지고, 정작 목록은 그만큼 아래로 밀린다. 잠금 사유
-        // 같은 문장은 메뉴 패널이 이미 보여 준다 (2026-09-16, 6 Pro 지적).
         let levelTitle = Palette.title(level: model.level)
         let scope = Self.logScopeSummary(summary)
         logSummary?.stringValue = scope.isEmpty
             ? "\(levelTitle) — \(Palette.caption(code: model.primary_code))"
             : "\(levelTitle) — \(scope)"
-        // 잘라낸 뒷문장은 여기 남는다. 머리말은 한 줄로 두되, 왜 그런지가
-        // 궁금할 때 마우스를 올리면 전문을 읽을 수 있다 (2026-09-16).
         logSummary?.toolTip = summary.isEmpty ? nil : summary
         applyLogReceipts(model)
     }
@@ -7318,7 +7238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 기록(receiptRows)을 보고 판단해서, 결과 필터로 모든 줄이 빠진
         // 뒤에도 안내가 뜨지 않고 빈 표만 남았다 (2026-09-16).
         let empty = displayedReceipts.isEmpty
-        logEmptyLabel?.stringValue = ""
         logTableScroll?.isHidden = empty
         logEmptyState?.isHidden = !empty
         logEmptyState?.titleText = logEmptyTitle()
@@ -7520,23 +7439,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if roomsWindow != nil {
             return
         }
-        // 표 최소 높이가 300pt라 380pt까지 줄이면 머리말만 남고 목록이
-        // 사라진다. 머리말 105 + 표 300에 사이 여백을 더해 470pt가 필요하다
-        // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "단체 채팅방",
-            // 머리말과 표를 합친 만큼만 준다. 예전에는 창 위 파이프라인 띠
-            // 39pt와 그 여백까지 더해 608pt로 열었다 (2026-09-16).
             size: NSSize(width: 760, height: 470),
             autosave: "AutoReplyRooms",
             minimum: NSSize(width: 620, height: 440)
         )
         let content = NSView()
         window.contentView = content
-
-        // 켜고 끄는 규칙은 두 문장이면 끝난다. 어느 칸을 눌러야 하는지까지
-        // 나열하던 문장은 표의 칸 제목이 이미 말한다 (2026-09-16).
-        let hint = Chrome.hint("칸을 눌러 켜고 끕니다. 답변·긱뉴스를 켜면 동작도 함께 켜집니다.")
 
         let filter = Chrome.searchField(
             placeholder: "단체 채팅방 검색",
@@ -7545,6 +7455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             delegate: self
         )
         roomsFilterField = filter
+
         let addButton = NSButton(title: "추가", target: self, action: #selector(addRoomClicked))
         addButton.bezelStyle = .rounded
         addButton.translatesAutoresizingMaskIntoConstraints = false
@@ -7567,8 +7478,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("geek", "긱뉴스", 72.0),
             ("catalog", "추가됨", 64.0),
         ] as [(String, String, CGFloat)] {
-            // 제목 열의 본문은 왼쪽이다. 머리글만 가운데면 방 이름 위에서
-            // 제목이 칸 가운데에 떠 보인다 (2026-09-16).
             Chrome.addColumn(
                 table,
                 id: spec.0,
@@ -7580,20 +7489,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         roomsTable = table
 
-        // 검색과 추가·삭제는 안내 한 줄과 같은 카드에 둔다. 예전에는 이
-        // 도구줄이 카드 안의 또 다른 카드라, "방을 찾고 설정한다"는 한 가지
-        // 일에 테두리가 두 겹이었다 (2026-09-16, 6 Pro 지적).
-        let headerContent = Chrome.vstack([hint, toolbar], spacing: 8)
-        let headerCard = Chrome.card(headerContent, padding: 12)
-
-        let stack = Chrome.vstack([headerCard, scroll], spacing: 10)
+        let stack = Chrome.vstack([toolbar, scroll], spacing: 10)
         roomsStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
-            hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            toolbar.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             filter.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
@@ -7613,18 +7513,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let content = window.contentView else { return }
         roomsFitting = true
         defer { roomsFitting = false }
+
         for _ in 0..<3 {
             content.layoutSubtreeIfNeeded()
             stack.layoutSubtreeIfNeeded()
             let needed = stack.fittingSize.height
             guard needed > 1 else { return }
-            // 스크롤 뷰는 창의 남는 높이를 전부 먹는다. 그 늘어난 부분을
-            // fittingSize에서 빼야 오토세이브된 큰 프레임을 다시 목표 높이로
-            // 쓰지 않는다.
             let tableExcess = max(0, scroll.bounds.height - 300)
             let desired = needed - tableExcess + 32
             let current = content.bounds.height
             guard abs(current - desired) > 12 else { return }
+
             var frame = window.frame
             let delta = current - desired
             if delta > 0 {
@@ -8065,274 +7964,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if vectorWindow != nil {
             return
         }
-        // 표 240 + 그래프 260 + 편집 270에 머리말과 사이 여백을 더하면 세로로
-        // 974pt가 필요하다. 380pt까지 줄어들면 아래 편집 칸이 통째로 사라진다
-        // (2026-09-16).
         let window = Chrome.operatorWindow(
             title: "지식 그래프",
-            // 감사에서 스택이 974pt를 차지한다. 720으로 열면 표와 그래프가
-            // 서로 높이를 빼앗아 둘 다 좁아진다 (2026-09-16).
-            size: NSSize(width: 980, height: 1006),
+            size: NSSize(width: 900, height: 700),
             autosave: "AutoReplyVector",
-            minimum: NSSize(width: 700, height: 700)
+            minimum: NSSize(width: 700, height: 340)
         )
-        window.title = "지식 그래프"
         window.delegate = self
         let content = NSView()
         window.contentView = content
 
-        // 창이 무엇을 하는지 한 줄. 개념 이름을 나열하던 문장은 아래 표에
-        // 같은 이름이 이미 있고, 답변 보장은 여기서 약속할 일이 아니다
-        // (2026-09-16).
-        let hint = Chrome.hint("개념과 관계를 검색하고 확인합니다.")
-        vectorHint = hint
-
-        let vectorEmpty = Chrome.statusLabel(size: 12, lines: 3)
-        vectorEmptyLabel = vectorEmpty
-        let vectorEmptyState = EmptyStateView(symbolName: "brain")
-        vectorEmptyState.isHidden = true
-        self.vectorEmptyState = vectorEmptyState
-
-        let chatLabel = Chrome.label("보기", size: 11, color: .secondaryLabelColor, lines: 1)
-        chatLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let source = NSPopUpButton(frame: .zero, pullsDown: false)
-        source.translatesAutoresizingMaskIntoConstraints = false
-        source.addItems(withTitles: vectorSourceTitles)
-        source.selectItem(at: max(vectorSourceKeys.firstIndex(of: vectorSourceKind) ?? 0, 0))
-        source.target = self
-        source.action = #selector(vectorSourceChanged)
-        vectorSourceButton = source
-
-        let topic = NSPopUpButton(frame: .zero, pullsDown: false)
-        topic.translatesAutoresizingMaskIntoConstraints = false
-        topic.addItem(withTitle: "모든 주제")
-        topic.target = self
-        topic.action = #selector(vectorTopicChanged)
-        vectorTopicButton = topic
-
-        let chat = NSTextField()
-        chat.translatesAutoresizingMaskIntoConstraints = false
-        chat.stringValue = ""
-        chat.placeholderString = "비우면 모든 채팅방"
-        chat.delegate = self
-        chat.target = self
-        chat.action = #selector(vectorSearchClicked)
-        chat.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        vectorChatField = chat
-
-        let search = Chrome.searchField(
-            placeholder: "이름 또는 내용 검색",
-            target: self,
-            action: #selector(vectorSearchClicked),
-            delegate: self,
-            immediate: false
-        )
-        vectorSearchField = search
-        let findButton = NSButton(title: "찾기", target: self, action: #selector(vectorSearchClicked))
-        findButton.bezelStyle = .rounded
-        findButton.translatesAutoresizingMaskIntoConstraints = false
-        // 여섯 컨트롤을 한 줄에 밀어 넣으면 좁은 창에서 라벨이 잘리고 칸이
-        // 들쭉날쭉해진다. 고르는 줄과 찾는 줄로 나눈다 (2026-09-16).
-        let pickRow = Chrome.hstack([chatLabel, source, topic, chat, Chrome.spacer()], spacing: 8)
-        let findRow = Chrome.hstack([search, findButton], spacing: 8)
-        let toolbarContent = Chrome.vstack([pickRow, findRow], spacing: 8)
-
-        let summary = Chrome.label("기록 없음", size: 11, color: .secondaryLabelColor, lines: 1)
-        vectorSummary = summary
-        let prevButton = NSButton(title: "이전", target: self, action: #selector(vectorPrevClicked))
-        prevButton.bezelStyle = .rounded
-        prevButton.translatesAutoresizingMaskIntoConstraints = false
-        let nextButton = NSButton(title: "다음", target: self, action: #selector(vectorNextClicked))
-        nextButton.bezelStyle = .rounded
-        nextButton.translatesAutoresizingMaskIntoConstraints = false
-        vectorPrevButton = prevButton
-        vectorNextButton = nextButton
-        let pager = Chrome.hstack([summary, Chrome.spacer(), prevButton, nextButton], spacing: 8)
-        vectorPager = pager
-
-        // 신경망 보기: 노드가 뉴런, 관계가 시냅스다. 표와 같은 데이터를 쓰므로
-        // 두 보기가 서로 다른 말을 하지 않는다 (2026-09-16).
         let graph = KnowledgeGraphView(frame: .zero)
         graph.translatesAutoresizingMaskIntoConstraints = false
-        // 처음에는 그래프를 그리지 않지만 숨기지는 않는다. 숨김은 부모
-        // 스택이 혼자 관리하는데, 예전에는 여기서 자식만 숨겨 두어 스택을
-        // 보여 준 뒤에도 그래프가 영영 나타나지 않았다 (2026-09-16).
+        graph.isHidden = true
         graph.onSelect = { [weak self] node in
             self?.selectVectorRow(forKnowledgeNode: node)
         }
         vectorGraphView = graph
-        let graphHint = Chrome.hint(
-            "뉴런을 누르면 연결 관계와 근거를 펼칩니다.",
-            size: 11
-        )
+
+        let graphHint = Chrome.hint("지식 그래프를 읽는 중…", size: 11)
         vectorGraphHint = graphHint
-        // 실패했을 때만 나타나는 재시도 버튼. 빈 상태에는 누를 것이 없으므로
-        // 숨겨 두고, 오류·오래된 그림일 때만 보여 준다 (2026-09-17, 6 Pro 지적).
         let graphRetry = Chrome.roundedButton(
-            "지식 그래프 다시 읽기",
+            "다시 읽기",
             target: self,
             action: #selector(vectorGraphRetryClicked)
         )
-        graphRetry.toolTip = "지식 그래프를 다시 읽습니다. 색인은 그대로 두고 화면만 새로 그립니다."
+        graphRetry.toolTip = "지식 그래프 화면을 다시 읽습니다."
         graphRetry.isHidden = true
         vectorGraphRetryButton = graphRetry
+
         let graphHintRow = Chrome.hstack([graphHint, Chrome.spacer(), graphRetry], spacing: 8)
-        let graphStack = Chrome.vstack([graphHintRow, graph], spacing: 6)
+        let graphStack = Chrome.vstack([graphHintRow, graph], spacing: 8)
         vectorGraphStack = graphStack
-        let graphHeight = graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 260)
-        graphHeight.isActive = true
+        let graphHeight = graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 420)
+        graphHeight.isActive = false
         vectorGraphHeightConstraint = graphHeight
 
-        let (scroll, table) = Chrome.table()
-        table.delegate = self
-        table.dataSource = self
-        for spec in [
-            ("date", "시각", 126.0),
-            ("chat", "채팅방", 108.0),
-            ("user", "이름", 80.0),
-            ("preview", "내용", 280.0),
-            ("topics", "주제", 120.0),
-            ("origin", "출처", 88.0),
-        ] as [(String, String, CGFloat)] {
-            // 글자 열의 머리글은 본문과 같이 왼쪽에 붙인다 (2026-09-16).
-            let textColumn = spec.0 == "chat" || spec.0 == "user" || spec.0 == "preview" || spec.0 == "topics"
-            Chrome.addColumn(
-                table,
-                id: spec.0,
-                title: spec.1,
-                width: spec.2,
-                minWidth: 72,
-                alignment: textColumn ? .left : .center
-            )
-        }
-        vectorTable = table
-        vectorTableScroll = scroll
+        let detailTitle = Chrome.label(
+            "고른 뉴런",
+            size: 11,
+            weight: .semibold,
+            color: .secondaryLabelColor,
+            lines: 1
+        )
+        vectorEditCardTitle = detailTitle
 
-        let userLabel = Chrome.label("이름", size: 11, color: .secondaryLabelColor, lines: 1)
-        let user = NSTextField()
-        user.translatesAutoresizingMaskIntoConstraints = false
-        user.placeholderString = "최연우"
-        user.widthAnchor.constraint(equalToConstant: 140).isActive = true
-        vectorUserField = user
-        let dateLabel = Chrome.label("시각", size: 11, color: .secondaryLabelColor, lines: 1)
-        let date = NSTextField()
-        date.translatesAutoresizingMaskIntoConstraints = false
-        date.placeholderString = "2026-08-20 20:30:00"
-        date.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        vectorDateField = date
-        let embedLabel = Chrome.label("임베딩", size: 11, color: .secondaryLabelColor, lines: 1)
-        let embed = Chrome.label("원문에서 만든 128차원 해시 벡터", size: 11, color: .secondaryLabelColor, lines: 1)
-        embed.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        embed.isSelectable = true
-        embed.lineBreakMode = .byTruncatingTail
-        embed.toolTip = "검색에 쓰는 임베딩입니다. 원문을 저장하면 다시 계산됩니다."
-        vectorEmbeddingField = embed
-        let topicLabel = Chrome.label("주제", size: 11, color: .secondaryLabelColor, lines: 1)
-        let topicsField = NSTextField()
-        topicsField.translatesAutoresizingMaskIntoConstraints = false
-        topicsField.placeholderString = "코인, 주식"
-        topicsField.toolTip = "쉼표로 주제를 넣거나 비우면 내용에서 자동으로 묶습니다."
-        topicsField.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        vectorTopicsField = topicsField
-        let metaTop = Chrome.hstack([userLabel, user, dateLabel, date, topicLabel, topicsField, Chrome.spacer()], spacing: 8)
-        let metaBottom = Chrome.hstack([embedLabel, embed, Chrome.spacer()], spacing: 8)
-        let metaContent = Chrome.vstack([metaTop, metaBottom], spacing: 8)
+        let detailScroll = NSScrollView()
+        detailScroll.translatesAutoresizingMaskIntoConstraints = false
+        detailScroll.hasVerticalScroller = true
+        detailScroll.hasHorizontalScroller = false
+        detailScroll.autohidesScrollers = true
+        detailScroll.borderType = .bezelBorder
+        let detail = NSTextView(frame: .zero)
+        detail.isRichText = false
+        detail.isEditable = false
+        detail.isSelectable = true
+        detail.font = NSFont.systemFont(ofSize: 12)
+        detail.textColor = NSColor.labelColor
+        detail.backgroundColor = NSColor.textBackgroundColor
+        detail.minSize = NSSize(width: 0, height: 0)
+        detail.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        detail.isHorizontallyResizable = false
+        detail.isVerticallyResizable = true
+        detail.textContainerInset = NSSize(width: 10, height: 8)
+        detail.textContainer?.widthTracksTextView = true
+        detailScroll.documentView = detail
+        vectorMessageView = detail
 
-        let messageLabel = Chrome.label("내용", size: 11, color: .secondaryLabelColor, lines: 1)
-        messageLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let messageScroll = NSScrollView()
-        messageScroll.translatesAutoresizingMaskIntoConstraints = false
-        messageScroll.hasVerticalScroller = true
-        messageScroll.borderType = .bezelBorder
-        messageScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
-        let message = NSTextView(frame: .zero)
-        message.isRichText = false
-        message.isEditable = true
-        message.usesFindBar = false
-        message.font = NSFont.systemFont(ofSize: 12)
-        message.minSize = NSSize(width: 0, height: 120)
-        message.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        message.isVerticallyResizable = true
-        message.isHorizontallyResizable = false
-        message.textContainer?.widthTracksTextView = true
-        messageScroll.documentView = message
-        vectorMessageView = message
-        let editor = Chrome.hstack([messageLabel, messageScroll], spacing: 8)
-        editor.alignment = .top
+        let focusedDetail = Chrome.vstack([detailTitle, detailScroll], spacing: 6)
+        focusedDetail.isHidden = true
+        vectorEditCard = focusedDetail
 
-        let restoreButton = NSButton(title: "기본값 복원", target: self, action: #selector(vectorRestoreClicked))
-        restoreButton.bezelStyle = .rounded
-        restoreButton.translatesAutoresizingMaskIntoConstraints = false
-        restoreButton.isHidden = true
-        vectorRestoreButton = restoreButton
-        let addButton = NSButton(title: "새로 쓰기", target: self, action: #selector(vectorNewClicked))
-        addButton.bezelStyle = .rounded
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        vectorAddButton = addButton
-        let saveButton = NSButton(title: "저장", target: self, action: #selector(vectorSaveClicked))
-        saveButton.bezelStyle = .rounded
-        saveButton.translatesAutoresizingMaskIntoConstraints = false
-        vectorSaveButton = saveButton
-        let deleteButton = NSButton(title: "삭제", target: self, action: #selector(vectorDeleteClicked))
-        deleteButton.bezelStyle = .rounded
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        vectorDeleteButton = deleteButton
-        // 지식 그래프 창의 편집 단추. 숨은 "기본값 복원"은 스택이 빼므로
-        // 보이는 단추 셋이 창 폭을 나눠 갖는다 (2026-09-16).
-        let formActions = Chrome.actionRow([addButton, saveButton, deleteButton, restoreButton], spacing: 8)
-
-        // 중첩 테두리와 불필요한 중복 설명을 제거하고, 도구와 쪽수 넘김을 하나의 단일 카드로 정돈한다 (2026-09-17).
-        let headerContent = Chrome.vstack([toolbarContent, pager], spacing: 10)
-        let headerCard = Chrome.card(headerContent, padding: 12)
-
-        // 이 카드가 지금 무엇을 보여 주는지 한 줄로 말한다. 그래프에서 뉴런을
-        // 고르면 편집할 것이 아니라 근거를 보는 자리라, 제목이 같은 카드를
-        // 두 가지 뜻으로 읽히게 두면 무엇을 하는 화면인지 알 수 없다
-        // (2026-09-17).
-        let editTitle = Chrome.label("고른 기억", size: 11, weight: .semibold, color: .secondaryLabelColor, lines: 1)
-        vectorEditCardTitle = editTitle
-        let editBody = Chrome.vstack([editTitle, metaContent, editor, formActions], spacing: 10)
-        let editCard = Chrome.card(editBody, padding: 12)
-        // 편집 폼은 고른 줄이 있을 때만 펼친다. 예전에는 아무것도 고르지
-        // 않았는데도 이름·시각·주제·벡터·내용과 저장·삭제가 늘 자리를
-        // 차지해, 창에서 가장 큰 덩어리가 "아직 아무것도 아닌 것"이었다
-        // (2026-09-16, 6 Pro 지적).
-        editCard.isHidden = true
-        vectorEditCard = editCard
-
-        // 빈 상태 판은 표와 같은 자리를 쓰되, 스택 안에서는 표 바로 앞에 둔다.
-        // 둘 중 하나만 보이므로 화면에는 한 자리만 남는다 (2026-09-16).
-        let stack = Chrome.vstack([headerCard, vectorEmpty, vectorEmptyState, scroll, graphStack, editCard], spacing: 10)
+        let stack = Chrome.vstack([graphStack, focusedDetail], spacing: 10)
         vectorStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
-            headerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
-            toolbarContent.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            pickRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
-            findRow.widthAnchor.constraint(equalTo: toolbarContent.widthAnchor),
-            pager.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
-            vectorEmpty.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            vectorEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            // 빈 상태 판은 표와 같은 높이를 차지한다. 표를 숨긴 자리가 그대로
-            // 빈 띠로 남지 않게 하려면 높이가 같아야 한다 (2026-09-16).
-            vectorEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             graphStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            graphHint.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
+            graphHintRow.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
             graph.widthAnchor.constraint(equalTo: graphStack.widthAnchor),
-            editCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            editBody.widthAnchor.constraint(equalTo: editCard.widthAnchor, constant: -24),
-            editTitle.widthAnchor.constraint(equalTo: editBody.widthAnchor),
-            metaContent.widthAnchor.constraint(equalTo: editBody.widthAnchor),
-            metaTop.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
-            metaBottom.widthAnchor.constraint(equalTo: metaContent.widthAnchor),
-            editor.widthAnchor.constraint(equalTo: editBody.widthAnchor),
-            formActions.widthAnchor.constraint(equalTo: editBody.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            search.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            focusedDetail.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            detailTitle.widthAnchor.constraint(equalTo: focusedDetail.widthAnchor),
+            detailScroll.widthAnchor.constraint(equalTo: focusedDetail.widthAnchor),
+            detailScroll.heightAnchor.constraint(equalToConstant: 168),
         ])
-        window.initialFirstResponder = search
         vectorWindow = window
     }
 
@@ -8508,16 +8225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         updateVectorEmptyState()
     }
 
-    /// 표가 비면 회색 띠 대신 이유를 적는다 (2026-09-16).
     func updateVectorEmptyState() {
-        guard let label = vectorEmptyLabel else { return }
-        label.stringValue = ""
-        vectorEmptyState?.titleText = vectorSourceKind == "knowledge_graph"
-            ? "아직 그릴 뉴런이 없습니다"
-            : "이 조건에 보여 줄 기억이 없습니다"
-        vectorEmptyState?.detailText = vectorSourceKind == "knowledge_graph"
-            ? "대화가 쌓이면 개념이 뉴런으로, 관계가 시냅스로 이어집니다."
-            : "위에서 다른 보기나 주제를 골라 보세요."
         applyVectorLayout()
     }
 
@@ -8528,44 +8236,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 흐려진다. 지금은 보기 선택이 주 화면을 정하고, 편집 폼은 고른 줄이
     /// 있을 때만 따라 나온다 (2026-09-16, 6 Pro 지적).
     func applyVectorLayout() {
-        let graphMode = currentVectorSource() == "knowledge_graph"
-        let graphHasNodes = !(vectorGraphView?.nodes.isEmpty ?? true)
-        // 그래프 보기에서 뉴런이 없으면 표의 빈 상태 판이 대신 이유를 적는다.
-        let showsGraph = graphMode && graphHasNodes
-        // 그래프를 못 읽었으면 뉴런이 하나도 없어도 안내 줄과 재시도 버튼은
-        // 보여야 한다. 스택을 통째로 숨기면 그 안의 재시도 버튼까지 사라져,
-        // 처음 실패한 사람은 다시 시도할 방법이 없다 (2026-09-17, 6 Pro 지적).
-        let graphFailed = graphMode
-            && (vectorGraphPhase == .error || vectorGraphPhase == .stale)
-        let showsGraphPanel = showsGraph || graphFailed
-        let showsTable = !showsGraphPanel
+        let hasNodes = !(vectorGraphView?.nodes.isEmpty ?? true)
+        vectorGraphStack?.isHidden = false
+        vectorGraphView?.isHidden = !hasNodes
+        vectorGraphHeightConstraint?.isActive = hasNodes
 
-        vectorGraphStack?.isHidden = !showsGraphPanel
-        // 캔버스는 그릴 뉴런이 있을 때만 펼친다. 없으면 안내 줄만 남기고,
-        // 최소 높이 제약도 함께 꺼서 빈 판이 자리를 차지하지 않게 한다.
-        vectorGraphView?.isHidden = !showsGraph
-        vectorGraphHeightConstraint?.isActive = showsGraph
-        vectorTableScroll?.isHidden = !showsTable || displayedVectors.isEmpty
-        vectorEmptyState?.isHidden = !showsTable || !displayedVectors.isEmpty
-        // 쪽수 넘김은 목록에만 뜻이 있다. 그래프는 한 번에 다 그리므로
-        // "기록 없음" 옆에 이전·다음이 놓이면 무엇을 넘기는지 알 수 없다
-        // (2026-09-16, 6 Pro 지적).
-        vectorPager?.isHidden = !showsTable
-
-        let selectedRow = vectorTable?.selectedRow ?? -1
-        let hasSelection = showsTable && selectedRow >= 0 && selectedRow < displayedVectors.count
-        // 그래프에서도 고른 뉴런의 근거를 펼친다.
-        //
-        // 예전에는 표에서 고른 줄이 있을 때만 편집 카드를 열었다. 그래서
-        // 그래프에서 뉴런을 눌러도 아무 일도 일어나지 않아, 눌러 보라고
-        // 적어 둔 안내와 화면이 서로 다른 말을 했다 (2026-09-17).
-        let hasGraphSelection = showsGraph && vectorGraphView?.selectedNodeId != nil
-        vectorEditCard?.isHidden = !(hasSelection || hasGraphSelection)
-        // 그래프 보기에서 이 카드는 "편집"이 아니라 "근거"다. 무엇을 보는
-        // 중인지에 따라 제목이 달라야 같은 카드가 두 가지로 읽히지 않는다.
-        vectorEditCardTitle?.stringValue = hasGraphSelection
-            ? "고른 뉴런의 근거"
-            : "고른 기억"
+        let hasSelection = hasNodes && vectorGraphView?.selectedNodeId != nil
+        vectorEditCard?.isHidden = !hasSelection
+        if !hasSelection {
+            vectorEditCardTitle?.stringValue = "고른 뉴런"
+        }
         fitVectorWindow()
     }
 
@@ -8583,60 +8263,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let content = window.contentView else { return }
         vectorFitting = true
         defer { vectorFitting = false }
-        // 오래된 autosave 값이 현재 최소 크기보다 작을 수도 있다. 그 상태로
-        // 높이만 맞추면 편집 폼의 고정 폭 필드가 눌려 이름·시각·주제 라벨이
-        // 사라진다. 자동 맞춤을 하는 동안에는 선언한 최소 프레임을 지킨다.
+
         if window.frame.width < window.minSize.width {
             var frame = window.frame
             frame.size.width = window.minSize.width
             window.setFrame(frame, display: false, animate: false)
             content.layoutSubtreeIfNeeded()
         }
+
         let minimumContentHeight = window.contentRect(
             forFrameRect: NSRect(origin: .zero, size: window.minSize)
         ).height
-        // 배치가 한 번에 수렴하지 않는다. 줄인 뒤 다시 재서 맞춘다.
         for _ in 0..<3 {
             content.layoutSubtreeIfNeeded()
             stack.layoutSubtreeIfNeeded()
             let needed = stack.fittingSize.height
             guard needed > 1 else { return }
-            // 그래프 보기에서는 캔버스가 정사각형에 가까워야 뉴런이 골고루
-            // 퍼진다. 창 폭에서 여백을 뺀 만큼을 캔버스 높이로 잡는다.
-            //
-            // 다만 실제로 그릴 뉴런이 있을 때만 그렇다. 보기만 지식
-            // 그래프이고 그릴 것이 없으면, 이 높이가 그대로 남아 빈 상태
-            // 판이 704pt짜리 빈 카드가 되었다 (2026-09-16).
-            let showsGraph = currentVectorSource() == "knowledge_graph"
-                && !(vectorGraphView?.nodes.isEmpty ?? true)
-            var compactNeeded = needed
-            if showsGraph, let graph = vectorGraphView {
-                // 그래프는 남는 높이를 전부 먹는 뷰라, 복원된 큰 프레임에서
-                // fittingSize를 재면 그 높이가 다시 목표값이 된다. 그래프의
-                // 제약상 최소 높이인 260pt를 넘는 부분만 빼고, 아래에서 창의
-                // 실제 최소 높이를 다시 보장한다. 편집 카드가 열려 있으면 그
-                // 카드의 fittingSize는 그대로 남으므로 함께 들어간다.
-                compactNeeded -= max(0, graph.bounds.height - 260)
-            } else if let scroll = vectorTableScroll, !scroll.isHidden {
-                compactNeeded -= max(0, scroll.bounds.height - 240)
-            } else if let empty = vectorEmptyState, !empty.isHidden {
-                compactNeeded -= max(0, empty.bounds.height - 240)
+
+            let graphExcess: CGFloat
+            if let graph = vectorGraphView, !graph.isHidden {
+                graphExcess = max(0, graph.bounds.height - 420)
+            } else {
+                graphExcess = 0
             }
             let desired = min(
-                max(compactNeeded + 32, minimumContentHeight),
+                max(needed - graphExcess + 32, minimumContentHeight),
                 Self.vectorWindowHeightLimit
             )
             let current = content.bounds.height
             guard abs(current - desired) > 12 else { return }
+
             var frame = window.frame
             let delta = current - desired
             if delta > 0 {
-                // 줄일 때는 위쪽 모서리를 고정한다. 아래에서 줄이면 창이 화면
-                // 밖으로 밀린다.
                 frame.size.height -= delta
                 frame.origin.y += delta
             } else {
-                // 늘릴 때는 화면 위쪽을 넘지 않게 막는다.
                 let grown = min(-delta, frame.origin.y)
                 guard grown > 0 else { return }
                 frame.size.height += grown
@@ -8889,6 +8551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self.vectorGraphIndexedAt = report.indexed_at ?? 0
                 self.vectorGraphIsStale = report.stale ?? false
                 self.applyVectorGraphHint(total: total, grounded: grounded)
+                self.applyVectorLayout()
             }
         }
     }
@@ -8897,20 +8560,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applyVectorGraphHint(total: Int, grounded: Int) {
         guard let graph = vectorGraphView else { return }
         if let label = graph.focusedNodeLabel, graph.isFocused {
-            vectorGraphHint?.stringValue =
-                "\(label)을(를) 중심으로 펼쳤습니다. 이어진 뉴런만 남았습니다. "
-                + "빈 곳을 누르면 전체 그림으로 돌아갑니다."
+            vectorGraphHint?.stringValue = "\(label) 중심 · 빈 곳을 누르면 전체 보기"
             return
         }
-        // 색인이 언제 기준인지 붙인다. 카카오톡 DB는 몇 분마다 다시 읽히는데,
-        // 그 사실이 화면에 없으면 방금 한 대화가 왜 그래프에 없는지 알 길이
-        // 없다 (2026-09-17, 사용자 지시).
-        var head = "뉴런 \(total)개 중 \(grounded)개가 원문으로 확인되었습니다."
+        var parts = ["뉴런 \(total)", "근거 확인 \(grounded)"]
         if let stamp = vectorGraphIndexText {
-            head += " 색인 \(stamp)."
+            parts.append("색인 \(stamp)")
         }
-        vectorGraphHint?.stringValue =
-            head + " 크기는 중요도, 선 굵기는 관계 강도이고, 밝은 뉴런을 누르면 근거가 나옵니다."
+        parts.append("뉴런을 눌러 근거 보기")
+        vectorGraphHint?.stringValue = parts.joined(separator: " · ")
     }
 
     /// 색인 시각을 사람이 읽는 말로. 아직 색인 전이면 그렇게 말한다.
@@ -8936,10 +8594,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
         guard let node else {
             vectorTable?.deselectAll(nil)
-            vectorUserField?.stringValue = ""
-            vectorTopicsField?.stringValue = ""
+            vectorEditCardTitle?.stringValue = "고른 뉴런"
             vectorMessageView?.string = ""
-            vectorEmbeddingField?.stringValue = ""
             applyVectorGraphHint(total: vectorGraphTotal, grounded: vectorGraphGrounded)
             applyVectorLayout()
             return
@@ -8948,30 +8604,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             vectorTable?.scrollRowToVisible(index)
         }
-        // 표에 있든 없든 선택된 노드의 근거 카드를 채우고 즉시 펼친다 (2026-09-17, 6 Pro 지적).
-        vectorUserField?.stringValue = node.label
-        vectorTopicsField?.stringValue = node.category
+
         let evidence = node.evidence
-        var lines = [node.description, ""]
+        var lines = [
+            "\(node.category) · \(node.id)",
+            node.description,
+            "",
+        ]
         if evidence.grounded {
             lines.append("근거: 원문 메시지 \(evidence.source_event_ids.count)건 (방 \(evidence.chat_id))")
-            if let when = evidence.confirmed_at { lines.append("확인 시각: \(when)") }
+            if let when = evidence.confirmed_at {
+                lines.append("확인 시각: \(when)")
+            }
         } else {
             lines.append("근거: 아직 원문 메시지에서 확인되지 않은 초기 노드")
         }
-        if evidence.retracted { lines.append("상태: 철회됨") }
-        lines.append("")
-        lines.append(contentsOf: node.facts.map { "• \($0)" })
+        if evidence.retracted {
+            lines.append("상태: 철회됨")
+        }
+        if !node.facts.isEmpty {
+            lines.append("")
+            lines.append(contentsOf: node.facts.map { "• \($0)" })
+        }
         let connected = vectorGraphView?.connectedFacts(around: node.id) ?? []
         if !connected.isEmpty {
             lines.append("")
             lines.append("연결 관계")
             lines.append(contentsOf: connected.map { "• \($0)" })
         }
+
+        vectorEditCardTitle?.stringValue = node.label
         vectorMessageView?.string = lines.joined(separator: "\n")
-        vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
-        // 확대가 끝난 뒤 힌트 줄이 "무엇을 보고 있는지"를 말한다.
-        // 선택 직후에는 아직 확대 중이므로 한 박자 뒤에 다시 쓴다.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.applyVectorGraphHint(

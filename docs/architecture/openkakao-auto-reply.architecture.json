@@ -23,7 +23,7 @@
           "supervisor",
           "worker"
         ],
-        "note": "The menu extra is a Jarvis core hero with one top-right gear that opens the unified operator window, including KakaoTalk DB sync status."
+        "note": "The Jarvis core and top-right gear lead to one unified hub; jobs, logs, rooms, and graph open as flat single-purpose operator windows, and the hub keeps KakaoTalk DB sync status."
       },
       {
         "id": "grounded-reply",
@@ -82,7 +82,7 @@
       "sources": [
         {
           "path": "macos/AutoReplyMenu/main.swift",
-          "label": "core + unified settings + DB sync"
+          "label": "core + unified hub + flat operator windows + DB sync"
         }
       ]
     },
@@ -312,7 +312,8 @@
       "title": "Operator",
       "items": [
         "The menu extra renders only the Jarvis core and top-right gear",
-        "The gear opens one operator window for models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions"
+        "The unified hub keeps models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions",
+        "Jobs, logs, and rooms use one flat list surface; the graph window renders one hologram plus the focused-node detail"
       ]
     },
     {
