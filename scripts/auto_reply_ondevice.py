@@ -24,6 +24,10 @@ from typing import Any, Sequence
 
 
 MLX_GATEWAY_BASE_URL = "http://127.0.0.1:10100/v1"
+MLX_GATEWAY_CANDIDATES = (
+    "http://127.0.0.1:11234/v1",
+    MLX_GATEWAY_BASE_URL,
+)
 FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 QWEN38_27B_MODEL_ID = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
 QWEN38_27B_MIN_MEMORY_GB = 32.0
@@ -115,12 +119,11 @@ def _find_executable(names: Sequence[str], extra_paths: Sequence[Path]) -> str:
     return ""
 
 
-def detect_mlx_gateway_models(
+def _read_mlx_gateway_models(
     *,
-    base_url: str = MLX_GATEWAY_BASE_URL,
+    base_url: str,
     timeout: float = 1.5,
-) -> list[dict[str, str]]:
-    """Return only MLX models advertised by the already running local gateway."""
+) -> tuple[bool, list[dict[str, Any]]]:
     try:
         req = urllib.request.Request(
             f"{base_url.rstrip('/')}/models",
@@ -129,22 +132,64 @@ def detect_mlx_gateway_models(
         with urllib.request.urlopen(req, timeout=max(0.1, min(timeout, 3.0))) as resp:
             payload = json.loads(resp.read().decode("utf-8", "replace"))
     except Exception:
-        return []
+        return False, []
 
-    models: list[dict[str, str]] = []
+    models: list[dict[str, Any]] = []
     for item in payload.get("data") or []:
         if not isinstance(item, dict):
             continue
         model_id = str(item.get("id") or "").strip()
         owner = str(item.get("owned_by") or "").strip()
-        if model_id and (model_id.startswith("mlx/") or owner == "mlx-serve"):
-            models.append({"id": model_id, "owned_by": owner})
+        if model_id and (model_id.startswith("mlx/") or owner.casefold() == "mlx-serve"):
+            model: dict[str, Any] = {"id": model_id, "owned_by": owner}
+            if "loaded" in item:
+                model["loaded"] = item.get("loaded")
+            if "state" in item:
+                model["state"] = str(item.get("state") or "")
+            models.append(model)
+    return True, models
+
+
+def detect_mlx_gateway_models(
+    *,
+    base_url: str = MLX_GATEWAY_BASE_URL,
+    timeout: float = 1.5,
+) -> list[dict[str, Any]]:
+    """Return only MLX models advertised by one already running local gateway."""
+    _answered, models = _read_mlx_gateway_models(base_url=base_url, timeout=timeout)
     return models
+
+
+def _gateway_has_qwen38(models: Sequence[dict[str, Any]]) -> bool:
+    for item in models:
+        model_id = str(item.get("id") or "").casefold()
+        if "qwen3.8-flash-next" in model_id or "qwen3.8-27b" in model_id:
+            return True
+    return False
+
+
+def discover_mlx_gateway(
+    *,
+    candidates: Sequence[str] = MLX_GATEWAY_CANDIDATES,
+    timeout: float = 1.5,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Find an existing loopback MLX gateway without starting any service."""
+    first_answered: tuple[str, list[dict[str, Any]]] = ("", [])
+    for base_url in candidates:
+        answered, models = _read_mlx_gateway_models(base_url=base_url, timeout=timeout)
+        if not answered:
+            continue
+        if not first_answered[0]:
+            first_answered = (base_url, models)
+        if _gateway_has_qwen38(models):
+            return base_url, models
+    return first_answered
 
 
 def detect_engine_paths(
     *,
-    gateway_models: Sequence[dict[str, str]] | None = None,
+    gateway_models: Sequence[dict[str, Any]] | None = None,
+    gateway_base_url: str = "",
 ) -> dict[str, str]:
     """Locate MLX Core/Serve executables and the existing local MLX gateway."""
     home = Path.home()
@@ -155,9 +200,13 @@ def detect_engine_paths(
     mlx_serve = _find_executable(["mlx-serve"], [home / ".local/bin/mlx-serve"])
     if mlx_serve:
         paths["mlx-serve"] = mlx_serve
-    advertised = list(gateway_models) if gateway_models is not None else detect_mlx_gateway_models()
-    if advertised:
-        paths["mlx-gateway"] = MLX_GATEWAY_BASE_URL
+    if gateway_models is None:
+        discovered_base, advertised = discover_mlx_gateway()
+    else:
+        advertised = list(gateway_models)
+        discovered_base = gateway_base_url.strip() or (MLX_GATEWAY_BASE_URL if advertised else "")
+    if discovered_base and advertised:
+        paths["mlx-gateway"] = discovered_base
     return paths
 
 
@@ -181,11 +230,19 @@ def detect_local_qwen_models(home: Path | None = None) -> dict[str, str]:
     return found
 
 
-def _model_id(models: Sequence[dict[str, str]], marker: str) -> str:
+def _model_id(models: Sequence[dict[str, Any]], marker: str) -> str:
     wanted = marker.casefold()
     for item in models:
         model_id = str(item.get("id") or "").strip()
-        if model_id.startswith("mlx/") and wanted in model_id.casefold():
+        owner = str(item.get("owned_by") or "").strip().casefold()
+        if not (model_id.startswith("mlx/") or owner == "mlx-serve"):
+            continue
+        if wanted not in model_id.casefold():
+            continue
+        state = str(item.get("state") or "").strip().casefold()
+        if item.get("loaded") is False or state in {"unloaded", "error", "failed"}:
+            continue
+        if model_id:
             return model_id
     return ""
 
@@ -202,19 +259,25 @@ def recommend_ondevice_setup(
     hw: HardwareSpec | None = None,
     engines: dict[str, str] | None = None,
     *,
-    gateway_models: Sequence[dict[str, str]] | None = None,
+    gateway_models: Sequence[dict[str, Any]] | None = None,
     local_models: dict[str, str] | None = None,
 ) -> EngineRecommendation:
     """Recommend a Qwen3.8 model for the MLX Core/Serve path."""
     spec = hw or detect_hardware()
-    advertised = (
-        list(gateway_models)
-        if gateway_models is not None
-        else (detect_mlx_gateway_models() if engines is None else [])
-    )
-    raw_paths = (
-        detect_engine_paths(gateway_models=advertised) if engines is None else dict(engines)
-    )
+    gateway_base_url = ""
+    if engines is None:
+        if gateway_models is None:
+            gateway_base_url, advertised = discover_mlx_gateway()
+        else:
+            advertised = list(gateway_models)
+            gateway_base_url = MLX_GATEWAY_BASE_URL if advertised else ""
+        raw_paths = detect_engine_paths(
+            gateway_models=advertised,
+            gateway_base_url=gateway_base_url,
+        )
+    else:
+        advertised = list(gateway_models or [])
+        raw_paths = dict(engines)
     engine_paths = {
         key: value
         for key, value in raw_paths.items()
@@ -242,7 +305,7 @@ def recommend_ondevice_setup(
             reason=f"{spec.chip} · MLX Core/Serve는 Apple Silicon에서만 사용합니다",
             engine_paths=engine_paths,
             fallback_models=[FLASH_NEXT_MODEL_ID],
-            worker_model_id=FLASH_NEXT_MODEL_ID,
+            worker_model_id=served_flash or FLASH_NEXT_MODEL_ID,
         )
 
     primary = "mlx-serve"
@@ -286,6 +349,8 @@ def recommend_ondevice_setup(
         f"{spec.chip} ({spec.memory_gb}GB 통합 메모리) · MLX Core/Serve · {model_note}"
     )
     fallbacks = [FLASH_NEXT_MODEL_ID]
+    if served_flash and served_flash not in fallbacks:
+        fallbacks.insert(0, served_flash)
     if served_27b and served_27b not in fallbacks:
         fallbacks.append(served_27b)
 
@@ -297,7 +362,7 @@ def recommend_ondevice_setup(
         reason=reason,
         engine_paths=engine_paths,
         fallback_models=fallbacks,
-        worker_model_id=FLASH_NEXT_MODEL_ID,
+        worker_model_id=served_flash or FLASH_NEXT_MODEL_ID,
     )
 
 
@@ -461,14 +526,27 @@ def probe_ondevice_generation(
     safe_prompt = _sanitize_probe_text(prompt, PROBE_PROMPT_MAX_CHARS) or "LOCAL_OK"
     effective_timeout = max(
         0.1,
-        min(float(timeout), PROBE_TIMEOUT_SECONDS, PROBE_HARD_TIMEOUT_SECONDS),
+        min(float(timeout), PROBE_HARD_TIMEOUT_SECONDS),
     )
 
     try:
         recommendation = rec or recommend_ondevice_setup()
         gateway = recommendation.engine_paths.get("mlx-gateway", "")
         if gateway:
-            model = FLASH_NEXT_MODEL_ID
+            advertised = detect_mlx_gateway_models(
+                base_url=gateway,
+                timeout=min(effective_timeout, 3.0),
+            )
+            model = _model_id(advertised, "Qwen3.8-Flash-Next")
+            if not model:
+                return _finish_probe(
+                    started=started,
+                    engine="mlx-serve-gateway",
+                    model="",
+                    ok=False,
+                    errors=["flash_next_not_advertised"],
+                    state_root=state_root,
+                )
             payload = json.dumps(
                 {
                     "model": model,
@@ -668,8 +746,9 @@ def download_command(_rec: EngineRecommendation) -> str:
 def generate_command(rec: EngineRecommendation, prompt: str) -> str:
     """Return a diagnostic description without interpolating text into a shell."""
     safe_prompt = _sanitize_probe_text(prompt, PROBE_PROMPT_MAX_CHARS)
-    if rec.primary_engine == "mlx-serve" and rec.recommended_model:
-        return f"MLX Serve POST {MLX_GATEWAY_BASE_URL}/chat/completions model={rec.recommended_model} prompt={safe_prompt}"
+    gateway = rec.engine_paths.get("mlx-gateway", "")
+    if rec.primary_engine == "mlx-serve" and rec.recommended_model and gateway:
+        return f"MLX Serve POST {gateway.rstrip('/')}/chat/completions model={rec.recommended_model} prompt={safe_prompt}"
     if rec.primary_engine == "mlx_lm" and rec.recommended_model:
         return f"mlx_lm generate --model {rec.recommended_model} --prompt {safe_prompt} --max-tokens 16"
     return ""

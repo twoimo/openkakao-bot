@@ -29,6 +29,10 @@ from scripts.auto_reply_ondevice import (
 )
 
 
+FLASH_NEXT_ADVERTISED_ID = FLASH_NEXT_MODEL_ID.removeprefix("mlx/")
+QWEN38_27B_ADVERTISED_ID = QWEN38_27B_MODEL_ID.removeprefix("mlx/")
+
+
 def _hw(chip: str, memory_gb: float) -> HardwareSpec:
     return HardwareSpec(
         chip=chip,
@@ -43,6 +47,23 @@ def _gateway_models() -> list[dict[str, str]]:
     return [
         {"id": QWEN38_27B_MODEL_ID, "owned_by": "mlx-serve"},
         {"id": FLASH_NEXT_MODEL_ID, "owned_by": "mlx-serve"},
+    ]
+
+
+def _prefixless_gateway_models() -> list[dict]:
+    return [
+        {
+            "id": QWEN38_27B_ADVERTISED_ID,
+            "owned_by": "mlx-serve",
+            "loaded": False,
+            "state": "unloaded",
+        },
+        {
+            "id": FLASH_NEXT_ADVERTISED_ID,
+            "owned_by": "mlx-serve",
+            "loaded": True,
+            "state": "ready",
+        },
     ]
 
 
@@ -112,8 +133,62 @@ class TestHardwareDetection(unittest.TestCase):
             models = detect_mlx_gateway_models()
         self.assertEqual(models, [{"id": FLASH_NEXT_MODEL_ID, "owned_by": "mlx-serve"}])
 
+    def test_gateway_detection_accepts_prefixless_mlx_serve_id(self):
+        payload = {"data": _prefixless_gateway_models()}
+        with patch(
+            "scripts.auto_reply_ondevice.urllib.request.urlopen",
+            return_value=_HTTPResponse(payload),
+        ):
+            models = detect_mlx_gateway_models(base_url="http://127.0.0.1:11234/v1")
+        self.assertEqual(models[1]["id"], FLASH_NEXT_ADVERTISED_ID)
+        self.assertEqual(models[1]["owned_by"], "mlx-serve")
+
+    def test_engine_paths_prefers_discovered_11234_gateway(self):
+        seen_urls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            seen_urls.append(request.full_url)
+            return _HTTPResponse({"data": _prefixless_gateway_models()})
+
+        with patch(
+            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+        ), patch("scripts.auto_reply_ondevice._find_executable", return_value=""):
+            paths = detect_engine_paths()
+        self.assertEqual(paths, {"mlx-gateway": "http://127.0.0.1:11234/v1"})
+        self.assertEqual(seen_urls, ["http://127.0.0.1:11234/v1/models"])
+
+    def test_gateway_discovery_fails_closed_when_no_candidate_answers(self):
+        seen_urls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            seen_urls.append(request.full_url)
+            raise OSError("closed")
+
+        with patch(
+            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+        ), patch("scripts.auto_reply_ondevice._find_executable", return_value=""):
+            paths = detect_engine_paths()
+        self.assertEqual(paths, {})
+        self.assertEqual(
+            seen_urls,
+            [
+                "http://127.0.0.1:11234/v1/models",
+                "http://127.0.0.1:10100/v1/models",
+            ],
+        )
+
 
 class TestQwenRecommendation(unittest.TestCase):
+    def test_prefixless_ready_flash_is_canonical_recommendation(self):
+        rec = recommend_ondevice_setup(
+            _hw("Apple M5 Max", 128.0),
+            engines={"mlx-gateway": "http://127.0.0.1:11234/v1"},
+            gateway_models=_prefixless_gateway_models(),
+        )
+        self.assertEqual(rec.recommended_model, FLASH_NEXT_ADVERTISED_ID)
+        self.assertEqual(rec.worker_model_id, FLASH_NEXT_ADVERTISED_ID)
+        self.assertIn(FLASH_NEXT_MODEL_ID, rec.fallback_models)
+
     def test_large_apple_silicon_prefers_actual_served_qwen38_27b(self):
         rec = _gateway_rec(128.0)
         self.assertEqual(rec.primary_engine, "mlx-serve")
@@ -218,22 +293,40 @@ class TestVerification(unittest.TestCase):
 
 class TestProbe(unittest.TestCase):
     def test_probe_prefers_flash_next_gateway_and_persists_tiny_record(self):
-        rec = _gateway_rec()
-        response = _HTTPResponse(
-            {"choices": [{"message": {"content": "LOCAL_OK from local MLX"}}]}
+        rec = recommend_ondevice_setup(
+            _hw("Apple M5 Max", 128.0),
+            engines={"mlx-gateway": "http://127.0.0.1:11234/v1"},
+            gateway_models=_prefixless_gateway_models(),
         )
+        captured: dict[str, str] = {}
+
+        def fake_urlopen(request, timeout):
+            if request.full_url.endswith("/models"):
+                return _HTTPResponse({"data": _prefixless_gateway_models()})
+            payload = json.loads(request.data.decode("utf-8"))
+            captured["model"] = payload["model"]
+            captured["url"] = request.full_url
+            captured["max_tokens"] = str(payload["max_tokens"])
+            return _HTTPResponse(
+                {"choices": [{"message": {"content": "LOCAL_OK from local MLX"}}]}
+            )
+
         with TemporaryDirectory() as temp_dir, patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen", return_value=response
+            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
         ) as urlopen:
             result = probe_ondevice_generation(rec, state_root=Path(temp_dir), timeout=2)
             persisted = read_last_probe(Path(temp_dir))
         self.assertTrue(result["ok"])
         self.assertEqual(result["engine"], "mlx-serve-gateway")
-        self.assertEqual(result["model"], FLASH_NEXT_MODEL_ID)
-        self.assertEqual(persisted["model"], FLASH_NEXT_MODEL_ID)
+        self.assertEqual(result["model"], FLASH_NEXT_ADVERTISED_ID)
+        self.assertEqual(persisted["model"], FLASH_NEXT_ADVERTISED_ID)
+        self.assertEqual(captured["model"], FLASH_NEXT_ADVERTISED_ID)
+        self.assertNotEqual(captured["model"], FLASH_NEXT_MODEL_ID)
+        self.assertEqual(captured["url"], "http://127.0.0.1:11234/v1/chat/completions")
+        self.assertLessEqual(int(captured["max_tokens"]), 16)
         self.assertLessEqual(len(persisted["preview"]), 240)
         self.assertNotIn("errors", persisted)
-        urlopen.assert_called_once()
+        self.assertEqual(urlopen.call_count, 2)
 
     def test_probe_missing_engine_fails_closed(self):
         rec = EngineRecommendation(
@@ -323,6 +416,8 @@ class TestProbe(unittest.TestCase):
         captured: dict[str, str] = {}
 
         def fake_urlopen(request, timeout):
+            if request.full_url.endswith("/models"):
+                return _HTTPResponse({"data": _gateway_models()})
             payload = json.loads(request.data.decode("utf-8"))
             captured["prompt"] = payload["messages"][1]["content"]
             captured["timeout"] = str(timeout)
@@ -345,7 +440,7 @@ class TestProbe(unittest.TestCase):
         self.assertNotIn(";", captured["prompt"])
         self.assertNotIn("`", captured["prompt"])
         self.assertLessEqual(len(captured["prompt"]), 160)
-        self.assertLessEqual(float(captured["timeout"]), 45.0)
+        self.assertLessEqual(float(captured["timeout"]), 90.0)
         self.assertNotIn("`", result["preview"])
 
 
