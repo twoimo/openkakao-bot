@@ -312,9 +312,18 @@ struct OnDeviceHardware: Decodable {
         let model: String
         let errors: [String]
     }
+    struct LastProbe: Decodable {
+        let timestamp: String?
+        let engine: String?
+        let model: String?
+        let latency_ms: Int?
+        let ok: Bool?
+        let preview: String?
+    }
     let hardware: Spec
     let recommendation: Recommendation
     let verification: Verification?
+    let last_probe: LastProbe?
     let status_label: String?
     let status_detail: String?
 }
@@ -4880,9 +4889,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 hwLabel.stringValue = statusLabel
             } else if let verify = hw.verification {
                 let verifyText = verify.ok ? "검증 통과" : "가중치 미확인"
-                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · \(modelName) · \(verifyText)"
+                let probeText: String
+                if let probe = hw.last_probe {
+                    let state = probe.ok == true ? "실추론 통과" : "실추론 실패"
+                    let engine = probe.engine ?? "MLX Core/Serve"
+                    let model = probe.model ?? modelName
+                    probeText = " · \(engine) · \(model) · \(state)"
+                } else {
+                    probeText = ""
+                }
+                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · MLX Core/Serve · \(modelName) · \(verifyText)\(probeText)"
             } else {
-                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · 검증 정보 없음"
+                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · MLX Core/Serve · \(modelName) · 검증 정보 없음"
             }
             hwLabel.toolTip = hw.status_detail ?? (hw.recommendation.reason + " · " + modelName)
         }

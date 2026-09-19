@@ -2115,7 +2115,7 @@ def _attach_fallback_state(snap: Any, state_root: Any) -> Any:
     snap["reply_model_fallbacks"] = state
     try:
         from auto_reply_ondevice import ondevice_summary_dict
-        snap["ondevice_hardware"] = ondevice_summary_dict()
+        snap["ondevice_hardware"] = ondevice_summary_dict(Path(state_root))
     except Exception:
         pass
     return snap
@@ -3015,7 +3015,7 @@ def _scope_menubar_rooms_to_enrollment() -> None:
             # 화면이 실제로 쓰는 경로라, 여기서 빠지면 창이 기본값만 보여 준다.
             try:
                 from auto_reply_ondevice import ondevice_summary_dict
-                snap["ondevice_hardware"] = ondevice_summary_dict()
+                snap["ondevice_hardware"] = ondevice_summary_dict(Path(state_root))
             except Exception:
                 pass
             try:
