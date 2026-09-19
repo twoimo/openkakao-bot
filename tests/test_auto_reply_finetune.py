@@ -26,6 +26,7 @@ from scripts.auto_reply_finetune import (
     load_pairs,
     plan_training,
     prepare_dataset,
+    prepare_dpo_preferences,
     write_splits,
 )
 
@@ -346,6 +347,23 @@ class TestArguments(unittest.TestCase):
     def test_the_session_gap_defaults_to_thirty_minutes(self):
         self.assertEqual(DEFAULT_SESSION_GAP, 1800)
         self.assertEqual(build_parser().parse_args([]).session_gap, DEFAULT_SESSION_GAP)
+
+
+class TestDPOPreparation(unittest.TestCase):
+    def test_dpo_prepare_missing_file_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "dpo" / "preferences.jsonl"
+            result = prepare_dpo_preferences(
+                golden_path=root / "missing-golden.jsonl",
+                output_path=output,
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["reason"], "golden_missing")
+            self.assertEqual(result["pairs"], 0)
+            self.assertFalse(output.exists())
+            self.assertNotIn("prompt", result)
+            self.assertNotIn("completion", result)
 
 
 class TestPrepareDataset(unittest.TestCase):
