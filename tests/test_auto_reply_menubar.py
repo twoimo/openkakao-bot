@@ -1354,7 +1354,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.assertNotIn(secret, encoded)
             del helper
 
-    def test_swift_unified_settings_opens_job_window(self):
+    def test_swift_tiles_open_job_window(self):
         source = SWIFT.read_text(encoding="utf-8")
         settings = source[
             source.index("func ensureUnifiedSettingsWindow()"):
