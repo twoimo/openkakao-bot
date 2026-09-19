@@ -315,6 +315,7 @@ struct OnDeviceHardware: Decodable {
     let hardware: Spec
     let recommendation: Recommendation
     let verification: Verification?
+    let download_command: String?
     let status_label: String?
     let status_detail: String?
 }
@@ -3602,6 +3603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var modelImagePopup: NSPopUpButton?
     var modelReplySummary: NSTextField?
     var modelHardwareHint: NSTextField?
+    var modelOnDeviceSnapshotMissingLogged = false
     var modelImageSummary: NSTextField?
     var modelStatusField: NSTextField?
     var modelReplyStatus: NSTextField?
@@ -4925,15 +4927,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 역할 설명은 제목 아래에 고정하고, 현재 값은 선택란과 상태 줄에만 둔다.
         if let hw = lastModel?.ondevice_hardware, let hwLabel = modelHardwareHint {
             let modelName = hw.recommendation.recommended_model
-            if let statusLabel = hw.status_label, !statusLabel.isEmpty {
-                hwLabel.stringValue = statusLabel
-            } else if let verify = hw.verification {
-                let verifyText = verify.ok ? "검증 통과" : "가중치 미확인"
-                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · \(modelName) · \(verifyText)"
+            let lowerModel = modelName.lowercased()
+            let gemmaFamily: String
+            if lowerModel.contains("gemma-5") {
+                gemmaFamily = "Gemma 5"
+            } else if lowerModel.contains("gemma-4") {
+                gemmaFamily = "Gemma 4"
             } else {
-                hwLabel.stringValue = "온디바이스 감지: \(hw.hardware.chip) (\(Int(hw.hardware.memory_gb))GB RAM) · \(hw.recommendation.primary_engine) · 검증 정보 없음"
+                gemmaFamily = "Gemma"
             }
-            hwLabel.toolTip = hw.status_detail ?? (hw.recommendation.reason + " · " + modelName)
+            let engine: String
+            switch hw.recommendation.primary_engine.lowercased() {
+            case "mlx": engine = "MLX"
+            case "ollama": engine = "Ollama"
+            default: engine = hw.recommendation.primary_engine
+            }
+            let quant = hw.recommendation.recommended_quant
+            let command = hw.download_command?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let commandCopy = command.isEmpty ? "" : "\n가중치 받기: \(command)"
+            hwLabel.stringValue = "온디바이스 · \(hw.hardware.chip) · \(Int(hw.hardware.memory_gb))GB · \(engine) · \(gemmaFamily) \(quant) · \(modelName)\(commandCopy)"
+            hwLabel.toolTip = hw.status_detail ?? hw.recommendation.reason
+            modelOnDeviceSnapshotMissingLogged = false
+        } else if let hwLabel = modelHardwareHint {
+            hwLabel.stringValue = "온디바이스 상태 없음"
+            hwLabel.toolTip = nil
+            if !modelOnDeviceSnapshotMissingLogged {
+                traceOperatorSurface("model-settings ondevice snapshot missing")
+                modelOnDeviceSnapshotMissingLogged = true
+            }
         }
         modelReplySummary?.stringValue = "메시지에 답할 때 씁니다."
         modelReplyStatus?.stringValue = modelReplyState.message ?? (replyLabel.isEmpty
@@ -5061,7 +5082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 말을 다섯 번 읽을 이유가 없어 여기 한 번만 남긴다 (2026-09-16,
         // 6 Pro 지적).
         let hint = Chrome.hint("고른 모델은 다음 턴부터 적용됩니다.", size: 12)
-        let hwHint = Chrome.hint("온디바이스 하드웨어 사양을 감지하는 중…", size: 11)
+        let hwHint = Chrome.hint("온디바이스 상태 없음", size: 11)
         modelHardwareHint = hwHint
 
         let replyTitle = Chrome.label("답변 모델", size: 13, weight: .semibold, lines: 1)
