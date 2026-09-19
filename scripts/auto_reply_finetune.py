@@ -421,10 +421,11 @@ def prepare_dpo_preferences(
 ) -> dict[str, Any]:
     """Prepare chosen/rejected rows from the golden set without training.
 
-    Explicit rejected candidates win. When the golden row has no rejected
-    candidate, the next different answer from the same room is used as a
-    deterministic in-room negative. Missing or insufficient input fails closed:
-    no output file is created or replaced.
+    A preference pair is emitted only when the same golden row carries an
+    explicit rejected candidate. Borrowing an answer from another prompt would
+    manufacture a false preference signal, so rows without a rejected candidate
+    are skipped. Missing or insufficient input fails closed: no output file is
+    created or replaced.
     """
     if not golden_path.is_file():
         return {
@@ -444,40 +445,13 @@ def prepare_dpo_preferences(
             "skipped": len(records),
         }
 
-    by_room: dict[str, list[int]] = {}
-    for index, record in enumerate(records):
-        room = str(record.get("room") or "")
-        by_room.setdefault(room, []).append(index)
-
     rows: list[dict[str, str]] = []
     skipped = 0
-    for index, record in enumerate(records):
+    for record in records:
         shaped = _to_mlx_row(record, instruction)
         chosen = str(record.get("completion") or "").strip()
         rejected = _explicit_rejected(record)
-        if rejected == chosen:
-            rejected = ""
-        if not rejected:
-            room = str(record.get("room") or "")
-            candidates = by_room.get(room, [])
-            if len(candidates) < 2:
-                candidates = list(range(len(records)))
-            try:
-                start = candidates.index(index)
-            except ValueError:
-                start = -1
-            for offset in range(1, len(candidates) + 1):
-                candidate = records[candidates[(start + offset) % len(candidates)]]
-                candidate_completion = str(candidate.get("completion") or "").strip()
-                candidate_prompt = str(candidate.get("prompt") or "").strip()
-                if (
-                    candidate_completion
-                    and candidate_completion != chosen
-                    and candidate_prompt != str(record.get("prompt") or "").strip()
-                ):
-                    rejected = candidate_completion
-                    break
-        if not rejected:
+        if not rejected or rejected == chosen:
             skipped += 1
             continue
         rows.append(
