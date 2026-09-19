@@ -369,6 +369,7 @@ struct BackgroundActivity: Decodable {
 /// 세기, 설명을 읽기만 한다.
 struct BackgroundSource: Decodable {
     let state: String?
+    let code: String?
     let activity: Double?
     let caption: String?
 }
@@ -6287,7 +6288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } ?? model.background?.db_sync
         if let sync {
             let activity = min(max(sync.activity ?? 0, 0), 1)
-            let code = sync.state?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let code = (sync.code ?? sync.state)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let caption = sync.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let label = caption.isEmpty ? "DB 동기화 상태" : caption
             let safeCode = code.isEmpty ? "unknown" : code
