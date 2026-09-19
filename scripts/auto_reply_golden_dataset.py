@@ -729,6 +729,9 @@ def _evidence_paths(state_root: Path) -> list[Path]:
     return paths
 
 
+GOLDEN_REASON_CONTEXT_DB_MISSING = "context_db_missing"
+
+
 def extract_golden_dataset(
     *,
     state_root: Path,
@@ -744,6 +747,13 @@ def extract_golden_dataset(
     require_approval: bool = True,
 ) -> tuple[list[GoldenPair], dict[str, Any]]:
     """Build the de-duplicated golden set and a summary of what was dropped."""
+    if not context_db.is_file():
+        return [], {
+            "ok": False,
+            "reason": GOLDEN_REASON_CONTEXT_DB_MISSING,
+            "pairs": [],
+        }
+
     pairs: list[GoldenPair] = []
     seen: set[str] = set()
     approval_path = (
@@ -753,6 +763,8 @@ def extract_golden_dataset(
     )
     approvals = load_quality_approvals(approval_path)
     stats: dict[str, Any] = {
+        "ok": True,
+        "reason": "",
         "schema_version": SCHEMA_VERSION,
         "self_authors": list(self_authors),
         "rooms": list(rooms or []),
@@ -788,26 +800,23 @@ def extract_golden_dataset(
             stats[counter_key] += 1
             pairs.append(pair)
 
-    if context_db.is_file():
-        try:
-            with _connect_readonly(context_db) as connection:
-                _absorb(
-                    iter_self_pairs(
-                        connection,
-                        self_authors=self_authors,
-                        rooms=rooms,
-                        window_size=window_size,
-                        min_completion=min_completion,
-                        max_completion=max_completion,
-                        limit=limit,
-                        merge_gap=merge_gap,
-                    ),
-                    "self_rows",
-                )
-        except sqlite3.Error as exc:
-            stats["context_error"] = f"{type(exc).__name__}: {exc}"
-    else:
-        stats["context_error"] = f"missing: {context_db}"
+    try:
+        with _connect_readonly(context_db) as connection:
+            _absorb(
+                iter_self_pairs(
+                    connection,
+                    self_authors=self_authors,
+                    rooms=rooms,
+                    window_size=window_size,
+                    min_completion=min_completion,
+                    max_completion=max_completion,
+                    limit=limit,
+                    merge_gap=merge_gap,
+                ),
+                "self_rows",
+            )
+    except sqlite3.Error as exc:
+        stats["context_error"] = f"{type(exc).__name__}: {exc}"
 
     evidence_files = _evidence_paths(state_root)
     stats["evidence_files"] = len(evidence_files)
@@ -1106,6 +1115,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         approvals_path=approvals_path,
         require_approval=require_approval,
     )
+    if not stats.get("ok", False):
+        if args.json:
+            print(json.dumps(stats, ensure_ascii=False, indent=2))
+        else:
+            print(f"골든 데이터셋 생성 실패: {stats.get('reason') or 'unknown'}", file=sys.stderr)
+        return 2
+
     summary = write_dataset(pairs, output, stats)
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
