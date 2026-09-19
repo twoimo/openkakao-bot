@@ -1315,24 +1315,38 @@ def prune_relation_fanout(
 ) -> int:
     """Bound relation fan-out and remove edges whose endpoint disappeared."""
     limit = max(1, int(max_per_subject_predicate))
-    conn.execute(
+    orphan_cursor = conn.execute(
         """
         DELETE FROM kg_relations
         WHERE source_id NOT IN (SELECT entity_id FROM kg_entities)
            OR target_id NOT IN (SELECT entity_id FROM kg_entities)
         """
     )
+    removed = orphan_cursor.rowcount if orphan_cursor.rowcount and orphan_cursor.rowcount > 0 else 0
     rows = conn.execute(
         """
-        SELECT id, source_id, relation
+        SELECT id, source_id, relation, target_id, weight, room, time
         FROM kg_relations
         ORDER BY source_id, relation, weight DESC, updated_at DESC, id ASC
         """
     ).fetchall()
     counts: dict[tuple[str, str], int] = {}
     remove: list[int] = []
-    for relation_id, subject, predicate in rows:
-        key = (str(subject), str(predicate))
+    for relation_id, subject, predicate, object_id, weight, room, when in rows:
+        triple = normalize_knowledge_triple(
+            {
+                "subject": subject,
+                "predicate": predicate,
+                "object": object_id,
+                "weight": weight,
+                "room": room,
+                "time": when,
+            }
+        )
+        if triple is None:
+            remove.append(int(relation_id))
+            continue
+        key = (triple["subject"], triple["predicate"])
         counts[key] = counts.get(key, 0) + 1
         if counts[key] > limit:
             remove.append(int(relation_id))
@@ -1340,9 +1354,10 @@ def prune_relation_fanout(
         for start in range(0, len(remove), 200):
             chunk = remove[start : start + 200]
             marks = ",".join("?" * len(chunk))
-            conn.execute(f"DELETE FROM kg_relations WHERE id IN ({marks})", chunk)
-        conn.commit()
-    return len(remove)
+            cursor = conn.execute(f"DELETE FROM kg_relations WHERE id IN ({marks})", chunk)
+            removed += cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+    conn.commit()
+    return removed
 
 
 def prune_indexed_entities(
