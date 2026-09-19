@@ -10530,9 +10530,139 @@ print(json.dumps({
                 json.dumps({**base, "last_observed_log_id": 421}),
                 encoding="utf-8",
             )
-            self.assertFalse(module.conversation_advanced_past_event(event))
+            self.assertTrue(module.conversation_advanced_past_event(event))
             state_path.write_text("{}", encoding="utf-8")
             self.assertIsNone(module.conversation_advanced_past_event(event))
+
+    def test_enqueue_rejects_self_inbound_before_queue_write(self):
+        module = self._load_auto_reply_module("auto_reply_enqueue_self_hold_test")
+        with self._queued_turn_with_authoritative_watermark(module):
+            for is_self, identity in ((True, None), (False, "self")):
+                with (
+                    self.subTest(is_self=is_self, identity=identity),
+                    mock.patch.object(
+                        module, "numeric_author_identity_status",
+                        wraps=module.numeric_author_identity_status,
+                    ) as identity_status,
+                    mock.patch.object(module, "_queue_connection") as queue,
+                ):
+                    if identity is not None:
+                        identity_status.return_value = identity
+                    event = self._burst_event(module, 421, "question?", 4_200)
+                    event["is_self"] = is_self
+                    self.assertIs(module.enqueue_event(event), False)
+                    queue.assert_not_called()
+
+    def test_enqueue_rejects_missing_or_malformed_is_self_without_exception(self):
+        module = self._load_auto_reply_module("auto_reply_enqueue_bad_self_test")
+        missing = object()
+        with self._queued_turn_with_authoritative_watermark(module):
+            for value in (missing, None, "false", "true", 0, 1, [], {}):
+                with (
+                    self.subTest(is_self=value),
+                    mock.patch.object(module, "_queue_connection") as queue,
+                ):
+                    event = self._burst_event(module, 421, "question?", 4_200)
+                    if value is missing:
+                        event.pop("is_self")
+                    else:
+                        event["is_self"] = value
+                    self.assertIs(module.enqueue_event(event), False)
+                    queue.assert_not_called()
+
+    @contextmanager
+    def _queued_turn_with_authoritative_watermark(self, module):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch.dict(
+                os.environ,
+                {
+                    module.TARGET_CHAT_ID_ENV: "42",
+                    module.DB_SOURCE_EPOCH_ENV: "7",
+                    module.SUPERVISOR_OWNER_ENV: "owner",
+                    "OPENKAKAO_AUTO_REPLY_CLI": "1",
+                    module.DB_WATCH_STATE_ENV: str(Path(temporary) / "db-state.json"),
+                },
+                clear=False,
+            ),
+            mock.patch.dict(
+                os.environ,
+                self._write_numeric_enrollment(
+                    module, temporary, [{"nickname": "member", "author_id": 700}]
+                ),
+                clear=False,
+            ),
+        ):
+            module.QUEUE = Path(temporary) / "rooms" / "42" / "reply-queue.sqlite3"
+            event = self._burst_event(module, 420, "question?", int(time.time()))
+            event["burst_tail_log_id"] = 420
+            event["recent_messages"] = [self._recent_row(event)]
+            state_path = Path(os.environ[module.DB_WATCH_STATE_ENV])
+            state = {
+                "schema_version": module.CLI_DB_STATE_SCHEMA_VERSION,
+                "target_chat_id": 42,
+                "target_chat_name": module.CHAT,
+                "owner_id": "owner",
+                "source_epoch": 7,
+                "last_observed_log_id": 420,
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertIs(module.enqueue_event(event), True)
+            yield event, state_path, state
+
+    def test_conversation_advances_when_watermark_passes_queued_log_id(self):
+        module = self._load_auto_reply_module("auto_reply_queued_watermark_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            self.assertIs(module.conversation_advanced_past_event(event), False)
+            state_path.write_text(
+                json.dumps({**state, "last_observed_log_id": 421}), encoding="utf-8"
+            )
+            self.assertIs(module.conversation_advanced_past_event(event), True)
+
+    def test_reply_turn_guard_holds_advanced_or_unverifiable_turn(self):
+        module = self._load_auto_reply_module("auto_reply_advanced_turn_guard_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            self.assertIsNone(module._reply_turn_hold_reason(event))
+            for payload, expected_reason in (
+                ({**state, "last_observed_log_id": 421}, "conversation_advanced"),
+                ({}, "context_freshness_unavailable"),
+            ):
+                with self.subTest(state=payload):
+                    state_path.write_text(json.dumps(payload), encoding="utf-8")
+                    self.assertEqual(
+                        module._reply_turn_hold_reason(event), expected_reason
+                    )
+
+    def test_reply_turn_guard_holds_superseded_queued_turn(self):
+        module = self._load_auto_reply_module("auto_reply_superseded_turn_guard_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, _state_path, _state = fixture
+            self.assertIsNone(module._reply_turn_hold_reason(event))
+            # Isolate the guard from enqueue's independent burst policy.
+            self.assertIs(module.conversation_advanced_past_event(event), False)
+            connection = self._worker_queue_connection(module)
+            try:
+                with mock.patch.object(
+                    module, "_superseded_by", return_value="db:42:421"
+                ) as supersession:
+                    self.assertEqual(
+                        module._reply_turn_hold_reason(event, connection),
+                        "burst_superseded",
+                    )
+                    supersession.assert_called_once_with(connection, event)
+                    supersession.reset_mock()
+                    with mock.patch.object(
+                        module._ACTIVE_JOURNAL, "value",
+                        (connection, event["event_id"]), create=True,
+                    ):
+                        self.assertEqual(
+                            module._reply_turn_hold_reason(event), "burst_superseded"
+                        )
+                    supersession.assert_called_once_with(connection, event)
+            finally:
+                connection.close()
 
     def test_stale_backlog_uses_sample_distribution_upper_before_model(self):
         module = self._load_auto_reply_module("auto_reply_stale_backlog_test")
