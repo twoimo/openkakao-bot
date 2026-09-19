@@ -2219,10 +2219,8 @@ def normalize_text_query(text: str) -> str:
         normalized = re.sub(pattern, replacement, normalized)
     normalized = _KST_RE.sub("UTC+09:00", normalized)
     normalized = _UTC_OFFSET_RE.sub(_canonical_utc_offset, normalized)
-    explicit_offset = re.search(r"UTC[+-]\d{2}:\d{2}", normalized, re.IGNORECASE)
-    day_offset = explicit_offset.group(0).upper() if explicit_offset else "UTC+09:00"
     normalized = _RELATIVE_DAY_RE.sub(
-        lambda match: f"{match.group(1)}({day_offset})", normalized
+        lambda match: f"{match.group(1)}(UTC+09:00)", normalized
     )
     return normalized
 
