@@ -266,6 +266,7 @@ def ondevice_summary_dict() -> dict[str, Any]:
         "hardware": asdict(hw),
         "recommendation": asdict(rec),
         "verification": verification,
+        "download_command": download_command(rec),
         "status_label": (
             f"온디바이스 감지: {hw.chip} ({int(hw.memory_gb)}GB RAM)"
             f" · {rec.primary_engine} · {model_name} · {status}"
