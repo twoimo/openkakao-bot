@@ -361,7 +361,16 @@ struct MenubarModel: Decodable {
 struct BackgroundActivity: Decodable {
     let activity: Double?
     let caption: String?
+    let db_sync: BackgroundSource?
     let rooms: [BackgroundRoom]?
+}
+
+/// 백그라운드 스냅샷의 개별 작업 상태. 화면은 코어가 계산한 상태 코드와
+/// 세기, 설명을 읽기만 한다.
+struct BackgroundSource: Decodable {
+    let state: String?
+    let activity: Double?
+    let caption: String?
 }
 
 /// 방 하나의 백그라운드 세기. 방을 고르면 이 값이 전체 값 대신 쓰인다.
@@ -369,6 +378,7 @@ struct BackgroundRoom: Decodable {
     let chat_id: Int?
     let activity: Double?
     let caption: String?
+    let db_sync: BackgroundSource?
 }
 
 /// 모델 설정 창의 폴백 섹션이 그대로 그리는 값. 판단은 코어(파이썬)가 한다.
@@ -3584,6 +3594,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsRoomSummary: NSTextField?
     var settingsHealthLamps: [String: LampCell] = [:]
     var settingsHealthSummary: NSTextField?
+    var settingsSyncStatus: NSTextField?
+    var settingsSyncSnapshotMissingLogged = false
     var settingsSlotFields: [String: NSTextField] = [:]
     var settingsJobButtons: [NSButton] = []
     var settingsAutoButton: NSButton?
@@ -6102,9 +6114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard settingsWindow == nil else { return }
         let window = Chrome.operatorWindow(
             title: "Jarvis 운영 설정",
-            size: NSSize(width: 640, height: 610),
+            size: NSSize(width: 640, height: 660),
             autosave: "openkakao.unified-settings",
-            minimum: NSSize(width: 600, height: 520)
+            minimum: NSSize(width: 600, height: 560)
         )
         window.delegate = self
         guard let content = window.contentView else {
@@ -6162,6 +6174,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
+        let syncTitle = Chrome.label("카카오톡 DB 동기화 / 색인", size: 13, weight: .semibold, lines: 1)
+        let syncStatus = Chrome.statusLabel(size: 11, lines: 1)
+        syncStatus.identifier = NSUserInterfaceItemIdentifier("settings-sync-status")
+        syncStatus.stringValue = "동기화 상태 없음 · 0% · unknown"
+        let syncCard = Chrome.card(
+            Chrome.vstack([syncTitle, syncStatus], spacing: 4),
+            padding: 12
+        )
+
         let primaryButtons: [NSButton] = [
             Chrome.roundedButton("AI 모델 설정", target: self, action: #selector(showModelSettingsWindow)),
             Chrome.roundedButton("채팅방 관리", target: self, action: #selector(showRoomsWindow)),
@@ -6196,11 +6217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
-        let stack = Chrome.vstack([roomCard, healthCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
+        let stack = Chrome.vstack([roomCard, healthCard, slotsCard, syncCard, primaryActions, jobsCard, instantCard], spacing: 10)
         Chrome.fill(stack, in: content)
         settingsRoomPopup = roomPopup
         settingsRoomSummary = roomSummary
         settingsHealthSummary = healthSummary
+        settingsSyncStatus = syncStatus
         settingsWindow = window
     }
 
@@ -6259,6 +6281,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         settingsRoomSummary?.stringValue = selected.map {
             "\($0.title) · \($0.live ? "동작 중" : "동작 꺼짐")"
         } ?? "등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다."
+
+        let sync = selected.flatMap { room in
+            model.background?.rooms?.first(where: { $0.chat_id == room.chat_id })?.db_sync
+        } ?? model.background?.db_sync
+        if let sync {
+            let activity = min(max(sync.activity ?? 0, 0), 1)
+            let code = sync.state?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let caption = sync.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let label = caption.isEmpty ? "DB 동기화 상태" : caption
+            let safeCode = code.isEmpty ? "unknown" : code
+            settingsSyncStatus?.stringValue = "\(label) · \(Int((activity * 100).rounded()))% · \(safeCode)"
+            settingsSyncStatus?.toolTip = nil
+            settingsSyncSnapshotMissingLogged = false
+        } else {
+            settingsSyncStatus?.stringValue = "동기화 상태 없음 · 0% · unknown"
+            settingsSyncStatus?.toolTip = "백그라운드 스냅샷에 DB 동기화 상태가 없습니다."
+            if !settingsSyncSnapshotMissingLogged {
+                traceOperatorSurface("settings-sync snapshot missing")
+                settingsSyncSnapshotMissingLogged = true
+            }
+        }
 
         let health = model.health ?? [:]
         for (key, lamp) in settingsHealthLamps {
