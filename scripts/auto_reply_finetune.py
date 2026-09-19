@@ -497,9 +497,9 @@ def prepare_dpo_preferences(
             "skipped": skipped,
         }
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_suffix(output_path.suffix + ".tmp")
     try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         with tmp.open("w", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + chr(10))
