@@ -25,6 +25,7 @@ from scripts.auto_reply_golden_dataset import (
     QUALITY_HUMAN_AUTHORED,
     QUALITY_MODEL_GENERATED,
     QUALITY_UNREVIEWED,
+    GOLDEN_REASON_CONTEXT_DB_MISSING,
     GoldenPair,
     _connect_readonly,
     _db_has_transcript,
@@ -453,24 +454,25 @@ class TestExtraction(unittest.TestCase):
         self.assertEqual(len(model_rows), 1)
         self.assertEqual(model_rows[0].quality, QUALITY_MODEL_GENERATED)
 
-    def test_missing_context_db_drops_rows_whose_inbound_cannot_be_resolved(self):
-        # Without the transcript the ledger's log id cannot be resolved, and
-        # this ledger has no inline message, so the row has no prompt to train
-        # on. Dropping it is correct; a pair without a question is not data.
+    def test_missing_context_db_fails_closed(self):
         pairs, stats = extract_golden_dataset(
             state_root=self.state,
             context_db=self.root / "absent.sqlite3",
             self_authors=["최연우"],
             require_approval=False,
         )
-        self.assertEqual(stats["self_rows"], 0)
-        self.assertIn("context_error", stats)
-        self.assertEqual(stats["evidence_rows"], 0)
         self.assertEqual(pairs, [])
+        self.assertFalse(stats["ok"])
+        self.assertEqual(stats["reason"], GOLDEN_REASON_CONTEXT_DB_MISSING)
+        self.assertEqual(stats["pairs"], [])
+        self.assertNotIn("prompt", stats)
+        self.assertNotIn("completion", stats)
 
-    def test_inline_message_survives_a_missing_context_db(self):
-        inline = self.root / "inline-evidence.jsonl"
-        inline.write_text(
+    def test_inline_evidence_cannot_bypass_a_missing_context_db(self):
+        state = self.root / "inline-state"
+        room = state / "rooms" / "1"
+        room.mkdir(parents=True)
+        (room / "reply-evidence.jsonl").write_text(
             json.dumps(
                 {
                     "recorded_at": "2026-01-02T10:00:00+0900",
@@ -485,27 +487,34 @@ class TestExtraction(unittest.TestCase):
             encoding="utf-8",
         )
         pairs, stats = extract_golden_dataset(
-            state_root=self.root / "empty-state",
-            context_db=self.root / "absent.sqlite3",
-            self_authors=["최연우"],
-        )
-        self.assertEqual(pairs, [])
-        # Now point the same extraction at a state root holding that ledger.
-        state = self.root / "inline-state"
-        (state / "rooms" / "1").mkdir(parents=True)
-        (state / "rooms" / "1" / "reply-evidence.jsonl").write_text(
-            inline.read_text(encoding="utf-8"), encoding="utf-8"
-        )
-        pairs, stats = extract_golden_dataset(
             state_root=state,
             context_db=self.root / "absent.sqlite3",
             self_authors=["최연우"],
             require_approval=False,
         )
-        self.assertEqual(stats["evidence_rows"], 1)
-        self.assertEqual(pairs[0].prompt, "내일 일정 어떻게 돼?")
-        self.assertEqual(pairs[0].completion, "오전에 회의 하나 있고 오후는 비어 있어")
-        self.assertEqual(pairs[0].quality, QUALITY_MODEL_GENERATED)
+        self.assertEqual(pairs, [])
+        self.assertFalse(stats["ok"])
+        self.assertEqual(stats["reason"], GOLDEN_REASON_CONTEXT_DB_MISSING)
+
+    def test_main_missing_context_db_does_not_write_output(self):
+        output = self.root / "must-not-exist.jsonl"
+        rendered = StringIO()
+        with redirect_stdout(rendered):
+            code = golden_main(
+                [
+                    "--state-root", str(self.state),
+                    "--context-db", str(self.root / "absent.sqlite3"),
+                    "--output", str(output),
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 2)
+        report = json.loads(rendered.getvalue())
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["reason"], GOLDEN_REASON_CONTEXT_DB_MISSING)
+        self.assertEqual(report["pairs"], [])
+        self.assertFalse(output.exists())
+        self.assertFalse(output.with_suffix(".summary.json").exists())
 
     def test_write_dataset_emits_jsonl_and_summary(self):
         pairs = [
