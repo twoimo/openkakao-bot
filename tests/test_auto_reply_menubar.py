@@ -25,7 +25,15 @@ def load(name: str):
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    previous = os.environ.get("OPENKAKAO_MENUBAR_SOURCE_IMPORT")
+    os.environ["OPENKAKAO_MENUBAR_SOURCE_IMPORT"] = "1"
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            os.environ.pop("OPENKAKAO_MENUBAR_SOURCE_IMPORT", None)
+        else:
+            os.environ["OPENKAKAO_MENUBAR_SOURCE_IMPORT"] = previous
     return module
 
 
@@ -951,6 +959,22 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn(
             "coreView.toolTip = code.isEmpty ? caption",
             source,
+        )
+
+    def test_swift_model_settings_surfaces_ondevice_plan_and_missing_snapshot_trace(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        start = source.index("    func updateModelSettingsWindow()")
+        end = source.index("    func refreshModelSettingsWindowIfOpen()", start)
+        block = source[start:end]
+        self.assertIn('"온디바이스 상태 없음"', source)
+        self.assertIn('"Gemma 5"', block)
+        self.assertIn('"Gemma 4"', block)
+        self.assertIn("recommended_quant", block)
+        self.assertIn("download_command", block)
+        self.assertIn("가중치 받기:", block)
+        self.assertIn(
+            'traceOperatorSurface("model-settings ondevice snapshot missing")',
+            block,
         )
 
     def _check_codes(self, report):
