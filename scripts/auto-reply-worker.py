@@ -65,6 +65,11 @@ QUEUE_PARENT_MODE = 0o700
 QUEUE_FILE_MODE = 0o600
 import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
+from auto_reply_ondevice import (
+    _model_id as _ondevice_model_id,
+    detect_mlx_gateway_models,
+    discover_mlx_gateway,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 def _stable_cli_path() -> Path | None:
@@ -11049,20 +11054,29 @@ def _reply_fallback_candidates() -> list[str]:
         return models
     return models or list(DEFAULT_REPLY_FALLBACK_MODELS)
 
+
+def _is_mlx_serve_flash_next_model(model: str) -> bool:
+    folded = str(model or "").casefold()
+    return "qwen3.8-flash-next" in folded and "mlx-serve" in folded
+
+
+def _is_local_reply_model(model: str) -> bool:
+    folded = str(model or "").casefold()
+    return folded.startswith(("omlx/", "mlx/")) or _is_mlx_serve_flash_next_model(model)
+
 def _fallback_thinking_effort(model: str) -> str:
     """Fallbacks answer at high effort, except the local runtimes."""
 
     # Both local runtimes (oMLX and the MLX-Serve gateway) answer without a
     # thinking budget; asking for one only spends latency on the same reply.
-    folded = str(model or "").casefold()
-    return "medium" if folded.startswith(("omlx/", "mlx/")) else "high"
+    return "medium" if _is_local_reply_model(model) else "high"
 
 def _model_generation_timeout(model: str, *, deadline: float | None = None) -> float:
     """Allow on-device prompt processing to finish within the model lease."""
 
     limit = (
         LOCAL_MODEL_GENERATION_TIMEOUT_SECONDS
-        if str(model or "").casefold().startswith(("omlx/", "mlx/"))
+        if _is_local_reply_model(model)
         else MODEL_GENERATION_TIMEOUT_SECONDS
     )
     return limit if deadline is None else max(0.0, min(limit, deadline - time.monotonic()))
@@ -11241,8 +11255,19 @@ def _run_opencodex_generation(
     except UnicodeDecodeError:
         user_content = prompt_bytes.decode("utf-8", "replace")
 
+    target_base_url = base_url
     target_model = model
-    if target_model in (
+    if _is_mlx_serve_flash_next_model(target_model):
+        gateway_base_url, _ = discover_mlx_gateway()
+        if not gateway_base_url:
+            return 1, b"", b"mlx_serve_gateway_unavailable"
+        advertised = detect_mlx_gateway_models(base_url=gateway_base_url)
+        advertised_model = _ondevice_model_id(advertised, "Qwen3.8-Flash-Next")
+        if not advertised_model:
+            return 1, b"", b"mlx_serve_flash_next_not_advertised"
+        target_base_url = gateway_base_url
+        target_model = advertised_model
+    elif target_model in (
         "google-antigravity/gemini-3.8-flash-high",
         "google-antigravity/gemini-3.8-flash-tiered",
         "gemini-3.8-flash",
@@ -11310,7 +11335,7 @@ def _run_opencodex_generation(
         ("opencodex/opencode-go/session/v1\0" + session_lane).encode("utf-8")
     ).hexdigest()[:32]
     req = urllib.request.Request(
-        f"{base_url}/chat/completions",
+        f"{target_base_url.rstrip('/')}/chat/completions",
         data=data,
         headers={
             "Content-Type": "application/json",
@@ -11328,6 +11353,38 @@ def _run_opencodex_generation(
         return exc.code, b"", err_bytes
     except Exception as exc:
         return 1, b"", str(exc).encode("utf-8")
+
+def _run_generation_candidate(
+    model: str,
+    system_prompt: str,
+    prompt_bytes: bytes,
+    *,
+    command: list[str],
+    env: dict[str, str],
+    model_stdin_bytes: bytes | None,
+    image_paths: list[Path] | None,
+    timeout: float,
+) -> tuple[int, bytes, bytes]:
+    if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_flash_next_model(model):
+        return _run_opencodex_generation(
+            model,
+            system_prompt,
+            prompt_bytes,
+            image_paths=image_paths,
+            timeout=timeout,
+        )
+    return _run_bounded_process(
+        _model_swap_in_command(command, model),
+        cwd=Path("/tmp"),
+        env=env,
+        timeout=timeout,
+        stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+        stderr_cap=MAX_MODEL_STDERR_BYTES,
+        stdin_bytes=model_stdin_bytes,
+        stdin_cap=(MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None),
+        isolate_group=True,
+    )
+
 
 def generate_reply(
     message: str,
@@ -11802,18 +11859,15 @@ def generate_reply(
             else:
                 winner = _model_fallback_chain(
                     active_model,
-                    lambda candidate: _run_bounded_process(
-                        _model_swap_in_command(command, candidate),
-                        cwd=Path("/tmp"),
+                    lambda candidate: _run_generation_candidate(
+                        candidate,
+                        system_prompt,
+                        prompt_bytes,
+                        command=command,
                         env=env,
+                        model_stdin_bytes=model_stdin_bytes,
+                        image_paths=normalized_image_paths,
                         timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
-                        stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-                        stderr_cap=MAX_MODEL_STDERR_BYTES,
-                        stdin_bytes=model_stdin_bytes,
-                        stdin_cap=(
-                            MAX_MODEL_PROMPT_BYTES if model_stdin_bytes is not None else None
-                        ),
-                        isolate_group=True,
                     ),
                     deadline=generation_deadline,
                     turn_guard=turn_hold,
@@ -11897,7 +11951,7 @@ def generate_reply(
     try:
         if not cooldown_fallback_answered and generation_deadline <= time.monotonic():
             return fail_model_call("runner_timeout")
-        if REPLY_RUNNER_KIND == "opencodex":
+        if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_flash_next_model(active_model):
             if not cooldown_fallback_answered:
                 returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
                     active_model,
@@ -11921,10 +11975,13 @@ def generate_reply(
                 ):
                     winner = _model_fallback_chain(
                         active_model,
-                        lambda candidate: _run_opencodex_generation(
+                        lambda candidate: _run_generation_candidate(
                             candidate,
                             system_prompt,
                             prompt_bytes,
+                            command=command,
+                            env=env,
+                            model_stdin_bytes=model_stdin_bytes,
                             image_paths=normalized_image_paths,
                             timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                         ),
@@ -11999,20 +12056,15 @@ def generate_reply(
                 candidate: str,
                 _command: list[str] = command,
             ) -> tuple:
-                return _run_bounded_process(
-                    _model_swap_in_command(_command, candidate),
-                    cwd=Path("/tmp"),
+                return _run_generation_candidate(
+                    candidate,
+                    system_prompt,
+                    prompt_bytes,
+                    command=_command,
                     env=env,
+                    model_stdin_bytes=model_stdin_bytes,
+                    image_paths=normalized_image_paths,
                     timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
-                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-                    stderr_cap=MAX_MODEL_STDERR_BYTES,
-                    stdin_bytes=model_stdin_bytes,
-                    stdin_cap=(
-                        MAX_MODEL_PROMPT_BYTES
-                        if model_stdin_bytes is not None
-                        else None
-                    ),
-                    isolate_group=True,
                 )
 
             try:
@@ -12068,21 +12120,15 @@ def generate_reply(
         )
         if is_opencode and is_limit and REPLY_RUNNER_KIND != "opencodex":
             def _run_candidate(candidate: str, _command: list[str] = command) -> tuple:
-                fallback_command = _model_swap_in_command(_command, candidate)
-                return _run_bounded_process(
-                    fallback_command,
-                    cwd=Path("/tmp"),
+                return _run_generation_candidate(
+                    candidate,
+                    system_prompt,
+                    prompt_bytes,
+                    command=_command,
                     env=env,
+                    model_stdin_bytes=model_stdin_bytes,
+                    image_paths=normalized_image_paths,
                     timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
-                    stdout_cap=MAX_MODEL_OUTPUT_BYTES,
-                    stderr_cap=MAX_MODEL_STDERR_BYTES,
-                    stdin_bytes=model_stdin_bytes,
-                    stdin_cap=(
-                        MAX_MODEL_PROMPT_BYTES
-                        if model_stdin_bytes is not None
-                        else None
-                    ),
-                    isolate_group=True,
                 )
 
             winner = _model_fallback_chain(
