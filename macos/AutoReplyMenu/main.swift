@@ -40,6 +40,8 @@ struct RoomChoice {
     let chat_id: Int
     let title: String
     let live: Bool
+    let auto_reply: Bool
+    let geeknews: Bool
     let level: String
     let pipeline: PipelineModel
     let codes: [String]
@@ -5983,6 +5985,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 chat_id: room.chat_id,
                 title: titles[room.chat_id].flatMap { $0.isEmpty ? nil : $0 } ?? "방 \(room.chat_id)",
                 live: room.live,
+                auto_reply: room.auto_reply,
+                geeknews: room.geeknews,
                 level: room.level,
                 pipeline: room.pipeline,
                 codes: room.codes,
@@ -6008,6 +6012,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         chat_id: room.chat_id,
                         title: chat.title.isEmpty ? room.title : chat.title,
                         live: room.live,
+                        auto_reply: room.auto_reply,
+                        geeknews: room.geeknews,
                         level: room.level,
                         pipeline: room.pipeline,
                         codes: room.codes,
@@ -6025,6 +6031,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     chat_id: chat.chat_id,
                     title: chat.title.isEmpty ? "방 \(chat.chat_id)" : chat.title,
                     live: chat.live,
+                    auto_reply: chat.auto_reply,
+                    geeknews: chat.geeknews,
                     level: chat.live ? "green" : "off",
                     pipeline: PipelineModel(active_index: nil, event_id: "none", outcome: "none", stages: []),
                     codes: chat.live ? [] : ["auto_reply_off"],
@@ -6244,9 +6252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
 
-        let hasRoom = selected != nil
-        settingsAutoButton?.isEnabled = hasRoom
-        settingsGeekButton?.isEnabled = hasRoom
+        let canAuto = selected.map { $0.live && $0.auto_reply } ?? false
+        let canGeek = selected.map { $0.live && $0.geeknews } ?? false
+        settingsAutoButton?.isEnabled = canAuto
+        settingsGeekButton?.isEnabled = canGeek
         settingsRoomSummary?.stringValue = selected.map {
             "\($0.title) · \($0.live ? "동작 중" : "동작 꺼짐")"
         } ?? "등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다."
