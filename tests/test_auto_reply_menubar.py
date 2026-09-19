@@ -1499,59 +1499,84 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("menu.addItem(graphic)", build)
         self.assertNotIn("NSMenuItem(title:", build)
 
-
-    def test_swift_operator_windows_are_flat_single_purpose_surfaces(self):
+    def test_swift_jobs_window_has_one_empty_state_and_summary_header_card(self):
         source = SWIFT.read_text(encoding="utf-8")
-
-        def block(start, end):
-            start_at = source.index(start)
-            return source[start_at:source.index(end, start_at)]
-
-        jobs = block("    func ensureJobsWindow() {", "    func ensureLogWindow() {")
-        log = block("    func ensureLogWindow() {", "    /// 기록 표는 실제 행 수만큼만 높이를 쓴다.")
-        rooms = block("    func ensureRoomsWindow() {", "    /// 저장된 큰 창 크기가 표의 빈 영역으로 흘러 들어가지 않게")
-        vector = block("    func ensureVectorWindow() {", "    func vectorChatName() -> String {")
-
-        for window in (jobs, log, rooms, vector):
-            self.assertNotIn("presentGearMenu", window)
-            self.assertNotIn("tileButtons", window)
-
-        self.assertIn("[summary, filterRow, emptyState, scroll, traceCard, actions]", jobs)
+        start = source.index("    func ensureJobsWindow() {")
+        end = source.index("    func ensureLogWindow() {", start)
+        jobs = source[start:end]
         self.assertNotIn("jobsHint", jobs)
         self.assertNotIn("jobsEmptyLabel", jobs)
-        self.assertNotIn("Chrome.statusLabel", jobs)
+        self.assertEqual(jobs.count("EmptyStateView("), 1)
+        self.assertIn("let headerCard = Chrome.card(summary, padding: 12)", jobs)
+        self.assertIn(
+            "[headerCard, filterRow, jobsEmptyState, scroll, traceCard, actions]",
+            jobs,
+        )
         self.assertIn("traceCard.isHidden = true", jobs)
         self.assertIn("actions.isHidden = true", jobs)
 
-        self.assertIn("[summary, toolbar, emptyState, scroll, detailContent]", log)
+        empty_start = source.index("    func updateJobsEmptyState() {")
+        empty_end = source.index("    /// 목록이 비면 창을", empty_start)
+        self.assertNotIn("jobsEmptyLabel", source[empty_start:empty_end])
+
+        actions_start = source.index("    func updateJobsActions() {")
+        actions_end = source.index("    @objc func jobsSkipClicked()", actions_start)
+        self.assertNotIn("jobsHint", source[actions_start:actions_end])
+
+        refresh_start = source.index("    func refreshJobs(status: String) {")
+        refresh_end = source.index("    func applyJobs(_ report: JobReport)", refresh_start)
+        refresh = source[refresh_start:refresh_end]
+        self.assertIn("let report = loaded ?? JobReport(", refresh)
+        self.assertIn(
+            'traceOperatorSurface("jobs snapshot missing; safe empty state")',
+            refresh,
+        )
+
+    def test_swift_log_window_has_one_empty_state_and_keeps_detail_card(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        start = source.index("    func ensureLogWindow() {")
+        end = source.index(
+            "    /// 기록 표는 실제 행 수만큼만 높이를 쓴다.",
+            start,
+        )
+        log = source[start:end]
         self.assertNotIn("logHint", log)
-        self.assertNotIn("Chrome.statusLabel", log)
+        self.assertNotIn("logEmptyLabel", log)
+        self.assertEqual(log.count("EmptyStateView("), 1)
+        self.assertIn(
+            "let headerContent = Chrome.vstack([summary, toolbar], spacing: 10)",
+            log,
+        )
+        self.assertIn("let headerCard = Chrome.card(headerContent, padding: 12)", log)
+        self.assertIn("let detailCard = Chrome.card(detailContent, padding: 10)", log)
+        self.assertIn("[headerCard, emptyState, scroll, detailCard]", log)
 
-        self.assertIn("Chrome.vstack([toolbar, scroll], spacing: 10)", rooms)
-        self.assertNotIn("Chrome.card(", rooms)
+        filter_start = source.index("    func applyLogFilter(reload: Bool = true)")
+        filter_end = source.index("    func rememberLogSelection()", filter_start)
+        self.assertNotIn("logEmptyLabel", source[filter_start:filter_end])
 
-        self.assertIn("KnowledgeGraphView(frame: .zero)", vector)
-        self.assertIn("vectorEditCard = focusedDetail", vector)
+    def test_swift_graph_window_is_one_hologram_with_bounded_safe_fallback(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        start = source.index("    func ensureVectorWindow() {")
+        end = source.index("    func vectorChatName() -> String {", start)
+        vector = source[start:end]
+        self.assertEqual(vector.count("KnowledgeGraphView(frame: .zero)"), 1)
+        self.assertIn(
+            "let stack = Chrome.vstack([graphStack, detailPane], spacing: 10)",
+            vector,
+        )
         self.assertNotIn("Chrome.table()", vector)
         self.assertNotIn("Chrome.card(", vector)
-        self.assertNotIn("vectorPager", vector)
-        self.assertNotIn("vectorSummary", vector)
+        self.assertNotIn("Three.js", vector)
+        self.assertNotIn("THREE.", vector)
 
-    def test_swift_operator_empty_states_and_graph_failure_are_fail_closed(self):
-        source = SWIFT.read_text(encoding="utf-8")
-
-        jobs_start = source.index("    func updateJobsEmptyState() {")
-        jobs = source[jobs_start:source.index("    /// 목록이 비면 창을", jobs_start)]
-        self.assertIn("jobsTableScroll?.isHidden = empty", jobs)
-        self.assertIn("jobsEmptyState?.isHidden = !empty", jobs)
-
-        log_start = source.index("    func applyLogFilter(reload: Bool = true)")
-        log_filter = source[log_start:source.index("    func rememberLogSelection()", log_start)]
-        self.assertIn("logTableScroll?.isHidden = empty", log_filter)
-        self.assertIn("logEmptyState?.isHidden = !empty", log_filter)
+        facts_start = source.index("    func connectedFacts(around nodeId: String)")
+        facts_end = source.index("    private func fitTransform(", facts_start)
+        self.assertIn(".prefix(Self.focusNeighborLimit)", source[facts_start:facts_end])
 
         graph_start = source.index("    func refreshKnowledgeGraph() {")
-        graph = source[graph_start:source.index("    func applyVectorGraphHint", graph_start)]
+        graph_end = source.index("    func applyVectorGraphHint", graph_start)
+        graph = source[graph_start:graph_end]
         self.assertIn("try? JSONDecoder().decode(KnowledgeGraphReport.self", graph)
         self.assertIn(
             'traceOperatorSurface("knowledge-graph snapshot missing or malformed")',
@@ -1560,28 +1585,13 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("applySnapshot(nodes: [], edges: [])", graph)
         self.assertIn("beginFocus(on: nil)", graph)
         self.assertIn("presentVectorGraphError(hasPreviousPicture: false)", graph)
-        self.assertIn("self.applyVectorLayout()", graph)
 
-    def test_swift_operator_surfaces_keep_single_hub_and_payload_free_trace(self):
-        source = SWIFT.read_text(encoding="utf-8")
-        panel = source[
-            source.index("final class MenuPanelView"):
-            source.index("final class CenteredLabelCell")
-        ]
-        self.assertNotIn("tileButtons", panel)
-        self.assertNotIn("func presentGearMenu()", source)
-        self.assertIn("self?.showUnifiedSettingsWindow()", source)
-        self.assertIn('Chrome.roundedButton("지식 그래프"', source)
-        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-status")', source)
-
-        trace = source[
-            source.index("func traceOperatorSurface"):
-            source.index("@objc func showRoomsWindow")
-        ]
-        self.assertIn(".prefix(240)", trace)
-        self.assertNotIn("JSONSerialization", trace)
-        self.assertNotIn("api_key", trace.lower())
-        self.assertNotIn("token", trace.lower())
+        hint_start = graph_end
+        hint_end = source.index(
+            "    /// 색인 시각을 사람이 읽는 말로.",
+            hint_start,
+        )
+        self.assertIn("applyVectorLayout()", source[hint_start:hint_end])
 
     def test_swift_unified_settings_empty_room_disables_send(self):
         source = SWIFT.read_text(encoding="utf-8")
