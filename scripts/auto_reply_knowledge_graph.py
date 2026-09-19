@@ -341,9 +341,6 @@ def upsert_knowledge_triple(
     return True
 
 
-def read_meta
-
-
 def read_meta(conn: sqlite3.Connection, key: str) -> str:
     """Read one value from the graph's own bookkeeping table."""
     try:
