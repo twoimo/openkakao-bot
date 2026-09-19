@@ -921,6 +921,56 @@ def _argv_flag_value(flag: str) -> str:
     return ""
 
 
+def _knowledge_graph_focus_payload(
+    *,
+    state_root: Path,
+    query_text: str,
+    node_id: str = "",
+    chat_id: str = "",
+) -> dict[str, Any]:
+    """Return the GraphRAG bundle for one clicked knowledge-graph node.
+
+    This path only reads the existing knowledge-graph store. It deliberately
+    does not call collect_knowledge_graph(), so a neuron click cannot start a
+    reindex or touch the live Kakao database snapshot path.
+    """
+    query = str(query_text or "").strip()
+    selected_id = str(node_id or "").strip()
+    room = str(chat_id or "").strip()
+    if not query and not selected_id:
+        return {
+            "ok": False,
+            "query": "",
+            "chat_id": room,
+            "facts": [],
+            "fact_count": 0,
+            "focus_node_id": "",
+            "focus_k": 0,
+            "reason": "knowledge_graph_focus_query_missing",
+        }
+    try:
+        from auto_reply_knowledge_graph import retrieve_knowledge_bundle
+
+        bundle = retrieve_knowledge_bundle(
+            query or selected_id,
+            state_root=state_root,
+            chat_id=room or None,
+            also=[selected_id] if selected_id else None,
+        )
+        return {"ok": True, **bundle}
+    except Exception as exc:  # click drill-down must stay fail-closed
+        return {
+            "ok": False,
+            "query": query or selected_id,
+            "chat_id": room,
+            "facts": [],
+            "fact_count": 0,
+            "focus_node_id": "",
+            "focus_k": 0,
+            "reason": str(exc) or "knowledge_graph_focus_unavailable",
+        }
+
+
 def _strip_argv_flags(flags: tuple[str, ...]) -> None:
     kept: list[str] = []
     index = 0
@@ -1927,6 +1977,17 @@ def main():
                 "indexing_mode": "wal+isolated-copy+mode=ro+query_only",
                 "reason": str(exc) or "knowledge_graph_status_unavailable",
             }
+        _print_json(payload)
+        return 0
+    if action == "knowledge-graph-focus":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        payload = _knowledge_graph_focus_payload(
+            state_root=state_root,
+            query_text=_argv_flag_value("--knowledge-query"),
+            node_id=_argv_flag_value("--knowledge-node-id"),
+            chat_id=_argv_flag_value("--knowledge-chat"),
+        )
         _print_json(payload)
         return 0
     if action == "knowledge-graph":

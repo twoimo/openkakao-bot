@@ -1624,6 +1624,14 @@ struct KnowledgeGraphReport: Decodable {
     let indexing_mode: String?
 }
 
+struct KnowledgeGraphFocusReport: Decodable {
+    let ok: Bool
+    let facts: [String]
+    let focus_node_id: String
+    let focus_k: Int
+    let chat_id: String?
+}
+
 /// Draws the knowledge graph the way a brain scan shows neurons and synapses:
 /// a node is a cell body whose radius follows its importance, an edge is a
 /// synapse whose thickness follows its weight, and the whole thing settles
@@ -2193,6 +2201,21 @@ final class KnowledgeGraphView: NSView {
         // 확대를 풀 때는 지금 배율에서, 걸 때는 전체 그림에서 출발한다.
         focusAnimationStart = Date().timeIntervalSince1970
         startFocusTimer()
+    }
+
+    /// GraphRAG가 고른 루트와 hop에 카메라를 맞춘다. 서버가 잘못된 값을
+    /// 보내도 화면 계약인 2~3 hop 밖으로 나가지 않는다.
+    func applyGraphRAGFocus(nodeId: String, hop: Int) {
+        guard nodes.contains(where: { $0.id == nodeId }) else { return }
+        let boundedHop = min(max(hop, Self.defaultFocusHop), Self.maxFocusHop)
+        let target = kHopNodeIds(around: nodeId, hops: boundedHop).count > 1 ? nodeId : nil
+        guard target != focusNodeId || boundedHop != focusHop else { return }
+        focusNodeId = target
+        focusHop = boundedHop
+        focusProgress = min(focusProgress, 0.55)
+        focusAnimationStart = Date().timeIntervalSince1970
+        startFocusTimer()
+        needsDisplay = true
     }
 
     /// 지금 화면이 확대 상태인지. 창이 힌트 줄에 안내를 띄울 때 쓴다.
@@ -3505,6 +3528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var vectorFitting = false
     var vectorGraphHint: NSTextField?
     var vectorGraphToken = 0
+    var vectorGraphFocusToken = 0
     /// 마지막으로 읽은 그래프의 규모. 힌트 줄을 다시 쓸 때 쓴다.
     var vectorGraphTotal = 0
     var vectorGraphGrounded = 0
@@ -8933,6 +8957,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 데이터를 가리키므로, 표에 없으면 선택만 바꾸지 않고 그대로 둔다.
     func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
         guard let node else {
+            vectorGraphFocusToken += 1
             // 빈 공간 클릭으로 선택이 해제된 경우 근거 카드를 즉시 닫고,
             // 힌트 줄도 전체 그림 기준으로 되돌린다 (2026-09-17, 6 Pro 지적).
             applyVectorGraphHint(total: vectorGraphTotal, grounded: vectorGraphGrounded)
@@ -8943,7 +8968,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             vectorTable?.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             vectorTable?.scrollRowToVisible(index)
         }
-        // 표에 있든 없든 선택된 노드의 근거 카드를 채우고 즉시 펼친다 (2026-09-17, 6 Pro 지적).
+        // 표에 있든 없든 선택된 노드의 근거 카드를 먼저 채워 즉시 펼친다.
+        // GraphRAG 번들은 별도 읽기라 늦게 와도 이 카드만 보강한다.
+        renderKnowledgeGraphEvidence(node, bundle: nil)
+        requestKnowledgeGraphFocus(for: node)
+        // 확대가 끝난 뒤 힌트 줄이 "무엇을 보고 있는지"를 말한다.
+        // 선택 직후에는 아직 확대 중이므로 한 박자 뒤에 다시 쓴다.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyVectorGraphHint(
+                total: self.vectorGraphTotal,
+                grounded: self.vectorGraphGrounded
+            )
+        }
+        applyVectorLayout()
+    }
+
+    func renderKnowledgeGraphEvidence(_ node: KnowledgeNode, bundle: KnowledgeGraphFocusReport?) {
         vectorUserField?.stringValue = node.label
         vectorTopicsField?.stringValue = node.category
         let evidence = node.evidence
@@ -8957,18 +8998,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if evidence.retracted { lines.append("상태: 철회됨") }
         lines.append("")
         lines.append(contentsOf: node.facts.map { "• \($0)" })
-        vectorMessageView?.string = lines.joined(separator: "\n")
-        vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
-        // 확대가 끝난 뒤 힌트 줄이 "무엇을 보고 있는지"를 말한다.
-        // 선택 직후에는 아직 확대 중이므로 한 박자 뒤에 다시 쓴다.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.applyVectorGraphHint(
-                total: self.vectorGraphTotal,
-                grounded: self.vectorGraphGrounded
-            )
+        if let bundle, bundle.ok, !bundle.facts.isEmpty {
+            lines.append("")
+            lines.append("관련 사실·관계")
+            lines.append(contentsOf: bundle.facts.map { "• \($0)" })
         }
-        applyVectorLayout()
+        vectorMessageView?.string = lines.joined(separator: "\n")
+        if let bundle, bundle.ok, !bundle.focus_node_id.isEmpty {
+            vectorEmbeddingField?.stringValue =
+                "지식 그래프 노드 \(node.id) · GraphRAG \(bundle.focus_node_id) · \(bundle.focus_k) hop"
+        } else {
+            vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
+        }
+    }
+
+    func requestKnowledgeGraphFocus(for node: KnowledgeNode) {
+        vectorGraphFocusToken += 1
+        let token = vectorGraphFocusToken
+        let nodeId = node.id
+        var args = [
+            "--action", "knowledge-graph-focus",
+            "--knowledge-query", node.label,
+            "--knowledge-node-id", node.id,
+        ]
+        let selectedRoom = vectorChatName()
+        let evidenceRoom = node.evidence.chat_id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let room = (!selectedRoom.isEmpty && selectedRoom != "전체" && selectedRoom != "*")
+            ? selectedRoom
+            : evidenceRoom
+        if !room.isEmpty {
+            args.append(contentsOf: ["--knowledge-chat", room])
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let data = self.runPython(args, timeout: 8)
+            let report = data.flatMap { try? JSONDecoder().decode(KnowledgeGraphFocusReport.self, from: $0) }
+            DispatchQueue.main.async {
+                guard token == self.vectorGraphFocusToken,
+                      self.vectorGraphView?.selectedNodeId == nodeId else { return }
+                guard let report, report.ok else {
+                    // 조회 실패는 기존 노드 근거를 그대로 두고 끝낸다.
+                    return
+                }
+                self.renderKnowledgeGraphEvidence(node, bundle: report)
+                if !report.focus_node_id.isEmpty {
+                    self.vectorGraphView?.applyGraphRAGFocus(
+                        nodeId: report.focus_node_id,
+                        hop: report.focus_k
+                    )
+                }
+                self.applyVectorGraphHint(
+                    total: self.vectorGraphTotal,
+                    grounded: self.vectorGraphGrounded
+                )
+                self.applyVectorLayout()
+            }
+        }
     }
 
     /// 사용자가 그래프를 다시 읽으라고 했을 때. 캐시 시각을 지워 다음 읽기가

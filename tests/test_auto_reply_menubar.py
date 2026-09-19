@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3626,6 +3627,115 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertGreater(graph_at, 0)
         self.assertGreater(dispatch_at, 0)
         self.assertLess(graph_at, dispatch_at, "the graph action must come first")
+
+    def test_knowledge_graph_focus_action_uses_bundle_and_stays_fail_closed(self):
+        module = load("auto_reply_menubar_graph_focus_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = {
+                "query": "선택 뉴런",
+                "chat_id": "room-42",
+                "facts": ["[관계] A —(연결)→ B"],
+                "fact_count": 1,
+                "candidate_count": 1,
+                "entities_count": 1,
+                "relations_count": 1,
+                "focus_node_id": "entity:a",
+                "focus_k": 2,
+                "focus_node_count": 2,
+                "focus_edge_count": 1,
+            }
+            with mock.patch(
+                "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                return_value=bundle,
+            ) as retrieve, mock.patch(
+                "auto_reply_knowledge_graph.collect_knowledge_graph"
+            ) as reindex:
+                payload = module._knowledge_graph_focus_payload(
+                    state_root=root,
+                    query_text="선택 뉴런",
+                    node_id="entity:a",
+                    chat_id="room-42",
+                )
+            retrieve.assert_called_once_with(
+                "선택 뉴런",
+                state_root=root,
+                chat_id="room-42",
+                also=["entity:a"],
+            )
+            reindex.assert_not_called()
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["facts"], bundle["facts"])
+            self.assertEqual(payload["focus_node_id"], "entity:a")
+            self.assertEqual(payload["focus_k"], 2)
+
+            with mock.patch(
+                "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                side_effect=sqlite3.OperationalError(
+                    "isolated read-only snapshot unavailable"
+                ),
+            ):
+                failed = module._knowledge_graph_focus_payload(
+                    state_root=root,
+                    query_text="선택 뉴런",
+                    node_id="entity:a",
+                    chat_id="room-42",
+                )
+            self.assertFalse(failed["ok"])
+            self.assertEqual(failed["facts"], [])
+            self.assertEqual(failed["focus_node_id"], "")
+            self.assertEqual(failed["focus_k"], 0)
+
+        source = MENUBAR.read_text(encoding="utf-8")
+        focus_at = source.find('if action == "knowledge-graph-focus":')
+        graph_at = source.find('if action == "knowledge-graph":')
+        dispatch_at = source.find('args = type("Args", (), {"action": action})()')
+        self.assertGreater(focus_at, 0)
+        self.assertLess(focus_at, graph_at)
+        self.assertLess(focus_at, dispatch_at)
+        helper_start = source.index("def _knowledge_graph_focus_payload(")
+        helper_end = source.index("\ndef _strip_argv_flags", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertIn("retrieve_knowledge_bundle", helper)
+        self.assertNotIn("context.sqlite3", helper)
+
+    def test_swift_graph_focus_drilldown_uses_existing_evidence_card_and_contracts(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        request_start = source.index("func requestKnowledgeGraphFocus(for node: KnowledgeNode)")
+        request_end = source.index("\n    /// 사용자가 그래프를 다시 읽으라고 했을 때", request_start)
+        request = source[request_start:request_end]
+
+        self.assertIn('"--action", "knowledge-graph-focus"', request)
+        self.assertIn('"--knowledge-query", node.label', request)
+        self.assertIn('"--knowledge-node-id", node.id', request)
+        self.assertIn('["--knowledge-chat", room]', request)
+        self.assertIn("renderKnowledgeGraphEvidence(node, bundle: report)", request)
+        self.assertIn("nodeId: report.focus_node_id", request)
+        self.assertIn("hop: report.focus_k", request)
+        self.assertIn('lines.append("관련 사실·관계")', source)
+        self.assertIn('bundle.facts.map { "• \\($0)" }', source)
+
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn(
+            "let boundedHop = min(max(hop, Self.defaultFocusHop), Self.maxFocusHop)",
+            graph,
+        )
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
 
     def test_knowledge_graph_action_survives_a_broken_state_root(self):
         """A missing state root must return an empty graph, not crash the menu."""
