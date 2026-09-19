@@ -19,7 +19,7 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 2. 새 메시지가 오면 답장 후보인지 판단합니다.
 3. 예전 대화와 내 말투를 참고해 답 초안을 만듭니다.
 4. 카카오톡 입력창에 대신 입력해 보냅니다. (접근성 API)
-5. 메뉴바에서 켜고 끄고, 방을 고를 수 있습니다.
+5. 메뉴바 Extra는 골드 코어와 우측 상단 gear만 두고, 제어는 그 gear로 여는 통합 설정에서 다룹니다.
 
 카카오 서버에 별도로 로그인해서 메시지를 빼 오는 봇이 **아닙니다.**
 **맥에 설치된 카카오톡 앱**이 있어야 하고, 그 앱이 만든 로컬 DB를 읽습니다.
@@ -27,14 +27,16 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 ```text
 카카오톡 맥 앱
     │  (대화가 로컬 DB에 저장됨)
-    ▼
-openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
+    ▼ 임시 복사 후 mode=ro + query_only
+openkakao-cli
+    ├─► 벡터 기억 (context.sqlite3, 내 Mac에만 생성)
+    └─► 지식 그래프 (knowledge-graph.sqlite3, GraphRAG k-hop 2/3/10)
     │
     ▼
-자동 답장 워커 + LLM
+자동 답장 워커 + 권장 MLX Qwen3.8 Flash-Next
     │
     ▼
-카카오톡 입력창에 전송 (손쉬운 사용 권한 필요)
+카카오톡 입력창에 전송 (AX local-send)
 ```
 
 ---
@@ -63,10 +65,11 @@ openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
 | 카카오톡 대화 DB | `~/Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Application Support/com.kakao.KakaoTalkMac/` 아래의 암호화된 DB 파일 |
 | 카카오톡 캐시 | `~/Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Caches/Cache.db` |
 | 벡터/기억 DB | `~/Library/Application Support/openkakao/context.sqlite3` |
+| 지식 그래프 | `~/Library/Application Support/openkakao/bujamentor/knowledge-graph.sqlite3` |
 | 자동 답장 상태 | `~/Library/Application Support/openkakao/auto-reply/` |
 | 로그인 정보 | `~/.config/openkakao/credentials.json` |
 
-벡터 DB는 처음 동기화할 때 **프로그램이 알아서 만듭니다.** 미리 복사해 올 필요가 없습니다.
+벡터 DB와 지식 그래프는 처음 동기화할 때 **프로그램이 알아서 만듭니다.** 미리 복사해 올 필요가 없습니다. 그래프 클릭은 이미 있는 저장소만 읽으며, 그 클릭으로 카카오톡 원본을 복사하거나 재색인하지 않습니다.
 
 ---
 
@@ -151,6 +154,10 @@ openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
 | `pipeline_transitions` | 처리 단계 일지 |
 | `model-circuit.sqlite3` → `model_circuit_breaker` | 모델 장애 시 잠시 멈추는 회로 |
 
+**지식 그래프** — `~/Library/Application Support/openkakao/bujamentor/knowledge-graph.sqlite3`
+
+채팅방·참여자·주제 엔티티와 관계를 담습니다. 메뉴바 드릴다운과 답장 GraphRAG가 이 파일을 읽습니다. GitHub에 올리지 마세요.
+
 이 파일들은 실행하면 자동으로 만들어집니다. **백업이 필요하면 내 디스크에서만** 하세요.
 
 ---
@@ -213,12 +220,28 @@ python_interpreter = "/opt/homebrew/opt/python@3.13/bin/python3.13"
 sh scripts/build-auto-reply-menubar.sh
 ```
 
-만들어진 `AutoReplyMenu.app`을 실행하면 메뉴바에서 방 선택, 모델, 시작/중지를 다룰 수 있습니다.
+만들어진 `AutoReplyMenu.app`을 실행하면 Extra에 골드 코어와 우측 상단 gear만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 모두 그 gear의 통합 설정에서 다룹니다.
+
+온디바이스 권장은 MLX Qwen3.8 Flash-Next입니다. Gemma, llama.cpp, Ollama를 기본 엔진으로 두지 않습니다. 호스트가 감당하면 Qwen3.8 27B ID를 쓸 수 있습니다. 권장 ID는 완료된 실생성을 뜻하지 않으며, 프로브가 시간 초과하면 fail-closed입니다.
 
 무인 실행(launchd)은 `docs/auto-reply-launchd-supervision.md`와 `scripts/install-auto-reply-launchd.sh`를 보세요. 처음이면 메뉴바부터 시작하는 편이 안전합니다.
 
 ---
 
+## Jarvis Extra와 지식 그래프
+
+Extra는 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 대량 검증, 기능 점검, 권한 설정 UI는 없습니다. 제어는 gear를 눌러 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
+
+카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
+
+노드 클릭은 `knowledge-graph-focus`만 호출하고, 이미 있는 `knowledge-graph.sqlite3`에서 k-hop `2/3/10` 번들을 읽습니다. 클릭 경로에는 원본 복사와 재색인이 없습니다. 조회 실패 시 `facts`는 빈 배열이고 `관련 사실·관계`만 갱신합니다.
+
+다이어그램 본문(노드·카드·레이블)은 한국어로 작성했습니다. Archify Viewer UI와 `<html lang>`은 영어 폴백입니다. 이 HTML은 로컬 showcase validate / deliver / visual-check를 통과한 산출물이며, 지각적 AHP나 설치된 앱 재빌드를 증명하지 않습니다.
+
+- [Jarvis Extra 렌더와 운영 파이프라인](docs/architecture/openkakao-auto-reply.html)
+- [GraphRAG 드릴다운 시퀀스](docs/architecture/openkakao-graphrag.html)
+
+---
 ## 폴더 안내
 
 | 경로 | 내용 |
@@ -227,7 +250,7 @@ sh scripts/build-auto-reply-menubar.sh
 | `scripts/` | 파이썬 워커, DB 감시, 메뉴바, 설치 스크립트 |
 | `macos/AutoReplyMenu/` | 메뉴바 앱 (Swift) |
 | `tests/` | 동작이 깨지지 않는지 확인하는 테스트 |
-| `docs/` | 운영·개선 메모 |
+| `docs/` | 운영 메모와 Archify 다이어그램 (`docs/architecture/`) |
 | `config.example.toml` | 설정 예시. 이걸 복사해 씁니다 |
 | `examples/launchd/` | macOS 백그라운드 실행 예시 |
 
@@ -246,6 +269,12 @@ sh scripts/build-auto-reply-menubar.sh
 
 **벡터 검색이 비어 있다**
 정상입니다. 대화가 아직 동기화되지 않은 것입니다. 카카오톡 DB를 이 저장소에 넣을 필요는 없고, 에이전트를 켜 두면 `context.sqlite3`가 내 Mac에 만들어집니다.
+
+**그래프를 눌렀는데 관련 사실·관계가 비어 있다**
+클릭은 이미 있는 `knowledge-graph.sqlite3`만 읽습니다. 재색인하거나 카카오톡 원본을 복사하지 않습니다. 조회가 실패하면 `facts`는 빈 배열입니다.
+
+**로컬 생성이 안 된다**
+온디바이스 권장은 MLX Qwen3.8 Flash-Next이지만, 프로브가 시간 초과하면 fail-closed입니다. 권장 모델 ID가 곧 완료된 생성을 뜻하지는 않습니다.
 
 ---
 

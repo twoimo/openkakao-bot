@@ -11,11 +11,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 <p align="center">
-  <a href="#features"><b>Features</b></a> •
-  <a href="#architecture"><b>Architecture</b></a> •
-  <a href="#model-support"><b>Model Support</b></a> •
-  <a href="#quick-start"><b>Quick Start</b></a> •
-  <a href="#configuration"><b>Configuration</b></a> •
+  <a href="#features"><b>Features</b></a> &bull;
+  <a href="#architecture"><b>Architecture</b></a> &bull;
+  <a href="#model-support"><b>Model Support</b></a> &bull;
+  <a href="#quick-start"><b>Quick Start</b></a> &bull;
+  <a href="#configuration"><b>Configuration</b></a> &bull;
   <a href="README.ko.md"><b>한국어 문서 (Korean)</b></a>
 </p>
 
@@ -27,54 +27,54 @@
 
 <h2 id="architecture">Architecture</h2>
 
+Extra is a gold hologram core plus a top-right gear. All operator controls open from that gear into one settings window. Extra has no bulk-verify, feature-checklist, or permission-settings UI.
+
+KakaoTalk indexing copies the live database into a temp snapshot, then opens that copy with `mode=ro` and `PRAGMA query_only`. If the copy cannot be created, the live database is not opened. GraphRAG drill-down reads the existing `knowledge-graph.sqlite3` only; a node click does not copy KakaoTalk or reindex. DREAM-RSI on the settings card is checkpoint provenance, not a live trainer.
+
 ```text
-KakaoTalk macOS (Local SQLCipher DB)
-        │
-        ▼ (Read-only Local Ingestion)
-openkakao-cli (Rust Engine)
-        │
-        ├─► Local Vector & Semantic Memory (context.sqlite3)
-        │
-        ▼
-Agent Decision Pipeline
-        │
-        ├─► Open Weights (Gemma 4, Qwen 3.8-Max, DeepSeek V4-Flash, Kimi K3 on Apple Silicon)
-        ├─► Frontier APIs (Claude Sonnet 5 / Opus 5, GPT-6 Astra, Gemini 3.8 Flash)
-        │
-        ▼ (Native macOS Accessibility Dispatch)
-KakaoTalk Composer
+KakaoTalk macOS (local SQLCipher DB)
+        |
+        v isolated copy, then mode=ro + query_only
+openkakao-cli
+        |
+        +-> context.sqlite3 (vectors / keyword)
+        +-> knowledge-graph.sqlite3 (GraphRAG k-hop 2/3/10)
+        |
+        v
+reply worker
+        |
+        +-> recommended on-device: MLX Qwen3.8 Flash-Next
+        +-> host-capable on-device: MLX Qwen3.8 27B
+        |
+        v AX local-send
+KakaoTalk composer
 ```
 
----
+Interactive diagrams (authored node/card/label copy is Korean; Archify Viewer UI and `<html lang>` fall back to English):
+
+- [Jarvis Extra render and operator pipeline](docs/architecture/openkakao-auto-reply.html)
+- [GraphRAG drill-down sequence](docs/architecture/openkakao-graphrag.html)
+
+The diagrams reflect `efee7c8`. They are not a live generation trace. On-device generation still fails closed when a probe times out.
 
 <h2 id="features">Features</h2>
 
-- **100% On-Device Privacy**: Chat history, local vector memories, and credentials never leave your Mac.
-- **Fast Local Ingestion**: High-performance Rust core decrypts and reads local SQLite databases directly.
-- **Local Memory & RAG**: On-device vector embeddings and full-text search retrieve relevant context per contact.
-- **Native macOS Dispatch**: Sends replies using macOS Accessibility APIs without reverse-engineering server protocols.
-- **Safety Controls**: Strict chatroom allowlisting, rate limits, and an automated circuit breaker.
-
----
+- **Local-first privacy**: Chat history, vector memory, knowledge-graph rows, and credentials stay on your Mac.
+- **Isolated read-only indexing**: KakaoTalk is copied to a temp snapshot, then opened read-only. Copy failure does not fall back to the live DB.
+- **GraphRAG over the existing store**: Node focus retrieves a k-hop bundle (`2/3/10`) and fills `관련 사실·관계`. Failure returns empty `facts`.
+- **Native macOS dispatch**: Replies go through Accessibility local-send, not Kakao server protocols.
+- **Safety controls**: Chatroom allowlisting, rate limits, and a circuit breaker.
 
 <h2 id="model-support">Model Support</h2>
 
-`openkakao-bot` supports the latest local open-weight models and frontier cloud APIs:
+The Apple Silicon on-device recommendation is **MLX Qwen3.8 Flash-Next**. Gemma, llama.cpp, and Ollama are not the primary engine.
 
-### 1. Local & Open Weights (Apple Silicon Optimized)
-Optimized for low-latency, private on-device inference via MLX, Ollama, and local servers:
-- **Google Gemma**: Gemma 4 (31B, 12B Unified, E4B, E2B), Gemma 3
-- **Alibaba Qwen**: Qwen 3.8 (Qwen3.8-Max, Qwen3.8-27B), Qwen 3
-- **DeepSeek**: DeepSeek V4-Flash, V4, V3.2, R1
-- **Moonshot & Zhipu**: Kimi K3 (2.8T MoE), Kimi K2.7 Code, GLM-5.2
+- Recommended: `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`
+- Host-capable larger local model: `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
+- DREAM-RSI: receipt / checkpoint provenance only (`settings-dream-rsi-card` after the sync card)
+- Cloud runners remain optional and explicit in `config.toml`; they are not the on-device default
 
-### 2. Frontier Cloud Providers
-Direct integration with cloud model providers:
-- **Anthropic**: Claude Sonnet 5, Claude Opus 5, Claude Fable 5.1, Claude 4.6
-- **Google**: Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.5 Flash, Gemini 3.1 Pro
-- **OpenAI**: GPT-6 Astra, GPT-5.6 Sol, GPT-5.4, o3 / o1
-
----
+A recommended model ID is not a completed live-generation run. Probes that time out fail closed and leave `last_probe` instead of sending.
 
 <h2 id="quick-start">Quick Start</h2>
 
@@ -109,14 +109,9 @@ chats = ["bind:123456789012345:TeamChannel"]
 # Your display name in KakaoTalk
 self_nickname = "Your Name"
 
-# Runtime and Model Selection
-# Local Open Weights (MLX / Ollama):
-# reply_runner_kind = "ollama" # or "mlx"
-# reply_model = "gemma4:12b" # or "qwen3.8:27b", "deepseek-v4-flash"
-
-# Cloud Frontier APIs:
-# reply_runner_kind = "anthropic" # or "google", "openai"
-# reply_model = "claude-sonnet-5" # or "gemini-3.8-flash", "gpt-6-astra"
+# Recommended on-device engine (MLX), not Gemma / llama.cpp / Ollama:
+# reply_runner_kind = "mlx"
+# reply_model = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ```
 
 ### 4. Run
@@ -131,8 +126,11 @@ sh scripts/build-auto-reply-menubar.sh
 open macos/AutoReplyMenu/AutoReplyMenu.app
 ```
 
+Privacy paths, KakaoTalk table names, and Korean operator notes live in [README.ko.md](README.ko.md). Do not commit chat databases, `context.sqlite3`, `knowledge-graph.sqlite3`, or credentials.
+
 ---
 
 ## License
 
 [MIT License](LICENSE)
+

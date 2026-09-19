@@ -2,235 +2,408 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "OpenKakao Auto-Reply Runtime",
-    "subtitle": "Operator menu, GraphRAG worker, and on-device Gemma",
+    "title": "Jarvis Extra 렌더와 운영 파이프라인",
     "output": "docs/architecture/openkakao-auto-reply.html",
-    "visual_preset": "blueprint",
-    "animation": "none",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/twoimo/openkakao-bot",
       "provider": "github",
-      "revision": "7d4b1262957cb0007a57d10654f812241e723d79"
+      "revision": "efee7c81a33ca323835977e61636d9b60bc6a5f9"
     },
     "views": [
       {
         "id": "operator-surface",
-        "label": "Operator surface",
-        "focus": ["kakaotalk", "menu", "supervisor", "worker"],
-        "note": "The menu extra watches rooms and keeps the launchd worker alive."
+        "label": "운영자 화면",
+        "focus": [
+          "extra",
+          "settings",
+          "dream"
+        ],
+        "note": "골드 코어와 gear만 두고 제어는 통합 설정으로 모은다."
+      },
+      {
+        "id": "isolated-index",
+        "label": "격리 색인",
+        "focus": [
+          "kakaotalk",
+          "cli",
+          "snapshot",
+          "graph"
+        ],
+        "note": "임시 복사본을 RO로만 열고, 복사 실패 시 원본을 열지 않는다."
       },
       {
         "id": "grounded-reply",
-        "label": "Grounded reply path",
-        "focus": ["cli", "worker", "knowledge", "vectors", "gemma"],
-        "note": "Room events reach the worker, then GraphRAG and vector memory ground the local model."
-      },
-      {
-        "id": "fallback-path",
-        "label": "Local first, cloud fallback",
-        "focus": ["worker", "gemma", "cloud", "cli"],
-        "note": "Gemma answers on-device when weights verify; cloud models run when the local engine cannot."
+        "label": "근거 답장",
+        "focus": [
+          "worker",
+          "graph",
+          "vectors",
+          "mlx",
+          "dream"
+        ],
+        "note": "GraphRAG가 근거를 붙이고 DREAM-RSI는 receipt 출처만 남긴다."
       }
     ]
   },
   "components": [
     {
-      "id": "kakaotalk",
-      "type": "external",
-      "label": "KakaoTalk",
-      "sublabel": "rooms + AX host",
-      "pos": [40, 300],
-      "size": [128, 60]
-    },
-    {
-      "id": "menu",
+      "id": "extra",
       "type": "frontend",
-      "label": "Menu Extra",
-      "sublabel": "status + models",
-      "pos": [250, 120],
-      "size": [132, 60],
-      "tag": "AppKit",
+      "label": "Extra",
+      "sublabel": "골드 코어 + gear",
+      "pos": [
+        48,
+        88
+      ],
+      "size": [
+        156,
+        64
+      ],
+      "tag": "276×260",
       "sources": [
-        { "path": "macos/AutoReplyMenu/main.swift", "line": 5430, "label": "model window" }
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "line": 2738,
+          "label": "JarvisCoreView"
+        },
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "line": 3248,
+          "label": "panel 276×260"
+        }
       ]
     },
     {
-      "id": "supervisor",
-      "type": "backend",
-      "label": "Supervisor",
-      "sublabel": "launchd keep-alive",
-      "pos": [460, 120],
-      "size": [136, 60],
+      "id": "settings",
+      "type": "frontend",
+      "label": "통합 설정",
+      "sublabel": "sync + dream 카드",
+      "pos": [
+        268,
+        88
+      ],
+      "size": [
+        168,
+        64
+      ],
       "sources": [
-        { "path": "scripts/auto-reply-supervisor.py", "label": "supervisor" }
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "line": 6171,
+          "label": "unified settings"
+        },
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "line": 6239,
+          "label": "settings-sync-card"
+        }
+      ]
+    },
+    {
+      "id": "dream",
+      "type": "database",
+      "label": "DREAM-RSI",
+      "sublabel": "receipt 전용",
+      "pos": [
+        500,
+        88
+      ],
+      "size": [
+        168,
+        64
+      ],
+      "tag": "checkpoint",
+      "sources": [
+        {
+          "path": "macos/AutoReplyMenu/main.swift",
+          "line": 6266,
+          "label": "dream-rsi-card"
+        },
+        {
+          "path": "scripts/auto-reply-worker.py",
+          "line": 301,
+          "label": "checkpoint name"
+        }
+      ]
+    },
+    {
+      "id": "kakaotalk",
+      "type": "external",
+      "label": "카카오톡",
+      "sublabel": "방 + AX 호스트",
+      "pos": [
+        48,
+        244
+      ],
+      "size": [
+        156,
+        64
       ]
     },
     {
       "id": "cli",
       "type": "backend",
       "label": "openkakao-cli",
-      "sublabel": "container IO",
-      "pos": [250, 300],
-      "size": [132, 60],
+      "sublabel": "컨테이너 IO",
+      "pos": [
+        268,
+        244
+      ],
+      "size": [
+        168,
+        64
+      ],
       "tag": "host"
     },
     {
       "id": "worker",
       "type": "backend",
-      "label": "Reply Worker",
-      "sublabel": "queue + generate",
-      "pos": [460, 300],
-      "size": [136, 62],
+      "label": "답장 워커",
+      "sublabel": "큐 + 생성",
+      "pos": [
+        500,
+        244
+      ],
+      "size": [
+        168,
+        64
+      ],
       "tag": "core",
       "sources": [
-        { "path": "scripts/auto-reply-worker.py", "line": 11301, "label": "GraphRAG inject" }
+        {
+          "path": "scripts/auto-reply-worker.py",
+          "line": 11355,
+          "label": "GraphRAG retrieve"
+        }
       ]
     },
     {
-      "id": "knowledge",
-      "type": "database",
-      "label": "Knowledge Graph",
-      "sublabel": "hybrid GraphRAG",
-      "pos": [680, 180],
-      "size": [150, 62],
+      "id": "mlx",
+      "type": "backend",
+      "label": "MLX Qwen3.8",
+      "sublabel": "Flash-Next 권장",
+      "pos": [
+        732,
+        244
+      ],
+      "size": [
+        168,
+        64
+      ],
+      "tag": "fail-closed",
       "sources": [
-        { "path": "scripts/auto_reply_knowledge_graph.py", "line": 2214, "label": "retrieve bundle" }
+        {
+          "path": "scripts/auto_reply_ondevice.py",
+          "line": 27,
+          "label": "FLASH_NEXT_MODEL_ID"
+        }
+      ]
+    },
+    {
+      "id": "snapshot",
+      "type": "security",
+      "label": "격리 스냅샷",
+      "sublabel": "임시 복사 RO",
+      "pos": [
+        48,
+        400
+      ],
+      "size": [
+        156,
+        64
+      ],
+      "sources": [
+        {
+          "path": "scripts/auto_reply_knowledge_graph.py",
+          "line": 536,
+          "label": "copy fail-closed"
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "지식 그래프",
+      "sublabel": "k-hop 2/3/10",
+      "pos": [
+        500,
+        400
+      ],
+      "size": [
+        168,
+        64
+      ],
+      "sources": [
+        {
+          "path": "scripts/auto_reply_knowledge_graph.py",
+          "line": 30,
+          "label": "DEFAULT_K_HOP"
+        },
+        {
+          "path": "scripts/auto_reply_knowledge_graph.py",
+          "line": 2508,
+          "label": "retrieve bundle"
+        }
       ]
     },
     {
       "id": "vectors",
       "type": "database",
-      "label": "Vector Memory",
-      "sublabel": "room-scoped RAG",
-      "pos": [680, 420],
-      "size": [150, 62]
-    },
-    {
-      "id": "gemma",
-      "type": "backend",
-      "label": "Local Gemma",
-      "sublabel": "MLX on-device",
-      "pos": [900, 180],
-      "size": [140, 62],
-      "tag": "read-only verify",
-      "sources": [
-        { "path": "scripts/auto_reply_ondevice.py", "line": 254, "label": "status snapshot" }
+      "label": "벡터 기억",
+      "sublabel": "하이브리드 검색",
+      "pos": [
+        732,
+        400
+      ],
+      "size": [
+        168,
+        64
       ]
-    },
-    {
-      "id": "cloud",
-      "type": "cloud",
-      "label": "Cloud Models",
-      "sublabel": "quota fallback",
-      "pos": [900, 420],
-      "size": [140, 62]
     }
   ],
   "boundaries": [
     {
       "kind": "region",
-      "label": "Operator Mac",
-      "wraps": ["menu", "supervisor", "cli", "worker", "knowledge", "vectors", "gemma"]
+      "label": "운영자 Mac",
+      "wraps": [
+        "extra",
+        "settings",
+        "dream",
+        "cli",
+        "worker",
+        "mlx",
+        "snapshot",
+        "graph",
+        "vectors"
+      ]
     },
     {
       "kind": "security-group",
-      "label": "KakaoTalk container",
-      "wraps": ["kakaotalk"]
+      "label": "카카오톡 컨테이너",
+      "wraps": [
+        "kakaotalk"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "격리 RO 스냅샷",
+      "wraps": [
+        "snapshot"
+      ]
     }
   ],
   "connections": [
     {
+      "id": "gear-open",
+      "from": "extra",
+      "to": "settings",
+      "label": "gear 클릭",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dream-status",
+      "from": "settings",
+      "to": "dream",
+      "label": "dream-rsi-status",
+      "labelAt": [
+        468,
+        166
+      ]
+    },
+    {
       "id": "room-events",
       "from": "kakaotalk",
       "to": "cli",
-      "label": "AX events",
+      "label": "AX 이벤트",
       "variant": "emphasis"
     },
     {
       "id": "queue-turn",
       "from": "cli",
       "to": "worker",
-      "label": "queued turn"
-      ,"labelDy": 38
+      "label": "큐 턴"
+    },
+    {
+      "id": "local-infer",
+      "from": "worker",
+      "to": "mlx",
+      "label": "Flash-Next 권장",
+      "variant": "emphasis",
+      "labelAt": [
+        700,
+        240
+      ]
     },
     {
       "id": "hybrid-graph",
       "from": "worker",
-      "to": "knowledge",
-      "label": "hybrid GraphRAG"
+      "to": "graph",
+      "label": "GraphRAG",
+      "labelAt": [
+        584,
+        322
+      ]
     },
     {
       "id": "vector-retrieve",
       "from": "worker",
       "to": "vectors",
-      "label": "retrieve"
+      "label": "하이브리드 검색"
     },
     {
-      "id": "local-infer",
-      "from": "worker",
-      "to": "gemma",
-      "label": "on-device",
-      "variant": "emphasis"
+      "id": "isolate-copy",
+      "from": "kakaotalk",
+      "to": "snapshot",
+      "label": "격리 복사",
+      "variant": "security",
+      "labelAt": [
+        126,
+        322
+      ]
     },
     {
-      "id": "cloud-fallback",
-      "from": "worker",
-      "to": "cloud",
-      "label": "fallback",
-      "variant": "dashed"
+      "id": "ro-index",
+      "from": "snapshot",
+      "to": "graph",
+      "label": "RO 색인",
+      "variant": "security"
     },
     {
-      "id": "deliver-reply",
-      "from": "worker",
-      "to": "cli",
-      "label": "reply"
-      ,"labelDy": -40
-    },
-    {
-      "id": "send-room",
+      "id": "ax-send",
       "from": "cli",
       "to": "kakaotalk",
-      "label": "send"
-      ,"labelDy": 28
-    },
-    {
-      "id": "menu-status",
-      "from": "menu",
-      "to": "supervisor",
-      "label": "health"
-    },
-    {
-      "id": "keep-alive",
-      "from": "supervisor",
-      "to": "worker",
-      "label": "keep-alive"
-      ,"labelDy": 24
+      "label": "AX local-send",
+      "variant": "dashed",
+      "labelAt": [
+        236,
+        322
+      ]
     }
   ],
   "cards": [
     {
-      "dot": "cyan",
-      "title": "Operator",
+      "dot": "amber",
+      "title": "운영 화면",
       "items": [
-        "The menu extra shows room health and on-device verification",
-        "launchd restarts the worker without exposing extra gear menus"
+        "Extra는 골드 코어와 gear만 둔다",
+        "대량 검증·기능 점검·권한 UI는 없다"
       ]
     },
     {
       "dot": "emerald",
-      "title": "Grounding",
+      "title": "격리 색인",
       "items": [
-        "GraphRAG keeps alias hits and ranks exact matches first",
-        "Vector memory stays room-scoped beside the graph"
+        "임시 복사본을 mode=ro·query_only로만 연다",
+        "복사 실패 시 원본을 열지 않는다"
       ]
     },
     {
-      "dot": "rose",
-      "title": "Inference",
+      "dot": "orange",
+      "title": "근거와 추론",
       "items": [
-        "Gemma 4 is recommended by unified memory tier",
-        "Cloud models run only when the local engine cannot answer"
+        "GraphRAG k-hop 2/3/10, 드릴다운은 재색인 없음",
+        "권장 Flash-Next, DREAM-RSI는 receipt, 생성은 fail-closed"
       ]
     }
   ]
