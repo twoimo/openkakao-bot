@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.auto_reply_dream_rsi import (
+    DREAM_REASON_GOLDEN_FILE_MISSING,
     DreamRsiSimulator,
     _candidate_policies,
     answer_similarity,
@@ -431,12 +432,17 @@ class TestDreamLoop(unittest.TestCase):
         self.assertEqual(result["status"], "evaluated")
         self.assertTrue((self.root / "dream-rsi-policy.json").exists())
 
-    def test_loop_without_data_selects_nothing(self):
+    def test_loop_missing_golden_file_fails_closed_without_checkpoint(self):
         result = dream_policy_evaluation(self.root, policies={"blank": lambda row: ""})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], DREAM_REASON_GOLDEN_FILE_MISSING)
         self.assertEqual(result["selected_policy"], "")
-        self.assertEqual(result["status"], "insufficient_data")
+        self.assertEqual(result["status"], "missing_input")
+        self.assertFalse((self.root / "dream-rsi-policy.json").exists())
+        self.assertNotIn(str(self.root), json.dumps(result, ensure_ascii=False))
 
     def test_active_features_follow_actual_policy_definitions(self):
+        _write_golden(self.root, [])
         result = dream_policy_evaluation(
             self.root,
             policies={"first": lambda row: "", "second": lambda row: ""},
@@ -444,10 +450,13 @@ class TestDreamLoop(unittest.TestCase):
         self.assertEqual(result["active_features"], {"first": True, "second": True})
 
     def test_checkpoint_write_errors_are_surfaced(self):
-        blocked_root = self.root / "not-a-directory"
-        blocked_root.write_text("block mkdir", encoding="utf-8")
+        _write_golden(
+            self.root,
+            [{"prompt": "질문", "completion": "답변", "source": "self_history"}],
+        )
+        (self.root / "dream-rsi-policy.json.tmp").mkdir()
         with self.assertRaises(OSError):
-            dream_policy_evaluation(blocked_root, policies={"blank": lambda row: ""})
+            dream_policy_evaluation(self.root, policies={"blank": lambda row: ""})
 
     def test_checkpoint_records_the_gold_source_filter(self):
         self._write_human_and_model_gold()
@@ -515,8 +524,19 @@ class TestDistribution(unittest.TestCase):
 
     def test_distribution_without_data_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
-            report = distribution_report(Path(tmp))
+            root = Path(tmp)
+            _write_golden(root, [])
+            report = distribution_report(root)
+            self.assertTrue(report["ok"])
             self.assertEqual(report["status"], "insufficient_data")
+
+    def test_distribution_missing_golden_file_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = distribution_report(Path(tmp))
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["reason"], DREAM_REASON_GOLDEN_FILE_MISSING)
+            self.assertEqual(report["status"], "missing_input")
+            self.assertNotIn(str(tmp), json.dumps(report, ensure_ascii=False))
 
     def test_distribution_uses_the_same_human_only_filter(self):
         with tempfile.TemporaryDirectory() as tmp:
