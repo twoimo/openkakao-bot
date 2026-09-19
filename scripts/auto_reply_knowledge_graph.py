@@ -37,6 +37,60 @@ PROVENANCE_SEED = "seed"
 PROVENANCE_LEDGER = "ledger"
 MAX_EVIDENCE_PER_NODE = 8
 
+# Every relation stored by the graph is an entity-relation-entity triple.
+# room and time are edge metadata, never nodes: chat/participant/timeline
+# fan-out therefore cannot create an unbounded set of synthetic entities.
+KNOWLEDGE_TRIPLE_FIELDS = ("subject", "predicate", "object", "weight", "room", "time")
+MAX_TRIPLES_PER_SUBJECT_PREDICATE = 12
+MAX_TRIPLE_ID_CHARS = 240
+MAX_TRIPLE_META_CHARS = 240
+_PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+
+def normalize_knowledge_triple(raw: Any) -> dict[str, Any] | None:
+    """Validate and canonicalize one entity-relation-entity triple.
+
+    Empty/malformed triples are rejected before SQLite sees them. room and
+    time may be empty for global/seed relations, but the six fields must be
+    present so every caller uses one explicit contract.
+    """
+    if not isinstance(raw, dict) or any(field not in raw for field in KNOWLEDGE_TRIPLE_FIELDS):
+        return None
+    subject = str(raw.get("subject") or "").strip()
+    predicate = str(raw.get("predicate") or "").strip().upper()
+    object_id = str(raw.get("object") or "").strip()
+    if (
+        not subject
+        or not object_id
+        or subject == object_id
+        or len(subject) > MAX_TRIPLE_ID_CHARS
+        or len(object_id) > MAX_TRIPLE_ID_CHARS
+        or not _PREDICATE_RE.fullmatch(predicate)
+    ):
+        return None
+    weight = raw.get("weight")
+    if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+        return None
+    weight_number = float(weight)
+    if not math.isfinite(weight_number) or not 0 <= weight_number <= 100:
+        return None
+    room = raw.get("room")
+    when = raw.get("time")
+    if room is None or when is None:
+        return None
+    room_text = str(room).strip()
+    time_text = str(when).strip()
+    if len(room_text) > MAX_TRIPLE_META_CHARS or len(time_text) > MAX_TRIPLE_META_CHARS:
+        return None
+    return {
+        "subject": subject,
+        "predicate": predicate,
+        "object": object_id,
+        "weight": int(round(weight_number)),
+        "room": room_text,
+        "time": time_text,
+    }
+
 
 def stable_node_id(entity_id: str) -> int:
     """A row id that is the same in every process.
@@ -204,6 +258,8 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
             target_id TEXT NOT NULL,
             context TEXT NOT NULL,
             weight INTEGER DEFAULT 50,
+            room TEXT NOT NULL DEFAULT '',
+            time TEXT NOT NULL DEFAULT '',
             evidence_json TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL,
             UNIQUE(source_id, relation, target_id)
@@ -223,8 +279,69 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
                 )
             except sqlite3.Error:
                 pass
+        if table == "kg_relations":
+            for column in ("room", "time"):
+                if column in columns:
+                    continue
+                try:
+                    conn.execute(
+                        f"ALTER TABLE kg_relations ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                    )
+                except sqlite3.Error:
+                    pass
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kg_relations_subject_predicate_weight"
+        " ON kg_relations(source_id, relation, weight DESC, updated_at DESC)"
+    )
     conn.commit()
     return conn
+
+
+def upsert_knowledge_triple(
+    conn: sqlite3.Connection,
+    raw: Any,
+    *,
+    context: str = "",
+    updated_at: int | None = None,
+) -> bool:
+    """Store one validated triple only when both endpoints are real entities."""
+    triple = normalize_knowledge_triple(raw)
+    if triple is None:
+        return False
+    rows = conn.execute(
+        "SELECT entity_id FROM kg_entities WHERE entity_id IN (?, ?)",
+        (triple["subject"], triple["object"]),
+    ).fetchall()
+    if len({str(row[0]) for row in rows}) != 2:
+        return False
+    stamp = int(time.time()) if updated_at is None else int(updated_at)
+    conn.execute(
+        """
+        INSERT INTO kg_relations
+            (source_id, relation, target_id, context, weight, room, time, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+            context=excluded.context,
+            weight=excluded.weight,
+            room=excluded.room,
+            time=excluded.time,
+            updated_at=excluded.updated_at
+        """,
+        (
+            triple["subject"],
+            triple["predicate"],
+            triple["object"],
+            str(context or "")[:400],
+            triple["weight"],
+            triple["room"],
+            triple["time"],
+            stamp,
+        ),
+    )
+    return True
+
+
+def read_meta
 
 
 def read_meta(conn: sqlite3.Connection, key: str) -> str:
@@ -281,23 +398,18 @@ def ensure_seeded(conn: sqlite3.Connection) -> None:
             ),
         )
     for r in DEFAULT_RELATIONS:
-        conn.execute(
-            """
-            INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                context=excluded.context,
-                weight=excluded.weight,
-                updated_at=excluded.updated_at
-            """,
-            (
-                r["source_id"],
-                r["relation"],
-                r["target_id"],
-                r["context"],
-                r["weight"],
-                now,
-            ),
+        upsert_knowledge_triple(
+            conn,
+            {
+                "subject": r["source_id"],
+                "predicate": r["relation"],
+                "object": r["target_id"],
+                "weight": r["weight"],
+                "room": "",
+                "time": "",
+            },
+            context=r["context"],
+            updated_at=now,
         )
     conn.commit()
 
@@ -1036,26 +1148,20 @@ def index_topic_relations(
         if left_id not in known or right_id not in known:
             continue
         stats["pairs"] += 1
-        conn.execute(
-            """
-            INSERT INTO kg_relations
-                (source_id, relation, target_id, context, weight, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                context=excluded.context,
-                weight=excluded.weight,
-                updated_at=excluded.updated_at
-            """,
-            (
-                left_id,
-                "CO_OCCURS",
-                right_id,
-                f"같은 메시지에서 {int(count)}번 함께 언급됨",
-                _synapse_weight(count),
-                now,
-            ),
-        )
-        stats["written"] += 1
+        if upsert_knowledge_triple(
+            conn,
+            {
+                "subject": left_id,
+                "predicate": "CO_OCCURS",
+                "object": right_id,
+                "weight": _synapse_weight(count),
+                "room": _room_key(state_root, chat) if chat else "",
+                "time": str(now),
+            },
+            context=f"같은 메시지에서 {int(count)}번 함께 언급됨",
+            updated_at=now,
+        ):
+            stats["written"] += 1
     conn.commit()
     return stats
 
@@ -1110,26 +1216,20 @@ def index_membership_relations(
                     target = f"chat:{room_key}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "TALKED_IN",
-                            target,
-                            f"이 방에서 {int(count or 0):,}건을 남김",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
-                    )
-                    stats["person_chat"] += 1
+                    if upsert_knowledge_triple(
+                        conn,
+                        {
+                            "subject": source,
+                            "predicate": "TALKED_IN",
+                            "object": target,
+                            "weight": _synapse_weight(int(count or 0)),
+                            "room": room_key,
+                            "time": str(now),
+                        },
+                        context=f"이 방에서 {int(count or 0):,}건을 남김",
+                        updated_at=now,
+                    ):
+                        stats["person_chat"] += 1
             except sqlite3.Error:
                 pass
             # 방 → 주제. 방마다 그 주제가 얼마나 나왔는지가 곧 연결 강도다.
@@ -1150,26 +1250,20 @@ def index_membership_relations(
                     target = f"topic:{topic}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "DISCUSSED",
-                            target,
-                            f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
-                    )
-                    stats["chat_topic"] += 1
+                    if upsert_knowledge_triple(
+                        conn,
+                        {
+                            "subject": source,
+                            "predicate": "DISCUSSED",
+                            "object": target,
+                            "weight": _synapse_weight(int(count or 0)),
+                            "room": _room_key(state_root, str(room)),
+                            "time": str(now),
+                        },
+                        context=f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
+                        updated_at=now,
+                    ):
+                        stats["chat_topic"] += 1
             except sqlite3.Error:
                 pass
             # 사람 → 주제. 사람 뉴런은 `person:방:이름` 꼴이라, 그 사람의 메시지에
@@ -1193,26 +1287,21 @@ def index_membership_relations(
                     target = f"topic:{topic}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "TALKS_ABOUT",
-                            target,
-                            f"이 주제로 {int(count or 0):,}건을 말함",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
-                    )
-                    stats["person_topic"] += 1
+                    room_key = _room_key(state_root, str(room))
+                    if upsert_knowledge_triple(
+                        conn,
+                        {
+                            "subject": source,
+                            "predicate": "TALKS_ABOUT",
+                            "object": target,
+                            "weight": _synapse_weight(int(count or 0)),
+                            "room": room_key,
+                            "time": str(now),
+                        },
+                        context=f"이 주제로 {int(count or 0):,}건을 말함",
+                        updated_at=now,
+                    ):
+                        stats["person_topic"] += 1
             except sqlite3.Error:
                 pass
     except sqlite3.Error:
@@ -1220,6 +1309,43 @@ def index_membership_relations(
     conn.commit()
     return stats
 
+
+
+def prune_relation_fanout(
+    conn: sqlite3.Connection,
+    *,
+    max_per_subject_predicate: int = MAX_TRIPLES_PER_SUBJECT_PREDICATE,
+) -> int:
+    """Bound relation fan-out and remove edges whose endpoint disappeared."""
+    limit = max(1, int(max_per_subject_predicate))
+    conn.execute(
+        """
+        DELETE FROM kg_relations
+        WHERE source_id NOT IN (SELECT entity_id FROM kg_entities)
+           OR target_id NOT IN (SELECT entity_id FROM kg_entities)
+        """
+    )
+    rows = conn.execute(
+        """
+        SELECT id, source_id, relation
+        FROM kg_relations
+        ORDER BY source_id, relation, weight DESC, updated_at DESC, id ASC
+        """
+    ).fetchall()
+    counts: dict[tuple[str, str], int] = {}
+    remove: list[int] = []
+    for relation_id, subject, predicate in rows:
+        key = (str(subject), str(predicate))
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] > limit:
+            remove.append(int(relation_id))
+    if remove:
+        for start in range(0, len(remove), 200):
+            chunk = remove[start : start + 200]
+            marks = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM kg_relations WHERE id IN ({marks})", chunk)
+        conn.commit()
+    return len(remove)
 
 
 def prune_indexed_entities(
@@ -1247,6 +1373,7 @@ def prune_indexed_entities(
     지우지 않는다 (2026-09-16).
     """
     cutoff = int(cycle_started_at)
+    fanout_removed = prune_relation_fanout(conn)
     stale = [
         row[0]
         for row in conn.execute(
@@ -1259,7 +1386,7 @@ def prune_indexed_entities(
         )
     ]
     if not stale:
-        return {"nodes": 0, "relations": 0}
+        return {"nodes": 0, "relations": fanout_removed}
     indexed_total = int(
         conn.execute(
             "SELECT COUNT(*) FROM kg_entities"
@@ -1269,8 +1396,8 @@ def prune_indexed_entities(
         ).fetchone()[0]
     )
     if indexed_total and len(stale) > max(int(indexed_total * max(min_keep_ratio, 0.0)), 0):
-        return {"nodes": 0, "relations": 0, "skipped": len(stale)}
-    removed_relations = 0
+        return {"nodes": 0, "relations": fanout_removed, "skipped": len(stale)}
+    removed_relations = fanout_removed
     for start in range(0, len(stale), 200):
         chunk = stale[start : start + 200]
         marks = ",".join("?" * len(chunk))
@@ -2037,10 +2164,27 @@ TYPO_DICTIONARY: dict[str, str] = {
 # 시간대 표현은 같은 시각을 여러 표기로 말한다. 표준형으로 모아 두면 그래프의
 # 시간 노드와 같은 말로 만난다.
 TIME_EXPRESSION_RULES: tuple[tuple[str, str], ...] = (
-    (r"(오늘\s*아침|아침에)", "아침(8시)"),
-    (r"(점심\s*때|점심에)", "점심(12시)"),
-    (r"(저녁\s*때|저녁에|밤에)", "저녁(20시)"),
+    (r"(?:아침에|아침)(?!\(8시\))", "아침(8시)"),
+    (r"(?:점심\s*때|점심에)", "점심(12시)"),
+    (r"(?:저녁\s*때|저녁에|밤에)", "저녁(20시)"),
 )
+_RELATIVE_DAY_RE = re.compile(
+    r"(?<![A-Za-z0-9가-힣])(오늘|어제|내일)(?!\(UTC[+-]\d{2}:\d{2}\))"
+)
+_UTC_OFFSET_RE = re.compile(
+    r"(?<![A-Za-z0-9])UTC\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_KST_RE = re.compile(r"(?<![A-Za-z0-9])KST(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _canonical_utc_offset(match: re.Match[str]) -> str:
+    sign, hour_raw, minute_raw = match.group(1), match.group(2), match.group(3)
+    hour = int(hour_raw)
+    minute = int(minute_raw or 0)
+    if hour > 14 or minute > 59 or (hour == 14 and minute != 0):
+        return match.group(0)
+    return f"UTC{sign}{hour:02d}:{minute:02d}"
 
 
 def normalize_text_query(text: str) -> str:
@@ -2062,6 +2206,11 @@ def normalize_text_query(text: str) -> str:
         normalized = normalized.replace(wrong, right)
     for pattern, replacement in TIME_EXPRESSION_RULES:
         normalized = re.sub(pattern, replacement, normalized)
+    normalized = _KST_RE.sub("UTC+09:00", normalized)
+    normalized = _UTC_OFFSET_RE.sub(_canonical_utc_offset, normalized)
+    normalized = _RELATIVE_DAY_RE.sub(
+        lambda match: f"{match.group(1)}(UTC+09:00)", normalized
+    )
     return normalized
 
 
