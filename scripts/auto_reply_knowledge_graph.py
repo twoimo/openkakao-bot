@@ -1385,7 +1385,6 @@ def prune_indexed_entities(
     지우지 않는다 (2026-09-16).
     """
     cutoff = int(cycle_started_at)
-    fanout_removed = prune_relation_fanout(conn)
     stale = [
         row[0]
         for row in conn.execute(
@@ -1398,7 +1397,7 @@ def prune_indexed_entities(
         )
     ]
     if not stale:
-        return {"nodes": 0, "relations": fanout_removed}
+        return {"nodes": 0, "relations": prune_relation_fanout(conn)}
     indexed_total = int(
         conn.execute(
             "SELECT COUNT(*) FROM kg_entities"
@@ -1408,8 +1407,8 @@ def prune_indexed_entities(
         ).fetchone()[0]
     )
     if indexed_total and len(stale) > max(int(indexed_total * max(min_keep_ratio, 0.0)), 0):
-        return {"nodes": 0, "relations": fanout_removed, "skipped": len(stale)}
-    removed_relations = fanout_removed
+        return {"nodes": 0, "relations": 0, "skipped": len(stale)}
+    removed_relations = prune_relation_fanout(conn)
     for start in range(0, len(stale), 200):
         chunk = stale[start : start + 200]
         marks = ",".join("?" * len(chunk))
