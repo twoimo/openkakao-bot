@@ -743,7 +743,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 (room / module.OPERATOR_REQUEST_NAME).read_text(encoding="utf-8")
             )
             self.assertEqual(request["action"], "auto-reply-now")
-            self.assertNotIn("queue-body-must-never-escape", json.dumps(result))
+            encoded = json.dumps(
+                {"result": result, "request": request}, ensure_ascii=False
+            )
+            for secret in FORBIDDEN:
+                self.assertNotIn(secret, encoded)
             del helper
 
     def test_geeknews_now_writes_operator_request(self):
@@ -762,7 +766,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(request["action"], "geeknews-now")
             self.assertEqual(request["schema_version"], 1)
-            encoded = json.dumps(result, ensure_ascii=False)
+            encoded = json.dumps(
+                {"result": result, "request": request}, ensure_ascii=False
+            )
             for secret in FORBIDDEN:
                 self.assertNotIn(secret, encoded)
             del helper
@@ -846,6 +852,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("roomsExpanded", panel)
         self.assertNotIn("drawStatusRow", panel)
         self.assertNotIn("statusRowTop", panel)
+        self.assertNotIn("LampCell", panel)
+        self.assertNotIn("health-row", panel)
         self.assertNotIn("즉시 답장 보내기", panel)
         self.assertNotIn("긱뉴스 바로 전송", panel)
         self.assertNotIn("대량 검증", source)
@@ -1367,6 +1375,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("#selector(instantAutoReplyClicked)", settings)
         self.assertIn('"긱뉴스 바로 전송"', settings)
         self.assertIn("#selector(instantGeekNewsClicked)", settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-instant-auto")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-instant-geek")', settings)
+        self.assertIn(
+            '[("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]',
+            settings,
+        )
         self.assertIn("--jobs-status", source)
         self.assertNotIn("tileClicked", source)
         self.assertNotIn("func presentGearMenu()", source)
@@ -1387,9 +1401,26 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("if rooms.isEmpty", settings)
         self.assertIn('popup.addItem(withTitle: "고를 방이 없습니다")', settings)
         self.assertIn("popup.isEnabled = false", settings)
-        self.assertIn("let hasRoom = selected != nil", settings)
-        self.assertIn("settingsAutoButton?.isEnabled = hasRoom", settings)
-        self.assertIn("settingsGeekButton?.isEnabled = hasRoom", settings)
+        self.assertIn(
+            "let canAuto = selected.map { $0.live && $0.auto_reply } ?? false",
+            settings,
+        )
+        self.assertIn(
+            "let canGeek = selected.map { $0.live && $0.geeknews } ?? false",
+            settings,
+        )
+        self.assertIn("settingsAutoButton?.isEnabled = canAuto", settings)
+        self.assertIn("settingsGeekButton?.isEnabled = canGeek", settings)
+        room_choice = source[
+            source.index("struct RoomChoice"):
+            source.index("struct AvailableChat"),
+        ]
+        self.assertIn("let auto_reply: Bool", room_choice)
+        self.assertIn("let geeknews: Bool", room_choice)
+        self.assertIn("auto_reply: room.auto_reply", source)
+        self.assertIn("geeknews: room.geeknews", source)
+        self.assertIn("auto_reply: chat.auto_reply", source)
+        self.assertIn("geeknews: chat.geeknews", source)
         self.assertIn("등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다.", settings)
 
     def test_swift_unified_settings_rejects_bad_job_tag(self):
