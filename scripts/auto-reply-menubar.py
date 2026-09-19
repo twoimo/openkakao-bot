@@ -2398,6 +2398,19 @@ def _empty_background_source(kind: str) -> dict[str, Any]:
     return source
 
 
+def _safe_background_token(value: Any, *, limit: int = 32) -> str:
+    """상태 스냅샷에는 닫힌 코드만 싣는다. 임의 문자열이나 본문은 버린다."""
+
+    text = str(value or "").strip().lower()
+    if (
+        not text
+        or len(text) > limit
+        or re.fullmatch(r"[a-z0-9_.:-]+", text) is None
+    ):
+        return ""
+    return text
+
+
 def _background_rank(source: dict) -> tuple[float, int]:
     """전체 값으로 접을 때 어느 방을 남길지 정하는 순서.
 
@@ -2443,8 +2456,8 @@ def _room_db_sync_background(room_dir: Path, now: float) -> dict[str, Any]:
     """카카오톡 DB 동기화가 도는지, 뒤처졌는지, 멈췄는지."""
 
     state = _read_background_state(room_dir / "db-watch-state.json")
-    capability = str(state.get("capability_state") or "").strip()[:32]
-    fence_reason = str(state.get("fence_reason") or "").strip()[:64]
+    capability = _safe_background_token(state.get("capability_state"))
+    fence_reason = _safe_background_token(state.get("fence_reason"), limit=64)
     synced_at = _bounded_epoch(state.get("context_sync_at"))
     due_at = _bounded_epoch(state.get("context_sync_retry_at"))
     heartbeat = _bounded_epoch(state.get("heartbeat_at"))
@@ -2485,9 +2498,11 @@ def _background_sources(room_dir: Path | None, now: float) -> dict[str, Any]:
     else:
         geeknews = _room_geeknews_background(room_dir, now)
         db_sync = _room_db_sync_background(room_dir, now)
+    dominant = max((geeknews, db_sync), key=_background_rank)
     return {
         "activity": max(geeknews["activity"], db_sync["activity"]),
-        "caption": geeknews["caption"] or db_sync["caption"],
+        "code": _safe_background_token(dominant.get("state")) or "unknown",
+        "caption": str(dominant.get("caption") or ""),
         "geeknews": geeknews,
         "db_sync": db_sync,
     }
@@ -2532,19 +2547,28 @@ def _attach_background_state(
     db_sync = _empty_background_source("db_sync")
     activity = 0.0
     caption = ""
+    code = "unknown"
+    overall_rank = (-1.0, -1)
     for entry in entries:
         for kind, target in (("geeknews", geeknews), ("db_sync", db_sync)):
             source = entry[kind]
             if _background_rank(source) > _background_rank(target):
                 target.clear()
                 target.update(source)
-        if entry["activity"] > activity:
-            activity = entry["activity"]
-            caption = entry["caption"]
+        entry_rank = (
+            float(entry.get("activity") or 0.0),
+            0 if entry.get("code") == "unknown" else 1,
+        )
+        if entry_rank > overall_rank:
+            overall_rank = entry_rank
+            activity = entry_rank[0]
+            code = str(entry.get("code") or "unknown")
+            caption = str(entry.get("caption") or "")
     snap = dict(snap)
     snap["background"] = {
         "schema_version": 1,
         "activity": activity,
+        "code": code,
         "caption": caption,
         "geeknews": geeknews,
         "db_sync": db_sync,

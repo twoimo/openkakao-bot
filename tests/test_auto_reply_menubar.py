@@ -870,6 +870,89 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("settingsAutoButton", source)
         self.assertIn("settingsGeekButton", source)
 
+    def test_hologram_background_snapshot_drives_busy_and_idle_without_secrets(self):
+        module = load(f"auto_reply_menubar_hologram_background_{id(self)}")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            room = root / "rooms" / "42"
+            room.mkdir(parents=True)
+            queue = room / "reply-queue.sqlite3"
+            connection = sqlite3.connect(queue)
+            try:
+                connection.execute(
+                    "CREATE TABLE reply_jobs(reason TEXT, status TEXT)"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            now = 1_800_000_000.0
+            base = {"rooms": [{"chat_id": 42}]}
+            (room / "db-watch-state.json").write_text(
+                "{malformed",
+                encoding="utf-8",
+            )
+            idle = module._attach_background_state(base, root, now=now)
+            self.assertEqual(idle["background"]["activity"], 0.0)
+            self.assertEqual(idle["background"]["code"], "idle")
+
+            connection = sqlite3.connect(queue)
+            try:
+                connection.execute(
+                    "INSERT INTO reply_jobs(reason, status) VALUES (?, ?)",
+                    ("geeknews_rss", "processing"),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            (room / "db-watch-state.json").write_text(
+                json.dumps(
+                    {
+                        "capability_state": "ready",
+                        "fence_reason": "secret-headline injected body",
+                        "context_sync_at": now,
+                        "heartbeat_at": now,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            busy = module._attach_background_state(base, root, now=now)
+            self.assertEqual(busy["background"]["activity"], 0.9)
+            self.assertEqual(busy["background"]["code"], "sending")
+            self.assertEqual(busy["background"]["caption"], "긱뉴스 전송 중")
+            encoded = json.dumps(busy["background"], ensure_ascii=False)
+            self.assertNotIn("secret-headline", encoded)
+            self.assertNotIn("injected body", encoded)
+
+    def test_swift_hologram_missing_snapshot_is_idle_and_traced(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        start = source.index("    static func activity(\n")
+        end = source.index("    static func background(\n", start)
+        mapping = source[start:end]
+        self.assertIn(
+            "value = max(value, min(max(background, 0), 1))",
+            mapping,
+        )
+        self.assertNotIn('case "red": value', mapping)
+        self.assertNotIn('case "yellow": value', mapping)
+        self.assertIn(
+            'traceOperatorSurface("menubar snapshot missing; Jarvis idle")',
+            source,
+        )
+        self.assertIn("var snapshotMissingLogged = false", source)
+        self.assertIn(
+            "spawnPulse(strength: 0.45 + currentActivity * 0.55)",
+            source,
+        )
+        self.assertIn(
+            "let boost = 0.35 + currentActivity * 3.0",
+            source,
+        )
+        self.assertIn(
+            "coreView.toolTip = code.isEmpty ? caption",
+            source,
+        )
+
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
 
@@ -3305,6 +3388,44 @@ class AutoReplyMenubarTests(unittest.TestCase):
         # a random layout would look like a different graph every poll.
         self.assertNotIn("Int.random", source[source.find("final class KnowledgeGraphView"):])
         self.assertNotIn("arc4random", source[source.find("final class KnowledgeGraphView"):])
+
+    def test_swift_graph_click_drills_down_to_connected_triples(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        graph_start = source.index("final class KnowledgeGraphView")
+        graph_end = source.index("final class JarvisCoreView", graph_start)
+        graph = source[graph_start:graph_end]
+        mouse_start = graph.index("override func mouseDown")
+        mouse_end = graph.index("func beginFocus", mouse_start)
+        mouse = graph[mouse_start:mouse_end]
+        self.assertIn("beginFocus(on: hit?.id)", mouse)
+        self.assertIn("onSelect?(hit)", mouse)
+        self.assertIn("func focusGroup(around nodeId: String)", graph)
+        self.assertIn("func connectedFacts(around nodeId: String)", graph)
+        self.assertIn("focusProgress", graph)
+        self.assertIn(
+            "let connected = vectorGraphView?.connectedFacts(around: node.id) ?? []",
+            source,
+        )
+        self.assertIn('lines.append("연결 관계")', source)
+
+    def test_swift_graph_malformed_snapshot_falls_back_to_empty_with_trace(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        self.assertIn("@discardableResult", source)
+        self.assertIn("seen.insert(node.id).inserted", source)
+        self.assertIn("nodeIds.contains(edge.source)", source)
+        self.assertIn(
+            'traceOperatorSurface("knowledge-graph snapshot missing or malformed")',
+            source,
+        )
+        self.assertIn(
+            "vectorGraphView?.applySnapshot(nodes: [], edges: [])",
+            source,
+        )
+        self.assertIn("selectVectorRow(forKnowledgeNode: nil)", source)
+        self.assertIn(
+            'traceOperatorSurface("knowledge-graph snapshot sanitized")',
+            source,
+        )
 
     def test_swift_applies_a_graph_snapshot_in_one_layout_pass(self):
         """A snapshot must not settle the force layout twice.

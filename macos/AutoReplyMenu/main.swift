@@ -360,7 +360,9 @@ struct MenubarModel: Decodable {
 /// 코어(파이썬)가 접어 보낸 백그라운드 작업. 화면은 숫자를 그리기만 한다.
 struct BackgroundActivity: Decodable {
     let activity: Double?
+    let code: String?
     let caption: String?
+    let geeknews: BackgroundSource?
     let db_sync: BackgroundSource?
     let rooms: [BackgroundRoom]?
 }
@@ -378,7 +380,9 @@ struct BackgroundSource: Decodable {
 struct BackgroundRoom: Decodable {
     let chat_id: Int?
     let activity: Double?
+    let code: String?
     let caption: String?
+    let geeknews: BackgroundSource?
     let db_sync: BackgroundSource?
 }
 
@@ -1662,20 +1666,33 @@ final class KnowledgeGraphView: NSView {
     /// 그 사이 한 프레임 동안 새 뉴런과 옛 시냅스가 섞여 그려진다. 읽어
     /// 온 그래프는 언제나 통째로 바뀌므로 한 번에 적용한다
     /// (2026-09-17, 6 Pro 지적).
-    func applySnapshot(nodes newNodes: [KnowledgeNode], edges newEdges: [KnowledgeEdge]) {
-        let nodesChanged = newNodes.count != nodes.count
-            || zip(newNodes, nodes).contains { $0.id != $1.id }
-        let edgesChanged = newEdges.count != edges.count
-            || zip(newEdges, edges).contains {
+    @discardableResult
+    func applySnapshot(nodes newNodes: [KnowledgeNode], edges newEdges: [KnowledgeEdge]) -> Bool {
+        var seen = Set<String>()
+        let safeNodes = newNodes.filter { node in
+            let id = node.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !id.isEmpty && seen.insert(node.id).inserted
+        }
+        let nodeIds = Set(safeNodes.map(\.id))
+        let safeEdges = newEdges.filter { edge in
+            edge.source != edge.target
+                && nodeIds.contains(edge.source)
+                && nodeIds.contains(edge.target)
+        }
+        let sanitized = safeNodes.count != newNodes.count || safeEdges.count != newEdges.count
+        let nodesChanged = safeNodes.count != nodes.count
+            || zip(safeNodes, nodes).contains { $0.id != $1.id }
+        let edgesChanged = safeEdges.count != edges.count
+            || zip(safeEdges, edges).contains {
                 $0.source != $1.source || $0.target != $1.target || $0.weight != $1.weight
             }
-        guard nodesChanged || edgesChanged else { return }
+        guard nodesChanged || edgesChanged else { return sanitized }
         applyingSnapshot = true
-        nodes = newNodes
-        edges = newEdges
+        nodes = safeNodes
+        edges = safeEdges
         applyingSnapshot = false
-        // 두 값을 다 넣은 뒤 한 번만 배치한다.
         rebuildLayout()
+        return sanitized
     }
     var selectedNodeId: String?
     var onSelect: ((KnowledgeNode?) -> Void)?
@@ -1694,7 +1711,7 @@ final class KnowledgeGraphView: NSView {
     /// 확대 전환에 걸리는 시간(초).
     static let focusDuration: Double = 0.32
     /// 포커스 애니메이션의 프레임 상한. 코어와 같은 이유로 60fps를 쓰지 않는다.
-    static let focusFramesPerSecond: Double = 60
+    static let focusFramesPerSecond: Double = 30
 
     /// 자비스 코어와 같은 금색 계열 팔레트.
     ///
@@ -1850,6 +1867,31 @@ final class KnowledgeGraphView: NSView {
             keep.insert(id)
         }
         return nodes.filter { keep.contains($0.id) }
+    }
+
+    func connectedFacts(around nodeId: String) -> [String] {
+        let visible = Set(focusGroup(around: nodeId).map(\.id))
+        var labels: [String: String] = [:]
+        for node in nodes where labels[node.id] == nil {
+            labels[node.id] = node.label
+        }
+        return edges
+            .filter { edge in
+                visible.contains(edge.source)
+                    && visible.contains(edge.target)
+                    && (edge.source == nodeId || edge.target == nodeId)
+            }
+            .sorted { left, right in
+                if left.weight != right.weight { return left.weight > right.weight }
+                if left.source != right.source { return left.source < right.source }
+                return left.target < right.target
+            }
+            .prefix(Self.focusNeighborLimit)
+            .map { edge in
+                let subject = labels[edge.source] ?? edge.source
+                let object = labels[edge.target] ?? edge.target
+                return "\(subject) —\(edge.relation)→ \(object)"
+            }
     }
 
     private func fitTransform(
@@ -2754,6 +2796,7 @@ final class JarvisCoreView: NSView {
     private var lastTick: Double = 0
     private var timer: Timer?
     private var pulses: [Pulse] = []
+    private var lastPulseAt: Double = 0
     private var particles: [Particle] = []
     private var random = SeededRandom(seed: 0x5A17C0DE)
     /// 매 프레임 새로 만들지 않고 재사용한다.
@@ -2785,7 +2828,7 @@ final class JarvisCoreView: NSView {
     static func activity(
         pipeline: PipelineModel?,
         openJobs: Int,
-        level: String,
+        level _: String,
         background: Double = 0
     ) -> Double {
         var value = 0.0
@@ -2797,11 +2840,8 @@ final class JarvisCoreView: NSView {
             }
         }
         if openJobs > 0 { value = max(value, 0.35) }
-        switch level {
-        case "red": value = max(value, 0.5)
-        case "yellow": value = max(value, 0.25)
-        default: break
-        }
+        // level은 건강 상태이지 작업량이 아니다. 스냅샷을 못 읽어 red가 된 경우에도
+        // 코어가 바쁘게 돌면 안 되므로 회전은 실제 pipeline/open jobs/background만 본다.
         // 긱뉴스 전송과 DB 동기화는 답변 파이프라인 밖에서 돈다. 코어가 접어
         // 보낸 세기를 그대로 얹어, 그 작업에도 같은 코어가 반응한다.
         value = max(value, min(max(background, 0), 1))
@@ -2816,14 +2856,14 @@ final class JarvisCoreView: NSView {
     static func background(
         _ model: MenubarModel,
         chatId: Int?
-    ) -> (activity: Double, caption: String?) {
+    ) -> (activity: Double, caption: String?, code: String?) {
         let aggregate = model.background
-        let fallback = (aggregate?.activity ?? 0, aggregate?.caption)
+        let fallback = (aggregate?.activity ?? 0, aggregate?.caption, aggregate?.code)
         guard let chatId, let rooms = aggregate?.rooms else { return fallback }
         guard let room = rooms.first(where: { $0.chat_id == chatId }) else {
             return fallback
         }
-        return (room.activity ?? 0, room.caption)
+        return (room.activity ?? 0, room.caption, room.code)
     }
 
     /// 코어 아래 한 줄로 지금 무슨 일이 도는지 말한다.
@@ -2944,6 +2984,12 @@ final class JarvisCoreView: NSView {
         lastTick = now
         let speed = Self.idleSpeed + Self.activeSpeed * currentActivity
         phase = (phase + speed * dt).truncatingRemainder(dividingBy: 2 * Double.pi)
+        if currentActivity >= 0.2 {
+            let pulseInterval = max(0.32, 1.15 - currentActivity * 0.72)
+            if now - lastPulseAt >= pulseInterval {
+                spawnPulse(strength: 0.45 + currentActivity * 0.55)
+            }
+        }
         advanceParticles(dt: dt)
         pulses.removeAll { now - $0.start > Self.pulseLife }
         needsDisplay = true
@@ -2953,7 +2999,9 @@ final class JarvisCoreView: NSView {
         // 파동이 우수수 겹치면 화면이 시끄럽다. 살아 있는 것이 셋을 넘으면
         // 가장 오래된 것을 버린다.
         if pulses.count >= 3 { pulses.removeFirst() }
-        pulses.append(Pulse(start: Date.timeIntervalSinceReferenceDate, strength: strength))
+        let now = Date.timeIntervalSinceReferenceDate
+        pulses.append(Pulse(start: now, strength: strength))
+        lastPulseAt = now
     }
 
     private func advanceParticles(dt: Double) {
@@ -2964,7 +3012,7 @@ final class JarvisCoreView: NSView {
                 particles.append(newParticle())
             }
         }
-        let boost = 1.0 + currentActivity * 1.7
+        let boost = 0.35 + currentActivity * 3.0
         for index in particles.indices {
             particles[index].progress += particles[index].speed * boost * dt
             if particles[index].progress >= 1 {
@@ -3155,7 +3203,7 @@ final class JarvisCoreView: NSView {
                 calibratedRed: 1.0,
                 green: 0.97,
                 blue: 0.85,
-                alpha: 0.22 + 0.7 * near
+                alpha: (0.12 + 0.78 * near) * (0.30 + 0.70 * currentActivity)
             ).setFill()
             NSBezierPath(
                 ovalIn: NSRect(x: x - size, y: y - size, width: size * 2, height: size * 2)
@@ -3254,7 +3302,19 @@ final class MenuPanelView: NSView {
         let level = room?.level ?? model.level
         let background = JarvisCoreView.background(model, chatId: room?.chat_id)
         coreView.level = level
-        coreView.activity = JarvisCoreView.activity(pipeline: pipeline, openJobs: openJobs, level: level, background: background.activity)
+        coreView.activity = JarvisCoreView.activity(
+            pipeline: pipeline,
+            openJobs: openJobs,
+            level: level,
+            background: background.activity
+        )
+        let caption = JarvisCoreView.caption(
+            pipeline: pipeline,
+            openJobs: openJobs,
+            background: background.caption
+        )
+        let code = background.code?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        coreView.toolTip = code.isEmpty ? caption : "\(caption) · \(code)"
         needsDisplay = true
     }
 
@@ -3597,6 +3657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsHealthSummary: NSTextField?
     var settingsSyncStatus: NSTextField?
     var settingsSyncSnapshotMissingLogged = false
+    var snapshotMissingLogged = false
     var settingsSlotFields: [String: NSTextField] = [:]
     var settingsJobButtons: [NSButton] = []
     var settingsAutoButton: NSButton?
@@ -3702,9 +3763,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let fetchToken = modelChangeToken
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let model = self.loadModel() ?? Self.unavailableModel()
+            let loaded = self.loadModel()
+            let model = loaded ?? Self.unavailableModel()
             DispatchQueue.main.async {
                 self.refreshInFlight = false
+                if loaded == nil {
+                    if !self.snapshotMissingLogged {
+                        self.traceOperatorSurface("menubar snapshot missing; Jarvis idle")
+                        self.snapshotMissingLogged = true
+                    }
+                } else {
+                    self.snapshotMissingLogged = false
+                }
                 self.apply(model, modelToken: fetchToken)
                 if self.refreshQueued {
                     self.refreshQueued = false
@@ -7978,14 +8048,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 974pt가 필요하다. 380pt까지 줄어들면 아래 편집 칸이 통째로 사라진다
         // (2026-09-16).
         let window = Chrome.operatorWindow(
-            title: "지식 그래프 (대화 기억)",
+            title: "지식 그래프",
             // 감사에서 스택이 974pt를 차지한다. 720으로 열면 표와 그래프가
             // 서로 높이를 빼앗아 둘 다 좁아진다 (2026-09-16).
             size: NSSize(width: 980, height: 1006),
             autosave: "AutoReplyVector",
             minimum: NSSize(width: 700, height: 700)
         )
-        window.title = "지식 그래프 (대화 기억)"
+        window.title = "지식 그래프"
         window.delegate = self
         let content = NSView()
         window.contentView = content
@@ -7993,7 +8063,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 창이 무엇을 하는지 한 줄. 개념 이름을 나열하던 문장은 아래 표에
         // 같은 이름이 이미 있고, 답변 보장은 여기서 약속할 일이 아니다
         // (2026-09-16).
-        let hint = Chrome.hint("대화에서 정립된 개념과 관계를 모아 둡니다. 답변은 여기서 검색합니다.")
+        let hint = Chrome.hint("개념과 관계를 검색하고 확인합니다.")
         vectorHint = hint
 
         let vectorEmpty = Chrome.statusLabel(size: 12, lines: 3)
@@ -8071,7 +8141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         vectorGraphView = graph
         let graphHint = Chrome.hint(
-            "크기는 중요도, 선 굵기는 관계 강도입니다. 흐린 뉴런은 아직 근거가 없습니다.",
+            "뉴런을 누르면 연결 관계와 근거를 펼칩니다.",
             size: 11
         )
         vectorGraphHint = graphHint
@@ -8768,21 +8838,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             DispatchQueue.main.async {
                 guard token == self.vectorGraphToken else { return }
                 guard let report, report.ok else {
-                    // 읽지 못했다고 이전 그림을 지우지 않는다.
-                    //
-                    // 지우면 한 번의 시간 초과가 화면을 "뉴런이 하나도 없는
-                    // 그래프"로 바꿔, 색인이 멀쩡한데도 사용자에게는 그래프가
-                    // 사라진 것으로 보인다. 그림은 그대로 두고 그 위에
-                    // 마지막으로 읽은 시각을 말한다 (2026-09-17).
-                    let hasPicture = !(self.vectorGraphView?.nodes.isEmpty ?? true)
-                    self.presentVectorGraphError(hasPreviousPicture: hasPicture)
+                    self.traceOperatorSurface("knowledge-graph snapshot missing or malformed")
+                    self.vectorGraphView?.applySnapshot(nodes: [], edges: [])
+                    self.vectorGraphView?.beginFocus(on: nil)
+                    self.selectVectorRow(forKnowledgeNode: nil)
+                    self.presentVectorGraphError(hasPreviousPicture: false)
                     return
                 }
-                self.vectorGraphView?.applySnapshot(nodes: report.nodes, edges: report.edges)
+                let sanitized = self.vectorGraphView?.applySnapshot(
+                    nodes: report.nodes,
+                    edges: report.edges
+                ) ?? false
+                if sanitized {
+                    self.traceOperatorSurface("knowledge-graph snapshot sanitized")
+                }
                 let total = report.node_count
                 let grounded = report.grounded_nodes
-                // 뉴런이 없으면 빈 캔버스를 남기지 않는다.
-                if report.nodes.isEmpty {
+                if self.vectorGraphView?.nodes.isEmpty ?? true {
+                    self.traceOperatorSurface("knowledge-graph snapshot empty")
+                    self.selectVectorRow(forKnowledgeNode: nil)
                     self.vectorGraphPhase = .empty
                     self.hideEmptyKnowledgeGraph()
                     return
@@ -8840,8 +8914,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 데이터를 가리키므로, 표에 없으면 선택만 바꾸지 않고 그대로 둔다.
     func selectVectorRow(forKnowledgeNode node: KnowledgeNode?) {
         guard let node else {
-            // 빈 공간 클릭으로 선택이 해제된 경우 근거 카드를 즉시 닫고,
-            // 힌트 줄도 전체 그림 기준으로 되돌린다 (2026-09-17, 6 Pro 지적).
+            vectorTable?.deselectAll(nil)
+            vectorUserField?.stringValue = ""
+            vectorTopicsField?.stringValue = ""
+            vectorMessageView?.string = ""
+            vectorEmbeddingField?.stringValue = ""
             applyVectorGraphHint(total: vectorGraphTotal, grounded: vectorGraphGrounded)
             applyVectorLayout()
             return
@@ -8864,6 +8941,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if evidence.retracted { lines.append("상태: 철회됨") }
         lines.append("")
         lines.append(contentsOf: node.facts.map { "• \($0)" })
+        let connected = vectorGraphView?.connectedFacts(around: node.id) ?? []
+        if !connected.isEmpty {
+            lines.append("")
+            lines.append("연결 관계")
+            lines.append(contentsOf: connected.map { "• \($0)" })
+        }
         vectorMessageView?.string = lines.joined(separator: "\n")
         vectorEmbeddingField?.stringValue = "지식 그래프 노드 \(node.id)"
         // 확대가 끝난 뒤 힌트 줄이 "무엇을 보고 있는지"를 말한다.
