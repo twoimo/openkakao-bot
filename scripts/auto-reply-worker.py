@@ -2290,6 +2290,11 @@ def archive_terminal_jobs(
 
 
 def enqueue_event(event: dict) -> bool:
+    if event.get("proactive") is not True:
+        reason = _inbound_identity_hold_reason(event)
+        if reason:
+            _trace_turn_hold(event, reason)
+            return False
     event_id = str(event.get("event_id") or "").strip()
     if not event_id:
         return False
@@ -2858,6 +2863,8 @@ def _confirmed_self_reply_log_id(reply: str, after_log_id: int | None) -> int | 
         return None
     for row in reversed(rows):
         if not isinstance(row, dict) or not _is_self_chat_row(row):
+            continue
+        if "chat_id" in row and _fence_int(row["chat_id"]) != _queue_expected_chat_id():
             continue
         if str(row.get("message") or "").strip() != text:
             continue
@@ -4145,12 +4152,10 @@ def _superseded_by(
 
 
 def conversation_advanced_past_event(event: dict) -> bool | None:
-    """Later room rows no longer cancel an earlier unanswered inbound.
-
-    A malformed fence still returns ``None`` so send-readiness can fail closed.
-    Advancement itself is never treated as a skip reason.
-    """
-    tail = _fence_int(event.get("burst_tail_log_id")) or _fence_int(event.get("log_id"))
+    """Only a stable, current room watermark can authorize the queued turn."""
+    tail = _fence_int(event.get("log_id"))
+    if "burst_tail_log_id" in event and _fence_int(event["burst_tail_log_id"]) != tail:
+        return None
     target = _fence_env_int(os.environ.get(TARGET_CHAT_ID_ENV, ""))
     epoch = _fence_env_int(os.environ.get(DB_SOURCE_EPOCH_ENV, ""))
     owner = os.environ.get(SUPERVISOR_OWNER_ENV, "").strip()
@@ -4161,7 +4166,7 @@ def conversation_advanced_past_event(event: dict) -> bool | None:
     second = _read_fence_object(path)
     if first is None or second is None:
         return None
-    if first[0].get("last_observed_log_id") != second[0].get("last_observed_log_id"):
+    if first != second:
         return None
     state = first[0]
     last_observed = state.get("last_observed_log_id")
@@ -4179,7 +4184,77 @@ def conversation_advanced_past_event(event: dict) -> bool | None:
         or not 0 <= last_observed < MAX_INT64
     ):
         return None
-    return False
+    if last_observed < tail:
+        return None
+    return last_observed > tail
+
+
+TURN_HOLD_REASONS = frozenset(
+    {
+        "self_author",
+        "author_identity_drift",
+        "author_not_allowlisted",
+        "conversation_advanced",
+        "burst_superseded",
+        "stale_backlog",
+        "context_freshness_unavailable",
+    }
+)
+
+
+def _trace_turn_hold(event: dict, reason: str) -> None:
+    """Trace a turn hold without exposing chat content or display identity."""
+    safe_reason = reason if reason in TURN_HOLD_REASONS else "context_freshness_unavailable"
+    chat_id = _fence_int(event.get("chat_id")) or 0
+    log_id = _fence_int(event.get("log_id")) or 0
+    try:
+        print(
+            f"[reply-turn] skip={safe_reason} chat_id={chat_id} log_id={log_id}",
+            file=sys.stderr,
+            flush=True,
+        )
+    except OSError:
+        pass
+
+
+def _inbound_identity_hold_reason(event: dict) -> str | None:
+    try:
+        status = numeric_author_identity_status(event)
+    except Exception:
+        status = "drift"
+    return {
+        "allowed": None,
+        "self": "self_author",
+        "not_allowlisted": "author_not_allowlisted",
+    }.get(status, "author_identity_drift")
+
+
+def _reply_turn_hold_reason(
+    event: dict,
+    connection: sqlite3.Connection | None = None,
+) -> str | None:
+    if event.get("proactive") is True:
+        return None
+    reason = _inbound_identity_hold_reason(event)
+    if reason:
+        return reason
+    try:
+        if connection is None:
+            active = getattr(_ACTIVE_JOURNAL, "value", None)
+            if active is not None and active[1] == event.get("event_id"):
+                connection = active[0]
+        if connection is not None and _superseded_by(connection, event):
+            return "burst_superseded"
+        advanced = conversation_advanced_past_event(event)
+        if advanced is not False:
+            return (
+                "conversation_advanced"
+                if advanced is True
+                else "context_freshness_unavailable"
+            )
+    except Exception:
+        return "context_freshness_unavailable"
+    return None
 
 
 def db_state_schema_version() -> int:
@@ -7565,6 +7640,16 @@ def run_context_reply_bundle(message: str, event: dict) -> dict:
     ):
         raise RetrievalError("retrieval_event_identity_malformed")
     sync = sync_live_context_index(chat_id)
+    if event.get("proactive") is not True:
+        checkpoint = _fence_int(sync.get("checkpoint_log_id"))
+        if (
+            sync.get("authoritative") is not True
+            or checkpoint is None
+            or checkpoint < current_log_id
+        ):
+            raise RetrievalError("context_freshness_unavailable")
+        if checkpoint > current_log_id:
+            raise RetrievalError("conversation_advanced")
     event.setdefault("provenance", {})
     if isinstance(event.get("provenance"), dict):
         event["provenance"]["context_sync"] = {
@@ -9754,12 +9839,10 @@ def _is_self_chat_row(row: object) -> bool:
     """Classify self from numeric proof, never from a display name.
 
     `user_id == 0` and `display == my_name` are not sufficient. Injected
-    outbound receipts may omit author_id and set `self_receipt`.
+    outbound receipts may omit author_id, which remains self only with is_self.
     """
     if not isinstance(row, dict) or row.get("is_self") is not True:
         return False
-    if row.get("self_receipt") is True:
-        return True
     raw_id = row.get("author_id")
     if raw_id is None:
         raw_id = row.get("user_id")
@@ -9946,8 +10029,10 @@ def _pre_mutation_send_hold(
     )
     if _past_send_grace(event, effective_upper):
         return "stale_backlog"
-    if conversation_advanced_past_event(event) is True:
-        return "conversation_advanced"
+    reason = _reply_turn_hold_reason(event, connection)
+    if reason:
+        _trace_turn_hold(event, reason)
+        return reason
     return _send_time_repeat_hold(
         event, reply, _event_recent_conversation(event), connection
     )
@@ -11037,6 +11122,7 @@ def _model_fallback_chain(
     *,
     on_attempt=None,
     deadline: float | None = None,
+    turn_guard=None,
 ) -> dict | None:
     """Try each configured fallback model once, in order, until one answers.
 
@@ -11049,6 +11135,11 @@ def _model_fallback_chain(
     """
 
     for candidate in _reply_fallback_candidates():
+        try:
+            if turn_guard is not None and turn_guard():
+                break
+        except Exception:
+            break
         if deadline is not None and deadline - time.monotonic() < MODEL_MIN_DEFER_SECONDS:
             break
         if candidate == active_model:
@@ -11258,6 +11349,7 @@ def generate_reply(
     media_evidence_id: str = "",
     _preacquired_model_slot: dict | None = None,
     _capacity_probe: bool = False,
+    turn_guard=None,
 ) -> dict:
     empty = {
         "should_reply": False,
@@ -11265,6 +11357,30 @@ def generate_reply(
         "reason": "model_unavailable",
         "category": "uncertain",
     }
+    held_reason = None
+
+    def turn_hold() -> dict | None:
+        nonlocal held_reason
+        if turn_guard is None or _capacity_probe:
+            return None
+        if held_reason is None:
+            try:
+                held_reason = turn_guard()
+            except Exception:
+                held_reason = "context_freshness_unavailable"
+        if not held_reason:
+            return None
+        safe_reason = (
+            held_reason
+            if held_reason in TURN_HOLD_REASONS
+            else "context_freshness_unavailable"
+        )
+        held_reason = safe_reason
+        return {**empty, "reason": safe_reason, "category": "policy"}
+
+    held = turn_hold()
+    if held:
+        return held
     if _capacity_probe:
         if _preacquired_model_slot is None:
             raise ValueError("capacity probe requires a pre-acquired model lease")
@@ -11644,6 +11760,9 @@ def generate_reply(
         for path in normalized_image_paths:
             command.append(f"@{path}")
         model_stdin_bytes = gjc_stdin_prefix + prompt_bytes
+    held = turn_hold()
+    if held:
+        return held
     slot = (
         _preacquired_model_slot
         if _capacity_probe
@@ -11661,6 +11780,9 @@ def generate_reply(
     ):
         raise ValueError("capacity probe lease is malformed")
     if not slot["allowed"]:
+        held = turn_hold()
+        if held:
+            return held
         failure_class = str(slot["failure_class"])
         retry_at = float(slot["retry_at"])
         if not _capacity_probe and failure_class not in {"call_in_flight", "circuit_state_invalid"}:
@@ -11675,6 +11797,7 @@ def generate_reply(
                         timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                     ),
                     deadline=generation_deadline,
+                    turn_guard=turn_hold,
                 )
             else:
                 winner = _model_fallback_chain(
@@ -11693,6 +11816,7 @@ def generate_reply(
                         isolate_group=True,
                     ),
                     deadline=generation_deadline,
+                    turn_guard=turn_hold,
                 )
             if winner is not None:
                 slot = {
@@ -11805,6 +11929,7 @@ def generate_reply(
                             timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
                         ),
                         deadline=generation_deadline,
+                        turn_guard=turn_hold,
                     )
                     if winner is not None:
                         # The fallback answered. Close the first attempt, then run
@@ -11892,7 +12017,10 @@ def generate_reply(
 
             try:
                 winner = _model_fallback_chain(
-                    active_model, _run_timeout_candidate, deadline=generation_deadline,
+                    active_model,
+                    _run_timeout_candidate,
+                    deadline=generation_deadline,
+                    turn_guard=turn_hold,
                 )
             except Exception:
                 winner = None
@@ -11958,7 +12086,10 @@ def generate_reply(
                 )
 
             winner = _model_fallback_chain(
-                active_model, _run_candidate, deadline=generation_deadline,
+                active_model,
+                _run_candidate,
+                deadline=generation_deadline,
+                turn_guard=turn_hold,
             )
             if winner is not None:
                 # The fallback answered. Close the first attempt, then run the
@@ -11984,6 +12115,23 @@ def generate_reply(
                     flush=True,
                 )
 
+    held = turn_hold()
+    if held:
+        if returncode == 0:
+            _finish_model_call_success(lease_token, model=active_model)
+        else:
+            failure_class, retry_after = _classify_model_failure(
+                returncode,
+                stdout_bytes,
+                stderr_bytes,
+            )
+            _close_model_lease(
+                lease_token,
+                active_model,
+                failure_class,
+                retry_after_seconds=retry_after,
+            )
+        return with_prompt_receipt(held)
     if returncode != 0:
         print(
             "[reply-gen] runner_failed rc=%s stderr=%r stdout=%r"
@@ -13341,6 +13489,11 @@ def _recover_local_media_bundle(event: dict) -> list[Path] | None:
 def analyze_media_unavailable_clarification(event: dict) -> dict:
     """Build a bounded no-pixel clarification without invoking the model."""
     result = blank_analysis("image_unavailable")
+    reason = _reply_turn_hold_reason(event)
+    if reason:
+        _trace_turn_hold(event, reason)
+        result.update(reason=reason, category="policy")
+        return result
     result["attachment"] = "image"
     provenance = result["provenance"]
     provenance["privacy_attested"] = privacy_attestation_current()
@@ -13466,6 +13619,10 @@ def _prior_is_exact_duplicate(
 
 @perf.timed("auto_reply.analysis")
 def analyze_event(event: dict) -> dict:
+    reason = _reply_turn_hold_reason(event)
+    if reason:
+        _trace_turn_hold(event, reason)
+        return blank_analysis(reason, category="policy")
     message = str(event.get("message") or "").strip()
     attachment = str(event.get("attachment") or "").strip()
     provided_image = str(event.get("image_path") or "").strip()
@@ -13667,20 +13824,15 @@ def analyze_event(event: dict) -> dict:
                 )
                 return result
         except RetrievalError as exc:
-            provenance["retrieval_error"] = str(exc)[:80]
-            context = []
-            styles = []
-            prior_decisions = []
-            style_profile = None
-            recipient_style_profile = None
-            response_time = None
-            if not recent_conversation and not image_paths:
-                result.update(
-                    recent_conversation=recent_conversation,
-                    reason=str(exc)[:80],
-                    category="uncertain",
-                )
-                return result
+            retrieval_reason = str(exc)[:80]
+            provenance["retrieval_error"] = retrieval_reason
+            result.update(
+                recent_conversation=recent_conversation,
+                reason=retrieval_reason,
+                category="uncertain",
+            )
+            _trace_turn_hold(event, retrieval_reason)
+            return result
         if not recent_conversation and not context and not image_paths:
             result.update(
                 recent_conversation=recent_conversation,
@@ -13745,6 +13897,11 @@ def analyze_event(event: dict) -> dict:
             result["reply"] = ""
             return result
 
+        reason = _reply_turn_hold_reason(event)
+        if reason:
+            _trace_turn_hold(event, reason)
+            result.update(reason=reason, category="policy")
+            return result
         provenance["model_invoked"] = runner_is_trusted() and (
             not privacy_required or privacy_attestation_current()
         )
@@ -13767,7 +13924,13 @@ def analyze_event(event: dict) -> dict:
             media_evidence_id=(
                 f"media:{media_bundle_digest}" if image_paths else ""
             ),
+            turn_guard=lambda: _reply_turn_hold_reason(event),
         )
+        reason = _reply_turn_hold_reason(event)
+        if reason:
+            _trace_turn_hold(event, reason)
+            result.update(reason=reason, category="policy", reply="")
+            return result
         # The generation receipt stays with the same event as the retrieval
         # receipt, so the stored decision can be traced to the exact prompt that
         # produced it without holding the prompt text itself.
@@ -14052,6 +14215,8 @@ def durable_policy_skip(
     *,
     category: str = "policy",
 ) -> bool:
+    if reason in TURN_HOLD_REASONS:
+        _trace_turn_hold(event, reason)
     audited_event = dict(event)
     audited_event["event_id"] = event_id
     audited_event["message"] = str(audited_event.get("message") or "").strip() or "[policy_skip]"
@@ -14322,12 +14487,27 @@ def finish_author_identity_policy_skip(
     connection: sqlite3.Connection | None,
     identity_status: str,
 ) -> None:
-    event = release_media_event(event)
     reason = {
         "self": "self_author",
         "not_allowlisted": "author_not_allowlisted",
         "drift": "author_identity_drift",
     }.get(identity_status, "author_identity_drift")
+    finish_turn_policy_skip(event, event_id, connection, reason)
+
+
+def finish_turn_policy_skip(
+    event: dict,
+    event_id: str,
+    connection: sqlite3.Connection | None,
+    reason: str,
+) -> None:
+    if reason == "burst_superseded":
+        finish_burst_superseded(event, event_id, connection)
+        return
+    if reason == "conversation_advanced":
+        finish_conversation_advanced(event, event_id, connection)
+        return
+    event = release_media_event(event)
     if not durable_policy_skip(event, event_id, reason):
         finish_delivery_unknown(
             event,
@@ -14381,14 +14561,9 @@ def process_job(
     ):
         finish_delivery_unknown(event, event_id, connection)
         return
-    identity_status = numeric_author_identity_status(event)
-    if event.get("proactive") is not True and identity_status != "allowed":
-        finish_author_identity_policy_skip(
-            event,
-            event_id,
-            connection,
-            identity_status,
-        )
+    reason = _reply_turn_hold_reason(event, connection)
+    if reason:
+        finish_turn_policy_skip(event, event_id, connection, reason)
         return
 
     if event.get("proactive") is True:
@@ -14815,6 +14990,10 @@ def process_job(
             formed = str(analysis.get("reply") or "").strip()
             if formed:
                 update_job(event_id, connection=connection, reply=formed)
+    reason = _reply_turn_hold_reason(event, connection)
+    if reason:
+        finish_turn_policy_skip(event, event_id, connection, reason)
+        return
     if analysis["decision"] != "reply":
         try:
             model_due_at = _model_defer_due_at(event, analysis)
@@ -16390,6 +16569,8 @@ def main() -> int:
     except (json.JSONDecodeError, OSError):
         emit_ack("skipped", reason="invalid_event")
         return 0
+    if not isinstance(event, dict):
+        return ack_return("skipped", reason="invalid_event")
     event_id = str(event.get("event_id") or "").strip()
     if event.get("chat_name") != CHAT:
         return ack_return("skipped", event_id, "wrong_chat")
@@ -16406,32 +16587,15 @@ def main() -> int:
         return ack_return("skipped", event_id, "auto_reply_disabled")
     if event.get("direction") != "incoming":
         return ack_return("skipped", event_id, "not_incoming")
-    identity_status = numeric_author_identity_status(event)
-    if identity_status == "self":
-        if not durable_policy_skip(event, event_id, "self_author"):
+    reason = _inbound_identity_hold_reason(event)
+    if reason:
+        _trace_turn_hold(event, reason)
+        if not durable_policy_skip(event, event_id, reason):
             return 1
         return ack_return(
             "skipped",
             event_id,
-            "self_author",
-            audit_applied=True,
-        )
-    if identity_status == "drift":
-        if not durable_policy_skip(event, event_id, "author_identity_drift"):
-            return 1
-        return ack_return(
-            "skipped",
-            event_id,
-            "author_identity_drift",
-            audit_applied=True,
-        )
-    if identity_status == "not_allowlisted":
-        if not durable_policy_skip(event, event_id, "author_not_allowlisted"):
-            return 1
-        return ack_return(
-            "skipped",
-            event_id,
-            "author_not_allowlisted",
+            reason,
             audit_applied=True,
         )
     if not event_id:
