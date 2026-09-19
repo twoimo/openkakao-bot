@@ -567,6 +567,32 @@ enum Palette {
 }
 
 enum Chrome {
+    static let hairlineWidth: CGFloat = 0.5
+    static let cardCornerRadius: CGFloat = 9
+    static let emptyStateCornerRadius: CGFloat = 8
+    static let tableCornerRadius: CGFloat = 8
+    static let tableRowHeight: CGFloat = 34
+    static let controlFontSize: CGFloat = 12
+
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
+    static func surfaceFill(for appearance: NSAppearance) -> NSColor {
+        if isDark(appearance) {
+            return NSColor(calibratedWhite: 0.15, alpha: 0.58)
+        }
+        return NSColor.controlBackgroundColor.withAlphaComponent(0.50)
+    }
+
+    static func hairlineColor(for appearance: NSAppearance) -> NSColor {
+        NSColor.separatorColor.withAlphaComponent(isDark(appearance) ? 0.30 : 0.42)
+    }
+
+    static func sectionTitle(_ text: String, color: NSColor = .labelColor) -> NSTextField {
+        label(text, size: 12.5, weight: .semibold, color: color, lines: 1)
+    }
+
     static func operatorWindow(title: String, size: NSSize, autosave: String) -> NSWindow {
         operatorWindow(title: title, size: size, autosave: autosave, minimum: nil)
     }
@@ -600,6 +626,7 @@ enum Chrome {
             height: min(max(minimum?.height ?? floor.height, floor.height), size.height)
         )
         window.setFrameAutosaveName(autosave)
+        window.backgroundColor = .windowBackgroundColor
         window.titlebarSeparatorStyle = .line
         window.center()
         return window
@@ -652,6 +679,9 @@ enum Chrome {
     static func roundedButton(_ title: String, target: AnyObject, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: target, action: action)
         button.bezelStyle = .rounded
+        button.controlSize = .regular
+        button.font = NSFont.systemFont(ofSize: controlFontSize, weight: .medium)
+        button.contentTintColor = .secondaryLabelColor
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setContentHuggingPriority(.required, for: .horizontal)
         return button
@@ -672,6 +702,9 @@ enum Chrome {
         field.action = action
         field.sendsSearchStringImmediately = immediate
         field.sendsWholeSearchString = immediate == false
+        field.controlSize = .regular
+        field.font = NSFont.systemFont(ofSize: controlFontSize)
+        field.bezelStyle = .roundedBezel
         return field
     }
 
@@ -684,7 +717,7 @@ enum Chrome {
         scroll.drawsBackground = false
         scroll.hasHorizontalScroller = false
         let table = NSTableView()
-        table.rowHeight = 32
+        table.rowHeight = tableRowHeight
         // 줄무늬는 행이 있는 자리에만 그린다. AppKit의 교차 배경은 표의
         // 전체 프레임을 칠하므로, 행이 두 개뿐인 창에서 남은 300pt가 회색
         // 줄무늬 여섯 줄로 채워졌다. 표가 아니라 행이 자기 배경을 칠하면
@@ -694,7 +727,7 @@ enum Chrome {
         table.allowsMultipleSelection = false
         table.allowsEmptySelection = true
         table.gridStyleMask = []
-        table.intercellSpacing = NSSize(width: 8, height: 2)
+        table.intercellSpacing = NSSize(width: 8, height: 0)
         table.headerView = NSTableHeaderView()
         // 열 폭은 TableScrollView가 창 폭에 맞춰 정한다. AppKit의 자동 배분을
         // 켜 두면 둘이 서로 다른 값을 밀어 넣어 열이 매번 조금씩 달라진다
@@ -707,7 +740,7 @@ enum Chrome {
         // 카드와 같은 둥근 모서리를 쓴다. 표의 줄무늬가 각진 사각형으로
         // 창 끝까지 차면 카드 사이에서 혼자 튄다 (2026-09-16).
         scroll.wantsLayer = true
-        scroll.layer?.cornerRadius = 8
+        scroll.layer?.cornerRadius = tableCornerRadius
         scroll.layer?.masksToBounds = true
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -786,6 +819,14 @@ enum Chrome {
         let stack = hstack(views + [spacer()], spacing: spacing)
         stack.distribution = .fill
         return stack
+    }
+
+    static func hairlineSeparator() -> NSBox {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.heightAnchor.constraint(equalToConstant: hairlineWidth).isActive = true
+        return separator
     }
 
     static func vstack(_ views: [NSView], spacing: CGFloat = 10) -> NSStackView {
@@ -874,7 +915,7 @@ final class StripedRowView: NSTableRowView {
         // 창에서는 마지막 줄 아래가 통째로 빈 띠가 되어, 감사가 작업 목록
         // 창에서 25pt를 재고 실패했다. 모든 줄에 옅은 바탕을 깔고 홀수 줄만
         // 조금 더 진하게 해 줄무늬는 그대로 남긴다 (2026-09-18).
-        NSColor.labelColor.withAlphaComponent(isOdd ? 0.07 : 0.04).setFill()
+        NSColor.labelColor.withAlphaComponent(isOdd ? 0.035 : 0.018).setFill()
         dirtyRect.fill()
     }
 
@@ -1049,7 +1090,8 @@ final class EmptyStateView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = Chrome.emptyStateCornerRadius
+        layer?.borderWidth = Chrome.hairlineWidth
         applyColors()
 
         symbol.translatesAutoresizingMaskIntoConstraints = false
@@ -1058,18 +1100,18 @@ final class EmptyStateView: NSView {
             pointSize: compact ? 15 : 26,
             weight: .regular
         )
-        symbol.contentTintColor = NSColor.tertiaryLabelColor
+        symbol.contentTintColor = NSColor.secondaryLabelColor.withAlphaComponent(0.62)
         symbol.imageScaling = .scaleProportionallyUpOrDown
         symbol.isHidden = compact
 
-        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
         title.textColor = NSColor.secondaryLabelColor
         title.alignment = .center
         title.maximumNumberOfLines = 2
         title.lineBreakMode = .byWordWrapping
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = NSFont.systemFont(ofSize: 10.5)
         detail.textColor = NSColor.tertiaryLabelColor
         detail.alignment = .center
         detail.maximumNumberOfLines = 3
@@ -1079,7 +1121,7 @@ final class EmptyStateView: NSView {
         let column = NSStackView(views: [symbol, title, detail])
         column.orientation = .vertical
         column.alignment = .centerX
-        column.spacing = compact ? 4 : 8
+        column.spacing = compact ? 3 : 7
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
@@ -1105,9 +1147,8 @@ final class EmptyStateView: NSView {
     }
 
     private func applyColors() {
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
+        layer?.backgroundColor = Chrome.surfaceFill(for: effectiveAppearance).cgColor
+        layer?.borderColor = Chrome.hairlineColor(for: effectiveAppearance).cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1133,8 +1174,8 @@ final class CardView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.borderWidth = 1
+        layer?.cornerRadius = Chrome.cardCornerRadius
+        layer?.borderWidth = Chrome.hairlineWidth
         applyColors()
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
@@ -1153,16 +1194,8 @@ final class CardView: NSView {
     override var isFlipped: Bool { true }
 
     private func applyColors() {
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        if isDark {
-            // 다크 모드: 윈도우 배경(#171717)과 대비를 이루는 부드러운 다크 서피스와 은은한 분리선
-            layer?.backgroundColor = NSColor(white: 0.16, alpha: 0.75).cgColor
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.25).cgColor
-        } else {
-            // 라이트 모드: 순백 배경 위 은은한 컨트롤 배경과 얇고 정돈된 테두리
-            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.70).cgColor
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
-        }
+        layer?.backgroundColor = Chrome.surfaceFill(for: effectiveAppearance).cgColor
+        layer?.borderColor = Chrome.hairlineColor(for: effectiveAppearance).cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -3089,14 +3122,13 @@ final class JarvisCoreView: NSView {
     ///
     /// 예전에는 위도선 다섯 개를 그렸다. 그러면 구가 아니라 줄무늬 공처럼
     /// 보였다. 지금은 기울어진 궤도 고리 세 개를 서로 다른 속도로 돌린다.
-    /// 홀로그램처럼 보이면서, 구가 돌고 있다는 사실도 함께 읽힌다
-    /// (2026-09-17).
+    /// 얇은 금색 선만 남겨 구의 깊이와 회전만 읽히게 한다.
     private func drawSphereRings(center: CGPoint, radius: CGFloat) {
         // 고리마다 기울기와 반지름, 도는 속도를 다르게 준다.
         let orbits: [(tilt: Double, squash: CGFloat, speed: Double, alpha: CGFloat)] = [
-            (0.0, 0.30, 0.6, 0.30),
-            (1.05, 0.42, -0.9, 0.22),
-            (-0.75, 0.36, 1.4, 0.18),
+            (0.0, 0.30, 0.6, 0.22),
+            (1.05, 0.42, -0.9, 0.16),
+            (-0.75, 0.36, 1.4, 0.12),
         ]
         for orbit in orbits {
             let angle = phase * orbit.speed
@@ -3112,7 +3144,7 @@ final class JarvisCoreView: NSView {
                 height: span * 2 * orbit.squash
             )
             let path = NSBezierPath(ovalIn: rect)
-            path.lineWidth = 1
+            path.lineWidth = 0.7
             Self.gold.withAlphaComponent(orbit.alpha).setStroke()
             path.stroke()
         }
@@ -3125,8 +3157,8 @@ final class JarvisCoreView: NSView {
                 height: radius * 2
             )
         )
-        outer.lineWidth = 1
-        Self.gold.withAlphaComponent(0.30).setStroke()
+        outer.lineWidth = 0.75
+        Self.gold.withAlphaComponent(0.22).setStroke()
         outer.stroke()
     }
 
@@ -3260,9 +3292,12 @@ final class MenuPanelView: NSView {
         gearButton.bezelStyle = .inline
         gearButton.isBordered = false
         gearButton.controlSize = .regular
-        gearButton.image = NSImage(systemSymbolName: "gearshape.fill", accessibilityDescription: "설정")
+        gearButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "설정")?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+            )
         gearButton.imagePosition = .imageOnly
-        gearButton.contentTintColor = NSColor.secondaryLabelColor
+        gearButton.contentTintColor = NSColor.secondaryLabelColor.withAlphaComponent(0.74)
         gearButton.toolTip = "설정과 운영 도구 열기"
         gearButton.identifier = NSUserInterfaceItemIdentifier("gear")
         addSubview(gearButton)
@@ -6147,7 +6182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
 
-        let roomTitle = Chrome.label("대상 채팅방", size: 13, weight: .semibold, lines: 1)
+        let roomTitle = Chrome.sectionTitle("대상 채팅방")
         let roomPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         roomPopup.translatesAutoresizingMaskIntoConstraints = false
         roomPopup.target = self
@@ -6165,7 +6200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             blue: 0.36,
             alpha: 1.0
         )
-        let syncTitle = Chrome.label("카카오 DB 동기화 · 색인", size: 13, weight: .semibold, color: jarvisGold, lines: 1)
+        let syncTitle = Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)
         let syncSource = Chrome.label("동기화: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
         let syncCopy = Chrome.label("격리 복제: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
         let syncMode = Chrome.label("색인 모드: WAL · 격리 복제 · mode=ro · query_only", size: 11, color: .secondaryLabelColor, lines: 1)
@@ -6186,7 +6221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             blue: 0.12,
             alpha: 1.0
         )
-        let dreamTitle = Chrome.label("DREAM-RSI", size: 13, weight: .semibold, color: jarvisGold, lines: 1)
+        let dreamTitle = Chrome.sectionTitle("DREAM-RSI", color: jarvisGold)
         let dreamStatus = Chrome.label(
             "status: 확인 중 · selected_policy: none",
             size: 11,
@@ -6207,7 +6242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
         dreamCard.identifier = NSUserInterfaceItemIdentifier("settings-dream-rsi-card")
 
-        let slotsTitle = Chrome.label("GeekNews 슬롯", size: 13, weight: .semibold, lines: 1)
+        let slotsTitle = Chrome.sectionTitle("GeekNews 슬롯")
         let slotSpecs = [("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]
         var slotViews: [NSView] = []
         settingsSlotFields = [:]
@@ -6230,7 +6265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ]
         let primaryActions = Chrome.actionRow(primaryButtons.map { $0 as NSView }, spacing: 8)
 
-        let stack = Chrome.vstack([roomCard, syncCard, dreamCard, slotsCard, primaryActions], spacing: 10)
+        let stack = Chrome.vstack(
+            [roomCard, syncCard, dreamCard, slotsCard, Chrome.hairlineSeparator(), primaryActions],
+            spacing: 10
+        )
         stack.alignment = .width
         Chrome.scrollable(stack, in: content)
         settingsRoomPopup = roomPopup

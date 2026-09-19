@@ -3469,7 +3469,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         ]
         graph_python = (SCRIPTS / "auto_reply_knowledge_graph.py").read_text(encoding="utf-8")
 
-        self.assertIn('Chrome.label("카카오 DB 동기화 · 색인"', settings)
+        self.assertIn('Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-card")', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-copy")', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-mode")', settings)
@@ -3548,6 +3548,65 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn('"--action", "knowledge-graph"', source)
         self.assertIn("refreshKnowledgeGraph", source)
         self.assertIn("selectVectorRow(forKnowledgeNode:", source)
+
+    def test_swift_premium_chrome_uses_quiet_hairline_tokens(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        chrome = source[
+            source.index("enum Chrome {") :
+            source.index("final class FlippedContainerView")
+        ]
+        card = source[
+            source.index("final class CardView") :
+            source.index("/// 레이아웃 감사")
+        ]
+        empty = source[
+            source.index("final class EmptyStateView") :
+            source.index("final class CardView")
+        ]
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()") :
+            source.index("@objc func settingsRoomChanged")
+        ]
+
+        self.assertIn("static let hairlineWidth: CGFloat = 0.5", chrome)
+        self.assertIn("static let cardCornerRadius: CGFloat = 9", chrome)
+        self.assertIn("static let tableRowHeight: CGFloat = 34", chrome)
+        self.assertIn("NSColor.controlBackgroundColor.withAlphaComponent(0.50)", chrome)
+        self.assertIn("static func hairlineSeparator() -> NSBox", chrome)
+        self.assertIn("layer?.borderWidth = Chrome.hairlineWidth", card)
+        self.assertIn("layer?.borderWidth = Chrome.hairlineWidth", empty)
+        self.assertIn('Chrome.sectionTitle("대상 채팅방")', settings)
+        self.assertIn(
+            'Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)',
+            settings,
+        )
+        self.assertIn('Chrome.sectionTitle("DREAM-RSI", color: jarvisGold)', settings)
+        self.assertIn('Chrome.sectionTitle("GeekNews 슬롯")', settings)
+        self.assertIn("Chrome.hairlineSeparator()", settings)
+
+    def test_swift_extra_refines_gear_and_core_without_size_drift(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        core = source[
+            source.index("final class JarvisCoreView") :
+            source.index("final class MenuPanelView")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView") :
+            source.index("final class CenteredLabelCell")
+        ]
+
+        self.assertIn('NSImage(systemSymbolName: "gearshape"', panel)
+        self.assertNotIn('NSImage(systemSymbolName: "gearshape.fill"', panel)
+        self.assertIn(
+            "NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)",
+            panel,
+        )
+        self.assertIn("path.lineWidth = 0.7", core)
+        self.assertIn("outer.lineWidth = 0.75", core)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
 
     def test_swift_cards_grow_with_their_content(self):
         """A card must take its height from its content.
