@@ -3297,19 +3297,6 @@ final class MenuPanelView: NSView {
         bounds.fill()
     }
 
-    static func healthTooltip(_ health: [String: String]) -> String {
-        let lamps: [(String, String)] = [
-            ("감시", health["watchdog"] ?? "off"),
-            ("감독", health["supervisor"] ?? "off"),
-            ("카톡창", health["ax"] ?? "off"),
-            ("답변 워커", health["worker"] ?? "off"),
-            ("AI 모델", health["model"] ?? "off"),
-        ]
-        let off = lamps.filter { $0.1 != "ok" }.map { $0.0 }
-        if off.isEmpty { return "구성 요소 다섯이 모두 켜져 있습니다." }
-        return "점검이 필요한 구성 요소: " + off.joined(separator: " · ")
-    }
-
     static func compact(_ value: Int) -> String {
         if value >= 1000 { return String(format: "%.1fk", Double(value) / 1000.0) }
         return String(value)
@@ -3627,8 +3614,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsWindow: NSWindow?
     var settingsRoomPopup: NSPopUpButton?
     var settingsRoomSummary: NSTextField?
-    var settingsHealthLamps: [String: LampCell] = [:]
-    var settingsHealthSummary: NSTextField?
     var settingsSyncSource: NSTextField?
     var settingsSyncCopy: NSTextField?
     var settingsSyncMode: NSTextField?
@@ -3640,7 +3625,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsSyncRefreshInFlight = false
     var settingsSyncLastRefreshAt: TimeInterval = 0
     var settingsSlotFields: [String: NSTextField] = [:]
-    var settingsJobButtons: [NSButton] = []
     var menuTracking = false
     var refreshInFlight = false
     var refreshQueued = false
@@ -5851,7 +5835,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         fitJobsWindow()
         // 설정 창의 autosave는 운영자가 마지막으로 늘린 프레임을 복원할 수 있다.
         // 감사는 그 개인 상태가 아니라 설계 기본 크기를 재야 재현 가능하다.
-        settingsWindow?.setContentSize(NSSize(width: 640, height: 458))
+        settingsWindow?.setContentSize(NSSize(width: 640, height: 400))
         for entry in windows {
             guard let window = entry.1, let content = window.contentView else { continue }
             // 창을 옮기고 크기를 바꾸면 AppKit이 그 프레임을 autosave 이름에
@@ -6148,9 +6132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard settingsWindow == nil else { return }
         let window = Chrome.operatorWindow(
             title: "Jarvis 운영 설정",
-            size: NSSize(width: 640, height: 458),
+            size: NSSize(width: 640, height: 400),
             autosave: "openkakao.unified-settings",
-            minimum: NSSize(width: 600, height: 420)
+            minimum: NSSize(width: 600, height: 380)
         )
         window.delegate = self
         guard let content = window.contentView else {
@@ -6167,29 +6151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let roomSummary = Chrome.statusLabel(size: 11, lines: 2)
         let roomCard = Chrome.card(
             Chrome.vstack([Chrome.hstack([roomTitle, roomPopup, Chrome.spacer()], spacing: 10), roomSummary], spacing: 6),
-            padding: 12
-        )
-
-        let healthTitle = Chrome.label("건강", size: 13, weight: .semibold, lines: 1)
-        let healthSpecs: [(String, String)] = [
-            ("watchdog", "감시"), ("supervisor", "감독"), ("ax", "카톡창"),
-            ("worker", "답변 워커"), ("model", "AI 모델"),
-        ]
-        var healthViews: [NSView] = []
-        settingsHealthLamps = [:]
-        for (key, title) in healthSpecs {
-            let lamp = LampCell(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
-            lamp.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                lamp.widthAnchor.constraint(equalToConstant: 18),
-                lamp.heightAnchor.constraint(equalToConstant: 18),
-            ])
-            settingsHealthLamps[key] = lamp
-            healthViews.append(Chrome.hstack([lamp, Chrome.label(title, size: 11, lines: 1)], spacing: 3))
-        }
-        let healthSummary = Chrome.statusLabel(size: 11, lines: 2)
-        let healthCard = Chrome.card(
-            Chrome.vstack([healthTitle, Chrome.hstack(healthViews + [Chrome.spacer()], spacing: 10), healthSummary], spacing: 6),
             padding: 12
         )
 
@@ -6264,26 +6225,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ]
         let primaryActions = Chrome.actionRow(primaryButtons.map { $0 as NSView }, spacing: 8)
 
-        let jobsTitle = Chrome.label("작업 목록", size: 13, weight: .semibold, lines: 1)
-        let jobTitles = ["열림", "전송", "건너뜀", "미확인"]
-        settingsJobButtons = []
-        for (index, title) in jobTitles.enumerated() {
-            let button = Chrome.roundedButton(title, target: self, action: #selector(settingsJobClicked(_:)))
-            button.tag = index
-            button.identifier = NSUserInterfaceItemIdentifier("settings-job-\(Self.jobKinds[index])")
-            settingsJobButtons.append(button)
-        }
-        let jobsCard = Chrome.card(
-            Chrome.vstack([jobsTitle, Chrome.actionRow(settingsJobButtons.map { $0 as NSView }, spacing: 8)], spacing: 6),
-            padding: 12
-        )
-
-        let stack = Chrome.vstack([roomCard, healthCard, syncCard, dreamCard, slotsCard, primaryActions, jobsCard], spacing: 10)
+        let stack = Chrome.vstack([roomCard, syncCard, dreamCard, slotsCard, primaryActions], spacing: 10)
         stack.alignment = .width
         Chrome.scrollable(stack, in: content)
         settingsRoomPopup = roomPopup
         settingsRoomSummary = roomSummary
-        settingsHealthSummary = healthSummary
         settingsSyncSource = syncSource
         settingsSyncCopy = syncCopy
         settingsSyncMode = syncMode
@@ -6303,15 +6249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         inspectRoom(chatId)
-    }
-
-    @objc func settingsJobClicked(_ sender: NSButton) {
-        let tag = sender.tag
-        guard tag >= 0, tag < Self.jobKinds.count else {
-            traceOperatorSurface("settings-job invalid tag=\(tag)")
-            return
-        }
-        showJobsWindow(status: Self.jobKinds[tag])
     }
 
     func loadSettingsSyncStatus() -> KnowledgeGraphReport? {
@@ -6469,16 +6406,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         settingsRoomSummary?.stringValue = selected.map {
             "\($0.title) · \($0.live ? "동작 중" : "동작 꺼짐")"
         } ?? "등록된 채팅방이 없습니다."
-
-        let health = model.health ?? [:]
-        for (key, lamp) in settingsHealthLamps {
-            let value = health[key] ?? "off"
-            lamp.on = value == "ok"
-            lamp.color = Palette.lamp(value)
-            lamp.toolTip = "\(key): \(value)"
-            lamp.needsDisplay = true
-        }
-        settingsHealthSummary?.stringValue = MenuPanelView.healthTooltip(health)
 
         let day = MenuPanelView.kstDay()
         let posted = Set(selected?.geeknews_slots ?? [])

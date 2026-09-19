@@ -867,7 +867,6 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("func ensureUnifiedSettingsWindow()", source)
         self.assertNotIn("func presentGearMenu()", source)
         self.assertIn("settingsRoomPopup", source)
-        self.assertIn("settingsHealthLamps", source)
         self.assertIn("settingsSlotFields", source)
         self.assertNotIn("settingsAutoButton", source)
         self.assertNotIn("settingsGeekButton", source)
@@ -876,11 +875,18 @@ class AutoReplyMenubarTests(unittest.TestCase):
             source.index("func ensureUnifiedSettingsWindow()"):
             source.index("@objc func settingsRoomChanged")
         ]
-        self.assertIn("size: NSSize(width: 640, height: 458)", settings)
-        self.assertIn("minimum: NSSize(width: 600, height: 420)", settings)
+        self.assertNotIn("settingsHealthLamps", settings)
+        self.assertNotIn("settingsHealthSummary", settings)
+        self.assertNotIn('Chrome.label("건강"', settings)
+        self.assertNotIn('"점검이 필요한 구성 요소', settings)
+        self.assertNotIn('"작업 목록"', settings)
+        self.assertNotIn("settingsJobButtons", settings)
+        self.assertNotIn("settingsJobClicked", settings)
+        self.assertIn("size: NSSize(width: 640, height: 400)", settings)
+        self.assertIn("minimum: NSSize(width: 600, height: 380)", settings)
         self.assertIn("stack.alignment = .width", settings)
         self.assertIn("Chrome.scrollable(stack, in: content)", settings)
-        self.assertIn("settingsWindow?.setContentSize(NSSize(width: 640, height: 458))", source)
+        self.assertIn("settingsWindow?.setContentSize(NSSize(width: 640, height: 400))", source)
 
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
@@ -1366,7 +1372,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.assertNotIn(secret, encoded)
             del helper
 
-    def test_swift_tiles_open_job_window(self):
+    def test_swift_unified_settings_keeps_only_status_and_primary_navigation(self):
         source = SWIFT.read_text(encoding="utf-8")
         settings = source[
             source.index("func ensureUnifiedSettingsWindow()"):
@@ -1374,16 +1380,17 @@ class AutoReplyMenubarTests(unittest.TestCase):
         ]
         self.assertIn('"온디바이스 모델 설정"', settings)
         self.assertIn("#selector(showModelSettingsWindow)", settings)
-        self.assertIn('Chrome.label("건강"', settings)
         self.assertIn('"채팅방 관리"', settings)
         self.assertIn("#selector(showRoomsWindow)", settings)
         self.assertIn('"답변 기록"', settings)
         self.assertIn("#selector(showLogWindow)", settings)
         self.assertIn('"지식 그래프"', settings)
         self.assertIn("#selector(showVectorWindow)", settings)
-        self.assertIn('"작업 목록"', settings)
-        self.assertIn("#selector(settingsJobClicked(_:))", settings)
-        self.assertIn("showJobsWindow(status: Self.jobKinds[tag])", settings)
+        self.assertNotIn('Chrome.label("건강"', settings)
+        self.assertNotIn('"점검이 필요한 구성 요소', settings)
+        self.assertNotIn('"작업 목록"', settings)
+        self.assertNotIn("#selector(settingsJobClicked(_:))", settings)
+        self.assertNotIn("settingsJobButtons", settings)
         self.assertNotIn('"즉시 답장 보내기"', settings)
         self.assertNotIn("#selector(instantAutoReplyClicked)", settings)
         self.assertNotIn('"긱뉴스 바로 전송"', settings)
@@ -1397,6 +1404,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             settings,
         )
         self.assertIn("--jobs-status", source)
+        self.assertIn("func showJobsWindow(status: String)", source)
         self.assertNotIn("tileClicked", source)
         self.assertNotIn("func presentGearMenu()", source)
 
@@ -1431,15 +1439,16 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("geeknews: chat.geeknews", source)
         self.assertIn("등록된 채팅방이 없습니다.", settings)
 
-    def test_swift_unified_settings_rejects_bad_job_tag(self):
+    def test_swift_jobs_window_remains_without_unified_settings_shortcut(self):
         source = SWIFT.read_text(encoding="utf-8")
-        handler = source[
-            source.index("@objc func settingsJobClicked"):
-            source.index("func updateUnifiedSettingsWindow")
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func showRoomsWindow()")
         ]
-        self.assertIn("guard tag >= 0, tag < Self.jobKinds.count else", handler)
-        self.assertIn('traceOperatorSurface("settings-job invalid tag=\\(tag)")', handler)
-        self.assertIn("showJobsWindow(status: Self.jobKinds[tag])", handler)
+        self.assertNotIn("settingsJobClicked", settings)
+        self.assertNotIn("settings-job-", settings)
+        self.assertIn("func showJobsWindow(status: String)", source)
+        self.assertIn('static let jobKinds = ["open", "sent", "skipped", "unknown"]', source)
 
     def test_swift_operator_surface_failure_logs_are_payload_free(self):
         source = SWIFT.read_text(encoding="utf-8")
