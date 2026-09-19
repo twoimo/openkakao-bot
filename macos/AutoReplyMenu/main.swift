@@ -3641,8 +3641,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var settingsSyncLastRefreshAt: TimeInterval = 0
     var settingsSlotFields: [String: NSTextField] = [:]
     var settingsJobButtons: [NSButton] = []
-    var settingsAutoButton: NSButton?
-    var settingsGeekButton: NSButton?
     var menuTracking = false
     var refreshInFlight = false
     var refreshQueued = false
@@ -5652,28 +5650,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refresh()
     }
 
-    @objc func instantAutoReplyClicked() {
-        guard let model = lastModel,
-              let room = Self.selectedRoom(in: model, preferred: inspectedRoomId) else {
-            traceOperatorSurface("instant auto-reply blocked: no room")
-            alertOperator(title: "보낼 채팅방이 없습니다", message: "채팅방 관리에서 방을 등록한 뒤 다시 시도해 주세요.")
-            return
-        }
-        inspectedRoomId = room.chat_id
-        runOperatorAction("auto-reply-now", chatId: room.chat_id)
-    }
-
-    @objc func instantGeekNewsClicked() {
-        guard let model = lastModel,
-              let room = Self.selectedRoom(in: model, preferred: inspectedRoomId) else {
-            traceOperatorSurface("instant GeekNews blocked: no room")
-            alertOperator(title: "보낼 채팅방이 없습니다", message: "채팅방 관리에서 방을 등록한 뒤 다시 시도해 주세요.")
-            return
-        }
-        inspectedRoomId = room.chat_id
-        runOperatorAction("geeknews-now", chatId: room.chat_id)
-    }
-
     func runOperatorAction(_ action: String, chatId: Int = 0) {
         if (action == "auto-reply-now" || action == "geeknews-now") && chatId <= 0 {
             traceOperatorSurface("operator action rejected: missing chat id")
@@ -6302,19 +6278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
-        let instantTitle = Chrome.label("바로 실행", size: 13, weight: .semibold, lines: 1)
-        let auto = Chrome.roundedButton("즉시 답장 보내기", target: self, action: #selector(instantAutoReplyClicked))
-        let geek = Chrome.roundedButton("긱뉴스 바로 전송", target: self, action: #selector(instantGeekNewsClicked))
-        auto.identifier = NSUserInterfaceItemIdentifier("settings-instant-auto")
-        geek.identifier = NSUserInterfaceItemIdentifier("settings-instant-geek")
-        settingsAutoButton = auto
-        settingsGeekButton = geek
-        let instantCard = Chrome.card(
-            Chrome.vstack([instantTitle, Chrome.actionRow([auto as NSView, geek as NSView], spacing: 8)], spacing: 6),
-            padding: 12
-        )
-
-        let stack = Chrome.vstack([roomCard, healthCard, syncCard, dreamCard, slotsCard, primaryActions, jobsCard, instantCard], spacing: 10)
+        let stack = Chrome.vstack([roomCard, healthCard, syncCard, dreamCard, slotsCard, primaryActions, jobsCard], spacing: 10)
         stack.alignment = .width
         Chrome.scrollable(stack, in: content)
         settingsRoomPopup = roomPopup
@@ -6502,13 +6466,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
 
-        let canAuto = selected.map { $0.live && $0.auto_reply } ?? false
-        let canGeek = selected.map { $0.live && $0.geeknews } ?? false
-        settingsAutoButton?.isEnabled = canAuto
-        settingsGeekButton?.isEnabled = canGeek
         settingsRoomSummary?.stringValue = selected.map {
             "\($0.title) · \($0.live ? "동작 중" : "동작 꺼짐")"
-        } ?? "등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다."
+        } ?? "등록된 채팅방이 없습니다."
 
         let health = model.health ?? [:]
         for (key, lamp) in settingsHealthLamps {

@@ -869,8 +869,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("settingsRoomPopup", source)
         self.assertIn("settingsHealthLamps", source)
         self.assertIn("settingsSlotFields", source)
-        self.assertIn("settingsAutoButton", source)
-        self.assertIn("settingsGeekButton", source)
+        self.assertNotIn("settingsAutoButton", source)
+        self.assertNotIn("settingsGeekButton", source)
         self.assertIn('entry["identifier"] = identifier', source)
         settings = source[
             source.index("func ensureUnifiedSettingsWindow()"):
@@ -1384,12 +1384,14 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn('"작업 목록"', settings)
         self.assertIn("#selector(settingsJobClicked(_:))", settings)
         self.assertIn("showJobsWindow(status: Self.jobKinds[tag])", settings)
-        self.assertIn('"즉시 답장 보내기"', settings)
-        self.assertIn("#selector(instantAutoReplyClicked)", settings)
-        self.assertIn('"긱뉴스 바로 전송"', settings)
-        self.assertIn("#selector(instantGeekNewsClicked)", settings)
-        self.assertIn('NSUserInterfaceItemIdentifier("settings-instant-auto")', settings)
-        self.assertIn('NSUserInterfaceItemIdentifier("settings-instant-geek")', settings)
+        self.assertNotIn('"즉시 답장 보내기"', settings)
+        self.assertNotIn("#selector(instantAutoReplyClicked)", settings)
+        self.assertNotIn('"긱뉴스 바로 전송"', settings)
+        self.assertNotIn("#selector(instantGeekNewsClicked)", settings)
+        self.assertNotIn('NSUserInterfaceItemIdentifier("settings-instant-auto")', settings)
+        self.assertNotIn('NSUserInterfaceItemIdentifier("settings-instant-geek")', settings)
+        self.assertNotIn("func instantAutoReplyClicked()", source)
+        self.assertNotIn("func instantGeekNewsClicked()", source)
         self.assertIn(
             '[("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]',
             settings,
@@ -1405,7 +1407,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("menu.addItem(graphic)", build)
         self.assertNotIn("NSMenuItem(title:", build)
 
-    def test_swift_unified_settings_empty_room_disables_send(self):
+    def test_swift_unified_settings_empty_room_is_read_only(self):
         source = SWIFT.read_text(encoding="utf-8")
         settings = source[
             source.index("func updateUnifiedSettingsWindow"):
@@ -1414,16 +1416,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("if rooms.isEmpty", settings)
         self.assertIn('popup.addItem(withTitle: "고를 방이 없습니다")', settings)
         self.assertIn("popup.isEnabled = false", settings)
-        self.assertIn(
-            "let canAuto = selected.map { $0.live && $0.auto_reply } ?? false",
-            settings,
-        )
-        self.assertIn(
-            "let canGeek = selected.map { $0.live && $0.geeknews } ?? false",
-            settings,
-        )
-        self.assertIn("settingsAutoButton?.isEnabled = canAuto", settings)
-        self.assertIn("settingsGeekButton?.isEnabled = canGeek", settings)
+        self.assertNotIn("settingsAutoButton", settings)
+        self.assertNotIn("settingsGeekButton", settings)
+        self.assertNotIn('"바로 실행"', settings)
         room_choice = source[
             source.index("struct RoomChoice"):
             source.index("struct AvailableChat")
@@ -1434,7 +1429,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("geeknews: room.geeknews", source)
         self.assertIn("auto_reply: chat.auto_reply", source)
         self.assertIn("geeknews: chat.geeknews", source)
-        self.assertIn("등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다.", settings)
+        self.assertIn("등록된 채팅방이 없습니다.", settings)
 
     def test_swift_unified_settings_rejects_bad_job_tag(self):
         source = SWIFT.read_text(encoding="utf-8")

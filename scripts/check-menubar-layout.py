@@ -132,13 +132,29 @@ def menu_panel_surface_violations(rows: list[dict]) -> dict[str, list[str]]:
             issues.append(f"buttons={len(buttons)}")
 
         forbidden_titles = {"즉시 답장 보내기", "긱뉴스 바로 전송"}
-        forbidden_markers = ("room-popup", "health-row", "tile-")
+        forbidden_markers = ("room-popup", "health-row", "tile-", "settings-instant-")
         for row in direct:
             if row.get("text") in forbidden_titles:
                 issues.append(f"action:{row.get('text')}")
             if any(marker in row["path"] for marker in forbidden_markers):
                 issues.append(f"legacy:{row['path']}")
 
+        if issues:
+            complaints[window] = issues
+    return complaints
+
+
+def unified_settings_identifier_violations(rows: list[dict]) -> dict[str, list[str]]:
+    """Reject instant-action identifiers in the unified settings dumps."""
+
+    complaints: dict[str, list[str]] = {}
+    for window in ("settings", "settings-dark"):
+        issues = [
+            str(row.get("identifier"))
+            for row in rows
+            if row["window"] == window
+            and str(row.get("identifier") or "").startswith("settings-instant-")
+        ]
         if issues:
             complaints[window] = issues
     return complaints
@@ -521,6 +537,8 @@ def main(argv: list[str]) -> int:
     # menu extra는 Jarvis 코어와 우측 상단 gear 두 요소만 가진다.
     for window, issues in menu_panel_surface_violations(result["rows"]).items():
         problems.append(f"{window}: core+gear 구성 위반 {issues}")
+    for window, issues in unified_settings_identifier_violations(result["rows"]).items():
+        problems.append(f"{window}: 즉시 실행 identifier 금지 위반 {issues}")
     for issue in menu_panel_source_violations():
         problems.append(f"menu-panel: 소스 구성 위반 {issue}")
 
