@@ -35,8 +35,34 @@ _FROZEN = Path(__file__).resolve().with_name(
 # Source-audit token kept from JOB_REASON_LABELS: "geeknews_rss": "긱뉴스"
 
 
+def _install_source_import_stubs() -> None:
+    """Install inert names needed to import the source without the frozen runtime."""
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    def _empty_models(*_args, **_kwargs):
+        return {"providers": [], "model": ""}
+
+    globals().update(
+        {
+            "_WRAPPER_ONLY_FLAGS": set(),
+            "VECTOR_LIST_SOURCES": frozenset(),
+            "main": lambda *_args, **_kwargs: 0,
+            "set_reply_model": _noop,
+            "collect_reply_models": _empty_models,
+            "add_api_provider": _noop,
+            "collect_vector_list": _noop,
+            "upsert_vector_row": _noop,
+        }
+    )
+
+
 def _bootstrap() -> None:
     if not _FROZEN.is_file() or _FROZEN.is_symlink():
+        if os.environ.get("OPENKAKAO_MENUBAR_SOURCE_IMPORT") == "1":
+            _install_source_import_stubs()
+            return
         raise RuntimeError("frozen_menubar_missing")
     code = marshal.loads(_FROZEN.read_bytes()[16:])
     ns = globals()
