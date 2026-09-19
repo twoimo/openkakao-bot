@@ -161,7 +161,14 @@ def menu_panel_source_violations() -> list[str]:
         "let coreView = JarvisCoreView(frame: .zero)",
         'NSUserInterfaceItemIdentifier("gear")',
         "static let panelWidth: CGFloat = 276",
+        "static let panelBaseHeight: CGFloat = 260",
         "static let coreSize: CGFloat = 236",
+        "static let gearSize: CGFloat = 28",
+        "addSubview(coreView)",
+        "addSubview(gearButton)",
+        "x: (width - Self.coreSize) / 2",
+        "x: width - Self.panelInset - Self.gearSize",
+        "y: Self.panelInset",
     )
     forbidden = (
         "tileButtons",
@@ -172,6 +179,8 @@ def menu_panel_source_violations() -> list[str]:
         "roomsExpanded",
         "drawStatusRow",
         "statusRowTop",
+        "LampCell",
+        "health-row",
         "즉시 답장 보내기",
         "긱뉴스 바로 전송",
     )
