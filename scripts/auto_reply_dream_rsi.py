@@ -53,6 +53,7 @@ GOLD_SOURCE_HUMAN_AND_MODEL = "human_and_model"
 # measure is deliberately simple and deterministic: it ranks candidate
 # policies, and it never pretends to be a language-quality judge.
 MAX_EVAL_ROWS = 400
+DREAM_REASON_GOLDEN_FILE_MISSING = "golden_file_missing"
 
 
 def _char_ngrams(text: str, n: int = 2) -> Counter:
@@ -323,8 +324,26 @@ def dream_policy_evaluation(
 ) -> dict[str, Any]:
     """Run the offline dreaming loop and write the winning checkpoint."""
     root = state_root or _default_state_root()
-    simulator = DreamRsiSimulator(root, limit=limit, allow_model_gold=allow_model_gold)
     candidates = _candidate_policies() if policies is None else policies
+    golden = root / "golden" / "reply-golden.jsonl"
+    if not golden.is_file():
+        return {
+            "ok": False,
+            "reason": DREAM_REASON_GOLDEN_FILE_MISSING,
+            "status": "missing_input",
+            "replay_rows": 0,
+            "gold_rows": 0,
+            "excluded_model_gold": 0,
+            "gold_source_policy": (
+                GOLD_SOURCE_HUMAN_AND_MODEL if allow_model_gold else GOLD_SOURCE_HUMAN_ONLY
+            ),
+            "parse_errors": 0,
+            "evaluations": {},
+            "selected_policy": "",
+            "active_features": {name: True for name in candidates},
+        }
+
+    simulator = DreamRsiSimulator(root, limit=limit, allow_model_gold=allow_model_gold)
 
     evaluations = {name: simulator.replay_policy(fn) for name, fn in candidates.items()}
     usable = {n: e for n, e in evaluations.items() if e["status"] == "evaluated"}
@@ -333,6 +352,8 @@ def dream_policy_evaluation(
         winner = max(usable.items(), key=lambda item: item[1]["objective_score"])[0]
 
     checkpoint = {
+        "ok": True,
+        "reason": "",
         "schema_version": DEFAULT_SCHEMA_VERSION,
         "dreamed_at": int(time.time()),
         "replay_rows": len(simulator.rows),
@@ -370,6 +391,17 @@ def distribution_report(
     operator's own answers (2026-09-19).
     """
     root = state_root or _default_state_root()
+    golden = root / "golden" / "reply-golden.jsonl"
+    if not golden.is_file():
+        return {
+            "ok": False,
+            "reason": DREAM_REASON_GOLDEN_FILE_MISSING,
+            "rows": 0,
+            "status": "missing_input",
+            "excluded_model_gold": 0,
+            "gold_source_policy": GOLD_SOURCE_HUMAN_ONLY,
+        }
+
     counters: dict[str, int] = {}
     rows = load_replay_rows(root, limit, counters=counters)
     gold_filter = {
@@ -377,10 +409,12 @@ def distribution_report(
         "gold_source_policy": GOLD_SOURCE_HUMAN_ONLY,
     }
     if not rows:
-        return {"rows": 0, "status": "insufficient_data", **gold_filter}
+        return {"ok": True, "reason": "", "rows": 0, "status": "insufficient_data", **gold_filter}
     lengths = sorted(len(row["gold"]) for row in rows)
     rooms = Counter(str(row.get("room") or "") for row in rows)
     return {
+        "ok": True,
+        "reason": "",
         "rows": len(rows),
         **gold_filter,
         "length_p10": lengths[len(lengths) // 10],
