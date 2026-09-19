@@ -47,7 +47,7 @@
       "id": "menu",
       "type": "frontend",
       "label": "Menu Extra",
-      "sublabel": "status + models",
+      "sublabel": "Jarvis core + gear",
       "pos": [250, 120],
       "size": [132, 60],
       "tag": "AppKit",
@@ -198,7 +198,7 @@
       "id": "menu-status",
       "from": "menu",
       "to": "supervisor",
-      "label": "health"
+      "label": "operator state"
     },
     {
       "id": "keep-alive",
@@ -213,8 +213,8 @@
       "dot": "cyan",
       "title": "Operator",
       "items": [
-        "The menu extra shows room health and on-device verification",
-        "launchd restarts the worker without exposing extra gear menus"
+        "The menu extra renders only the Jarvis core and top-right gear",
+        "The gear opens one operator window for models, rooms, logs, jobs, graph, health, slots, and instant actions"
       ]
     },
     {
