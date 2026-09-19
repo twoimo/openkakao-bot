@@ -821,126 +821,46 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_swift_draws_pipeline_and_rooms(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn("class PipelineView", source)
-        self.assertIn("class MenuPanelView", source)
-        # 메뉴 패널의 주인공은 자비스 홀로그램 코어다. 예전에 이 자리를
-        # 차지하던 MiniPipelineView는 쓰는 곳이 없어 없앴다 (2026-09-17).
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
         self.assertIn("class JarvisCoreView", source)
-        self.assertNotIn("class MiniPipelineView", source)
-        self.assertNotIn("for line in model.menu_lines", source)
-        self.assertIn("showRoomsWindow", source)
-        self.assertIn("toggleRoomListClicked", source)
-        self.assertIn("inspectRoomButtonClicked", source)
-        self.assertIn("applyRoomList", source)
-        self.assertIn("roomsExpanded", source)
-        self.assertIn("tileY", source)
-        self.assertIn("roomGridColumns", source)
-        self.assertIn("roomGridExtra", source)
-        self.assertIn("layoutWidth", source)
-        self.assertIn("intrinsicContentSize", source)
-        self.assertIn("panelBaseHeight", source)
-        self.assertIn("max(bounds.width, Self.panelWidth)", source)
-        self.assertIn("layoutRoomGrid", source)
-        self.assertIn("button.isHidden = true", source)
-        self.assertIn("roomsListExpanded = false", source)
-        # 코어 좌우에 이름표를 세로로 늘어놓던 줄은 코어 아래 한 줄로
-        # 합쳐졌다. 점등은 자리로, 이름은 툴팁으로 읽는다 (2026-09-19).
-        self.assertIn("statusRowTop", source)
-        self.assertIn("drawStatusRow", source)
-        self.assertIn("healthTooltip", source)
-        self.assertNotIn("lampY", source)
-        self.assertNotIn("보고 있는 방", source)
-        self.assertIn("chat.catalog || chat.live", source)
-        self.assertIn("inspectableRooms", source)
-        self.assertIn("selectedRoom", source)
-        self.assertIn("24 + titleSize.width", source)
-        self.assertIn("statusPill.midY - captionSize.height / 2", source)
-        self.assertIn("catalog-upsert", source)
-        self.assertIn("statusImage", source)
-        self.assertNotIn(
-            "NSBezierPath(ovalIn: NSRect(x: 1, y: 2, width: 10, height: 10))",
-            source,
-        )
-        self.assertIn("let size = NSSize(width: 18, height: 14)", source)
-        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
-        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
-        self.assertIn("func presentGearMenu()", source)
-        self.assertIn("available_chats", source)
-        self.assertIn('"제목"', source)
-        self.assertIn('title: "추가"', source)
-        self.assertIn('title: "삭제"', source)
-        self.assertNotIn('placeholderString = "id"', source)
-        self.assertIn("systemGray", source)
-        self.assertIn('case "off"', source)
-        self.assertIn("즉시 답장 보내기", source)
-        self.assertIn("긱뉴스 바로 전송", source)
-        self.assertNotIn("menuAutoReplyItem", source)
-        self.assertNotIn("menuGeekNewsItem", source)
-        self.assertNotIn("let autoNow = NSMenuItem(", source)
-        self.assertNotIn("let geekNow = NSMenuItem(", source)
-        self.assertIn("auto-reply-now", source)
-        self.assertIn("geeknews-now", source)
-        self.assertNotIn("Reveal Logs", source)
-        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 완전히 빠졌다.
-        # 창 코드는 남아 있지만 메뉴 항목은 없어야 한다 (2026-09-16).
-        self.assertNotIn('title: "자가 진단…"', source)
-        self.assertNotIn('title: "자가 점검…"', source)
-        self.assertNotIn('title: "자가 개선…"', source)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
+        self.assertIn("x: width - Self.panelInset - Self.gearSize", panel)
+        self.assertIn("y: Self.panelInset", panel)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("coreView.activity = JarvisCoreView.activity(", panel)
+        self.assertIn("JarvisCoreView.background(model, chatId:", panel)
+
+        # The menu extra itself is only the Jarvis core plus the top-right gear.
+        self.assertNotIn("tileButtons", panel)
+        self.assertNotIn("tileClicked", panel)
+        self.assertNotIn('"room-popup"', panel)
+        self.assertNotIn("roomGridExtra", panel)
+        self.assertNotIn("layoutRoomGrid", panel)
+        self.assertNotIn("roomsExpanded", panel)
+        self.assertNotIn("drawStatusRow", panel)
+        self.assertNotIn("statusRowTop", panel)
+        self.assertNotIn("즉시 답장 보내기", panel)
+        self.assertNotIn("긱뉴스 바로 전송", panel)
+        self.assertNotIn("대량 검증", source)
+        self.assertNotIn("기능 점검", source)
         self.assertNotIn("showImproveWindow", source)
-        # 자가 개선 파이프라인은 사용자 요청으로 통째로 없앴다. 그 파이프라인이
-        # 쓰던 진행 문구·램프 갱신도 함께 사라졌다 (2026-09-17).
-        self.assertNotIn("runImprovePipeline", source)
-        self.assertNotIn("improve-prep", source)
-        self.assertNotIn("improve-launch", source)
-        self.assertNotIn("updateComponentLamps", source)
-        # 구성요소 램프는 메뉴 패널에 그대로 남아 있다. 자가 점검 창이
-        # 사라진 뒤로는 이 화면이 상태를 보여 주는 유일한 자리다.
-        self.assertIn('("창", health["ax"] ?? "off")', source)
-        self.assertIn('("감시", health["watchdog"] ?? "off")', source)
-        # 자가 개선 파이프라인은 파이썬 쪽에서도 함께 없앴다 (2026-09-17).
-        self.assertNotIn("improve-prep", MENUBAR.read_text())
-        self.assertNotIn("improve-launch", MENUBAR.read_text())
-        self.assertNotIn("showDoctorWindow", source)
-        self.assertNotIn("ensureDoctorWindow", source)
-        self.assertNotIn("TUI 열기", source)
-        self.assertNotIn("openTui", source)
-        self.assertNotIn("Open TUI", source)
-        self.assertNotIn("--tui-command", source)
-        self.assertNotIn("--tui-script", source)
-        self.assertIn('("geek", "긱뉴스"', source)
-        self.assertNotIn('("geek", "Geek"', source)
-        self.assertIn('("catalog", "추가됨"', source)
-        self.assertLess(source.find('("live", "동작"'), source.find('("catalog", "추가됨"'))
-        self.assertLess(source.find('("geek", "긱뉴스"'), source.find('("catalog", "추가됨"'))
-        self.assertIn("roomsTableClicked", source)
-        self.assertIn("toggleRoomCatalog", source)
-        self.assertIn("upsertRoomFlags", source)
-        # The hint has to keep saying which switches drag the others along;
-        # everything else about it was cut as explanation clutter
-        # (2026-09-16).
-        self.assertIn("칸을 눌러 켜고 끕니다", source)
-        self.assertIn("답변·긱뉴스를 켜면 동작도 함께 켜집니다", source)
-        self.assertIn("func reusedLamp", source)
-        self.assertIn("final class LampCell", source)
-        self.assertIn("toggleRoomLive", source)
-        # 등록과 실행은 다른 사실이라 다른 표시를 가져야 한다. 예전에는
-        # live || catalog를 한 초록 점으로 그려서, 목록에만 넣어 둔 방과
-        # 지금 도는 방이 똑같이 보였다 (2026-09-16, 6 Pro 지적).
-        self.assertNotIn("chat.live || chat.catalog", source)
-        self.assertIn("on: chat.live,", source)
-        # 목록에만 있고 아직 돌지 않는 방은 그 사실을 도움말로 말한다.
-        self.assertIn("목록에만 있고 아직 돌지 않습니다", source)
-        self.assertIn('"geeknews_rss": "긱뉴스"', MENUBAR.read_text())
-        # 자가 점검 창은 사용자 요청으로 창째로 없앴다. 그 창이 쓰던
-        # 다시 점검·자가 개선 단추와 필터도 함께 사라졌다 (2026-09-17).
-        self.assertNotIn("doctor-heal", source)
-        self.assertNotIn("doctorFilterChanged", source)
-        self.assertNotIn("자가 개선", source)
-        self.assertNotIn("자가 점검", source)
-        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 빠졌다. 창 코드와
-        # 파이프라인 문구는 남지만 메뉴 항목은 없어야 한다 (2026-09-16).
-        self.assertNotIn('title: "자가 진단…"', source)
-        self.assertNotIn('title: "자가 점검…"', source)
+        self.assertNotIn("showOnboarding", source)
+
+        self.assertIn("self?.showUnifiedSettingsWindow()", source)
+        self.assertIn("func ensureUnifiedSettingsWindow()", source)
+        self.assertNotIn("func presentGearMenu()", source)
+        self.assertIn("settingsRoomPopup", source)
+        self.assertIn("settingsHealthLamps", source)
+        self.assertIn("settingsSlotFields", source)
+        self.assertIn("settingsAutoButton", source)
+        self.assertIn("settingsGeekButton", source)
 
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
@@ -1426,51 +1346,90 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.assertNotIn(secret, encoded)
             del helper
 
-    def test_swift_tiles_open_job_window(self):
+    def test_swift_unified_settings_opens_job_window(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn("tileClicked", source)
-        self.assertIn("showJobsWindow", source)
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func showRoomsWindow()")
+        ]
+        self.assertIn('"AI 모델 설정"', settings)
+        self.assertIn("#selector(showModelSettingsWindow)", settings)
+        self.assertIn('"채팅방 관리"', settings)
+        self.assertIn("#selector(showRoomsWindow)", settings)
+        self.assertIn('"답변 기록"', settings)
+        self.assertIn("#selector(showLogWindow)", settings)
+        self.assertIn('"지식 그래프"', settings)
+        self.assertIn("#selector(showVectorWindow)", settings)
+        self.assertIn('"작업 목록"', settings)
+        self.assertIn("#selector(settingsJobClicked(_:))", settings)
+        self.assertIn("showJobsWindow(status: Self.jobKinds[tag])", settings)
+        self.assertIn('"즉시 답장 보내기"', settings)
+        self.assertIn("#selector(instantAutoReplyClicked)", settings)
+        self.assertIn('"긱뉴스 바로 전송"', settings)
+        self.assertIn("#selector(instantGeekNewsClicked)", settings)
         self.assertIn("--jobs-status", source)
-        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
-        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
-        self.assertIn("func presentGearMenu()", source)
-        self.assertIn("작업 목록", source)
-        self.assertNotIn('title: "Rooms…"', source)
-        self.assertIn("jobsSkipClicked", source)
-        self.assertIn("restoreRoomsSelection", source)
-        # 머리글은 본문과 같은 쪽에 붙는다. 열마다 정렬이 다르므로 창 하나를
-        # 통째로 보고 판단하지 않고, 열을 만드는 한 곳에서 정하게 한다
-        # (2026-09-16).
-        self.assertIn("column.headerCell.alignment = alignment", source)
-        self.assertIn("alignment: spec.0 == \"title\" ? .left : .center", source)
-        self.assertIn("roomsTableClicked", source)
-        self.assertIn("lamp.interactive = interactive", source)
-        self.assertIn("final class CenteredLabelCell", source)
-        self.assertIn("field.centerYAnchor.constraint(equalTo: centerYAnchor)", source)
-        self.assertIn("(cell.label.cell as? NSTextFieldCell)?.alignment = .center", source)
-        self.assertIn("-> CenteredLabelCell", source)
-        self.assertIn("채팅방을 창으로 띄워 주세요", source)
-        self.assertIn("미확인 건너뛰기", source)
-        self.assertIn("jobsFilterChanged", source)
-        self.assertIn("NSSegmentedControl", source)
-        self.assertIn("enum Chrome", source)
-        # 패널은 코어 아래 한 줄로 상태를 모은 뒤 360pt로 좁아졌고, 코어는
-        # 168pt로 커졌다. 좌우 빈칸을 없애는 것이 목적이었다 (2026-09-19).
-        self.assertIn("static let panelWidth: CGFloat = 360", source)
-        self.assertIn("static let coreSize: CGFloat = 168", source)
-        # 패널 높이는 조각을 이어 붙여 계산한다. 숫자를 따로 박아 두면 조각을
-        # 고칠 때마다 아래가 겹치거나 빈 띠가 남는다 (2026-09-16).
-        self.assertIn("static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset", source)
-        self.assertIn("static let sectionGap: CGFloat = 10", source)
-        self.assertIn("static let tileTop: CGFloat = roomGridTop", source)
-        self.assertIn("static let actionTop: CGFloat = tileTop + tileHeight + sectionGap", source)
-        self.assertIn("vectorCompactStatusLine", source)
-        self.assertNotIn("count) 멈춤", source)
-        self.assertIn("vectorStatusLine", source)
-        self.assertNotIn("CGPoint(x: 16, y: 186)", source)
-        self.assertIn("NSSearchField", source)
+        self.assertNotIn("tileClicked", source)
+        self.assertNotIn("func presentGearMenu()", source)
 
+        build = source[
+            source.index("func buildMenu(_ model: MenubarModel)"):
+            source.index("func applyImageReplyModelSelection")
+        ]
+        self.assertIn("menu.addItem(graphic)", build)
+        self.assertNotIn("NSMenuItem(title:", build)
 
+    def test_swift_unified_settings_empty_room_disables_send(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func updateUnifiedSettingsWindow"):
+            source.index("func traceOperatorSurface")
+        ]
+        self.assertIn("if rooms.isEmpty", settings)
+        self.assertIn('popup.addItem(withTitle: "고를 방이 없습니다")', settings)
+        self.assertIn("popup.isEnabled = false", settings)
+        self.assertIn("let hasRoom = selected != nil", settings)
+        self.assertIn("settingsAutoButton?.isEnabled = hasRoom", settings)
+        self.assertIn("settingsGeekButton?.isEnabled = hasRoom", settings)
+        self.assertIn("등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다.", settings)
+
+    def test_swift_unified_settings_rejects_bad_job_tag(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        handler = source[
+            source.index("@objc func settingsJobClicked"):
+            source.index("func updateUnifiedSettingsWindow")
+        ]
+        self.assertIn("guard tag >= 0, tag < Self.jobKinds.count else", handler)
+        self.assertIn('traceOperatorSurface("settings-job invalid tag=\\(tag)")', handler)
+        self.assertIn("showJobsWindow(status: Self.jobKinds[tag])", handler)
+
+    def test_swift_operator_surface_failure_logs_are_payload_free(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        result = source[
+            source.index("func presentOperatorResult"):
+            source.index("func alertOperator")
+        ]
+        self.assertIn("guard let data else", result)
+        self.assertIn("operator action failed without response", result)
+        self.assertIn("operator action returned invalid response", result)
+
+        trace = source[
+            source.index("func traceOperatorSurface"):
+            source.index("@objc func showRoomsWindow")
+        ]
+        self.assertIn(".prefix(240)", trace)
+        self.assertIn('replacingOccurrences(of: "\\n", with: " ")', trace)
+        self.assertNotIn("JSONSerialization", trace)
+        self.assertNotIn("api_key", trace.lower())
+        self.assertNotIn("token", trace.lower())
+
+        action = source[
+            source.index("func runOperatorAction"):
+            source.index("func presentOperatorResult")
+        ]
+        self.assertIn('var extra = ["--action", action]', action)
+        self.assertIn('["--chat-id", String(chatId)]', action)
+        self.assertNotIn("--message", action)
+        self.assertNotIn("--api-key", action)
 
     def test_vector_crud_roundtrip_on_temp_db(self):
         with tempfile.TemporaryDirectory() as temporary:
