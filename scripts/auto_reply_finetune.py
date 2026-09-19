@@ -82,6 +82,21 @@ class TrainingPlan:
         return asdict(self)
 
 
+@dataclass
+class DPOPlan:
+    """Prepared preference data and DPO knobs; no trainer is launched here."""
+
+    model: str
+    preference_path: str
+    pair_count: int
+    beta: float = 0.1
+    method: str = "dpo"
+    command: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def load_pairs(path: Path) -> list[dict[str, Any]]:
     """Read the golden JSONL, skipping rows that cannot be trained on."""
     if not path.is_file():
@@ -389,6 +404,146 @@ def prepare_dataset(
     return summary, splits
 
 
+def _explicit_rejected(record: dict[str, Any]) -> str:
+    """Read an explicit rejected candidate without exposing it in reports."""
+    for key in ("rejected", "rejected_completion", "candidate_reply", "model_reply"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def prepare_dpo_preferences(
+    *,
+    golden_path: Path,
+    output_path: Path,
+    instruction: str = DEFAULT_INSTRUCTION,
+) -> dict[str, Any]:
+    """Prepare chosen/rejected rows from the golden set without training.
+
+    Explicit rejected candidates win. When the golden row has no rejected
+    candidate, the next different answer from the same room is used as a
+    deterministic in-room negative. Missing or insufficient input fails closed:
+    no output file is created or replaced.
+    """
+    if not golden_path.is_file():
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "ok": False,
+            "reason": "golden_missing",
+            "pairs": 0,
+            "skipped": 0,
+        }
+    records = load_pairs(golden_path)
+    if len(records) < 2:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "ok": False,
+            "reason": "preference_pairs_unavailable",
+            "pairs": 0,
+            "skipped": len(records),
+        }
+
+    by_room: dict[str, list[int]] = {}
+    for index, record in enumerate(records):
+        room = str(record.get("room") or "")
+        by_room.setdefault(room, []).append(index)
+
+    rows: list[dict[str, str]] = []
+    skipped = 0
+    for index, record in enumerate(records):
+        shaped = _to_mlx_row(record, instruction)
+        chosen = str(record.get("completion") or "").strip()
+        rejected = _explicit_rejected(record)
+        if rejected == chosen:
+            rejected = ""
+        if not rejected:
+            room = str(record.get("room") or "")
+            candidates = by_room.get(room, [])
+            if len(candidates) < 2:
+                candidates = list(range(len(records)))
+            try:
+                start = candidates.index(index)
+            except ValueError:
+                start = -1
+            for offset in range(1, len(candidates) + 1):
+                candidate = records[candidates[(start + offset) % len(candidates)]]
+                candidate_completion = str(candidate.get("completion") or "").strip()
+                candidate_prompt = str(candidate.get("prompt") or "").strip()
+                if (
+                    candidate_completion
+                    and candidate_completion != chosen
+                    and candidate_prompt != str(record.get("prompt") or "").strip()
+                ):
+                    rejected = candidate_completion
+                    break
+        if not rejected:
+            skipped += 1
+            continue
+        rows.append(
+            {
+                "prompt": shaped["prompt"],
+                "chosen": chosen,
+                "rejected": rejected,
+            }
+        )
+
+    if not rows:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "ok": False,
+            "reason": "preference_pairs_unavailable",
+            "pairs": 0,
+            "skipped": skipped,
+        }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_suffix(output_path.suffix + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + chr(10))
+        tmp.replace(output_path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "ok": False,
+            "reason": "preference_write_failed",
+            "pairs": 0,
+            "skipped": skipped,
+        }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ok": True,
+        "reason": "prepared",
+        "pairs": len(rows),
+        "skipped": skipped,
+        "file": output_path.name,
+    }
+
+
+def plan_dpo_training(
+    *,
+    model: str,
+    preference_path: Path,
+    pair_count: int,
+    beta: float = 0.1,
+) -> DPOPlan | None:
+    """Describe a DPO run only after its preference file exists."""
+    if not preference_path.is_file() or pair_count <= 0:
+        return None
+    return DPOPlan(
+        model=model,
+        preference_path=str(preference_path),
+        pair_count=int(pair_count),
+        beta=float(beta),
+    )
+
+
 def _parse_test_loss(output: str) -> float | None:
     """Pull the reported loss out of mlx_lm.lora test output."""
     for line in reversed(output.splitlines()):
@@ -588,6 +743,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="한 세션으로 묶을 최대 시간 간격(초). 같은 그룹은 한 split에만 들어감",
     )
     parser.add_argument("--prepare-only", action="store_true", help="데이터만 만들고 학습은 안 함")
+    parser.add_argument("--dpo-prepare", action="store_true", help="골든 데이터에서 DPO 선호쌍만 준비")
+    parser.add_argument("--dpo-output", type=Path, default=None, help="DPO 선호쌍 JSONL 출력 경로")
+    parser.add_argument("--dpo-beta", type=float, default=0.1, help="DPO 계획의 beta 값")
     parser.add_argument("--train", action="store_true", help="실제 학습을 실행")
     parser.add_argument("--evaluate", action="store_true", help="학습 전후 손실을 비교")
     parser.add_argument("--test-batches", type=int, default=4)
@@ -602,6 +760,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     data_dir = (args.data_dir or state_root / "finetune" / "data").expanduser()
     adapter_path = (args.adapter_path or state_root / "finetune" / "adapter").expanduser()
     model = _resolve_model(args.model)
+
+    if args.dpo_prepare:
+        preference_path = (
+            args.dpo_output or state_root / "finetune" / "dpo" / "preferences.jsonl"
+        ).expanduser()
+        dpo = prepare_dpo_preferences(
+            golden_path=golden,
+            output_path=preference_path,
+        )
+        report: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "dpo": dpo,
+        }
+        plan = plan_dpo_training(
+            model=model,
+            preference_path=preference_path,
+            pair_count=int(dpo.get("pairs") or 0),
+            beta=args.dpo_beta,
+        )
+        if plan is not None:
+            report["plan"] = plan.to_dict()
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            if dpo.get("ok"):
+                print(f"DPO 선호쌍: {dpo['pairs']}개 → {preference_path}")
+            else:
+                print(f"DPO 준비 실패: {dpo.get('reason', 'unknown')}")
+        return 0 if dpo.get("ok") else 2
 
     summary, _ = prepare_dataset(
         golden_path=golden,
