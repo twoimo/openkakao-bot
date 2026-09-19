@@ -436,13 +436,13 @@ def prepare_dpo_preferences(
             "skipped": 0,
         }
     records = load_pairs(golden_path)
-    if len(records) < 2:
+    if not records:
         return {
             "schema_version": SCHEMA_VERSION,
             "ok": False,
             "reason": "preference_pairs_unavailable",
             "pairs": 0,
-            "skipped": len(records),
+            "skipped": 0,
         }
 
     rows: list[dict[str, str]] = []
