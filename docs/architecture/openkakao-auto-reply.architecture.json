@@ -52,7 +52,7 @@
       "size": [132, 60],
       "tag": "AppKit",
       "sources": [
-        { "path": "macos/AutoReplyMenu/main.swift", "line": 5430, "label": "model window" }
+        { "path": "macos/AutoReplyMenu/main.swift", "label": "core + unified settings" }
       ]
     },
     {
