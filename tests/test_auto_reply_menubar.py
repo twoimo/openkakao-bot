@@ -1423,6 +1423,21 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("geeknews: chat.geeknews", source)
         self.assertIn("등록된 채팅방이 없어 바로 실행을 사용할 수 없습니다.", settings)
 
+    def test_swift_unified_settings_missing_sync_snapshot_is_safe(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func updateUnifiedSettingsWindow"):
+            source.index("func traceOperatorSurface")
+        ]
+        self.assertIn("let db_sync: BackgroundSource?", source)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-status")', source)
+        self.assertIn(
+            'settingsSyncStatus?.stringValue = "동기화 상태 없음 · 0% · unknown"',
+            settings,
+        )
+        self.assertIn('traceOperatorSurface("settings-sync snapshot missing")', settings)
+        self.assertIn('Chrome.roundedButton("지식 그래프"', source)
+
     def test_swift_unified_settings_rejects_bad_job_tag(self):
         source = SWIFT.read_text(encoding="utf-8")
         handler = source[
