@@ -3620,6 +3620,96 @@ class AutoReplyMenubarTests(unittest.TestCase):
         # The audit has to run after the run loop laid the views out.
         self.assertIn("DispatchQueue.main.async { [weak self] in", source)
 
+    def test_swift_log_empty_state_replaces_the_table(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        ensure_start = source.index("func ensureLogWindow()")
+        ensure_end = source.index("func fitLogTableHeight()", ensure_start)
+        ensure = source[ensure_start:ensure_end]
+        self.assertIn(
+            'EmptyStateView(symbolName: "clock.arrow.circlepath", compact: true)',
+            ensure,
+        )
+        self.assertIn(
+            "emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72)",
+            ensure,
+        )
+
+        filter_start = source.index("func applyLogFilter(reload: Bool = true)")
+        filter_end = source.index("func rememberLogSelection()", filter_start)
+        apply_filter = source[filter_start:filter_end]
+        self.assertIn("let empty = displayedReceipts.isEmpty", apply_filter)
+        self.assertIn("logTableScroll?.isHidden = empty", apply_filter)
+        self.assertIn("logEmptyState?.isHidden = !empty", apply_filter)
+        self.assertIn("fitLogWindow()", apply_filter)
+
+        fit_start = source.index("func fitLogTableHeight()")
+        fit_end = source.index("func updateLogWindow(_ model: MenubarModel)", fit_start)
+        fit = source[fit_start:fit_end]
+        self.assertIn("Self.logTableMinimumRows", fit)
+        self.assertIn("Self.logTableMaximumHeight", fit)
+
+    def test_swift_rooms_empty_and_filtered_states_replace_the_table(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        ensure_start = source.index("func ensureRoomsWindow()")
+        ensure_end = source.index("func fitRoomsWindow()", ensure_start)
+        ensure = source[ensure_start:ensure_end]
+        self.assertIn(
+            'EmptyStateView(symbolName: "bubble.left.and.bubble.right", compact: true)',
+            ensure,
+        )
+        self.assertIn(
+            "Chrome.vstack([headerCard, emptyState, scroll], spacing: 10)",
+            ensure,
+        )
+        self.assertIn(
+            "emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72)",
+            ensure,
+        )
+
+        filter_start = source.index("func applyRoomsFilter()")
+        filter_end = source.index("func roomsFingerprint", filter_start)
+        apply_filter = source[filter_start:filter_end]
+        self.assertIn(
+            'trimmingCharacters(in: .whitespacesAndNewlines)', apply_filter
+        )
+        self.assertIn("if query.isEmpty", apply_filter)
+        self.assertIn("displayedChats = allChats", apply_filter)
+        self.assertIn("let empty = displayedChats.isEmpty", apply_filter)
+        self.assertIn("roomsTableScroll?.isHidden = empty", apply_filter)
+        self.assertIn("roomsEmptyState?.isHidden = !empty", apply_filter)
+        self.assertIn("if allChats.isEmpty", apply_filter)
+        self.assertIn('"검색 결과가 없습니다"', apply_filter)
+        self.assertIn("fitRoomsWindow()", apply_filter)
+
+        fit_start = source.index("func fitRoomsWindow()")
+        fit_end = source.index("func applyRoomsFilter()", fit_start)
+        fit = source[fit_start:fit_end]
+        self.assertIn("let minimumFrameHeight = window.frameRect", fit)
+        self.assertIn("let minimumHeight = min(440, minimumFrameHeight)", fit)
+
+        update_start = source.index("func updateRoomsWindow(_ model: MenubarModel)")
+        update_end = source.index("func reusedLabel", update_start)
+        update = source[update_start:update_end]
+        self.assertIn(
+            "if !roomsSnapshotApplied || fingerprint != lastRoomsFingerprint",
+            update,
+        )
+        self.assertIn("roomsSnapshotApplied = true", update)
+
+    def test_layout_audit_applies_log_and_rooms_without_a_loaded_model(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        audit_start = source.index("func runLayoutAudit(_ outputDir: String) -> String")
+        audit_end = source.index("settingsGraphStatus = loadSettingsSyncStatus()", audit_start)
+        audit = source[audit_start:audit_end]
+        self.assertIn("let loadedModel = loadModel()", audit)
+        self.assertIn("let auditModel = loadedModel ?? Self.unavailableModel()", audit)
+        self.assertIn('logWindow?.setFrameAutosaveName("")', audit)
+        self.assertIn('roomsWindow?.setFrameAutosaveName("")', audit)
+        self.assertIn("updateRoomsWindow(auditModel)", audit)
+        self.assertIn("updateLogWindow(auditModel)", audit)
+        self.assertIn("fitRoomsWindow()", audit)
+        self.assertIn("fitLogWindow()", audit)
+
     def test_layout_audit_detects_collapsed_cards_and_empty_bands(self):
         """The audit is the only way to check a window nobody can see, so it has
         to actually report the defects it claims to find."""

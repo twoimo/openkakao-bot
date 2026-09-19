@@ -3450,12 +3450,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var roomsTable: NSTableView?
     var roomsFilterField: NSTextField?
     var roomsTableScroll: NSScrollView?
+    var roomsEmptyState: EmptyStateView?
     var roomsStack: NSStackView?
     /// 사용자가 직접 크기를 바꾼 창은 자동으로 줄이지 않는다.
     var roomsWindowUserResized = false
     var roomsFitting = false
     var displayedChats: [AvailableChat] = []
     var allChats: [AvailableChat] = []
+    var roomsSnapshotApplied = false
     var jobsWindow: NSWindow?
     var jobsTable: NSTableView?
     var jobsSummary: NSTextField?
@@ -5747,9 +5749,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ensureRoomsWindow()
         ensureVectorWindow()
         ensureUnifiedSettingsWindow()
+        logWindow?.setFrameAutosaveName("")
+        roomsWindow?.setFrameAutosaveName("")
+        roomsWindowUserResized = false
+        let loadedModel = loadModel()
         // 메뉴 extra는 JarvisCoreView와 우측 상단 gear 하나만 렌더한다.
         layoutAuditPanels = []
-        let auditModel = loadModel() ?? Self.unavailableModel()
+        let auditModel = loadedModel ?? Self.unavailableModel()
         let panel = MenuPanelView(
             model: auditModel,
             frame: NSRect(x: 0, y: 0, width: MenuPanelView.panelWidth, height: MenuPanelView.panelBaseHeight)
@@ -5770,18 +5776,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         var rows: [[String: Any]] = []
         var images: [String] = []
         var modes: [[String: Any]] = []
-        // 실제 데이터를 채운 뒤에 재야 빈 목록으로 인한 거짓 여백을 보지 않는다.
-        if let model = loadModel() {
+        // 설정 창은 실제 모델이 있을 때만 갱신한다. 기록/방 목록은 아래에서
+        // unavailableModel까지 포함해 항상 한 번 배치해 초기 placeholder를 없앤다.
+        if let model = loadedModel {
             lastModel = model
             updateModelSettingsWindow()
-            updateRoomsWindow(model)
             updateUnifiedSettingsWindow(model)
-            // 창을 열 때 실제로 타는 경로를 그대로 쓴다. 예전에는
-            // applyLogReceipts만 불러서, 기록 창의 머리말이 초기 문구인
-            // "상태를 읽는 중"에 머문 채로 찍혔다. 그 그림을 근거로 창이
-            // 고장 났다고 판단하면 멀쩡한 곳을 고치게 된다 (2026-09-16).
-            updateLogWindow(model)
         }
+        updateRoomsWindow(auditModel)
+        updateLogWindow(auditModel)
+        fitRoomsWindow()
+        fitLogWindow()
         settingsGraphStatus = loadSettingsSyncStatus()
         applySettingsSyncStatus((lastModel ?? auditModel).vector_memory, graph: settingsGraphStatus)
         if let report = loadJobs(status: jobsStatus) {
@@ -6961,7 +6966,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 가운데에 아무것도 없는 띠가 생긴다 (2026-09-16).
         let empty = Chrome.statusLabel(size: 12, lines: 3)
         logEmptyLabel = empty
-        let emptyState = EmptyStateView(symbolName: "clock.arrow.circlepath")
+        let emptyState = EmptyStateView(symbolName: "clock.arrow.circlepath", compact: true)
         emptyState.isHidden = true
         self.logEmptyState = emptyState
 
@@ -7030,7 +7035,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // 빈 상태도 짧은 표와 같은 정도의 높이만 차지한다. 260pt를
             // 고정하면 기록이 없을 때 안내 한 줄 아래가 빈 판으로 늘어난다.
-            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 108),
+            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             detailContent.widthAnchor.constraint(equalTo: detailCard.widthAnchor, constant: -20),
@@ -7587,13 +7592,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         roomsTable = table
 
+        let emptyState = EmptyStateView(symbolName: "bubble.left.and.bubble.right", compact: true)
+        emptyState.isHidden = true
+        roomsEmptyState = emptyState
+
         // 검색과 추가·삭제는 안내 한 줄과 같은 카드에 둔다. 예전에는 이
         // 도구줄이 카드 안의 또 다른 카드라, "방을 찾고 설정한다"는 한 가지
         // 일에 테두리가 두 겹이었다 (2026-09-16, 6 Pro 지적).
         let headerContent = Chrome.vstack([hint, toolbar], spacing: 8)
         let headerCard = Chrome.card(headerContent, padding: 12)
 
-        let stack = Chrome.vstack([headerCard, scroll], spacing: 10)
+        let stack = Chrome.vstack([headerCard, emptyState, scroll], spacing: 10)
         roomsStack = stack
         Chrome.fill(stack, in: content)
         NSLayoutConstraint.activate([
@@ -7601,6 +7610,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             headerContent.widthAnchor.constraint(equalTo: headerCard.widthAnchor, constant: -24),
             hint.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
             toolbar.widthAnchor.constraint(equalTo: headerContent.widthAnchor),
+            emptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             filter.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
@@ -7630,6 +7641,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // 쓰지 않는다.
             let tableExcess = max(0, scroll.bounds.height - 300)
             let desired = needed - tableExcess + 32
+            let minimumFrameHeight = window.frameRect(
+                forContentRect: NSRect(
+                    origin: .zero,
+                    size: NSSize(width: content.bounds.width, height: desired)
+                )
+            ).height
+            let minimumHeight = min(440, minimumFrameHeight)
+            if abs(window.minSize.height - minimumHeight) > 0.5 {
+                window.minSize = NSSize(width: window.minSize.width, height: minimumHeight)
+            }
             let current = content.bounds.height
             guard abs(current - desired) > 12 else { return }
             var frame = window.frame
@@ -7659,6 +7680,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         roomsTable?.reloadData()
         restoreRoomsSelection()
+        let empty = displayedChats.isEmpty
+        roomsTableScroll?.isHidden = empty
+        roomsEmptyState?.isHidden = !empty
+        if empty {
+            if allChats.isEmpty {
+                roomsEmptyState?.titleText = "등록된 단체 채팅방이 없습니다"
+                roomsEmptyState?.detailText = "추가를 눌러 단체 채팅방을 등록하세요."
+            } else {
+                roomsEmptyState?.titleText = "검색 결과가 없습니다"
+                roomsEmptyState?.detailText = "검색어를 바꿔 보세요."
+            }
+        }
+        fitRoomsWindow()
     }
 
     func roomsFingerprint(_ chats: [AvailableChat]) -> String {
@@ -7691,7 +7725,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // 띠는 지금 고른 방의 진행 상황이라 목록과 다른 기준이었다. 방이 지금
         // 도는지는 표의 "동작" 칸이 이미 말하므로 띠는 뺀다 (2026-09-16,
         // 6 Pro 지적).
-        if fingerprint != lastRoomsFingerprint {
+        if !roomsSnapshotApplied || fingerprint != lastRoomsFingerprint {
+            roomsSnapshotApplied = true
             lastRoomsFingerprint = fingerprint
             applyRoomsFilter()
         } else {
