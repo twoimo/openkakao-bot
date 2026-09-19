@@ -23,7 +23,7 @@
           "supervisor",
           "worker"
         ],
-        "note": "The Jarvis core and top-right gear lead to one unified hub; jobs, logs, rooms, and graph open as flat single-purpose operator windows, and the hub keeps KakaoTalk DB sync status."
+        "note": "The menu extra remains a Jarvis core hero with one top-right gear; jobs and logs keep one empty-state operator surface, and the graph window renders one hologram with focused-node detail."
       },
       {
         "id": "grounded-reply",
@@ -82,7 +82,7 @@
       "sources": [
         {
           "path": "macos/AutoReplyMenu/main.swift",
-          "label": "core + unified hub + flat operator windows + DB sync"
+          "label": "core + unified settings + jobs/log/graph operator surfaces + DB sync"
         }
       ]
     },
@@ -312,7 +312,7 @@
       "title": "Operator",
       "items": [
         "The menu extra renders only the Jarvis core and top-right gear",
-        "The unified hub keeps models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions",
+        "The gear opens one operator window for models, rooms, logs, jobs, graph, health, slots, DB sync status, and instant actions",
         "Jobs and logs keep one empty-state surface; the graph window renders one hologram plus focused-node detail"
       ]
     },
