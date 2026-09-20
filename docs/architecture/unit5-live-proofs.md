@@ -309,3 +309,14 @@ This confirms that a `jarvis_abort` cancellation reaches an in-flight `BrowserUs
 The measured values match the production update `1 + smoothVoiceRms * (0.07 + 0.025 * sin(...))`: at RMS 0 the lattice is static at 1.0, while RMS 0.8 produces a center scale of 1.056 and a 1.036-1.076 pulse range.
 
 The existing hologram screenshot was not regenerated. Extra pid `20042` remained alive after both probes as `/Applications/AutoReplyMenu.app/Contents/MacOS/AutoReplyMenu`. No Extra/LaunchAgent restart, `open -a AutoReplyMenu`, Kakao send/live AX send, 27B/Gemma load, `/Applications` install, git commit/push, or write to `/Users/twoimo/.codex/worktrees/5a1c/openkakao-bot` was performed.
+
+## Background-safe AX virtual cursor proof — 2026-09-20 KST
+
+Measured at HEAD `fadb271dcb70d5a3407bf3168ae080eb9590b43c` with a temporary local AppKit accessory window exposing one `Background Safe` button. `scripts/auto_reply_ax_ui.py::background_virtual_cursor_action` targeted only that owned local button.
+
+- Command: `python3 .unit5-ax-proof/proof.py` → exit **0**, `pass=true`.
+- Frontmost before and after probe launch: **Aside pid 95964 → 95964**.
+- Button rect: **(129, 925, 162, 34)**; virtual cursor center: **(210, 942)**.
+- Background-safe path: `ok=true`, callback calls **1**, counter **0→1**, frontmost **95964→95964**.
+- Focus-required path: `ok=false`, `error_code=ax_focus_steal_required` (`AX_ABORT_FOCUS_REQUIRED`), callback calls **0**, counter stayed **1**, frontmost **95964→95964**.
+- Extra pid **20042** was alive before and after and was not frontmost after the proof.

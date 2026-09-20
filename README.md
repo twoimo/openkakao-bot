@@ -83,6 +83,7 @@ Current limits:
  - Settings Knowledge now renders an E-R-E Three.js hologram (24-node cap, click → 2-hop, hidden RAF=0). See [jarvis-knowledge-hologram.png](docs/architecture/jarvis-knowledge-hologram.png).
 - Load-driven Jarvis motion at `32dc4b6` is measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): ring targets are `0.170/-0.120/0.090` rad/s at idle and `0.408/-0.318/0.261` rad/s at busy load; nucleus radius is `0.270→0.324`. The 760 x 760 settings capture is [jarvis-settings-panel.png](docs/architecture/jarvis-settings-panel.png) (87,872 bytes).
 - Remaining local proofs at `282933b` are measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): a real `BrowserUseRunner` owned Playwright context opened a controlled `file://` page, `jarvis_abort` returned `global_abort` in **371.770 ms**, and the owned context/browser closed. With the real `JarvisCore`, `jobLoad=0.5` and `voiceRms=0→0.8` changed acoustic-lattice center scale from **1.000→1.056** (RMS 0.8 range **1.036-1.076**).
+- Background AX handling at `fadb271` is live-measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): a controlled local accessory-window button succeeded in the background with frontmost **Aside pid 95964→95964**, while the focus-required path returned `ax_focus_steal_required` without invoking its callback; Extra pid **20042** remained alive.
 
 Recovery and safety:
 
