@@ -224,3 +224,22 @@ Hide-state render delta was **0** and the RAF wrapper observed **1 `cancelAnimat
 A screenshot was attempted through the local macOS capture command while preparing this proof, but the command remained blocked on Screen Recording access and was aborted; no screenshot artifact was retained.
 
 Signed Extra cutover remains pending. The installed Extra was not restarted, rewritten, or replaced and continues to own the original `com.openkakao.auto-reply.menu` bundle id; the new Jarvis id is for the parallel Tauri app. No Kakao send/live AX send, `/Applications/AutoReplyMenu.app` install/copy, git commit, or push was performed, and `/Users/twoimo/.codex/worktrees/5a1c/openkakao-bot` was not used as a working directory or written.
+
+## Jarvis Three.js core panel PNG
+
+Captured on 2026-09-20 KST from `/Users/twoimo/Documents/projects/openkakao-bot` at HEAD `d20343e`. Vite served the real desktop panel on `127.0.0.1:1420`, and Google Chrome headless rendered the Three.js scene with a 2-second virtual-time budget before writing:
+
+`/Users/twoimo/Documents/projects/openkakao-bot/docs/architecture/jarvis-core-panel.png`
+
+The capture did not use macOS Screen Recording. Chrome's WebGL path emitted GPU `ReadPixels` activity while producing the PNG. Readback verified:
+
+- PNG dimensions: **276 × 260**
+- File size: **51,545 bytes**
+- Unique RGB colors: **1,580**
+- Background sample at `(0, 0)`: **(18, 16, 13)**
+- Core-center sample at `(138, 130)`: **(196, 165, 104)**
+- Pixels different from the top-left background: **25,208**
+
+Direct visual inspection shows the champagne-gold/warm-amber spherical Jarvis core on the warm dark panel with the single settings gear at the top-right. The image is therefore non-empty and is not a blank or black unrendered canvas.
+
+This is a browser-rendered proof of the Three.js core panel only. It does not claim signed Extra cutover. Extra pid `20042` remained the installed Swift Extra during capture.

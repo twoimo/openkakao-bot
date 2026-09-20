@@ -29,6 +29,8 @@
 
 Extra is a gold hologram core plus a top-right gear. All operator controls open from that gear into one settings window. Extra has no bulk-verify, feature-checklist, or permission-settings UI.
 
+![Jarvis champagne-gold spherical core panel](docs/architecture/jarvis-core-panel.png)
+
 KakaoTalk indexing copies the live database into a temp snapshot, then opens that copy with `mode=ro` and `PRAGMA query_only`. If the copy cannot be created, the live database is not opened. GraphRAG drill-down reads the existing `knowledge-graph.sqlite3` only; a node click does not copy KakaoTalk or reindex. DREAM-RSI on the settings card is checkpoint provenance, not a live trainer.
 
 ```text
