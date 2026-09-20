@@ -83,3 +83,46 @@ Signed-app cutover remains pending. The installed Swift Extra at `/Applications/
 Before writing this file, Extra PID `20042` was still running from `/Applications/AutoReplyMenu.app`. No process matching `27B` or `gemma` was observed. The existing allowed local `Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` server remained running and was not swapped or reloaded.
 
 No Kakao send or live AX send was performed. No git commit or push was performed. No command in this proof used `/Users/twoimo/.codex/worktrees/5a1c/openkakao-bot` as a working directory, and no file there was written.
+
+## Live window hide
+
+Measured on 2026-09-20 KST from `/Users/twoimo/Documents/projects/openkakao-bot` at HEAD `c990ad78d92550c3177821d19b373b2f4da78497`. The desktop Vite page was served with the repository's existing `npm run dev` command on `127.0.0.1:1420`; `/Applications/AutoReplyMenu.app` was not launched or restarted.
+
+`desktop/src/main.ts` now exposes the existing `JarvisCore.renderCount` as a tiny read-only browser debug getter, `window.__jarvisRenderCount`. A separate headless Chrome page was driven over the Chrome DevTools Protocol. Before page navigation, browser `requestAnimationFrame`/`cancelAnimationFrame` were wrapped only to count outstanding native browser RAF callbacks; this proof did not use the earlier Node timer RAF polyfill.
+
+The page was first forced to the visible lifecycle state and allowed to render for 550 ms, then `document.visibilityState`/`document.hidden` were set to `hidden`/`true` and a real `visibilitychange` event was dispatched. The browser was observed for another 650 ms.
+
+Measured result: **PASS**.
+
+| Measurement | renderCount | Pending browser RAF |
+| --- | ---: | ---: |
+| Visible before hide | 9 | 1 |
+| Immediately after `visibilitychange` to hidden | 9 | 0 |
+| Hidden after 650 ms | 9 | 0 |
+
+Hide-state render delta: **0**. The outstanding browser RAF callback was cancelled immediately and remained at **0** while hidden.
+
+## Isolated voice environment
+
+Created a dedicated voice virtual environment at `/Users/twoimo/Documents/projects/openkakao-bot/.venv-voice` with `/Users/twoimo/.local/bin/python3.12` (Python 3.12.13). This is separate from Extra pid 20042's UV Python 3.11 interpreter.
+
+Installed into that environment:
+
+- `openwakeword==0.6.0`
+- `mlx-whisper==0.4.3` (import name `mlx_whisper`)
+- `qwen-tts==0.1.1` (import name `qwen_tts`)
+
+The import and environment-gate probe used the dedicated interpreter with `OPENKAKAO_VOICE_ENV=1` and returned:
+
+```text
+interpreter=/Users/twoimo/Documents/projects/openkakao-bot/.venv-voice/bin/python
+OPENKAKAO_VOICE_ENV=1
+openwakeword=0.6.0:PASS
+mlx-whisper=0.4.3:PASS
+qwen-tts=0.1.1:PASS
+jarvis_voice_gate=PASS
+stt_adapter_init=MlxWhisperAdapter:PASS
+tts_adapter_init=Qwen3TtsAdapter:PASS
+```
+
+`qwen_tts` import also emitted two non-fatal runtime warnings: the system `sox` executable is not installed, and `flash-attn` is not installed. The package import and Jarvis isolated-environment gate still passed. No STT/TTS model smoke was run because it would require model download/load; no Qwen3.8 27B or Gemma model was loaded.

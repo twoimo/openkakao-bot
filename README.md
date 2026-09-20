@@ -59,7 +59,7 @@ The diagrams reflect `efee7c8`. They are not a live generation trace. On-device 
 
 ## Jarvis local-AI implementation status
 
-Unit 5 documentation reflects the source state after Units 1–4; it does not claim the still-open live proofs below.
+Unit 5 documentation now includes the measured live browser hide and isolated voice-import proofs; signed Tauri cutover remains open.
 
 | Unit | Landed SHA | Status |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ Current limits:
 - The Qwen3.8 27B model is unloaded.
 - DPO output does not promote or replace the live model automatically.
 - style.gallery was not applied.
- - Hide-state render-call=0 is measured on the real `AnimationLoop` with a timer-backed RAF polyfill (hidden/closed/locked each added 0 renders). A live Tauri window hide, host `openwakeword`/`mlx_whisper`/`qwen_tts` imports, and signed Tauri cutover remain open. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
+- Live Vite/browser hide is measured: visible `renderCount=9`/RAF `1`, then hidden `renderCount=9`/RAF `0` after 650 ms (delta `0`). Dedicated `.venv-voice` imports for `openwakeword`, `mlx_whisper`, and `qwen_tts` also pass with `OPENKAKAO_VOICE_ENV=1`. Signed Tauri cutover remains open. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
 
 Recovery and safety:
 

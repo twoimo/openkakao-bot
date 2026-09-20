@@ -110,6 +110,7 @@ async function bootPanel(): Promise<void> {
   if (!canvas || !gear) throw new Error("panel_contract_missing");
 
   const core = new JarvisCore(canvas);
+  Object.defineProperty(window, "__jarvisRenderCount", { configurable: true, get: () => core.renderCount });
   let pollTimer: number | null = null;
   let requestToken: CancellationToken | null = null;
 
