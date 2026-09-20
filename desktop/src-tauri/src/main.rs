@@ -1,0 +1,135 @@
+mod python_bridge;
+
+use python_bridge::{PythonBridge, SafeRuntimeSnapshot};
+use serde_json::Value;
+use tauri::image::Image;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, PhysicalPosition, WindowEvent};
+
+const PANEL_WIDTH: f64 = 276.0;
+
+#[tauri::command]
+async fn fetch_runtime_snapshot(
+    bridge: tauri::State<'_, PythonBridge>,
+    token_id: Option<String>,
+) -> Result<SafeRuntimeSnapshot, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.fetch_snapshot(token_id.as_deref()))
+        .await
+        .map_err(|_| "snapshot_worker_failed".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn fetch_settings_action(
+    bridge: tauri::State<'_, PythonBridge>,
+    action: String,
+) -> Result<Value, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.fetch_settings_action(&action))
+        .await
+        .map_err(|_| "settings_worker_failed".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn cancel_python(bridge: tauri::State<'_, PythonBridge>, token_id: String) -> bool {
+    bridge.cancel(&token_id)
+}
+
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("settings")
+        .ok_or_else(|| "settings_window_missing".to_string())?;
+    window
+        .show()
+        .map_err(|_| "settings_show_failed".to_string())?;
+    window
+        .set_focus()
+        .map_err(|_| "settings_focus_failed".to_string())
+}
+
+fn make_tray_icon() -> Image<'static> {
+    const SIZE: u32 = 18;
+    let mut rgba = vec![0_u8; (SIZE * SIZE * 4) as usize];
+    let center = (SIZE as f64 - 1.0) / 2.0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f64 - center;
+            let dy = y as f64 - center;
+            let radius = (dx * dx + dy * dy).sqrt();
+            let ring = (5.6..=7.1).contains(&radius);
+            let nucleus = radius <= 2.1;
+            if ring || nucleus {
+                let index = ((y * SIZE + x) * 4) as usize;
+                rgba[index] = 0;
+                rgba[index + 1] = 0;
+                rgba[index + 2] = 0;
+                rgba[index + 3] = if nucleus { 220 } else { 190 };
+            }
+        }
+    }
+    Image::new_owned(rgba, SIZE, SIZE)
+}
+
+fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
+    let Some(window) = app.get_webview_window("jarvis") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let x = (position.x - (PANEL_WIDTH * scale / 2.0)).round() as i32;
+    let y = (position.y + 12.0 * scale).round() as i32;
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+fn main() {
+    tauri::Builder::default()
+        .manage(PythonBridge::new())
+        .invoke_handler(tauri::generate_handler![
+            fetch_runtime_snapshot,
+            fetch_settings_action,
+            cancel_python,
+            open_settings
+        ])
+        .setup(|app| {
+            let handle = app.handle().clone();
+            TrayIconBuilder::new()
+                .icon(make_tray_icon())
+                .icon_as_template(true)
+                .tooltip("OpenKakao Jarvis")
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        position,
+                        ..
+                    } = event
+                    {
+                        toggle_panel(tray.app_handle(), position);
+                    }
+                })
+                .build(&handle)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            WindowEvent::Focused(false) if window.label() == "jarvis" => {
+                let _ = window.hide();
+            }
+            WindowEvent::CloseRequested { api, .. }
+                if window.label() == "jarvis" || window.label() == "settings" =>
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            _ => {}
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running OpenKakao Jarvis");
+}

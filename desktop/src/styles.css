@@ -1,0 +1,106 @@
+:root {
+  color-scheme: light dark;
+  --canvas: #F7F4EE;
+  --surface: #FFFCF7;
+  --text: #241F1A;
+  --muted: #6D655B;
+  --accent: #B88A45;
+  --warning: #92540E;
+  --border: rgba(109, 101, 91, 0.22);
+  --selection: rgba(184, 138, 69, 0.11);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #12100D;
+    --surface: #191611;
+    --text: #F1EBE1;
+    --muted: #B7AEA1;
+    --accent: #D5B36E;
+    --warning: #E5A04B;
+    --border: rgba(241, 235, 225, 0.14);
+    --selection: rgba(213, 179, 110, 0.13);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; width: 100%; min-height: 100%; }
+body { background: var(--canvas); color: var(--text); }
+body.panel-view, body.panel-view #app { width: 276px; height: 260px; overflow: hidden; }
+button, select { font: inherit; }
+
+.jarvis-panel {
+  position: relative;
+  width: 276px;
+  height: 260px;
+  background: var(--canvas);
+  overflow: hidden;
+}
+
+.jarvis-core {
+  position: absolute;
+  left: 20px;
+  top: 12px;
+  width: 236px;
+  height: 236px;
+  display: block;
+  background: transparent;
+}
+
+.gear {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: default;
+}
+.gear:hover, .gear:focus-visible { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); outline: none; }
+
+body.settings-view { min-width: 600px; min-height: 700px; overflow-y: auto; }
+.settings-shell {
+  width: min(720px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 36px;
+  display: grid;
+  gap: 12px;
+}
+.settings-header { padding: 0 4px 8px; }
+.settings-header h1 { margin: 2px 0 5px; font-size: 24px; letter-spacing: -0.02em; }
+.settings-header p { margin: 0; color: var(--muted); font-size: 13px; }
+.eyebrow { color: var(--accent) !important; font-size: 10px !important; font-weight: 700; letter-spacing: 0.12em; }
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 14px 15px;
+  box-shadow: none;
+}
+.settings-card h2 { margin: 0; font-size: 14px; letter-spacing: -0.01em; }
+.settings-card p { margin: 7px 0 0; font-size: 12px; line-height: 1.48; color: var(--muted); overflow-wrap: anywhere; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tag { flex: none; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 999px; padding: 3px 7px; color: var(--accent); font-size: 10px; font-weight: 650; }
+.muted-tag { color: var(--muted); border-color: var(--border); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+#settings-room-popup { width: 100%; margin-top: 10px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--canvas); color: var(--text); }
+.model-row { margin-top: 9px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.model-row.selection { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: var(--selection); }
+.model-row strong { font-size: 12px; }
+.model-row p { margin-top: 3px; font-size: 10.5px; }
+.knowledge-accent { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.slot-grid span { border-top: 1px solid var(--border); padding-top: 7px; color: var(--muted); font-size: 11px; }
+.slot-grid b { display: block; margin-top: 2px; color: var(--text); font-weight: 600; }
+.muted { color: var(--muted); }
