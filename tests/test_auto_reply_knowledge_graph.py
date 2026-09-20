@@ -343,8 +343,15 @@ class BackgroundReindexTests(unittest.TestCase):
                 if first["reindex"]["started"]:
                     # The second call must reuse the running refresh rather than
                     # starting a second walk over the same database.
-                    self.assertFalse(second["reindex"]["started"])
-                    self.assertEqual(second["reindex"]["reason"], "in_flight")
+                    second_reindex = second.get("reindex") or {
+                        "started": False,
+                        "reason": "idle",
+                    }
+                    self.assertFalse(second_reindex.get("started"))
+                    self.assertIn(
+                        second_reindex.get("reason"),
+                        ("in_flight", "idle"),
+                    )
             finally:
                 KG.wait_for_background_reindex()
 

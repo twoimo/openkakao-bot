@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -500,6 +501,135 @@ def compare_runs(
         "tuned_loss": after,
         "delta": round(delta, 4),
         "min_delta": min_delta,
+    }
+
+
+DPO_EVAL_UNAVAILABLE = "eval_unavailable"
+
+
+def _sum_response_logprobs(values: Any) -> float | None:
+    """Sum token logprobs from one response. Missing or non-finite -> None."""
+    if not isinstance(values, (list, tuple)) or not values:
+        return None
+    total = 0.0
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        total += number
+    if not math.isfinite(total):
+        return None
+    return total
+
+
+def dpo_loss_from_logprobs(
+    *,
+    chosen_logprobs: Any,
+    rejected_logprobs: Any,
+    beta: float = 0.1,
+    tokenizer_id: str = "",
+    base_model: str = "",
+    ref_chosen_logprobs: Any = None,
+    ref_rejected_logprobs: Any = None,
+) -> dict[str, Any]:
+    """Standard DPO loss from response-token logprobs. Never string similarity."""
+    chosen = _sum_response_logprobs(chosen_logprobs)
+    rejected = _sum_response_logprobs(rejected_logprobs)
+    if chosen is None or rejected is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    chosen_ref = _sum_response_logprobs(ref_chosen_logprobs) if ref_chosen_logprobs is not None else 0.0
+    rejected_ref = _sum_response_logprobs(ref_rejected_logprobs) if ref_rejected_logprobs is not None else 0.0
+    if ref_chosen_logprobs is not None and chosen_ref is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if ref_rejected_logprobs is not None and rejected_ref is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if chosen_ref is None:
+        chosen_ref = 0.0
+    if rejected_ref is None:
+        rejected_ref = 0.0
+    # L = -log σ(β [(log πθ(yw)-log πref(yw)) - (log πθ(yl)-log πref(yl))])
+    delta = float(beta) * ((chosen - chosen_ref) - (rejected - rejected_ref))
+    if delta >= 0:
+        loss = math.log1p(math.exp(-delta))
+    else:
+        loss = -delta + math.log1p(math.exp(delta))
+    return {
+        "status": "ok",
+        "reason": "dpo_logprob",
+        "loss": loss,
+        "delta": (chosen - chosen_ref) - (rejected - rejected_ref),
+        "beta": float(beta),
+        "tokenizer_id": tokenizer_id,
+        "base_model": base_model,
+    }
+
+
+def evaluate_preference_pairs(
+    pairs: Sequence[dict[str, Any]],
+    *,
+    tokenizer_id: str,
+    base_model: str,
+    beta: float = 0.1,
+) -> dict[str, Any]:
+    """Evaluate preferred/dispreferred pairs. Missing logprobs are unavailable."""
+    evaluated = 0
+    unavailable = 0
+    losses: list[float] = []
+    reports: list[dict[str, Any]] = []
+    for pair in pairs:
+        report = dpo_loss_from_logprobs(
+            chosen_logprobs=pair.get("chosen_logprobs") or pair.get("preferred_logprobs"),
+            rejected_logprobs=pair.get("rejected_logprobs") or pair.get("dispreferred_logprobs"),
+            beta=beta,
+            tokenizer_id=tokenizer_id,
+            base_model=base_model,
+            ref_chosen_logprobs=pair.get("ref_chosen_logprobs"),
+            ref_rejected_logprobs=pair.get("ref_rejected_logprobs"),
+        )
+        provenance = {
+            "pair_id": str(pair.get("pair_id") or ""),
+            "source": str(pair.get("source") or ""),
+            "preferred": str(pair.get("preferred") or pair.get("chosen") or ""),
+            "dispreferred": str(pair.get("dispreferred") or pair.get("rejected") or ""),
+        }
+        report = {**report, **provenance}
+        reports.append(report)
+        if report["status"] == DPO_EVAL_UNAVAILABLE:
+            unavailable += 1
+            continue
+        evaluated += 1
+        if report.get("loss") is not None:
+            losses.append(float(report["loss"]))
+    mean_loss = sum(losses) / len(losses) if losses else None
+    return {
+        "status": "ok" if evaluated else DPO_EVAL_UNAVAILABLE,
+        "evaluated": evaluated,
+        "unavailable": unavailable,
+        "mean_loss": mean_loss,
+        "tokenizer_id": tokenizer_id,
+        "base_model": base_model,
+        "pairs": reports,
     }
 
 

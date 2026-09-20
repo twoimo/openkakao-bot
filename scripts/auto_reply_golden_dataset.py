@@ -325,6 +325,76 @@ def is_gold_quality(quality: str) -> bool:
     return quality in (QUALITY_HUMAN_AUTHORED, QUALITY_APPROVED)
 
 
+def _looks_disconnected(prompt: str, completion: str) -> bool:
+    prompt_tokens = set(re.findall(r"[0-9a-zA-Z가-힣]+", prompt.casefold()))
+    completion_tokens = set(re.findall(r"[0-9a-zA-Z가-힣]+", completion.casefold()))
+    if not prompt_tokens or not completion_tokens:
+        return True
+    if prompt.strip() == completion.strip():
+        return True
+    if not prompt_tokens.isdisjoint(completion_tokens):
+        return False
+    return len(completion) >= 16 and len(prompt_tokens) >= 2
+
+
+def _looks_self_talk(prompt: str, completion: str) -> bool:
+    compact_prompt = " ".join(prompt.split())
+    compact_completion = " ".join(completion.split())
+    if not compact_prompt or not compact_completion:
+        return True
+    return compact_completion in compact_prompt and compact_prompt.endswith(compact_completion)
+
+
+def audit_golden_record(record: dict[str, Any], approvals: QualityApprovals | None = None) -> dict[str, Any]:
+    """Re-audit one row. Human-authored is not automatically golden."""
+    quality = gold_quality(record, approvals)
+    prompt = _norm_text(record.get("prompt"))
+    completion = _norm_text(record.get("completion"))
+    reasons: list[str] = []
+    if not prompt or not completion:
+        reasons.append("empty_fields")
+    if quality == QUALITY_MODEL_GENERATED:
+        reasons.append("unapproved_model_answer")
+    if quality == QUALITY_UNREVIEWED:
+        reasons.append("unreviewed")
+    if quality == QUALITY_HUMAN_AUTHORED:
+        if _looks_disconnected(prompt, completion):
+            reasons.append("disconnected_human_row")
+        if _looks_self_talk(prompt, completion):
+            reasons.append("self_talk")
+    accepted = not reasons and quality in (QUALITY_HUMAN_AUTHORED, QUALITY_APPROVED)
+    return {
+        "accepted": accepted,
+        "quality": quality,
+        "reasons": reasons,
+        "pair_id": str(record.get("pair_id") or ""),
+    }
+
+
+def is_audited_gold(record: dict[str, Any], approvals: QualityApprovals | None = None) -> bool:
+    return bool(audit_golden_record(record, approvals).get("accepted"))
+
+
+def audit_golden_records(
+    records: Sequence[dict[str, Any]],
+    approvals: QualityApprovals | None = None,
+) -> dict[str, Any]:
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for record in records:
+        report = audit_golden_record(record, approvals)
+        if report["accepted"]:
+            accepted.append(record)
+        else:
+            rejected.append({**report, "prompt": str(record.get("prompt") or "")[:80]})
+    return {
+        "accepted": accepted,
+        "rejected": rejected,
+        "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+    }
+
+
 def _bump(counters: dict[str, int] | None, key: str, amount: int = 1) -> None:
     if counters is not None:
         counters[key] = counters.get(key, 0) + amount

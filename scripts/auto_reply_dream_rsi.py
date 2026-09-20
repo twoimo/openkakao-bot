@@ -306,6 +306,88 @@ def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
     }
 
 
+def select_experiment_action(
+    *,
+    remaining_budget: int,
+    last_status: str = "",
+    tried: list[str] | tuple[str, ...] = (),
+    candidates: list[str] | tuple[str, ...] = (),
+    failure_axes: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """DREAM-RSI candidate selection / branch / stop. Not a preference scorer."""
+    unused = [name for name in candidates if name not in set(tried)]
+    axes = failure_axes or {}
+    if remaining_budget <= 0:
+        return {"action": "stop", "reason": "budget_exhausted", "next": ""}
+    if last_status == "eval_unavailable":
+        return {"action": "stop", "reason": "eval_unavailable", "next": ""}
+    if not unused:
+        return {"action": "stop", "reason": "candidate_exhausted", "next": ""}
+    if int(axes.get("factuality", 0) or 0) >= 2:
+        return {"action": "branch", "reason": "factuality_branch", "next": unused[0]}
+    if int(axes.get("self_talk", 0) or 0) >= 2:
+        return {"action": "branch", "reason": "self_talk_branch", "next": unused[0]}
+    return {"action": "continue", "reason": "next_candidate", "next": unused[0]}
+
+
+def run_fixed_budget_loop(
+    *,
+    candidates: list[str],
+    evaluate_fn: Callable[[str], dict[str, Any]],
+    budget: int,
+) -> dict[str, Any]:
+    """generate -> evaluate -> failure analysis -> next candidate. No live promote."""
+    history: list[dict[str, Any]] = []
+    tried: list[str] = []
+    remaining = int(budget)
+    last_status = ""
+    failure_axes: dict[str, int] = {}
+    while remaining > 0:
+        decision = select_experiment_action(
+            remaining_budget=remaining,
+            last_status=last_status,
+            tried=tried,
+            candidates=candidates,
+            failure_axes=failure_axes,
+        )
+        if decision["action"] == "stop":
+            return {
+                "status": "stopped",
+                "reason": decision["reason"],
+                "history": history,
+                "promoted": False,
+            }
+        name = str(decision.get("next") or "")
+        if not name:
+            return {
+                "status": "stopped",
+                "reason": "empty_candidate",
+                "history": history,
+                "promoted": False,
+            }
+        remaining -= 1
+        tried.append(name)
+        report = evaluate_fn(name)
+        last_status = str(report.get("status") or "")
+        for axis in ("factuality", "self_talk", "tone", "grounding", "latency"):
+            if report.get(axis) is False or report.get(f"{axis}_failed") is True:
+                failure_axes[axis] = failure_axes.get(axis, 0) + 1
+        history.append({"candidate": name, "decision": decision, "report": report})
+        if last_status == "eval_unavailable":
+            return {
+                "status": "stopped",
+                "reason": "eval_unavailable",
+                "history": history,
+                "promoted": False,
+            }
+    return {
+        "status": "stopped",
+        "reason": "budget_exhausted",
+        "history": history,
+        "promoted": False,
+    }
+
+
 def _default_state_root() -> Path:
     """Resolve the state root the same way the other scripts do."""
     override = os.environ.get("OPENKAKAO_STATE_ROOT")

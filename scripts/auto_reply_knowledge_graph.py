@@ -21,17 +21,38 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
 DEFAULT_K_HOP = 2
 MAX_K_HOP = 3
 K_HOP_NEIGHBOR_LIMIT = 10
-GRAPH_ENTITY_PREFIXES = ("ent:", "chat:", "person:", "topic:")
+GRAPH_ENTITY_PREFIXES = ("ent:", "chat:", "person:", "topic:", "time:", "author:")
 INDEX_STATUS_STALE_SECONDS = 300
+
+SEARCH_INDEX_VERSION = "unit4-rrf-bm25-dense-v1"
+DENSE_INDEX_DB_NAME = "knowledge-dense-ann.sqlite3"
+DENSE_INDEX_VERSION = "bge-m3-lsh-v1"
+DENSE_EMBEDDING_MODEL = os.environ.get(
+    "OPENKAKAO_DENSE_EMBEDDING_MODEL", "BAAI/bge-m3"
+)
+DENSE_EMBEDDING_URL = os.environ.get(
+    "OPENKAKAO_LOCAL_EMBEDDING_URL", "http://127.0.0.1:8000/v1/embeddings"
+)
+DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
+RRF_K = 60
+ANN_BANDS = 8
+ANN_BITS_PER_BAND = 8
+ALIAS_DICTIONARY_VERSION = "2026-09-20.1"
+KST = ZoneInfo("Asia/Seoul")
 
 # Provenance kinds. "seed" is a hand-written starting node that no message
 # backs yet; "ledger" means a real room message was found to mention the node.
@@ -243,6 +264,13 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
             source_id TEXT NOT NULL,
             relation TEXT NOT NULL,
             target_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL DEFAULT '',
+            relation_type TEXT NOT NULL DEFAULT '',
+            object_id TEXT NOT NULL DEFAULT '',
+            room_id TEXT NOT NULL DEFAULT '',
+            valid_from TEXT NOT NULL DEFAULT '',
+            valid_to TEXT NOT NULL DEFAULT '',
+            evidence_message_id TEXT NOT NULL DEFAULT '',
             context TEXT NOT NULL,
             weight INTEGER DEFAULT 50,
             evidence_json TEXT NOT NULL DEFAULT '{}',
@@ -264,6 +292,63 @@ def _connect_kg(db_path: Path) -> sqlite3.Connection:
                 )
             except sqlite3.Error:
                 pass
+        if table == "kg_relations":
+            relation_columns = {
+                "subject_id": "TEXT NOT NULL DEFAULT ''",
+                "relation_type": "TEXT NOT NULL DEFAULT ''",
+                "object_id": "TEXT NOT NULL DEFAULT ''",
+                "room_id": "TEXT NOT NULL DEFAULT ''",
+                "valid_from": "TEXT NOT NULL DEFAULT ''",
+                "valid_to": "TEXT NOT NULL DEFAULT ''",
+                "evidence_message_id": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column, definition in relation_columns.items():
+                if column in columns:
+                    continue
+                try:
+                    conn.execute(
+                        f"ALTER TABLE kg_relations ADD COLUMN {column} {definition}"
+                    )
+                except sqlite3.Error:
+                    pass
+            try:
+                conn.execute(
+                    "UPDATE kg_relations SET"
+                    " subject_id=CASE WHEN subject_id='' THEN source_id ELSE subject_id END,"
+                    " relation_type=CASE WHEN relation_type='' THEN relation ELSE relation_type END,"
+                    " object_id=CASE WHEN object_id='' THEN target_id ELSE object_id END"
+                )
+            except sqlite3.Error:
+                pass
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS kg_entities_fts USING fts5("
+            "entity_id UNINDEXED, name, aliases, description, facts, tokenize='unicode61')"
+        )
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS kg_entities_fts_ai AFTER INSERT ON kg_entities BEGIN
+              INSERT INTO kg_entities_fts(rowid, entity_id, name, aliases, description, facts)
+              VALUES (new.rowid, new.entity_id, new.name, new.aliases_json, new.description, new.key_facts_json);
+            END;
+            CREATE TRIGGER IF NOT EXISTS kg_entities_fts_ad AFTER DELETE ON kg_entities BEGIN
+              DELETE FROM kg_entities_fts WHERE rowid = old.rowid;
+            END;
+            CREATE TRIGGER IF NOT EXISTS kg_entities_fts_au AFTER UPDATE ON kg_entities BEGIN
+              DELETE FROM kg_entities_fts WHERE rowid = old.rowid;
+              INSERT INTO kg_entities_fts(rowid, entity_id, name, aliases, description, facts)
+              VALUES (new.rowid, new.entity_id, new.name, new.aliases_json, new.description, new.key_facts_json);
+            END;
+            """
+        )
+        conn.execute(
+            "INSERT INTO kg_entities_fts(rowid, entity_id, name, aliases, description, facts)"
+            " SELECT e.rowid, e.entity_id, e.name, e.aliases_json, e.description, e.key_facts_json"
+            " FROM kg_entities e"
+            " WHERE NOT EXISTS (SELECT 1 FROM kg_entities_fts f WHERE f.rowid=e.rowid)"
+        )
+    except sqlite3.Error as error:
+        _trace_graph("fts5_unavailable", error=type(error).__name__)
     conn.commit()
     return conn
 
@@ -396,23 +481,14 @@ def ensure_seeded(conn: sqlite3.Connection) -> None:
             ),
         )
     for r in DEFAULT_RELATIONS:
-        conn.execute(
-            """
-            INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                context=excluded.context,
-                weight=excluded.weight,
-                updated_at=excluded.updated_at
-            """,
-            (
-                r["source_id"],
-                r["relation"],
-                r["target_id"],
-                r["context"],
-                r["weight"],
-                now,
-            ),
+        _upsert_relation(
+            conn,
+            source_id=r["source_id"],
+            relation=r["relation"],
+            target_id=r["target_id"],
+            context=r["context"],
+            weight=int(r["weight"]),
+            updated_at=now,
         )
     conn.commit()
 
@@ -513,6 +589,64 @@ def _sample_is_conversation(user: str, message: str) -> bool:
 from contextlib import contextmanager
 import shutil
 
+ISOLATED_COPY_MAX_ATTEMPTS = 3
+
+
+def _snapshot_signature(db_path: Path) -> tuple[tuple[str, bool, int, int, int], ...]:
+    """Return a cheap mutation detector for the DB and its WAL sidecars."""
+    signature: list[tuple[str, bool, int, int, int]] = []
+    for path in (
+        db_path,
+        db_path.with_name(db_path.name + "-wal"),
+        db_path.with_name(db_path.name + "-shm"),
+    ):
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            signature.append((path.name, False, 0, 0, 0))
+            continue
+        signature.append(
+            (path.name, True, int(stat.st_size), int(stat.st_mtime_ns), int(stat.st_ino))
+        )
+    return tuple(signature)
+
+
+def _copy_consistent_sqlite_replica(db_path: Path, tmpdir: Path) -> Path:
+    """Copy DB+WAL+SHM only when the source stayed unchanged for the copy."""
+    tmp_db = tmpdir / db_path.name
+    last_error: BaseException | None = None
+    for attempt in range(1, ISOLATED_COPY_MAX_ATTEMPTS + 1):
+        before = _snapshot_signature(db_path)
+        try:
+            for target in (
+                tmp_db,
+                tmpdir / (db_path.name + "-wal"),
+                tmpdir / (db_path.name + "-shm"),
+            ):
+                try:
+                    target.unlink()
+                except FileNotFoundError:
+                    pass
+            shutil.copy2(db_path, tmp_db)
+            for sidecar in (
+                db_path.with_name(db_path.name + "-wal"),
+                db_path.with_name(db_path.name + "-shm"),
+            ):
+                if sidecar.exists():
+                    shutil.copy2(sidecar, tmpdir / sidecar.name)
+        except OSError as error:
+            last_error = error
+            continue
+        after = _snapshot_signature(db_path)
+        if before == after:
+            if attempt > 1:
+                _trace_graph("isolated_copy_retry_succeeded", attempt=attempt)
+            return tmp_db
+        last_error = sqlite3.OperationalError("source mutated during isolated copy")
+        _trace_graph("isolated_copy_mutated", attempt=attempt)
+    raise sqlite3.OperationalError("consistent isolated snapshot unavailable") from last_error
+
+
 @contextmanager
 def _open_isolated_ro_conn(db_path: Path):
     """DB Lock 방지: 카카오톡 DB 동기화 시 실행 중 파일 잠금을 방지하기 위해
@@ -521,15 +655,10 @@ def _open_isolated_ro_conn(db_path: Path):
     if not db_path.exists():
         raise FileNotFoundError(f"Database not found: {db_path}")
 
-    with tempfile.TemporaryDirectory(prefix="kg-ro-copy-") as tmpdir:
-        tmp_db = Path(tmpdir) / db_path.name
+    with tempfile.TemporaryDirectory(prefix="kg-ro-copy-") as tmpdir_name:
+        tmpdir = Path(tmpdir_name)
         try:
-            shutil.copy2(db_path, tmp_db)
-            wal = db_path.with_name(db_path.name + "-wal")
-            shm = db_path.with_name(db_path.name + "-shm")
-            for sidecar in (wal, shm):
-                if sidecar.exists():
-                    shutil.copy2(sidecar, Path(tmpdir) / sidecar.name)
+            tmp_db = _copy_consistent_sqlite_replica(db_path, tmpdir)
             conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
         except (OSError, sqlite3.Error) as error:
             _trace_graph("isolated_copy_failed", error=type(error).__name__)
@@ -547,6 +676,12 @@ def _k_hop_neighborhood_conn(
     node_id: str,
     k: int,
     limit: int,
+    *,
+    state_root: Path | None = None,
+    chat_id: "int | str | None" = None,
+    participant_id: "int | str | None" = None,
+    time_from: Any = None,
+    time_to: Any = None,
 ) -> dict[str, Any]:
     """Return a bounded entity-relation-entity neighborhood from one graph DB."""
     root = str(node_id or "").strip()
@@ -596,6 +731,20 @@ def _k_hop_neighborhood_conn(
             other = target if source in frontier else source if target in frontier else ""
             if not other or other in visited or other not in valid_ids:
                 continue
+            if not _participant_in_scope(other, participant_id):
+                continue
+            if str(chat_id or "").strip() and (
+                other.startswith("chat:") or other.startswith("person:")
+            ):
+                room = other.split(":")[1] if ":" in other else ""
+                wanted = str(chat_id)
+                if state_root is not None:
+                    wanted_key = _room_key(state_root, wanted) or wanted
+                    room_key = _room_key(state_root, room) or room
+                else:
+                    wanted_key, room_key = wanted, room
+                if room_key != wanted_key and room != wanted:
+                    continue
             strongest[other] = max(strongest.get(other, 0), int(weight or 0))
         next_ids = [
             item[0]
@@ -644,6 +793,10 @@ def k_hop_neighborhood(
     limit: int,
     *,
     state_root: Path | None = None,
+    chat_id: "int | str | None" = None,
+    participant_id: "int | str | None" = None,
+    time_from: Any = None,
+    time_to: Any = None,
 ) -> dict[str, Any]:
     """Read a bounded k-hop subgraph; invalid input returns an empty result."""
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
@@ -661,7 +814,17 @@ def k_hop_neighborhood(
     try:
         conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
         conn.execute("PRAGMA query_only = ON")
-        return _k_hop_neighborhood_conn(conn, node_id, k, limit)
+        return _k_hop_neighborhood_conn(
+            conn,
+            node_id,
+            k,
+            limit,
+            state_root=root,
+            chat_id=chat_id,
+            participant_id=participant_id,
+            time_from=time_from,
+            time_to=time_to,
+        )
     except (OSError, sqlite3.Error, ValueError) as error:
         _trace_graph("khop_failed", error=type(error).__name__)
         return {
@@ -1280,24 +1443,14 @@ def index_topic_relations(
         if left_id not in known or right_id not in known:
             continue
         stats["pairs"] += 1
-        conn.execute(
-            """
-            INSERT INTO kg_relations
-                (source_id, relation, target_id, context, weight, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                context=excluded.context,
-                weight=excluded.weight,
-                updated_at=excluded.updated_at
-            """,
-            (
-                left_id,
-                "CO_OCCURS",
-                right_id,
-                f"같은 메시지에서 {int(count)}번 함께 언급됨",
-                _synapse_weight(count),
-                now,
-            ),
+        _upsert_relation(
+            conn,
+            source_id=left_id,
+            relation="CO_OCCURS",
+            target_id=right_id,
+            context=f"같은 메시지에서 {int(count)}번 함께 언급됨",
+            weight=_synapse_weight(count),
+            updated_at=now,
         )
         stats["written"] += 1
     conn.commit()
@@ -1354,24 +1507,15 @@ def index_membership_relations(
                     target = f"chat:{room_key}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "TALKED_IN",
-                            target,
-                            f"이 방에서 {int(count or 0):,}건을 남김",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
+                    _upsert_relation(
+                        conn,
+                        source_id=source,
+                        relation="TALKED_IN",
+                        target_id=target,
+                        context=f"이 방에서 {int(count or 0):,}건을 남김",
+                        weight=_synapse_weight(int(count or 0)),
+                        updated_at=now,
+                        room_id=room_key,
                     )
                     stats["person_chat"] += 1
             except sqlite3.Error:
@@ -1394,24 +1538,15 @@ def index_membership_relations(
                     target = f"topic:{topic}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "DISCUSSED",
-                            target,
-                            f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
+                    _upsert_relation(
+                        conn,
+                        source_id=source,
+                        relation="DISCUSSED",
+                        target_id=target,
+                        context=f"이 방에서 {int(count or 0):,}건이 이 주제로 묶임",
+                        weight=_synapse_weight(int(count or 0)),
+                        updated_at=now,
+                        room_id=_room_key(state_root, str(room)),
                     )
                     stats["chat_topic"] += 1
             except sqlite3.Error:
@@ -1437,24 +1572,15 @@ def index_membership_relations(
                     target = f"topic:{topic}"
                     if source not in known or target not in known:
                         continue
-                    conn.execute(
-                        """
-                        INSERT INTO kg_relations
-                            (source_id, relation, target_id, context, weight, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
-                            context=excluded.context,
-                            weight=excluded.weight,
-                            updated_at=excluded.updated_at
-                        """,
-                        (
-                            source,
-                            "TALKS_ABOUT",
-                            target,
-                            f"이 주제로 {int(count or 0):,}건을 말함",
-                            _synapse_weight(int(count or 0)),
-                            now,
-                        ),
+                    _upsert_relation(
+                        conn,
+                        source_id=source,
+                        relation="TALKS_ABOUT",
+                        target_id=target,
+                        context=f"이 주제로 {int(count or 0):,}건을 말함",
+                        weight=_synapse_weight(int(count or 0)),
+                        updated_at=now,
+                        room_id=_room_key(state_root, str(room)),
                     )
                     stats["person_topic"] += 1
             except sqlite3.Error:
@@ -2283,6 +2409,17 @@ SYNONYM_DICTIONARY = {
     "computer use": ["컴퓨터 유즈", "컴유"],
 }
 
+CONTEXT_GATED_SYNONYM_KEYS = frozenset({"알쫀쿠", "알리바바쿠폰"})
+ALIZONKU_CONTEXT_TERMS = (
+    "알리바바",
+    "클라우드",
+    "cloud",
+    "쿠폰",
+    "구독",
+    "서버",
+    "인프라",
+)
+
 KOREAN_PARTICLES_PATTERN = (
     r"(?:$|[\s.,!?~/_\-()\[\]]|은|는|이|가|을|를|도|에|과|의|와|으로|로"
     r"|등|만|밖|부터|까지|처럼|보다|께)"
@@ -2305,7 +2442,51 @@ TIME_EXPRESSION_RULES: tuple[tuple[str, str], ...] = (
 )
 
 
-def normalize_text_query(text: str) -> str:
+def _message_datetime_kst(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).astimezone(KST)
+        except (OverflowError, OSError, ValueError):
+            return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    iso = raw[:-1] + "+00:00" if raw.endswith(("Z", "z")) else raw
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=KST)
+    return parsed.astimezone(KST)
+
+
+def _resolve_relative_time_kst(text: str, message_timestamp: Any) -> str:
+    """Resolve relative Korean dates against the original message clock."""
+    anchor = _message_datetime_kst(message_timestamp)
+    if anchor is None:
+        return text
+    day_offsets = {"그저께": -2, "어제": -1, "오늘": 0, "내일": 1, "모레": 2}
+    resolved = text
+    for token, offset in day_offsets.items():
+        if token not in resolved:
+            continue
+        target = datetime.fromtimestamp(anchor.timestamp() + offset * 86400, tz=KST)
+        resolved = resolved.replace(token, target.strftime("%Y-%m-%d"))
+    period_hours = {"아침": "08:00", "점심": "12:00", "저녁": "20:00", "밤": "22:00"}
+    for token, clock in period_hours.items():
+        if token in resolved:
+            resolved = re.sub(
+                rf"{re.escape(token)}(?:\s*때|에)?",
+                f"{token}({clock} KST)",
+                resolved,
+            )
+    return resolved
+
+
+def normalize_text_query(text: str, *, message_timestamp: Any = None) -> str:
     """오타·붙여쓰기·시간대 표현을 표준형으로 바꾼다.
 
     답변 생성은 이 함수를 거친 질의로 그래프를 찾는다. 사용자가 "러닝박에"나
@@ -2322,14 +2503,19 @@ def normalize_text_query(text: str) -> str:
         return ""
     for wrong, right in TYPO_DICTIONARY.items():
         normalized = normalized.replace(wrong, right)
-    for pattern, replacement in TIME_EXPRESSION_RULES:
-        normalized = re.sub(pattern, replacement, normalized)
+    if message_timestamp is not None:
+        normalized = _resolve_relative_time_kst(normalized, message_timestamp)
+    else:
+        for pattern, replacement in TIME_EXPRESSION_RULES:
+            normalized = re.sub(pattern, replacement, normalized)
     return normalized
 
 
 def query_haystacks(
     query_text: str,
     also: "list[str] | tuple[str, ...] | None" = None,
+    *,
+    message_timestamp: Any = None,
 ) -> list[str]:
     """질의와 곁말을 원문과 표준형으로 함께 모은다.
 
@@ -2339,21 +2525,40 @@ def query_haystacks(
 
     haystacks: list[str] = []
     for raw in (query_text, *(also or ())):
-        for variant in (str(raw or ""), normalize_text_query(raw)):
+        for variant in (
+            str(raw or ""),
+            normalize_text_query(raw, message_timestamp=message_timestamp),
+        ):
             folded = variant.casefold().strip()
             if folded and folded not in haystacks:
                 haystacks.append(folded)
     return haystacks
 
 
-def _alias_matches(alias: str, haystack: str) -> bool:
+def _alizonku_context_confirmed(haystacks: list[str] | tuple[str, ...]) -> bool:
+    combined = " ".join(str(value or "").casefold() for value in haystacks)
+    return any(term.casefold() in combined for term in ALIZONKU_CONTEXT_TERMS)
+
+
+def _alias_matches(
+    alias: str,
+    haystack: str,
+    *,
+    context_haystacks: "list[str] | tuple[str, ...] | None" = None,
+) -> bool:
     folded = alias.casefold().strip()
     if not folded:
         return False
     haystack_folded = haystack.casefold()
     expanded_terms = [folded]
+    context_values = list(context_haystacks or (haystack,))
     for syn_key, syn_vals in SYNONYM_DICTIONARY.items():
         if folded == syn_key.casefold() or folded in [v.casefold() for v in syn_vals]:
+            if (
+                syn_key in CONTEXT_GATED_SYNONYM_KEYS
+                and not _alizonku_context_confirmed(context_values)
+            ):
+                continue
             expanded_terms.append(syn_key.casefold())
             expanded_terms.extend([v.casefold() for v in syn_vals])
     for term in set(expanded_terms):
@@ -2368,10 +2573,8 @@ def _alias_matches(alias: str, haystack: str) -> bool:
     return False
 
 
-HYBRID_KEYWORD_WEIGHT = 0.6
-HYBRID_VECTOR_WEIGHT = 0.4
 KNOWLEDGE_EMBEDDING_DIM = 128
-VECTOR_CANDIDATE_MIN = 0.18
+VECTOR_CANDIDATE_MIN = 0.0
 
 
 def _deterministic_text_embedding(
@@ -2422,7 +2625,7 @@ def _keyword_match_score(terms: list[str], haystacks: list[str]) -> float:
             if not term_folded or pair in seen:
                 continue
             seen.add(pair)
-            if not _alias_matches(term, haystack):
+            if not _alias_matches(term, haystack, context_haystacks=haystacks):
                 continue
             score += 1.0
             if term_folded == haystack_folded:
@@ -2430,11 +2633,448 @@ def _keyword_match_score(terms: list[str], haystacks: list[str]) -> float:
     return score
 
 
-def _hybrid_score(keyword_score: float, vector_score: float) -> float:
-    # Fail closed on terminology: this is a keyword-gated weighted hash-cosine
-    # blend, not true hybrid RRF. Do not treat it as reciprocal-rank fusion
-    # until independently ranked lists are fused and that behavior is tested.
-    return HYBRID_KEYWORD_WEIGHT * keyword_score + HYBRID_VECTOR_WEIGHT * vector_score
+def _normalize_dense_vector(values: Any) -> tuple[float, ...]:
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError("dense embedding is empty")
+    vector = tuple(float(value) for value in values)
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not math.isfinite(norm) or norm <= 0.0:
+        raise ValueError("dense embedding has zero norm")
+    return tuple(value / norm for value in vector)
+
+
+def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
+    """Embed text through a loopback-only multilingual embedding endpoint.
+
+    The product path is local-only. A non-loopback URL is rejected before any
+    request is made so a misconfigured environment cannot silently turn dense
+    retrieval into a cloud dependency.
+    """
+    if not texts:
+        return []
+    parsed = urllib.parse.urlparse(DENSE_EMBEDDING_URL)
+    host = (parsed.hostname or "").casefold()
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("dense embedding endpoint must be loopback-local")
+    payload = json.dumps(
+        {"model": DENSE_EMBEDDING_MODEL, "input": [str(text) for text in texts]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        DENSE_EMBEDDING_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=DENSE_EMBEDDING_TIMEOUT_SECONDS) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError("local dense embedding unavailable") from error
+    rows = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(texts):
+        raise RuntimeError("local dense embedding response mismatch")
+    ordered = sorted(
+        rows,
+        key=lambda row: int(row.get("index", 0)) if isinstance(row, dict) else 0,
+    )
+    vectors: list[tuple[float, ...]] = []
+    for row in ordered:
+        if not isinstance(row, dict):
+            raise RuntimeError("local dense embedding row invalid")
+        vectors.append(_normalize_dense_vector(row.get("embedding")))
+    return vectors
+
+
+def _ann_band_keys(vector: tuple[float, ...]) -> list[tuple[int, str]]:
+    """Return deterministic random-hyperplane LSH buckets for one vector."""
+    keys: list[tuple[int, str]] = []
+    bits_total = ANN_BANDS * ANN_BITS_PER_BAND
+    bits: list[int] = []
+    for bit_index in range(bits_total):
+        projection = 0.0
+        # The sign matrix is generated deterministically from coordinates, so
+        # the ANN index needs no external random-state file.
+        for dim_index, value in enumerate(vector):
+            digest = hashlib.blake2b(
+                f"{bit_index}:{dim_index}".encode("ascii"),
+                digest_size=1,
+                person=b"kg-ann-v1",
+            ).digest()[0]
+            projection += value if digest & 1 else -value
+        bits.append(1 if projection >= 0.0 else 0)
+    for band in range(ANN_BANDS):
+        start = band * ANN_BITS_PER_BAND
+        bucket = 0
+        for offset, bit in enumerate(bits[start : start + ANN_BITS_PER_BAND]):
+            bucket |= bit << offset
+        keys.append((band, f"{bucket:02x}"))
+    return keys
+
+
+def _connect_dense_index(state_root: Path) -> sqlite3.Connection:
+    path = state_root / DENSE_INDEX_DB_NAME
+    conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS dense_vectors ("
+        " entity_id TEXT PRIMARY KEY, vector_json TEXT NOT NULL, dim INTEGER NOT NULL,"
+        " model TEXT NOT NULL, index_version TEXT NOT NULL, watermark TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ann_buckets ("
+        " band INTEGER NOT NULL, bucket TEXT NOT NULL, entity_id TEXT NOT NULL,"
+        " PRIMARY KEY (band, bucket, entity_id))"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ann_bucket_lookup ON ann_buckets(band, bucket)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS dense_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.commit()
+    return conn
+
+
+def _entity_dense_text(row: tuple[Any, ...]) -> str:
+    _entity_id, name, _category, aliases_json, description, facts_json = row[:6]
+    try:
+        aliases = json.loads(aliases_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        aliases = []
+    try:
+        facts = json.loads(facts_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        facts = []
+    return " ".join(
+        [str(name or ""), str(description or "")]
+        + [str(value) for value in aliases if str(value).strip()]
+        + [str(value) for value in facts[:5] if str(value).strip()]
+    ).strip()
+
+
+def refresh_dense_index(
+    kg_conn: sqlite3.Connection,
+    state_root: Path,
+    *,
+    batch_size: int = 32,
+) -> dict[str, Any]:
+    """Persist local multilingual embeddings and an LSH ANN index."""
+    rows = list(
+        kg_conn.execute(
+            "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
+            " FROM kg_entities ORDER BY entity_id"
+        )
+    )
+    watermark = read_meta(kg_conn, "last_indexed_at") or str(
+        max((int(row[0] or 0) for row in kg_conn.execute("SELECT MAX(updated_at) FROM kg_entities")), default=0)
+    )
+    if not rows:
+        return {"status": "empty", "indexed": 0, "watermark": watermark}
+    dense = _connect_dense_index(state_root)
+    indexed = 0
+    try:
+        dense.execute("BEGIN")
+        dense.execute("DELETE FROM ann_buckets")
+        dense.execute("DELETE FROM dense_vectors")
+        for start in range(0, len(rows), max(1, int(batch_size))):
+            batch = rows[start : start + max(1, int(batch_size))]
+            vectors = _local_dense_embeddings([_entity_dense_text(row) for row in batch])
+            for row, vector in zip(batch, vectors):
+                entity_id = str(row[0])
+                dense.execute(
+                    "INSERT INTO dense_vectors"
+                    " (entity_id, vector_json, dim, model, index_version, watermark)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (
+                        entity_id,
+                        json.dumps(vector, separators=(",", ":")),
+                        len(vector),
+                        DENSE_EMBEDDING_MODEL,
+                        DENSE_INDEX_VERSION,
+                        watermark,
+                    ),
+                )
+                dense.executemany(
+                    "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (?,?,?)",
+                    [(band, bucket, entity_id) for band, bucket in _ann_band_keys(vector)],
+                )
+                indexed += 1
+        dense.execute(
+            "INSERT INTO dense_meta(key,value) VALUES('index_version',?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (DENSE_INDEX_VERSION,),
+        )
+        dense.execute(
+            "INSERT INTO dense_meta(key,value) VALUES('watermark',?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (watermark,),
+        )
+        dense.commit()
+    except Exception:
+        dense.rollback()
+        raise
+    finally:
+        dense.close()
+    return {"status": "indexed", "indexed": indexed, "watermark": watermark}
+
+
+def _dense_ann_query(
+    state_root: Path,
+    query_text: str,
+    *,
+    limit: int = 40,
+) -> tuple[list[tuple[str, float]], str]:
+    """Return an independently ranked dense candidate list from the ANN store."""
+    path = state_root / DENSE_INDEX_DB_NAME
+    if not path.is_file():
+        raise RuntimeError("dense index unavailable")
+    query_vector = _local_dense_embeddings([query_text])[0]
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        version_row = conn.execute(
+            "SELECT value FROM dense_meta WHERE key='index_version'"
+        ).fetchone()
+        if not version_row or str(version_row[0]) != DENSE_INDEX_VERSION:
+            raise RuntimeError("dense index version mismatch")
+        watermark_row = conn.execute(
+            "SELECT value FROM dense_meta WHERE key='watermark'"
+        ).fetchone()
+        watermark = str(watermark_row[0]) if watermark_row else ""
+        clauses: list[str] = []
+        params: list[Any] = []
+        for band, bucket in _ann_band_keys(query_vector):
+            clauses.append("(band=? AND bucket=?)")
+            params.extend([band, bucket])
+        candidate_rows = conn.execute(
+            "SELECT entity_id, COUNT(*) AS hits FROM ann_buckets WHERE "
+            + " OR ".join(clauses)
+            + " GROUP BY entity_id ORDER BY hits DESC, entity_id LIMIT ?",
+            params + [max(int(limit) * 4, int(limit), 1)],
+        ).fetchall()
+        candidate_ids = [str(row[0]) for row in candidate_rows]
+        if not candidate_ids:
+            return [], watermark
+        marks = ",".join("?" for _ in candidate_ids)
+        vectors = {
+            str(entity_id): _normalize_dense_vector(json.loads(vector_json))
+            for entity_id, vector_json in conn.execute(
+                f"SELECT entity_id, vector_json FROM dense_vectors WHERE entity_id IN ({marks})",
+                candidate_ids,
+            )
+        }
+        ranked = [
+            (entity_id, _vector_similarity(query_vector, vector))
+            for entity_id, vector in vectors.items()
+        ]
+        ranked.sort(key=lambda item: (-item[1], item[0]))
+        return ranked[: max(int(limit), 1)], watermark
+    finally:
+        conn.close()
+
+
+def _fts_query_terms(haystacks: list[str]) -> str:
+    terms: list[str] = []
+    seen: set[str] = set()
+    particles = ("으로", "부터", "까지", "처럼", "보다", "은", "는", "이", "가", "을", "를", "도", "에", "과", "와", "의", "로", "만")
+    for haystack in haystacks:
+        for raw in re.findall(r"[0-9a-z가-힣]+", haystack.casefold()):
+            candidates = [raw]
+            for particle in particles:
+                if len(raw) > len(particle) + 1 and raw.endswith(particle):
+                    candidates.append(raw[: -len(particle)])
+                    break
+            for term in candidates:
+                if len(term) < 2 or term in seen:
+                    continue
+                seen.add(term)
+                terms.append('"' + term.replace('"', '""') + '"')
+    return " OR ".join(terms[:24])
+
+
+def _bm25_candidates(
+    conn: sqlite3.Connection,
+    haystacks: list[str],
+    *,
+    limit: int = 40,
+) -> list[tuple[str, float]]:
+    query = _fts_query_terms(haystacks)
+    if not query:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT entity_id, bm25(kg_entities_fts) AS score"
+            " FROM kg_entities_fts WHERE kg_entities_fts MATCH ?"
+            " ORDER BY score ASC, entity_id ASC LIMIT ?",
+            (query, max(int(limit), 1)),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [(str(entity_id), float(score)) for entity_id, score in rows]
+
+
+def _rrf_merge(
+    bm25: list[tuple[str, float]],
+    dense: list[tuple[str, float]],
+    *,
+    k: int = RRF_K,
+) -> list[tuple[str, float]]:
+    scores: dict[str, float] = {}
+    for ranked in (bm25, dense):
+        for rank, (entity_id, _raw_score) in enumerate(ranked, start=1):
+            scores[entity_id] = scores.get(entity_id, 0.0) + 1.0 / (max(int(k), 1) + rank)
+    return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+
+
+SEARCH_MODE_RRF = "rrf"
+SEARCH_MODE_BM25_ONLY = "bm25_only"
+
+
+def _time_bucket_id(value: Any) -> str:
+    """Bucket a timestamp to a daily KST node id. Never a per-message node."""
+    stamp = _message_datetime_kst(value)
+    if stamp is None:
+        return ""
+    return f"time:{stamp.strftime('%Y-%m-%d')}"
+
+
+def _format_entity_fact(name: Any, category: Any, description: Any, facts: Any) -> str:
+    fact_list = facts if isinstance(facts, list) else []
+    snippet = "; ".join(str(item) for item in fact_list[:3] if str(item).strip())
+    facts_snippet = f" (핵심 맥락: {snippet})" if snippet else ""
+    return f"[{category}] {name}: {description}{facts_snippet}"
+
+
+def _evidence_ids_from_json(raw: Any) -> list[str]:
+    payload: Any = raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+    if not isinstance(payload, dict):
+        return []
+    ids = payload.get("source_event_ids")
+    if not isinstance(ids, list):
+        return []
+    return [str(item) for item in ids if str(item).strip()][:MAX_EVIDENCE_PER_NODE]
+
+
+def _participant_in_scope(entity_id: str, participant_id: Any) -> bool:
+    wanted = str(participant_id or "").strip()
+    if not wanted:
+        return True
+    if entity_id.startswith("person:"):
+        parts = entity_id.split(":")
+        name = parts[-1] if parts else ""
+        return wanted in {entity_id, name, ":".join(parts[2:])}
+    if entity_id.startswith("author:"):
+        return entity_id == f"author:{wanted}" or entity_id.endswith(f":{wanted}")
+    return True
+
+
+def _relation_time_in_scope(
+    valid_from: Any,
+    valid_to: Any,
+    time_from: Any,
+    time_to: Any,
+) -> bool:
+    if time_from is None and time_to is None:
+        return True
+    start = _message_datetime_kst(valid_from)
+    end = _message_datetime_kst(valid_to)
+    lower = _message_datetime_kst(time_from)
+    upper = _message_datetime_kst(time_to)
+    if start is None and end is None:
+        return True
+    if lower is not None and end is not None and end < lower:
+        return False
+    if upper is not None and start is not None and start > upper:
+        return False
+    return True
+
+
+def _keyword_ranked_candidates(
+    conn: sqlite3.Connection,
+    haystacks: list[str],
+    in_scope: Any,
+    *,
+    limit: int = 40,
+) -> list[tuple[str, float]]:
+    ranked: list[tuple[str, float]] = []
+    for ent_id, name, aliases_str in conn.execute(
+        "SELECT entity_id, name, aliases_json FROM kg_entities"
+    ):
+        entity_id = str(ent_id)
+        if not in_scope(entity_id):
+            continue
+        try:
+            aliases = json.loads(aliases_str)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            aliases = []
+        if not isinstance(aliases, list):
+            aliases = []
+        terms = [str(alias) for alias in aliases] + [str(name)]
+        score = _keyword_match_score(terms, haystacks)
+        if score <= 0:
+            continue
+        ranked.append((entity_id, score))
+    ranked.sort(key=lambda item: (-item[1], item[0]))
+    return ranked[: max(int(limit), 1)]
+
+
+def _upsert_relation(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    relation: str,
+    target_id: str,
+    context: str,
+    weight: int,
+    updated_at: int,
+    room_id: str = "",
+    valid_from: str = "",
+    valid_to: str = "",
+    evidence_message_id: str = "",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO kg_relations (
+            source_id, relation, target_id,
+            subject_id, relation_type, object_id,
+            room_id, valid_from, valid_to, evidence_message_id,
+            context, weight, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id, relation, target_id) DO UPDATE SET
+            subject_id=excluded.subject_id,
+            relation_type=excluded.relation_type,
+            object_id=excluded.object_id,
+            room_id=CASE WHEN excluded.room_id != '' THEN excluded.room_id ELSE kg_relations.room_id END,
+            valid_from=CASE WHEN excluded.valid_from != '' THEN excluded.valid_from ELSE kg_relations.valid_from END,
+            valid_to=excluded.valid_to,
+            evidence_message_id=CASE WHEN excluded.evidence_message_id != '' THEN excluded.evidence_message_id ELSE kg_relations.evidence_message_id END,
+            context=excluded.context,
+            weight=excluded.weight,
+            updated_at=excluded.updated_at
+        """,
+        (
+            source_id,
+            relation,
+            target_id,
+            source_id,
+            relation,
+            target_id,
+            room_id,
+            valid_from,
+            valid_to,
+            evidence_message_id,
+            context,
+            int(weight),
+            int(updated_at),
+        ),
+    )
 
 
 def _focused_relation_facts(
@@ -2517,17 +3157,21 @@ def retrieve_knowledge_bundle(
     max_entities: int = 3,
     max_relations: int = 3,
 ) -> dict[str, Any]:
-    """GraphRAG + 키워드/트리플 하이브리드 검색 번들 반환.
-    
+    """GraphRAG + BM25/Dense RRF 검색 번들 반환.
+
     엔티티와 관계(트리플)가 한쪽에 편중되지 않도록 균형 예산을 적용하며,
     방 ID와 방 이름을 상호 확인하여 방 간 데이터 격리를 보장한다 (2026-09-17).
+    Dense 실패 시 모드는 bm25_only이며 hybrid/rrf로 표시하지 않는다.
     """
-    entity_facts, relation_facts, candidates = _query_knowledge_structured(
+    ranked = _query_knowledge_ranked(
         query_text,
         state_root=state_root,
         chat_id=chat_id,
         also=also,
     )
+    entity_facts = list(ranked.get("entity_facts") or [])
+    relation_facts = list(ranked.get("relation_facts") or [])
+    candidates = list(ranked.get("candidates") or [])
     focus: dict[str, Any] | None = None
     if candidates:
         root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
@@ -2536,6 +3180,7 @@ def retrieve_knowledge_bundle(
             DEFAULT_K_HOP,
             K_HOP_NEIGHBOR_LIMIT,
             state_root=root,
+            chat_id=chat_id,
         )
         focused_ids = set(focus.get("node_ids", []))
         if focused_ids:
@@ -2565,6 +3210,10 @@ def retrieve_knowledge_bundle(
         "focus_k": int((focus or {}).get("k") or 0),
         "focus_node_count": len((focus or {}).get("node_ids", [])),
         "focus_edge_count": len((focus or {}).get("edges", [])),
+        "search_mode": str(ranked.get("search_mode") or SEARCH_MODE_BM25_ONLY),
+        "index_version": str(ranked.get("index_version") or SEARCH_INDEX_VERSION),
+        "watermark": str(ranked.get("watermark") or ""),
+        "evidence_ids": list(ranked.get("evidence_ids") or []),
     }
 
 def query_knowledge_context(
@@ -2592,6 +3241,29 @@ def _query_knowledge_structured(
     chat_id: "int | str | None" = None,
     also: "list[str] | tuple[str, ...] | None" = None,
 ) -> tuple[list[str], list[str], list[str]]:
+    ranked = _query_knowledge_ranked(
+        query_text,
+        state_root=state_root,
+        chat_id=chat_id,
+        also=also,
+    )
+    return (
+        list(ranked.get("entity_facts") or []),
+        list(ranked.get("relation_facts") or []),
+        list(ranked.get("candidates") or []),
+    )
+
+
+def _query_knowledge_ranked(
+    query_text: str,
+    state_root: Path | None = None,
+    *,
+    chat_id: "int | str | None" = None,
+    also: "list[str] | tuple[str, ...] | None" = None,
+    participant_id: "int | str | None" = None,
+    time_from: Any = None,
+    time_to: Any = None,
+) -> dict[str, Any]:
     """Retrieve relevant Knowledge Graph context nodes for a turn.
 
     ``query_text`` is the incoming message. ``also`` adds more text the turn is
@@ -2608,22 +3280,28 @@ def _query_knowledge_structured(
     # 오타·붙여쓰기·시간 표현을 표준형으로 바꾼 바늘더미까지 함께 쓴다.
     # 예전에는 원문만 썼고, 정규화 함수는 아무도 부르지 않았다.
     haystacks = query_haystacks(query_text, also)
+    empty = {
+        "entity_facts": [],
+        "relation_facts": [],
+        "candidates": [],
+        "search_mode": SEARCH_MODE_BM25_ONLY,
+        "index_version": SEARCH_INDEX_VERSION,
+        "watermark": "",
+        "evidence_ids": [],
+        "bm25_count": 0,
+        "dense_count": 0,
+    }
     if not haystacks:
         # 빈 질의로도 불린다. 여기서 리스트 하나를 돌려주면 호출자의 세 값
         # 언패킹이 깨져 조회 전체가 실패한다(2026-09-19).
-        return [], [], []
+        return empty
     root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
     kg_path = root / KNOWLEDGE_GRAPH_DB_NAME
     if not kg_path.exists():
-        return [], [], []
+        return empty
     conn = _connect_kg(kg_path)
     try:
         ensure_seeded(conn)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
-            " FROM kg_entities ORDER BY importance DESC, entity_id ASC"
-        )
         chat_str = str(chat_id or "").strip()
         # 방 격리: 방 식별자를 하나의 정규 키로 모은 뒤, 노드 ID의 방 부분과
         # 정확히 비교한다.
@@ -2676,76 +3354,134 @@ def _query_knowledge_structured(
                 canonical = _room_key(root, room) or room
             return canonical in allowed_canonical
 
+        def _keep_entity(entity_id: str) -> bool:
+            return _in_scope(entity_id) and _participant_in_scope(entity_id, participant_id)
+
+        bm25_ranked = [
+            (entity_id, score)
+            for entity_id, score in _bm25_candidates(conn, haystacks, limit=40)
+            if _keep_entity(entity_id)
+        ]
+        if not bm25_ranked:
+            bm25_ranked = _keyword_ranked_candidates(
+                conn, haystacks, _keep_entity, limit=40
+            )
+
+        search_mode = SEARCH_MODE_BM25_ONLY
+        dense_ranked: list[tuple[str, float]] = []
+        dense_watermark = ""
+        try:
+            dense_hits, dense_watermark = _dense_ann_query(
+                root, " ".join(haystacks), limit=40
+            )
+            dense_ranked = [
+                (entity_id, score)
+                for entity_id, score in dense_hits
+                if _keep_entity(entity_id)
+            ]
+            search_mode = SEARCH_MODE_RRF
+        except Exception as error:  # noqa: BLE001 - dense is optional, never cloud-fallback
+            _trace_graph("dense_query_failed", error=type(error).__name__)
+            search_mode = SEARCH_MODE_BM25_ONLY
+            dense_ranked = []
+
+        if search_mode == SEARCH_MODE_RRF:
+            merged = _rrf_merge(bm25_ranked, dense_ranked)
+        else:
+            merged = bm25_ranked
+
+        ordered_ids = [entity_id for entity_id, _score in merged]
         entity_facts: list[str] = []
         relation_facts: list[str] = []
-        ranked: list[tuple[float, str, str, str]] = []
         candidates: list[str] = []
-        query_vec = _deterministic_text_embedding(" ".join(haystacks))
-        matched_entity_ids = set()
-        matched_entity_names = {}
+        evidence_ids: list[str] = []
+        matched_entity_ids: set[str] = set()
+        matched_entity_names: dict[str, str] = {}
+        if ordered_ids:
+            marks = ",".join("?" for _ in ordered_ids)
+            rows = {
+                str(entity_id): (name, category, description, facts_json, evidence_json)
+                for entity_id, name, category, description, facts_json, evidence_json in conn.execute(
+                    f"SELECT entity_id, name, category, description, key_facts_json, evidence_json"
+                    f" FROM kg_entities WHERE entity_id IN ({marks})",
+                    ordered_ids,
+                )
+            }
+            for entity_id in ordered_ids:
+                row = rows.get(entity_id)
+                if row is None:
+                    continue
+                name, category, description, facts_json, evidence_json = row
+                try:
+                    facts = json.loads(facts_json)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    facts = []
+                if not isinstance(facts, list):
+                    facts = []
+                candidates.append(entity_id)
+                matched_entity_ids.add(entity_id)
+                matched_entity_names[entity_id] = str(name)
+                entity_facts.append(
+                    _format_entity_fact(name, category, description, facts)
+                )
+                evidence_ids.extend(_evidence_ids_from_json(evidence_json))
 
-        for ent_id, name, cat, aliases_str, desc, facts_str in cursor.fetchall():
-            # 방 격리 검사: person:* 또는 chat:* 노드는 허용된 방에만 속해야 함
-            if not _in_scope(ent_id):
-                continue
-
-            try:
-                aliases = json.loads(aliases_str)
-            except (TypeError, ValueError):
-                aliases = []
-            if not isinstance(aliases, list):
-                aliases = []
-            terms = [str(alias) for alias in aliases] + [str(name)]
-            keyword_score = _keyword_match_score(terms, haystacks)
-            if keyword_score <= 0:
-                continue
-
-            try:
-                facts = json.loads(facts_str)
-            except (TypeError, ValueError):
-                facts = []
-            if not isinstance(facts, list):
-                facts = []
-            node_text = " ".join(
-                [str(name), str(desc or "")] + [str(term) for term in terms] + [str(f) for f in facts[:5]]
-            )
-            node_vec = _deterministic_text_embedding(node_text)
-            vector_score = _vector_similarity(query_vec, node_vec)
-            score = _hybrid_score(keyword_score, vector_score)
-            snippet = "; ".join(str(f) for f in facts[:3])
-            facts_snippet = f" (핵심 맥락: {snippet})" if facts else ""
-            ranked.append((score, ent_id, name, f"[{cat}] {name}: {desc}{facts_snippet}"))
-
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        for score, ent_id, name, fact in ranked:
-            candidates.append(ent_id)
-            matched_entity_ids.add(ent_id)
-            matched_entity_names[ent_id] = name
-            entity_facts.append(fact)
-
-        # 관계(시냅스) 확장: 타 방 전용 노드가 섞여 들지 않도록 관계 수준 방 격리
         if matched_entity_ids:
             marks = ",".join("?" * len(matched_entity_ids))
             rel_cursor = conn.execute(
-                f"SELECT source_id, relation, target_id, context, weight"
+                f"SELECT source_id, relation, target_id, context, weight,"
+                f" COALESCE(room_id,''), COALESCE(valid_from,''), COALESCE(valid_to,''),"
+                f" COALESCE(evidence_message_id,'')"
                 f" FROM kg_relations"
                 f" WHERE source_id IN ({marks}) OR target_id IN ({marks})"
                 f" ORDER BY weight DESC LIMIT 12",
                 list(matched_entity_ids) + list(matched_entity_ids),
             )
-            for src, rel, tgt, ctx, w in rel_cursor.fetchall():
-                # 양쪽 끝을 모두 검사한다. 매칭된 쪽만 보면 다른 방 인물이
-                # target으로 들어온 관계가 그대로 통과한다
-                # (2026-09-17, 6 Pro 지적).
+            for src, rel, tgt, ctx, _weight, room_id, valid_from, valid_to, evidence_message_id in rel_cursor.fetchall():
                 if not _in_scope(src) or not _in_scope(tgt):
                     continue
+                if not _participant_in_scope(src, participant_id) and not _participant_in_scope(
+                    tgt, participant_id
+                ):
+                    if str(participant_id or "").strip():
+                        continue
+                if not _relation_time_in_scope(valid_from, valid_to, time_from, time_to):
+                    continue
+                if allowed_canonical and str(room_id or "").strip():
+                    canonical = room_aliases.get(str(room_id)) or (
+                        _room_key(root, str(room_id)) or str(room_id)
+                    )
+                    if canonical not in allowed_canonical:
+                        continue
                 src_name = matched_entity_names.get(src, src.split(":")[-1])
                 tgt_name = matched_entity_names.get(tgt, tgt.split(":")[-1])
                 relation_facts.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
+                if evidence_message_id:
+                    evidence_ids.append(str(evidence_message_id))
 
-        return entity_facts, relation_facts, candidates
-    except Exception:
-        return [], [], []
+        watermark = read_meta(conn, "last_indexed_at") or dense_watermark
+        # Preserve order, drop duplicates.
+        seen_evidence: set[str] = set()
+        ordered_evidence: list[str] = []
+        for item in evidence_ids:
+            if item in seen_evidence:
+                continue
+            seen_evidence.add(item)
+            ordered_evidence.append(item)
+        return {
+            "entity_facts": entity_facts,
+            "relation_facts": relation_facts,
+            "candidates": candidates,
+            "search_mode": search_mode,
+            "index_version": SEARCH_INDEX_VERSION,
+            "watermark": str(watermark or ""),
+            "evidence_ids": ordered_evidence,
+            "bm25_count": len(bm25_ranked),
+            "dense_count": len(dense_ranked),
+        }
+    except Exception as error:  # noqa: BLE001 - retrieval must not kill a turn
+        _trace_graph("query_ranked_failed", error=type(error).__name__)
+        return empty
     finally:
         conn.close()
 
