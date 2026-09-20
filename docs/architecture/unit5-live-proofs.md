@@ -243,3 +243,29 @@ The capture did not use macOS Screen Recording. Chrome's WebGL path emitted GPU 
 Direct visual inspection shows the champagne-gold/warm-amber spherical Jarvis core on the warm dark panel with the single settings gear at the top-right. The image is therefore non-empty and is not a blank or black unrendered canvas.
 
 This is a browser-rendered proof of the Three.js core panel only. It does not claim signed Extra cutover. Extra pid `20042` remained the installed Swift Extra during capture.
+
+
+## Load-driven Jarvis motion and settings panel at `32dc4b6`
+
+Measured on 2026-09-20 KST at HEAD `32dc4b689cac7793814dc1162c08af9556ea7cd7`. The current `jarvis-core.ts` and `animation-loop.ts` were bundled to `/tmp`; the real `JarvisCore.prototype.render` update ran through the real `AnimationLoop` with a deterministic 60 Hz RAF-like scheduler and inert renderer/scene stubs.
+
+| Measure | load 0 | load 1 |
+| --- | ---: | ---: |
+| steady render rate | 12.25 fps | 20.50 fps |
+| frame ceiling | 15 fps | 30 fps |
+| ring 0 target / settled | 0.170 / 0.170 rad/s | 0.408 / 0.408 rad/s |
+| ring 1 target / settled | -0.120 / -0.120 rad/s | -0.318 / -0.318 rad/s |
+| ring 2 target / settled | 0.090 / 0.090 rad/s | 0.261 / 0.261 rad/s |
+| ring damping lambda | 1.80 / 2.35 / 2.90 s^-1 | 1.80 / 2.35 / 2.90 s^-1 |
+| nucleus radius | 0.270 | 0.324 |
+| neuron point size | 0.036 | 0.048 |
+| synapse opacity | 0.090 | 0.250 |
+| particle opacity | 0.200 | 0.650 |
+| acoustic lattice scale | 1.000 | 1.000 |
+| root Y angular velocity | 0.040 rad/s | 0.150 rad/s |
+
+The three ring targets use distinct load multipliers and damping constants. Job load increases nucleus radius and visual activity density through neuron size and synapse/particle opacity. With `voiceRms=0`, the acoustic lattice stays at `1.0` because that pulse is voice driven.
+
+Vite ran on `127.0.0.1:1420`. The live DOM route `index.html?view=settings` was rendered at **760 x 760** and captured to `/Users/twoimo/Documents/projects/openkakao-bot/docs/architecture/jarvis-settings-panel.png` (**87,872 bytes**). Visual and source readback show target rooms, AI model, Voice, Kakao DB sync/index plus Knowledge, DREAM-RSI, and History. The main panel remains gear-only and its gear invokes `open_settings`; no bulk verification or permissions chrome is present.
+
+This section does not claim Extra cutover.
