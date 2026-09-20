@@ -45,6 +45,10 @@ pub enum BridgeError {
     ActionNotAllowed,
     #[error("state_io_failed")]
     StateIo,
+    #[error("voice_environment_missing")]
+    VoiceEnv,
+    #[error("voice_script_missing")]
+    VoiceScript,
 }
 
 #[derive(Clone)]
@@ -222,6 +226,25 @@ impl PythonBridge {
             }
         }
         write_global_abort(&self.config.state_root)
+    }
+
+    pub fn start_voice_session(&self) -> Result<(), BridgeError> {
+        let (python, script) = plan_voice_session(&self.config.repo_root)?;
+        Command::new(&python)
+            .env("OPENKAKAO_VOICE_ENV", "1")
+            .args([
+                "-E",
+                "-B",
+                script.to_str().ok_or(BridgeError::VoiceScript)?,
+                "--state-root",
+                self.config.state_root.to_str().ok_or(BridgeError::StateIo)?,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| BridgeError::Spawn)
     }
 
     fn run_python(
@@ -414,6 +437,20 @@ fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
         return None;
     }
     Some(value.chars().take(max_chars).collect())
+}
+
+fn plan_voice_session(repo_root: &Path) -> Result<(PathBuf, PathBuf), BridgeError> {
+    let python = repo_root.join(".venv-voice/bin/python")
+        .canonicalize()
+        .map_err(|_| BridgeError::VoiceEnv)?;
+    let script = repo_root.join("scripts/jarvis_voice.py");
+    if !python.is_file() {
+        return Err(BridgeError::VoiceEnv);
+    }
+    if !script.is_file() || script.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
+        return Err(BridgeError::VoiceScript);
+    }
+    Ok((python, script))
 }
 
 fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
@@ -1045,6 +1082,36 @@ mod tests {
             value.get("reason").and_then(Value::as_str),
             Some("global_abort")
         );
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn plan_voice_session_requires_isolated_interpreter() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-voice-session-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        assert!(matches!(
+            plan_voice_session(&temp),
+            Err(BridgeError::VoiceEnv)
+        ));
+
+        let python = temp.join(".venv-voice/bin/python");
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::write(&python, b"").unwrap();
+        assert!(matches!(
+            plan_voice_session(&temp),
+            Err(BridgeError::VoiceScript)
+        ));
+
+        let script = temp.join("scripts/jarvis_voice.py");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(&script, b"").unwrap();
+        let (resolved_python, resolved_script) = plan_voice_session(&temp).unwrap();
+        assert_eq!(resolved_python, python.canonicalize().unwrap());
+        assert_eq!(resolved_script, script);
         let _ = fs::remove_dir_all(&temp);
     }
 }

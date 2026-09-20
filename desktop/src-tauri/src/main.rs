@@ -49,6 +49,13 @@ fn cancel_python(bridge: tauri::State<'_, PythonBridge>, token_id: String) -> bo
 }
 
 #[tauri::command]
+fn start_voice_session(bridge: tauri::State<'_, PythonBridge>) -> Result<(), String> {
+    bridge
+        .start_voice_session()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("settings")
@@ -129,7 +136,8 @@ fn main() {
             fetch_runtime_snapshot,
             fetch_settings_action,
             cancel_python,
-            open_settings
+            open_settings,
+            start_voice_session
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

@@ -286,6 +286,9 @@ async function bootPanel(): Promise<void> {
   gear.addEventListener("click", () => {
     void invoke("open_settings");
   });
+  document.getElementById("voice-start")?.addEventListener("click", () => {
+    void invoke("start_voice_session");
+  });
 
   const deactivate = (): void => lifecycle.transition("hidden");
   window.addEventListener("blur", deactivate);

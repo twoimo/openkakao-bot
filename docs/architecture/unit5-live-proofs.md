@@ -473,3 +473,9 @@ Both models mis-hear 음성 as 분성/분청 on this aiden TTS clip. That is an 
 
 `ignore_terminal_hangup()` now ignores SIGHUP at process start. After `tauri build --debug`, `open` launched `OpenKakao Jarvis.app` as pid **84521** with ppid **1**. `kill -HUP 84521` left that pid alive. Extra pid **20042** and LaunchAgent `com.openkakao.auto-reply.menu` stayed running. The unused template `desktop/launchd/com.openkakao.jarvis.desktop.plist.example` was not `launchctl load`ed. 27B stayed unloaded. Signed Extra cutover remains open.
 
+## Opt-in microphone session command — 2026-09-20 KST
+
+Settings Voice now has `voice-start` (마이크 세션 시작). The gear-only main panel does not. `PythonBridge::start_voice_session` spawns `.venv-voice/bin/python scripts/jarvis_voice.py --state-root …` with `OPENKAKAO_VOICE_ENV=1` and does not wait. Missing venv → `voice_environment_missing`; missing/symlink script → `voice_script_missing`. App setup does not auto-start the mic. ⌘⌥Esc still writes the existing abort latch.
+
+Rust `plan_voice_session_requires_isolated_interpreter` **OK**. Desktop vitest **13 OK**. Extra pid **20042** and debug pid **84521** were not restarted, so this button is in source until the next debug rebuild. The live microphone was not opened. 27B stayed unloaded.
+

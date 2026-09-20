@@ -62,6 +62,7 @@ export function settingsMarkup(): string {
       <p id="voice-threshold">임계값: 0.65 고정</p>
       <p id="voice-custom">한국어 커스텀 헤드: 확인 중</p>
       <p class="muted">RMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.</p>
+      <button id="voice-start" type="button">마이크 세션 시작</button>
     </section>
 
     <section id="settings-sync-card" class="settings-card knowledge-accent" aria-labelledby="sync-title">

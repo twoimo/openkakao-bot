@@ -121,6 +121,8 @@ describe("layout and settings contract", () => {
     expect(markup).toContain('id="voice-phrase"');
     expect(markup).toContain('id="voice-threshold"');
     expect(markup).toContain('id="voice-custom"');
+    expect(markup).toContain('id="voice-start"');
+    expect(mainPanelMarkup()).not.toContain('id="voice-start"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
   });
