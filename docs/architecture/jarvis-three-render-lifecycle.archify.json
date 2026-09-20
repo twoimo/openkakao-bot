@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Jarvis Three.js render lifecycle",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1280,
+      760
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Render loop"
+    }
+  ],
+  "states": [
+    {
+      "id": "idle",
+      "label": "Idle · 15 fps",
+      "type": "active",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "work",
+      "label": "Work · 30 fps",
+      "type": "active",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "hidden",
+      "label": "Hidden · RAF off",
+      "type": "waiting",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "resume",
+      "label": "Visible again",
+      "type": "active",
+      "lane": "main",
+      "col": 3
+    }
+  ],
+  "transitions": [
+    {
+      "from": "idle",
+      "to": "work"
+    },
+    {
+      "from": "work",
+      "to": "hidden"
+    },
+    {
+      "from": "hidden",
+      "to": "resume"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Render contract",
+      "items": [
+        "While visible, idle targets 15 fps and work targets 30 fps.",
+        "Hide / close / lock from a visible state stops the owned RAF loop: 0 RAF target.",
+        "Show / unlock resumes the loop at the state-appropriate budget."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Live proof still open",
+      "items": [
+        "Live hide-state render-call=0 was not measured in this turn."
+      ]
+    }
+  ]
+}

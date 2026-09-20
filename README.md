@@ -57,6 +57,39 @@ Interactive diagrams (authored node/card/label copy is Korean; Archify Viewer UI
 
 The diagrams reflect `efee7c8`. They are not a live generation trace. On-device generation still fails closed when a probe times out.
 
+## Jarvis local-AI implementation status
+
+Unit 5 documentation reflects the source state after Units 1–4; it does not claim the still-open live proofs below.
+
+| Unit | Landed SHA | Status |
+| --- | --- | --- |
+| 1 | 278b3a6 | Landed |
+| 2 | 64b577c | Landed |
+| 3 | 845f209 | Landed |
+| 4 | b53bfb2 | Landed |
+
+Verification recorded for the landed implementation: **215 tests OK on UV Python 3.11**.
+
+Current limits:
+
+- Live Extra is still the Swift AutoReplyMenu, pid **20042**. The Tauri app has **not** been cut over as the signed live app.
+- The Qwen3.8 27B model is unloaded.
+- DPO output does not promote or replace the live model automatically.
+- style.gallery was not applied.
+- Live hide-state render-call=0, wake/STT/TTS operation, and signed Tauri cutover remain open Unit 5 live proofs and are not claimed as measured here.
+
+Recovery and safety:
+
+- SQLite acquisition is fail-closed: create an isolated consistent copy first; if that copy fails, do not open the live KakaoTalk database as a fallback.
+- Emergency operator escape is **⌘⌥Esc**.
+- A delivery_unknown result is never auto-retried.
+
+Interactive Unit 5 diagrams:
+
+- [Jarvis/openkakao architecture after Units 1–4](docs/architecture/jarvis-openkakao-units1-4.html)
+- [Jarvis Three.js render lifecycle](docs/architecture/jarvis-three-render-lifecycle.html)
+- [GraphRAG ranked search sequence](docs/architecture/graphrag-search-sequence.html)
+
 <h2 id="features">Features</h2>
 
 - **Local-first privacy**: Chat history, vector memory, knowledge-graph rows, and credentials stay on your Mac.

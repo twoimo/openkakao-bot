@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "GraphRAG ranked search sequence",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1480,
+      680
+    ]
+  },
+  "participants": [
+    {
+      "id": "caller",
+      "label": "Reply worker",
+      "type": "frontend"
+    },
+    {
+      "id": "copy",
+      "label": "Isolated SQLite replica",
+      "type": "security"
+    },
+    {
+      "id": "bm25",
+      "label": "BM25 ranker",
+      "type": "backend"
+    },
+    {
+      "id": "dense",
+      "label": "Dense ANN",
+      "type": "backend"
+    },
+    {
+      "id": "merge",
+      "label": "RRF merger",
+      "type": "backend"
+    },
+    {
+      "id": "graph",
+      "label": "Knowledge graph",
+      "type": "database"
+    }
+  ],
+  "messages": [
+    {
+      "from": "caller",
+      "to": "copy",
+      "label": "create consistent isolated copy",
+      "y": 160
+    },
+    {
+      "from": "copy",
+      "to": "caller",
+      "label": "copy path; copy failure is fail-closed",
+      "y": 202
+    },
+    {
+      "from": "caller",
+      "to": "bm25",
+      "label": "query copied knowledge rows",
+      "y": 244
+    },
+    {
+      "from": "bm25",
+      "to": "caller",
+      "label": "independent BM25 ranked list",
+      "y": 286
+    },
+    {
+      "from": "caller",
+      "to": "dense",
+      "label": "query local dense ANN independently",
+      "y": 328
+    },
+    {
+      "from": "dense",
+      "to": "caller",
+      "label": "success: independent dense ranked list",
+      "y": 370
+    },
+    {
+      "from": "dense",
+      "to": "caller",
+      "label": "failure: bm25_only; skip RRF",
+      "y": 412
+    },
+    {
+      "from": "caller",
+      "to": "merge",
+      "label": "success path only: RRF(BM25, dense)",
+      "y": 454
+    },
+    {
+      "from": "merge",
+      "to": "caller",
+      "label": "search_mode = rrf",
+      "y": 496
+    },
+    {
+      "from": "caller",
+      "to": "graph",
+      "label": "expand selected seeds to 2 hops",
+      "y": 538
+    },
+    {
+      "from": "graph",
+      "to": "caller",
+      "label": "facts + relationships",
+      "y": 580
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Dense failure branch",
+      "items": [
+        "Dense ANN exception clears the dense list.",
+        "RRF is skipped.",
+        "search_mode remains bm25_only; never hybrid or rrf."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Dense success branch",
+      "items": [
+        "BM25 and dense are independent ranked lists.",
+        "RRF merges them before the 2-hop graph expansion."
+      ]
+    }
+  ]
+}
