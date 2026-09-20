@@ -100,7 +100,16 @@ fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
     let _ = window.set_focus();
 }
 
+fn ignore_terminal_hangup() {
+    // LaunchAgent and open(1) already reparent to launchd. Ignore SIGHUP so a
+    // terminal or nohup handoff cannot take down the menubar process.
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+}
+
 fn main() {
+    ignore_terminal_hangup();
     let abort_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
     tauri::Builder::default()
         .manage(PythonBridge::new())

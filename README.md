@@ -89,6 +89,7 @@ Current limits:
 - At HEAD `38f77cb`, the parallel Tauri debug bundle was rebuilt and restarted as pid **62924**. The updated **760 x 760** Voice settings capture is [jarvis-settings-panel.png](docs/architecture/jarvis-settings-panel.png) (**76,125 bytes**); Extra pid **20042** remained alive and process readback showed only Flash-Next on `mlx-serve`, with no Qwen3.8 27B or Gemma process. The real Tauri hide RAF probe was not repeated because its temporary telemetry hook had been removed.
 - Snapshot Voice now selects bundled Korean ONNX from the file on disk when no session status exists. Production `whisper-large-v3-turbo` on the same TTS clip transcribed `안녕하세요 분성 합성 테스트입니다.` in 25.4 s (tiny had 분청). Extra pid **20042** unchanged.
 - Debug Tauri was rebuilt at `96153df` and is running as pid **63463** (`com.openkakao.jarvis.desktop`) without replacing Extra.
+- Debug Jarvis now ignores SIGHUP: after rebuild, `open` pid **84521** survived `kill -HUP` with Extra **20042** unchanged. An unused LaunchAgent template is in the repo and was not loaded.
 
 Recovery and safety:
 

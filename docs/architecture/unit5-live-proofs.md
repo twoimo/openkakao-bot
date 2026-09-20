@@ -469,3 +469,7 @@ Both models mis-hear 음성 as 분성/분청 on this aiden TTS clip. That is an 
 
 `resolve_custom_wake_model(None)` on this tree returns the 6,406-byte bundled ONNX. Rust missing-status tests already cover the same selection rule. Hide RAF was not re-measured. Signed Extra cutover remains open. 27B stayed unloaded.
 
+## Menubar SIGHUP survival — 2026-09-20 KST
+
+`ignore_terminal_hangup()` now ignores SIGHUP at process start. After `tauri build --debug`, `open` launched `OpenKakao Jarvis.app` as pid **84521** with ppid **1**. `kill -HUP 84521` left that pid alive. Extra pid **20042** and LaunchAgent `com.openkakao.auto-reply.menu` stayed running. The unused template `desktop/launchd/com.openkakao.jarvis.desktop.plist.example` was not `launchctl load`ed. 27B stayed unloaded. Signed Extra cutover remains open.
+
