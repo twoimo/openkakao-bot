@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
-import { createCancellationToken, type CancellationToken, type RuntimeSnapshot } from "./contracts";
+import {
+  createCancellationToken,
+  unavailableSnapshot,
+  type CancellationToken,
+  type RuntimeSnapshot,
+} from "./contracts";
 import { JarvisCore } from "./core/jarvis-core";
 import { RenderLifecycle } from "./core/lifecycle";
 import { KnowledgeHologram } from "./knowledge/hologram";
@@ -20,9 +25,18 @@ import {
   prepareSwapModel,
   setResidentModel,
 } from "./runtime";
+import {
+  RuntimeSnapshotPoller,
+  browserPollScheduler,
+  type PollTimerScheduler,
+  type SnapshotCanceller,
+  type SnapshotLoader,
+} from "./runtime-poller";
 import { mainPanelMarkup, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
+
+export { RuntimeSnapshotPoller, type PollTimerScheduler } from "./runtime-poller";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 if (!app) throw new Error("app_root_missing");
@@ -30,9 +44,58 @@ if (!app) throw new Error("app_root_missing");
 const isSettings = new URLSearchParams(window.location.search).get("view") === "settings";
 document.body.classList.add(isSettings ? "settings-view" : "panel-view");
 
+interface JarvisCoreControl {
+  readonly renderCount: number;
+  start(): void;
+  stop(): void;
+  setSignals(jobLoad: number, voiceRms: number): void;
+  dispose(): void;
+}
+
 function setText(id: string, value: string): void {
   const element = document.getElementById(id);
   if (element) element.textContent = value;
+}
+
+function showPanelUnavailable(message: string, disableGear: boolean): void {
+  app.dataset.state = "unavailable";
+  const gear = document.querySelector<HTMLButtonElement>("#gear");
+  if (gear) {
+    gear.disabled = disableGear;
+    gear.dataset.state = "unavailable";
+    gear.setAttribute("aria-label", "설정 확인 불가");
+    gear.title = message;
+  }
+  const panel = document.querySelector<HTMLElement>(".jarvis-panel");
+  if (!panel) return;
+  let status = document.getElementById("panel-status");
+  if (!status) {
+    status = document.createElement("p");
+    status.id = "panel-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.style.cssText = "position:absolute;left:12px;right:12px;bottom:9px;margin:0;text-align:center;font-size:10px;line-height:1.35;color:var(--muted);pointer-events:none";
+    panel.append(status);
+  }
+  status.textContent = message;
+}
+
+function clearPanelUnavailable(): void {
+  app.dataset.state = "ready";
+  document.getElementById("panel-status")?.remove();
+  const gear = document.querySelector<HTMLButtonElement>("#gear");
+  if (!gear) return;
+  gear.disabled = false;
+  delete gear.dataset.state;
+  gear.setAttribute("aria-label", "설정 열기");
+  gear.title = "설정";
+}
+
+function renderPanelUnavailable(): void {
+  app.innerHTML = mainPanelMarkup();
+  document.querySelector<HTMLCanvasElement>(".jarvis-core")
+    ?.setAttribute("aria-label", "Jarvis core 확인 불가");
+  showPanelUnavailable("Jarvis 상태를 확인할 수 없습니다.", true);
 }
 
 function renderRooms(snapshot: RuntimeSnapshot): void {
@@ -156,6 +219,30 @@ function renderVoice(snapshot: RuntimeSnapshot): void {
   setText("voice-custom", customWakeText);
 }
 
+function renderSettingsUnavailable(): void {
+  app.innerHTML = settingsMarkup();
+  app.dataset.state = "unavailable";
+  const snapshot = unavailableSnapshot("desktop_boot_failed");
+  renderRooms(snapshot);
+  renderModels(null, snapshot);
+  renderVoice(snapshot);
+  setText("model-status", "모델 상태를 확인할 수 없습니다. 기존 선택은 변경하지 않습니다.");
+  setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
+  setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
+  setText("settings-sync-source", "동기화: 확인 불가");
+  setText("settings-sync-copy", "격리 복제: 확인 불가");
+  setText("settings-sync-mode", "색인 모드: 확인 불가");
+  setText("settings-sync-index", "마지막 색인: 확인 불가");
+  setText("knowledge-summary", "지식 그래프 상태를 확인할 수 없습니다.");
+  setText("knowledge-mode", "unavailable");
+  setText("settings-slot-morning", "미확인");
+  setText("settings-slot-lunch", "미확인");
+  setText("settings-slot-evening", "미확인");
+  document.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+    button.disabled = true;
+  });
+}
+
 function relationMeta(edge: KnowledgeEdge): string {
   const room = edge.roomId || edge.evidence.chatId || "room ?";
   const time = edge.validFrom
@@ -258,123 +345,261 @@ function setupKnowledgeGraph(
   return hologram;
 }
 
-async function bootSettings(): Promise<void> {
+interface SettingsBootDependencies {
+  loadSnapshot: SnapshotLoader;
+  loadAction: typeof fetchSettingsAction;
+  wireVoice: typeof wireVoiceStart;
+  invokeCommand: typeof invoke;
+}
+
+export async function bootSettings(
+  overrides: Partial<SettingsBootDependencies> = {},
+): Promise<void> {
+  const dependencies: SettingsBootDependencies = {
+    loadSnapshot: fetchRuntimeSnapshot,
+    loadAction: fetchSettingsAction,
+    wireVoice: wireVoiceStart,
+    invokeCommand: invoke,
+    ...overrides,
+  };
   app.innerHTML = settingsMarkup();
-  const token = createCancellationToken();
-  const [snapshot, models, dream, knowledge, graphPayload] = await Promise.all([
-    fetchRuntimeSnapshot(token),
-    fetchSettingsAction("models"),
-    fetchSettingsAction("dream-rsi-status"),
-    fetchSettingsAction("knowledge-graph-status"),
-    fetchSettingsAction("knowledge-graph"),
-  ]);
-  renderRooms(snapshot);
-  renderModels(models, snapshot);
-  wireModelSelection();
-  renderVoice(snapshot);
-  wireVoiceStart(document, invoke);
+  app.dataset.state = "loading";
+  let hologram: KnowledgeHologram | null = null;
+  try {
+    const token = createCancellationToken();
+    const results = await Promise.allSettled([
+      dependencies.loadSnapshot(token),
+      dependencies.loadAction("models"),
+      dependencies.loadAction("dream-rsi-status"),
+      dependencies.loadAction("knowledge-graph-status"),
+      dependencies.loadAction("knowledge-graph"),
+    ] as const);
+    const [snapshotResult, modelsResult, dreamResult, knowledgeResult, graphResult] = results;
+    const snapshot = snapshotResult.status === "fulfilled"
+      ? snapshotResult.value
+      : unavailableSnapshot("settings_snapshot_unavailable");
+    const models = modelsResult.status === "fulfilled" ? modelsResult.value : null;
+    const dream = dreamResult.status === "fulfilled" ? dreamResult.value : null;
+    const knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : null;
+    const graphPayload = graphResult.status === "fulfilled" ? graphResult.value : null;
+    const degraded = results.some((result) => result.status === "rejected") || !snapshot.available;
 
-  if (dream) {
-    setText("settings-dream-rsi-status", `status: ${String(dream.status ?? "unknown")} · selected_policy: ${String(dream.selected_policy ?? "none")}`);
-    setText("settings-dream-rsi-gold", `gold_rows: ${String(dream.gold_rows ?? "unknown")} · gold_source_policy: ${String(dream.gold_source_policy ?? "unknown")}`);
-  } else {
-    setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
-    setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
-  }
+    renderRooms(snapshot);
+    renderModels(models, snapshot);
+    wireModelSelection();
+    renderVoice(snapshot);
+    dependencies.wireVoice(document, dependencies.invokeCommand);
 
-  if (knowledge) {
-    const stale = knowledge.stale === true ? "stale" : "ready";
-    setText("settings-sync-source", `동기화: ${stale}`);
-    setText("settings-sync-copy", `격리 복제: ${String(knowledge.snapshot_status ?? "unknown")}`);
-    setText("settings-sync-mode", `색인 모드: ${String(knowledge.indexing_mode ?? "unknown")}`);
-    setText("settings-sync-index", `마지막 색인: ${String(knowledge.indexed_at ?? "unknown")} · indexed ${String(knowledge.indexed_count ?? 0)}`);
-  } else {
-    setText("settings-sync-source", "동기화: 확인 불가");
-    setText("settings-sync-copy", "격리 복제: 확인 불가");
-    setText("settings-sync-mode", "색인 모드: 확인 불가");
-    setText("settings-sync-index", "마지막 색인: 확인 불가");
-  }
+    if (dream) {
+      setText("settings-dream-rsi-status", `status: ${String(dream.status ?? "unknown")} · selected_policy: ${String(dream.selected_policy ?? "none")}`);
+      setText("settings-dream-rsi-gold", `gold_rows: ${String(dream.gold_rows ?? "unknown")} · gold_source_policy: ${String(dream.gold_source_policy ?? "unknown")}`);
+    } else {
+      setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
+      setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
+    }
 
-  const room = snapshot.rooms[0];
-  const slots = room ? ["대기", "대기", "대기"] : ["미확인", "미확인", "미확인"];
-  setText("settings-slot-morning", slots[0]);
-  setText("settings-slot-lunch", slots[1]);
-  setText("settings-slot-evening", slots[2]);
+    if (knowledge) {
+      const stale = knowledge.stale === true ? "stale" : "ready";
+      setText("settings-sync-source", `동기화: ${stale}`);
+      setText("settings-sync-copy", `격리 복제: ${String(knowledge.snapshot_status ?? "unknown")}`);
+      setText("settings-sync-mode", `색인 모드: ${String(knowledge.indexing_mode ?? "unknown")}`);
+      setText("settings-sync-index", `마지막 색인: ${String(knowledge.indexed_at ?? "unknown")} · indexed ${String(knowledge.indexed_count ?? 0)}`);
+    } else {
+      setText("settings-sync-source", "동기화: 확인 불가");
+      setText("settings-sync-copy", "격리 복제: 확인 불가");
+      setText("settings-sync-mode", "색인 모드: 확인 불가");
+      setText("settings-sync-index", "마지막 색인: 확인 불가");
+    }
 
-  const hologram = setupKnowledgeGraph(graphPayload, snapshot);
-  if (hologram) {
-    Object.defineProperty(window, "__knowledgeRenderCount", { configurable: true, get: () => hologram.renderCount });
-    const lifecycle = new RenderLifecycle(hologram, () => undefined, () => undefined);
-    const deactivate = (): void => lifecycle.transition("hidden");
-    window.addEventListener("blur", deactivate);
-    window.addEventListener("pagehide", () => {
-      lifecycle.transition("closed");
-      hologram.dispose();
-    });
-    document.addEventListener("visibilitychange", () => {
+    const room = snapshot.rooms[0];
+    const slots = room ? ["대기", "대기", "대기"] : ["미확인", "미확인", "미확인"];
+    setText("settings-slot-morning", slots[0]);
+    setText("settings-slot-lunch", slots[1]);
+    setText("settings-slot-evening", slots[2]);
+
+    hologram = setupKnowledgeGraph(graphPayload, snapshot);
+    app.dataset.state = degraded ? "unavailable" : "ready";
+    if (hologram) {
+      const graph = hologram;
+      Object.defineProperty(window, "__knowledgeRenderCount", { configurable: true, get: () => graph.renderCount });
+      const lifecycle = new RenderLifecycle(graph, () => undefined, () => undefined);
+      let disposed = false;
+      const deactivate = (): void => {
+        if (!disposed) lifecycle.transition("hidden");
+      };
+      const visibilityChanged = (): void => {
+        if (!disposed) lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+      };
+      const activate = (): void => {
+        if (!disposed && document.visibilityState === "visible") lifecycle.transition("visible");
+      };
+      const close = (): void => {
+        if (disposed) return;
+        disposed = true;
+        window.removeEventListener("blur", deactivate);
+        window.removeEventListener("focus", activate);
+        document.removeEventListener("visibilitychange", visibilityChanged);
+        lifecycle.transition("closed");
+        try {
+          graph.dispose();
+        } catch {
+          // The page is closing; disposal remains fail-closed and idempotent here.
+        }
+      };
+      window.addEventListener("blur", deactivate);
+      window.addEventListener("pagehide", close, { once: true });
+      document.addEventListener("visibilitychange", visibilityChanged);
+      window.addEventListener("focus", activate);
       lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
-    });
-    window.addEventListener("focus", () => {
-      if (document.visibilityState === "visible") lifecycle.transition("visible");
-    });
-    lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+    }
+  } catch {
+    try {
+      hologram?.dispose();
+    } catch {
+      // Rendering the fixed unavailable state takes precedence over cleanup errors.
+    }
+    renderSettingsUnavailable();
   }
 }
 
-async function bootPanel(): Promise<void> {
+type CommandInvoker = (command: string) => Promise<unknown>;
+
+interface PanelBootDependencies {
+  createCore: (canvas: HTMLCanvasElement) => JarvisCoreControl;
+  loadSnapshot: SnapshotLoader;
+  cancelSnapshot: SnapshotCanceller;
+  makeToken: () => CancellationToken;
+  pollScheduler: PollTimerScheduler;
+  invokeCommand: CommandInvoker;
+}
+
+export async function bootPanel(
+  overrides: Partial<PanelBootDependencies> = {},
+): Promise<void> {
+  const dependencies: PanelBootDependencies = {
+    createCore: (canvas) => new JarvisCore(canvas),
+    loadSnapshot: fetchRuntimeSnapshot,
+    cancelSnapshot: cancelRuntimeRequest,
+    makeToken: createCancellationToken,
+    pollScheduler: browserPollScheduler,
+    invokeCommand: invoke,
+    ...overrides,
+  };
   app.innerHTML = mainPanelMarkup();
+  app.dataset.state = "loading";
   const canvas = document.querySelector<HTMLCanvasElement>(".jarvis-core");
   const gear = document.querySelector<HTMLButtonElement>("#gear");
-  if (!canvas || !gear) throw new Error("panel_contract_missing");
+  if (!canvas || !gear) {
+    renderPanelUnavailable();
+    return;
+  }
 
-  const core = new JarvisCore(canvas);
-  Object.defineProperty(window, "__jarvisRenderCount", { configurable: true, get: () => core.renderCount });
-  let pollTimer: number | null = null;
-  let requestToken: CancellationToken | null = null;
+  let core: JarvisCoreControl | null = null;
+  let closePanel: (() => void) | null = null;
+  try {
+    core = dependencies.createCore(canvas);
+    const activeCore = core;
+    Object.defineProperty(window, "__jarvisRenderCount", { configurable: true, get: () => activeCore.renderCount });
+    const polling = new RuntimeSnapshotPoller(
+      activeCore,
+      dependencies.loadSnapshot,
+      dependencies.cancelSnapshot,
+      dependencies.makeToken,
+      dependencies.pollScheduler,
+    );
+    const lifecycle = new RenderLifecycle(activeCore, () => polling.stop(), () => polling.start());
+    let disposed = false;
+    let settingsPending = false;
 
-  const stopTimers = (): void => {
-    if (pollTimer !== null) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-    if (requestToken) {
-      void cancelRuntimeRequest(requestToken);
-      requestToken = null;
-    }
-  };
+    const deactivate = (): void => {
+      if (!disposed) lifecycle.transition("hidden");
+    };
+    const visibilityChanged = (): void => {
+      if (!disposed) lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+    };
+    const activate = (): void => {
+      if (!disposed && document.visibilityState === "visible") lifecycle.transition("visible");
+    };
+    const openSettings = (): void => {
+      if (disposed || settingsPending) return;
+      settingsPending = true;
+      clearPanelUnavailable();
+      gear.disabled = true;
+      gear.setAttribute("aria-busy", "true");
+      void (async () => {
+        let failed = false;
+        try {
+          await dependencies.invokeCommand("open_settings");
+        } catch {
+          failed = true;
+          if (!disposed) showPanelUnavailable("설정을 확인할 수 없습니다.", false);
+        } finally {
+          settingsPending = false;
+          if (!disposed) {
+            gear.disabled = false;
+            gear.removeAttribute("aria-busy");
+            if (!failed) clearPanelUnavailable();
+          }
+        }
+      })();
+    };
+    const close = (): void => {
+      if (disposed) return;
+      disposed = true;
+      window.removeEventListener("blur", deactivate);
+      window.removeEventListener("focus", activate);
+      window.removeEventListener("pagehide", close);
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      gear.removeEventListener("click", openSettings);
+      try {
+        lifecycle.transition("closed");
+      } catch {
+        polling.stop();
+      }
+      try {
+        activeCore.dispose();
+      } catch {
+        // WebGL teardown must never surface an exception during page shutdown.
+      }
+    };
+    closePanel = close;
 
-  const poll = async (): Promise<void> => {
-    const token = createCancellationToken();
-    requestToken = token;
-    const snapshot = await fetchRuntimeSnapshot(token);
-    if (requestToken === token && !token.cancelled) {
-      requestToken = null;
-      core.setSignals(snapshot.jobLoad, snapshot.voice.rms);
-      pollTimer = window.setTimeout(() => void poll(), 2500);
-    }
-  };
-
-  const lifecycle = new RenderLifecycle(
-    { start: () => core.start(), stop: () => core.stop() },
-    stopTimers,
-    () => void poll(),
-  );
-
-  gear.addEventListener("click", () => {
-    void invoke("open_settings");
-  });
-
-  const deactivate = (): void => lifecycle.transition("hidden");
-  window.addEventListener("blur", deactivate);
-  window.addEventListener("pagehide", () => lifecycle.transition("closed"));
-  document.addEventListener("visibilitychange", () => {
+    gear.addEventListener("click", openSettings);
+    window.addEventListener("blur", deactivate);
+    window.addEventListener("pagehide", close, { once: true });
+    document.addEventListener("visibilitychange", visibilityChanged);
+    window.addEventListener("focus", activate);
     lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
-  });
-  window.addEventListener("focus", () => {
-    if (document.visibilityState === "visible") lifecycle.transition("visible");
-  });
-  lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+    app.dataset.state = "ready";
+  } catch {
+    if (closePanel) closePanel();
+    else {
+      try {
+        core?.dispose();
+      } catch {
+        // A partially constructed renderer is best-effort cleanup only.
+      }
+    }
+    renderPanelUnavailable();
+  }
 }
 
-if (isSettings) void bootSettings();
-else void bootPanel();
+interface DesktopBootDependencies {
+  panel: () => Promise<void>;
+  settings: () => Promise<void>;
+}
+
+export async function startDesktopApp(
+  settingsView = isSettings,
+  booters: DesktopBootDependencies = { panel: bootPanel, settings: bootSettings },
+): Promise<void> {
+  try {
+    if (settingsView) await booters.settings();
+    else await booters.panel();
+  } catch {
+    if (settingsView) renderSettingsUnavailable();
+    else renderPanelUnavailable();
+  }
+}
+
+void startDesktopApp().catch(() => undefined);
