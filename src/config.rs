@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 pub(crate) const MLX_FLASH_NEXT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
 pub(crate) const MLX_FLASH_NEXT_PREFIXED_MODEL_ID: &str =
     "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+pub(crate) const MLX_27B_MODEL_ID: &str = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
+pub(crate) const MLX_27B_PREFIXED_MODEL_ID: &str = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
 pub(crate) const MLX_SERVE_PROVIDER: &str = "mlx-serve";
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -282,11 +284,12 @@ pub fn validate_model_privacy(config: &OpenKakaoConfig) -> Result<()> {
     }
 }
 
-pub(crate) fn canonical_mlx_flash_next_model(model: Option<&str>) -> Option<&'static str> {
+pub(crate) fn canonical_mlx_local_model(model: Option<&str>) -> Option<&'static str> {
     match model {
         Some(MLX_FLASH_NEXT_MODEL_ID | MLX_FLASH_NEXT_PREFIXED_MODEL_ID) => {
             Some(MLX_FLASH_NEXT_MODEL_ID)
         }
+        Some(MLX_27B_MODEL_ID | MLX_27B_PREFIXED_MODEL_ID) => Some(MLX_27B_MODEL_ID),
         _ => None,
     }
 }
@@ -305,9 +308,9 @@ pub(crate) fn validate_auto_reply_local_mlx_profile(config: &OpenKakaoConfig) ->
             "local MLX AutoReply requires reply_runner_kind=opencodex as its validated transport placeholder"
         );
     }
-    if canonical_mlx_flash_next_model(config.auto_reply.reply_model.as_deref()).is_none() {
+    if canonical_mlx_local_model(config.auto_reply.reply_model.as_deref()).is_none() {
         anyhow::bail!(
-            "local MLX AutoReply requires the exact Qwen3.8 Flash-Next MLX-Serve model ID"
+            "local MLX AutoReply requires the exact Qwen3.8 Flash-Next or Qwen3.8 27B MLX-Serve model ID"
         );
     }
     Ok(())

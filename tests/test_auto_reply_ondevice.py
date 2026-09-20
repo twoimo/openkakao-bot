@@ -17,8 +17,10 @@ from scripts.auto_reply_ondevice import (
     ModelResidencyManager,
     QWEN38_27B_MODEL_ID,
     EngineRecommendation,
+    HttpMlxModelGateway,
     HardwareSpec,
     _is_apple_silicon_chip,
+    _read_mlx_gateway_models,
     detect_engine_paths,
     detect_hardware,
     detect_mlx_gateway_models,
@@ -76,17 +78,17 @@ def _gateway_rec(memory_gb: float = 128.0) -> EngineRecommendation:
         engines={
             "mlx_lm": sys.executable,
             "mlx-serve": sys.executable,
-            "mlx-gateway": "http://127.0.0.1:10100/v1",
+            "mlx-gateway": "http://127.0.0.1:11234/v1",
         },
         gateway_models=_gateway_models(),
     )
 
 
 class _HTTPResponse:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: object):
         self._body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    def read(self) -> bytes:
+    def read(self, _limit=None) -> bytes:
         return self._body
 
     def __enter__(self):
@@ -97,6 +99,16 @@ class _HTTPResponse:
 
 
 class TestHardwareDetection(unittest.TestCase):
+    def test_mlx_gateway_rejects_non_fixed_or_remote_endpoints(self):
+        for endpoint in (
+            "http://127.0.0.1:10100/v1",
+            "https://example.invalid/v1",
+            "http://127.0.0.1:11234/v1?redirect=1",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(ValueError, "mlx_gateway_endpoint_invalid"):
+                    HttpMlxModelGateway(endpoint)
+
     def test_detect_hardware_returns_valid_spec(self):
         hw = detect_hardware()
         self.assertIsInstance(hw.chip, str)
@@ -130,7 +142,7 @@ class TestHardwareDetection(unittest.TestCase):
             ]
         }
         with patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen",
+            "scripts.auto_reply_ondevice._local_only_urlopen",
             return_value=_HTTPResponse(payload),
         ):
             models = detect_mlx_gateway_models()
@@ -139,12 +151,20 @@ class TestHardwareDetection(unittest.TestCase):
     def test_gateway_detection_accepts_prefixless_mlx_serve_id(self):
         payload = {"data": _prefixless_gateway_models()}
         with patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen",
+            "scripts.auto_reply_ondevice._local_only_urlopen",
             return_value=_HTTPResponse(payload),
         ):
             models = detect_mlx_gateway_models(base_url="http://127.0.0.1:11234/v1")
         self.assertEqual(models[1]["id"], FLASH_NEXT_ADVERTISED_ID)
         self.assertEqual(models[1]["owned_by"], "mlx-serve")
+
+    def test_gateway_detection_fails_closed_for_non_object_json(self):
+        with patch(
+            "scripts.auto_reply_ondevice._local_only_urlopen",
+            return_value=_HTTPResponse([]),
+        ):
+            result = _read_mlx_gateway_models(base_url="http://127.0.0.1:11234/v1")
+        self.assertEqual(result, (False, []))
 
     def test_engine_paths_prefers_discovered_11234_gateway(self):
         seen_urls: list[str] = []
@@ -154,7 +174,7 @@ class TestHardwareDetection(unittest.TestCase):
             return _HTTPResponse({"data": _prefixless_gateway_models()})
 
         with patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+            "scripts.auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
         ), patch("scripts.auto_reply_ondevice._find_executable", return_value=""):
             paths = detect_engine_paths()
         self.assertEqual(paths, {"mlx-gateway": "http://127.0.0.1:11234/v1"})
@@ -168,7 +188,7 @@ class TestHardwareDetection(unittest.TestCase):
             raise OSError("closed")
 
         with patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+            "scripts.auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
         ), patch("scripts.auto_reply_ondevice._find_executable", return_value=""):
             paths = detect_engine_paths()
         self.assertEqual(paths, {})
@@ -176,7 +196,6 @@ class TestHardwareDetection(unittest.TestCase):
             seen_urls,
             [
                 "http://127.0.0.1:11234/v1/models",
-                "http://127.0.0.1:10100/v1/models",
             ],
         )
 
@@ -575,7 +594,7 @@ class TestProbe(unittest.TestCase):
             )
 
         with TemporaryDirectory() as temp_dir, patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+            "scripts.auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
         ) as urlopen:
             result = probe_ondevice_generation(rec, state_root=Path(temp_dir), timeout=2)
             persisted = read_last_probe(Path(temp_dir))
@@ -688,7 +707,7 @@ class TestProbe(unittest.TestCase):
 
         injection = "hello\n$(touch /tmp/pwned); `whoami`\x00 && still text"
         with TemporaryDirectory() as temp_dir, patch(
-            "scripts.auto_reply_ondevice.urllib.request.urlopen", side_effect=fake_urlopen
+            "scripts.auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
         ):
             result = probe_ondevice_generation(
                 rec,

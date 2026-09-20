@@ -63,6 +63,7 @@ MAX_RESPONSE_TIMING_SECONDS = 24 * 60 * 60
 MAX_REPLY_DELAY_SECONDS = MAX_RESPONSE_TIMING_SECONDS
 QUEUE_PARENT_MODE = 0o700
 QUEUE_FILE_MODE = 0o600
+import auto_reply_ondevice
 import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
 from auto_reply_ondevice import (
@@ -146,9 +147,6 @@ REPLY_RUNNER = Path(
 REPLY_RUNNER_KIND = os.environ.get("OPENKAKAO_REPLY_RUNNER_KIND", "gjc").strip()
 REPLY_RUNNER_SHA256 = os.environ.get("OPENKAKAO_REPLY_RUNNER_SHA256", "").strip().lower()
 REPLY_MODEL = os.environ.get("OPENKAKAO_REPLY_MODEL", FLASH_NEXT_MODEL_ID).strip()
-MODEL_PRIVACY_MODE = os.environ.get("OPENKAKAO_MODEL_PRIVACY_MODE", "").strip()
-MODEL_ALLOW_EGRESS = os.environ.get("OPENKAKAO_MODEL_ALLOW_EGRESS", "").strip()
-MODEL_PROVIDER = os.environ.get("OPENKAKAO_MODEL_PROVIDER", "").strip()
 REPLY_REASONING_EFFORT = os.environ.get(
     "OPENKAKAO_REPLY_REASONING_EFFORT", "low"
 ).strip()
@@ -11195,21 +11193,6 @@ def _is_mlx_serve_text_model(model: str) -> bool:
     return _is_mlx_serve_flash_next_model(model) or _is_mlx_serve_27b_model(model)
 
 
-def _attested_local_mlx_flash_profile(model: str) -> bool:
-    exact_model = str(model or "")
-    return (
-        REPLY_RUNNER_KIND == "opencodex"
-        and MODEL_PRIVACY_MODE == "local"
-        and MODEL_ALLOW_EGRESS == "0"
-        and MODEL_PROVIDER == "mlx-serve"
-        and exact_model
-        in {
-            FLASH_NEXT_MODEL_ID,
-            FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
-        }
-    )
-
-
 def _is_local_reply_model(model: str) -> bool:
     folded = str(model or "").casefold()
     return folded.startswith(("omlx/", "mlx/")) or _is_mlx_serve_text_model(model)
@@ -11409,22 +11392,20 @@ def _run_opencodex_generation(
     *,
     image_paths: list[Path] | None = None,
     timeout: float = 30.0,
-    base_url: str = "http://127.0.0.1:10100/v1",
+    base_url: str = "http://127.0.0.1:11234/v1",
 ) -> tuple[int, bytes, bytes]:
     try:
         user_content = prompt_bytes.decode("utf-8")
     except UnicodeDecodeError:
         user_content = prompt_bytes.decode("utf-8", "replace")
 
+    local_mlx = _is_mlx_serve_text_model(model)
     target_base_url = base_url
     target_model = model
-    if _is_mlx_serve_text_model(target_model):
-        if _attested_local_mlx_flash_profile(target_model):
-            gateway_base_url, _ = discover_mlx_gateway(
-                candidates=("http://127.0.0.1:11234/v1",)
-            )
-        else:
-            gateway_base_url, _ = discover_mlx_gateway()
+    if local_mlx:
+        gateway_base_url, _ = discover_mlx_gateway(
+            candidates=("http://127.0.0.1:11234/v1",)
+        )
         if not gateway_base_url:
             return 1, b"", b"mlx_serve_gateway_unavailable"
         advertised = detect_mlx_gateway_models(base_url=gateway_base_url)
@@ -11511,12 +11492,24 @@ def _run_opencodex_generation(
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            content = str(body["choices"][0]["message"]["content"])
-            return 0, content.encode("utf-8"), b""
+        if local_mlx:
+            with auto_reply_ondevice._local_only_urlopen(req, timeout=timeout) as resp:
+                raw = resp.read(auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+            if len(raw) > auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES:
+                raise ValueError("mlx_gateway_response_too_large")
+        else:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+        body = json.loads(raw.decode("utf-8"))
+        content = str(body["choices"][0]["message"]["content"])
+        return 0, content.encode("utf-8"), b""
     except urllib.error.HTTPError as exc:
-        err_bytes = exc.read()
+        if local_mlx:
+            err_bytes = exc.read(auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+            if len(err_bytes) > auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES:
+                return 1, b"", b"mlx_gateway_response_too_large"
+        else:
+            err_bytes = exc.read()
         return exc.code, b"", err_bytes
     except Exception as exc:
         return 1, b"", str(exc).encode("utf-8")

@@ -14,6 +14,8 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from array import array
 from collections import deque
@@ -35,11 +37,55 @@ VOICE_STATUS_SCHEMA_VERSION = 1
 WHISPER_MODEL_ID = "mlx-community/whisper-large-v3-turbo"
 QWEN3_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 QWEN3_TTS_PRECISION = "bf16"
+LOCAL_LLM_BASE_URL = "http://127.0.0.1:11234/v1"
+LOCAL_LLM_MAX_RESPONSE_BYTES = 64 * 1024
 VOICE_PERSONA_PROMPT = (
     "당신은 건조하고 절제된 영국식 집사 말투의 Jarvis다. "
     "항상 한국어로 짧고 정확하게 답한다. 과장된 감탄이나 아첨은 하지 않는다. "
     "이 말투는 음성 대화에만 적용된다."
 )
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        return None
+
+
+def _force_local_model_cache() -> None:
+    """Make model libraries use already cached weights and never fetch them."""
+
+    for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
+        os.environ[name] = "1"
+
+
+def _local_urlopen(request: urllib.request.Request, *, timeout: float):
+    """Open the fixed local endpoint without proxies or redirects."""
+
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _validate_local_llm_base_url(value: str) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        valid = (
+            parsed.scheme == "http"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port == 11234
+            and parsed.path == "/v1"
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("local_llm_endpoint_invalid")
+    return raw
 
 
 class VoiceState(str, Enum):
@@ -471,8 +517,8 @@ class JarvisVoicePipeline:
 
 
 class LocalMlxLlm:
-    def __init__(self, base_url: str = "http://127.0.0.1:11234/v1", model: str = FLASH_NEXT_MODEL_ID):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str = LOCAL_LLM_BASE_URL, model: str = FLASH_NEXT_MODEL_ID):
+        self.base_url = _validate_local_llm_base_url(base_url)
         self.model = model
 
     def generate(self, text: str, token: AbortToken) -> str:
@@ -494,13 +540,22 @@ class LocalMlxLlm:
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=90.0) as response:
-            body = json.loads(response.read().decode("utf-8", "replace"))
+        try:
+            with _local_urlopen(request, timeout=90.0) as response:
+                raw = response.read(LOCAL_LLM_MAX_RESPONSE_BYTES + 1)
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            raise RuntimeError("local_llm_request_failed") from exc
+        if len(raw) > LOCAL_LLM_MAX_RESPONSE_BYTES:
+            raise RuntimeError("local_llm_response_too_large")
+        try:
+            body = json.loads(raw.decode("utf-8", "replace"))
+            message = body["choices"][0]["message"]
+            content = message.get("content") or message.get("reasoning_content") or ""
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("local_llm_response_invalid") from exc
         token.raise_if_cancelled()
-        message = body["choices"][0]["message"]
-        content = message.get("content") or message.get("reasoning_content") or ""
         return str(content).strip()
 
 
@@ -510,15 +565,17 @@ class MlxWhisperAdapter:
 
     def transcribe(self, pcm16: bytes, sample_rate: int, token: AbortToken) -> str:
         token.raise_if_cancelled()
+        _force_local_model_cache()
         import numpy as np
         import mlx_whisper
 
         samples = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
         if sample_rate != 16_000:
             raise RuntimeError("voice_sample_rate_unsupported")
+        model = os.environ.get("OPENKAKAO_WHISPER_MODEL_PATH", self.model).strip() or self.model
         result: dict[str, Any] = mlx_whisper.transcribe(
             samples,
-            path_or_hf_repo=self.model,
+            path_or_hf_repo=model,
             language="ko",
         )
         token.raise_if_cancelled()
@@ -532,11 +589,17 @@ class Qwen3TtsAdapter:
 
     def _load(self) -> Any:
         if self._engine is None:
+            _force_local_model_cache()
             from qwen_tts import Qwen3TTSModel
             import torch
 
             dtype = torch.bfloat16 if QWEN3_TTS_PRECISION == "bf16" else torch.float16
-            self._engine = Qwen3TTSModel.from_pretrained(self.model, dtype=dtype)
+            model = os.environ.get("OPENKAKAO_QWEN3_TTS_MODEL_PATH", self.model).strip() or self.model
+            self._engine = Qwen3TTSModel.from_pretrained(
+                model,
+                dtype=dtype,
+                local_files_only=True,
+            )
         return self._engine
 
     def synthesize(self, text: str, token: AbortToken) -> tuple[Any, int]:

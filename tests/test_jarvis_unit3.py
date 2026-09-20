@@ -325,6 +325,7 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"qwen_tts": fake_mod, "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"), "sounddevice": types.SimpleNamespace(play=lambda *a, **k: None, get_stream=lambda: types.SimpleNamespace(active=False), stop=lambda: None)}):
             adapter.speak("안녕하세요", token)  # type: ignore[arg-type]
         self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+        self.assertTrue(adapter._engine.kwargs["local_files_only"])
         self.assertEqual(adapter._engine.generated["language"], "Korean")
         self.assertEqual(adapter._engine.generated["speaker"], "ryan")
 
@@ -337,7 +338,7 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
         captured: dict[str, object] = {}
 
         class FakeResp:
-            def read(self) -> bytes:
+            def read(self, _limit: int = -1) -> bytes:
                 return json.dumps({"choices": [{"message": {"content": " 알겠습니다. "}}]}).encode()
 
             def __enter__(self):
@@ -353,12 +354,16 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp_dir:
             token = AbortController(Path(temp_dir)).token()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("jarvis_voice._local_urlopen", fake_urlopen):
             reply = LocalMlxLlm().generate("안녕", token)
         self.assertEqual(reply, "알겠습니다.")
         self.assertEqual(captured["timeout"], 90.0)
         self.assertEqual(captured["body"]["max_tokens"], 128)
         self.assertEqual(captured["body"]["model"], "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
+
+    def test_generate_rejects_non_loopback_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "local_llm_endpoint_invalid"):
+            LocalMlxLlm("https://example.invalid/v1")
 
 
 if __name__ == "__main__":

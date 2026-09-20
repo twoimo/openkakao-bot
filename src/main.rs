@@ -1545,15 +1545,17 @@ struct AutoReplyRunner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AutoReplyLlmChoice {
     MlxQwen38FlashNext,
+    MlxQwen38TwentySevenB,
     GjcGemini37Flash,
     GjcOpencodeDeepseek41Flash,
     CodexGpt56Luna,
 }
 
 impl AutoReplyLlmChoice {
-    fn all() -> [Self; 4] {
+    fn all() -> [Self; 5] {
         [
             Self::MlxQwen38FlashNext,
+            Self::MlxQwen38TwentySevenB,
             Self::GjcGemini37Flash,
             Self::GjcOpencodeDeepseek41Flash,
             Self::CodexGpt56Luna,
@@ -1561,8 +1563,10 @@ impl AutoReplyLlmChoice {
     }
 
     fn from_model(model: &str) -> Option<Self> {
-        if config::canonical_mlx_flash_next_model(Some(model)).is_some() {
-            return Some(Self::MlxQwen38FlashNext);
+        match config::canonical_mlx_local_model(Some(model)) {
+            Some(config::MLX_FLASH_NEXT_MODEL_ID) => return Some(Self::MlxQwen38FlashNext),
+            Some(config::MLX_27B_MODEL_ID) => return Some(Self::MlxQwen38TwentySevenB),
+            _ => {}
         }
         match model.trim() {
             "google-antigravity/gemini-3.8-flash"
@@ -1589,6 +1593,7 @@ impl AutoReplyLlmChoice {
     fn label(self) -> &'static str {
         match self {
             Self::MlxQwen38FlashNext => "Local MLX Qwen3.8 Flash-Next",
+            Self::MlxQwen38TwentySevenB => "Local MLX Qwen3.8 27B",
             Self::GjcGemini37Flash => "Gajae-Code Gemini 3.7 Flash (high)",
             Self::GjcOpencodeDeepseek41Flash => "OpenCode Go DeepSeek V4.1 Flash",
             Self::CodexGpt56Luna => "Codex GPT-5.6 Luna",
@@ -1598,6 +1603,7 @@ impl AutoReplyLlmChoice {
     fn model(self) -> &'static str {
         match self {
             Self::MlxQwen38FlashNext => config::MLX_FLASH_NEXT_MODEL_ID,
+            Self::MlxQwen38TwentySevenB => config::MLX_27B_MODEL_ID,
             Self::GjcGemini37Flash => "google-antigravity/gemini-3.7-flash-tiered",
             Self::GjcOpencodeDeepseek41Flash => "opencode-go-session/deepseek-v4.1-flash",
             Self::CodexGpt56Luna => "gpt-5.6-luna",
@@ -1605,7 +1611,7 @@ impl AutoReplyLlmChoice {
     }
 
     fn apply(self, config: &mut config::OpenKakaoConfig) {
-        if self == Self::MlxQwen38FlashNext {
+        if matches!(self, Self::MlxQwen38FlashNext | Self::MlxQwen38TwentySevenB) {
             config.model.privacy_mode = Some("local".into());
             config.model.allow_egress = false;
             config.model.provider = Some(config::MLX_SERVE_PROVIDER.into());
@@ -1634,6 +1640,7 @@ impl AutoReplyLlmChoice {
         }
         match self {
             Self::MlxQwen38FlashNext => unreachable!("local MLX choice returns above"),
+            Self::MlxQwen38TwentySevenB => unreachable!("local MLX choice returns above"),
             Self::GjcGemini37Flash | Self::GjcOpencodeDeepseek41Flash => {
                 config.model.privacy_mode = Some("remote_explicit".into());
                 config.model.allow_egress = true;
@@ -1683,7 +1690,7 @@ fn select_auto_reply_llm(
 ) -> Result<AutoReplyLlmChoice> {
     if let Some(requested) = requested {
         return AutoReplyLlmChoice::from_model(requested).with_context(|| {
-            format!("unknown reply model {requested:?}; use the exact local Qwen3.8 Flash-Next ID, gemini-3.7-flash, deepseek-v4.1-flash or gpt-5.6-luna")
+            format!("unknown reply model {requested:?}; use the exact local Qwen3.8 Flash-Next or Qwen3.8 27B ID, gemini-3.7-flash, deepseek-v4.1-flash or gpt-5.6-luna")
         });
     }
     if json_output || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
@@ -1821,7 +1828,7 @@ fn probe_local_mlx_auto_reply(
     transport: &dyn LocalMlxProbeTransport,
 ) -> Result<()> {
     config::validate_auto_reply_local_mlx_profile(config)?;
-    let model = config::canonical_mlx_flash_next_model(config.auto_reply.reply_model.as_deref())
+    let model = config::canonical_mlx_local_model(config.auto_reply.reply_model.as_deref())
         .context("local MLX AutoReply model is not allowlisted")?;
 
     let models = parse_local_mlx_probe_json(
@@ -1850,18 +1857,18 @@ fn probe_local_mlx_auto_reply(
             .get("id")
             .and_then(serde_json::Value::as_str)
             .context("local MLX models probe row has no model ID")?;
-        if config::canonical_mlx_flash_next_model(Some(row_id)) == Some(model) {
+        if config::canonical_mlx_local_model(Some(row_id)) == Some(model) {
             if target.is_some() {
                 anyhow::bail!("local MLX models probe returned an ambiguous model");
             }
             target = Some(row);
         }
     }
-    let target = target.context("local MLX Flash-Next model is not advertised")?;
+    let target = target.context("local MLX model is not advertised")?;
     if target.get("loaded").and_then(serde_json::Value::as_bool) != Some(true)
         || target.get("state").and_then(serde_json::Value::as_str) != Some("ready")
     {
-        anyhow::bail!("local MLX Flash-Next model is not ready");
+        anyhow::bail!("local MLX model is not ready");
     }
 
     let body = serde_json::to_vec(&serde_json::json!({
@@ -1912,7 +1919,10 @@ fn probe_auto_reply_llm_with_local_transport(
     choice: AutoReplyLlmChoice,
     local_transport: &dyn LocalMlxProbeTransport,
 ) -> Result<()> {
-    if choice == AutoReplyLlmChoice::MlxQwen38FlashNext {
+    if matches!(
+        choice,
+        AutoReplyLlmChoice::MlxQwen38FlashNext | AutoReplyLlmChoice::MlxQwen38TwentySevenB
+    ) {
         return probe_local_mlx_auto_reply(config, local_transport);
     }
 
@@ -1960,6 +1970,9 @@ fn probe_auto_reply_llm_with_local_transport(
     }
     match choice {
         AutoReplyLlmChoice::MlxQwen38FlashNext => {
+            unreachable!("local MLX choice returns before remote probes")
+        }
+        AutoReplyLlmChoice::MlxQwen38TwentySevenB => {
             unreachable!("local MLX choice returns before remote probes")
         }
         AutoReplyLlmChoice::GjcGemini37Flash => {
@@ -5225,18 +5238,6 @@ fn run_auto_reply(
             .env("OPENKAKAO_REPLY_RUNNER_KIND", &runner.kind)
             .env("OPENKAKAO_REPLY_RUNNER_SHA256", &runner.sha256)
             .env("OPENKAKAO_REPLY_MODEL", &runner.model)
-            .env(
-                "OPENKAKAO_MODEL_PRIVACY_MODE",
-                config.model.privacy_mode.as_deref().unwrap_or(""),
-            )
-            .env(
-                "OPENKAKAO_MODEL_ALLOW_EGRESS",
-                if config.model.allow_egress { "1" } else { "0" },
-            )
-            .env(
-                "OPENKAKAO_MODEL_PROVIDER",
-                config.model.provider.as_deref().unwrap_or(""),
-            )
             .env("OPENKAKAO_REPLY_REASONING_EFFORT", &runner.reasoning_effort)
             .env("OPENKAKAO_REPLY_SERVICE_TIER", &runner.service_tier);
         if let Some(codex_home) = &runner.codex_home {
@@ -9192,10 +9193,15 @@ mod tests {
             None,
             "the local model allowlist must remain exact"
         );
-        assert_eq!(
-            AutoReplyLlmChoice::from_model("ddalcu/Qwen3.8-27B-MLX-Serve-4bit"),
-            None
-        );
+        for exact in [
+            config::MLX_27B_MODEL_ID,
+            config::MLX_27B_PREFIXED_MODEL_ID,
+        ] {
+            assert_eq!(
+                AutoReplyLlmChoice::from_model(exact),
+                Some(AutoReplyLlmChoice::MlxQwen38TwentySevenB)
+            );
+        }
         let mut json_config = config::OpenKakaoConfig::default();
         json_config.auto_reply.reply_model = Some(config::MLX_FLASH_NEXT_PREFIXED_MODEL_ID.into());
         assert_eq!(
@@ -9230,7 +9236,7 @@ mod tests {
             Some("opencode-go-session")
         );
         assert_eq!(config.auto_reply.reply_runner_kind.as_deref(), Some("gjc"));
-        assert_eq!(AutoReplyLlmChoice::all().len(), 4);
+        assert_eq!(AutoReplyLlmChoice::all().len(), 5);
     }
 
     #[test]
@@ -9351,7 +9357,7 @@ mod tests {
             &not_ready,
         )
         .expect_err("an unloaded model must fail before generation");
-        assert!(error.to_string().contains("not ready"));
+        assert_eq!(error.to_string(), "local MLX model is not ready");
         assert_eq!(not_ready.requests.borrow().len(), 1);
 
         let malformed = FakeLocalMlxProbeTransport::new(vec![LocalMlxProbeResponse {

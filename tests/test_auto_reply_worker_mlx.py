@@ -24,7 +24,7 @@ class _Response:
     def __exit__(self, *_args):
         return False
 
-    def read(self):
+    def read(self, _limit=None):
         return json.dumps(self.payload).encode("utf-8")
 
 
@@ -75,7 +75,12 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                         return _Response({"choices": [{"message": {"content": "ok"}}]})
                     raise AssertionError(f"unexpected URL: {request.full_url}")
 
-                with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                with (
+                    mock.patch(
+                        "auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
+                    ),
+                    mock.patch("urllib.request.urlopen") as direct_urlopen,
+                ):
                     code, stdout, stderr = module._run_opencodex_generation(
                         selected_model,
                         "system",
@@ -91,6 +96,40 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 self.assertEqual(calls[-1][0], "http://127.0.0.1:11234/v1/chat/completions")
                 self.assertTrue(all("10100" not in url for url, _data, _timeout in calls))
                 self.assertTrue(all("/load" not in url for url, _data, _timeout in calls))
+                direct_urlopen.assert_not_called()
+
+    def test_mlx_generation_rejects_oversized_completion_response(self):
+        module = self.module
+        oversized = mock.MagicMock()
+        oversized.__enter__.return_value = oversized
+        oversized.read.return_value = b"x" * (
+            module.auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES + 1
+        )
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            if request.full_url == "http://127.0.0.1:11234/v1/models":
+                return _Response(self._advertised_models())
+            if request.full_url == "http://127.0.0.1:11234/v1/chat/completions":
+                return oversized
+            raise AssertionError(f"unexpected URL: {request.full_url}")
+
+        with (
+            mock.patch("auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen),
+            mock.patch("urllib.request.urlopen") as direct_urlopen,
+        ):
+            result = module._run_opencodex_generation(
+                "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                "system",
+                b'{"inbound":"hello"}',
+                timeout=90.0,
+            )
+
+        self.assertEqual(result, (1, b"", b"mlx_gateway_response_too_large"))
+        oversized.read.assert_called_once_with(
+            module.auto_reply_ondevice.MLX_GATEWAY_MAX_RESPONSE_BYTES + 1
+        )
+        direct_urlopen.assert_not_called()
 
     def test_missing_gateway_fails_closed_in_candidate_order(self):
         module = self.module
@@ -100,7 +139,7 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
             calls.append((request.full_url, request.data, timeout))
             raise urllib.error.URLError("offline")
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen):
             code, stdout, stderr = module._run_opencodex_generation(
                 "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
                 "system",
@@ -115,12 +154,11 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
             [url for url, _data, _timeout in calls],
             [
                 "http://127.0.0.1:11234/v1/models",
-                "http://127.0.0.1:10100/v1/models",
             ],
         )
         self.assertTrue(all(data is None for _url, data, _timeout in calls))
 
-    def test_attested_local_flash_profile_never_falls_back_to_10100(self):
+    def test_flash_models_use_only_the_fixed_loopback_gateway(self):
         module = self.module
         for selected_model in (
             "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
@@ -133,12 +171,8 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                     calls.append((request.full_url, request.data, timeout))
                     raise urllib.error.URLError("offline")
 
-                with (
-                    mock.patch.object(module, "REPLY_RUNNER_KIND", "opencodex"),
-                    mock.patch.object(module, "MODEL_PRIVACY_MODE", "local"),
-                    mock.patch.object(module, "MODEL_ALLOW_EGRESS", "0"),
-                    mock.patch.object(module, "MODEL_PROVIDER", "mlx-serve"),
-                    mock.patch("urllib.request.urlopen", side_effect=fake_urlopen),
+                with mock.patch(
+                    "auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
                 ):
                     code, stdout, stderr = module._run_opencodex_generation(
                         selected_model,
@@ -155,6 +189,30 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                     ["http://127.0.0.1:11234/v1/models"],
                 )
                 self.assertTrue(all(data is None for _url, data, _timeout in calls))
+
+    def test_27b_model_uses_only_the_fixed_loopback_gateway(self):
+        module = self.module
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append((request.full_url, request.data, timeout))
+            raise urllib.error.URLError("offline")
+
+        with mock.patch(
+            "auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
+        ):
+            code, stdout, stderr = module._run_opencodex_generation(
+                "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+                "system",
+                b'{"inbound":"hello"}',
+                timeout=90.0,
+            )
+
+        self.assertEqual((code, stdout, stderr), (1, b"", b"mlx_serve_gateway_unavailable"))
+        self.assertEqual(
+            [url for url, _data, _timeout in calls],
+            ["http://127.0.0.1:11234/v1/models"],
+        )
 
     def test_generation_candidate_blocks_product_cloud_fallback(self):
         module = self.module

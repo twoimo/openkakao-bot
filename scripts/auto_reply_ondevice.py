@@ -27,11 +27,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
 
-MLX_GATEWAY_BASE_URL = "http://127.0.0.1:10100/v1"
-MLX_GATEWAY_CANDIDATES = (
-    "http://127.0.0.1:11234/v1",
-    MLX_GATEWAY_BASE_URL,
-)
+MLX_GATEWAY_BASE_URL = "http://127.0.0.1:11234/v1"
+MLX_GATEWAY_CANDIDATES = (MLX_GATEWAY_BASE_URL,)
 FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 QWEN38_27B_MODEL_ID = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
 QWEN38_27B_MIN_MEMORY_GB = 32.0
@@ -41,6 +38,36 @@ PROBE_HARD_TIMEOUT_SECONDS = 90.0
 PROBE_PROMPT_MAX_CHARS = 160
 PROBE_PREVIEW_MAX_CHARS = 240
 LAST_PROBE_NAME = "ondevice-last-probe.json"
+MLX_GATEWAY_MAX_RESPONSE_BYTES = 256 * 1024
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        return None
+
+
+def _local_only_urlopen(request: urllib.request.Request, *, timeout: float):
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _valid_mlx_gateway_url(value: str) -> bool:
+    try:
+        parsed = urllib.parse.urlsplit(str(value or "").strip().rstrip("/"))
+        return (
+            parsed.scheme == "http"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port == 11234
+            and parsed.path == "/v1"
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -113,6 +140,8 @@ class HttpMlxModelGateway:
     """Control client for an already-running MLX Serve instance."""
 
     def __init__(self, base_url: str = "http://127.0.0.1:11234/v1", timeout: float = 30.0):
+        if not _valid_mlx_gateway_url(base_url):
+            raise ValueError("mlx_gateway_endpoint_invalid")
         self.base_url = base_url.rstrip("/")
         self.timeout = max(0.5, min(float(timeout), 180.0))
 
@@ -123,8 +152,8 @@ class HttpMlxModelGateway:
             data=b"",
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            response.read()
+        with _local_only_urlopen(request, timeout=self.timeout) as response:
+            response.read(MLX_GATEWAY_MAX_RESPONSE_BYTES)
 
     def unload(self, model_id: str) -> None:
         self._model_action(model_id, "unload")
@@ -146,8 +175,11 @@ class HttpMlxModelGateway:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=min(self.timeout, PROBE_TIMEOUT_SECONDS)) as response:
-            body = json.loads(response.read().decode("utf-8", "replace"))
+        with _local_only_urlopen(request, timeout=min(self.timeout, PROBE_TIMEOUT_SECONDS)) as response:
+            raw = response.read(MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
+            raise ValueError("mlx_gateway_response_too_large")
+        body = json.loads(raw.decode("utf-8", "replace"))
         return bool((body.get("choices") or [{}])[0].get("message", {}).get("content"))
 
 
@@ -443,13 +475,20 @@ def _read_mlx_gateway_models(
     base_url: str,
     timeout: float = 1.5,
 ) -> tuple[bool, list[dict[str, Any]]]:
+    if not _valid_mlx_gateway_url(base_url):
+        return False, []
     try:
         req = urllib.request.Request(
             f"{base_url.rstrip('/')}/models",
             headers={"Accept": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=max(0.1, min(timeout, 3.0))) as resp:
-            payload = json.loads(resp.read().decode("utf-8", "replace"))
+        with _local_only_urlopen(req, timeout=max(0.1, min(timeout, 3.0))) as resp:
+            raw = resp.read(MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
+            return False, []
+        payload = json.loads(raw.decode("utf-8", "replace"))
+        if not isinstance(payload, dict):
+            return False, []
     except Exception:
         return False, []
 
@@ -875,8 +914,11 @@ def probe_ondevice_generation(
                 },
             )
             try:
-                with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
-                    body = json.loads(resp.read().decode("utf-8", "replace"))
+                with _local_only_urlopen(req, timeout=effective_timeout) as resp:
+                    raw = resp.read(MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
+                    raise ValueError("mlx_gateway_response_too_large")
+                body = json.loads(raw.decode("utf-8", "replace"))
                 content = str(body["choices"][0]["message"]["content"] or "").strip()
                 if not content:
                     return _finish_probe(

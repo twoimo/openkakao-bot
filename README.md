@@ -77,9 +77,9 @@ The table records the historical Units 1–4 landing commits; it is not a curren
 - Reference-pack retrieval identifies the previous 128-dimensional hash vectors as `legacy_lexical_hash`, separate from local Dense embeddings. BM25 and Dense produce candidates independently and RRF fuses their rankings; the result contract carries room, participant, and time filters together with evidence IDs, index version, and watermark.
 - A missing, stale, mismatched, or failing local embedding engine/index degrades explicitly to `bm25_only`. There is no cloud embedding fallback.
 - `ModelResidencyManager` rolls back an owned prior model when memory admission, target load, or target probe fails after unload. It commits `current_model` only after the target probe succeeds; a failed rollback clears the current model and reports a `*_rollback_failed` fail-closed state. The swap gate also blocks new leases during a swap and fails closed on target-unload failure.
-- Rust startup now fails closed for local AutoReply unless the exact Flash-Next model and local profile are attested. It performs bounded, read-only checks only against `127.0.0.1:11234/v1/models` and `127.0.0.1:11234/v1/chat/completions`; the worker's attested local profile does not fall back to `127.0.0.1:10100`.
+- Rust startup now fails closed for local AutoReply unless the configured model is an exact allowlisted Flash-Next or 27B ID and the local profile is attested. It applies the same bounded, read-only readiness and generation probes only against `127.0.0.1:11234/v1/models` and `127.0.0.1:11234/v1/chat/completions`; the worker's local MLX path does not fall back to `127.0.0.1:10100`.
 - Validation recorded for this path: `cargo test --lib` passed **624 tests**, and the focused local MLX/readiness/worker Python regression passed **25 tests**. These regression results are separate from the live probe evidence below and do not establish 27B actual generation, signed cutover, or live-microphone success.
-- Current working-tree validation passes the focused local-AI Python CI suite (**139 tests**: 36 on-device, 8 reference search, 61 knowledge graph, 14 Unit 4, 9 model-readiness, and 11 local-model verification), the broader selected Python regression run (**221 tests**), desktop Vitest (**23 tests**), Tauri Rust (**19 tests**), the Vite build, and a local debug Tauri build. The debug bundle contains `scripts/auto_reply_reference_search.py`. The CI workflow includes these focused checks, but no hosted run of the current workflow change has been recorded. These checks do not establish live 27B readiness, signed Tauri cutover, alphaXiv availability, or live-microphone success.
+- Current working-tree validation passes the focused local-AI Python CI suite (**141 tests**: 38 on-device, 8 reference search, 61 knowledge graph, 14 Unit 4, 9 model-readiness, and 11 local-model verification), the broader selected Python regression run (**221 tests**), desktop Vitest (**23 tests**), Tauri Rust (**19 tests**), the Vite build, and a local debug Tauri build. The debug bundle contains `scripts/auto_reply_reference_search.py`. The CI workflow includes these focused checks, but no hosted run of the current workflow change has been recorded. These checks do not establish live 27B readiness, signed Tauri cutover, alphaXiv availability, or live-microphone success.
 
 Current limits:
 
@@ -135,7 +135,7 @@ Interactive Unit 5 diagrams:
 The Apple Silicon on-device recommendation is **MLX Qwen3.8 Flash-Next**. Gemma, llama.cpp, and Ollama are not the primary engine.
 
 - Recommended: `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`
-- Host-capable larger local model: `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
+- Host-capable larger local model (allowlisted and readiness-probed; actual generation unverified): `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
 - DREAM-RSI: receipt / checkpoint provenance only (`settings-dream-rsi-card` after the sync card)
 - Cloud runners remain optional and explicit in `config.toml`; they are not the on-device default
 
@@ -185,7 +185,7 @@ reply_runner_kind = "opencodex"
 reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ```
 
-`reply_runner` is a validated transport placeholder for this local MLX profile and must point to the installed `opencodex` executable.
+`reply_runner` is a validated transport placeholder for this local MLX profile and must point to the installed `opencodex` executable. The exact Flash-Next and 27B IDs, with or without the `mlx/` prefix, are allowlisted and use the same bounded localhost readiness and generation probes. The recorded 27B model was unloaded and not ready, so actual 27B generation remains unverified.
 
 ### 4. Run
 
