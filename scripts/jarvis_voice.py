@@ -470,9 +470,11 @@ class Qwen3TtsAdapter:
 
     def _load(self) -> Any:
         if self._engine is None:
-            from qwen_tts import Qwen3TTS
+            from qwen_tts import Qwen3TTSModel
+            import torch
 
-            self._engine = Qwen3TTS.from_pretrained(self.model, torch_dtype=QWEN3_TTS_PRECISION)
+            dtype = torch.bfloat16 if QWEN3_TTS_PRECISION == "bf16" else torch.float16
+            self._engine = Qwen3TTSModel.from_pretrained(self.model, dtype=dtype)
         return self._engine
 
     def speak(self, text: str, token: AbortToken) -> None:
@@ -480,7 +482,14 @@ class Qwen3TtsAdapter:
         import sounddevice as sd
 
         engine = self._load()
-        audio, sample_rate = engine.generate(text=text, language="Korean")
+        speakers = engine.get_supported_speakers() or []
+        speaker = speakers[0] if speakers else "ryan"
+        wavs, sample_rate = engine.generate_custom_voice(
+            text=text,
+            speaker=speaker,
+            language="Korean",
+        )
+        audio = wavs[0] if isinstance(wavs, list) else wavs
         token.raise_if_cancelled()
         sd.play(audio, int(sample_rate), blocking=False)
         try:

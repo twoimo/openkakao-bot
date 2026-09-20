@@ -16,6 +16,7 @@ from auto_reply_ax_ui import AX_ABORT_FOCUS_REQUIRED, AX_ABORT_GLOBAL, backgroun
 from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
 from jarvis_voice import JarvisVoicePipeline, VoiceState, WakePhraseGate
+from jarvis_voice import Qwen3TtsAdapter
 
 
 class FakeStt:
@@ -170,6 +171,39 @@ class JarvisBrowserAbortTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.ok)
             self.assertEqual(result.error_code, "global_abort")
             self.assertTrue(owned.closed)
+
+
+class Qwen3TtsAdapterApiTests(unittest.TestCase):
+    def test_load_uses_qwen3ttsmodel_and_custom_voice(self):
+        import types
+        from unittest import mock
+
+        fake_mod = types.ModuleType("qwen_tts")
+
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, model, **kwargs):
+                inst = cls()
+                inst.loaded_model = model
+                inst.kwargs = kwargs
+                return inst
+
+            def get_supported_speakers(self):
+                return ["ryan"]
+
+            def generate_custom_voice(self, **kwargs):
+                self.generated = kwargs
+                return [b"wav"], 24000
+
+        fake_mod.Qwen3TTSModel = FakeModel
+        adapter = Qwen3TtsAdapter()
+        with TemporaryDirectory() as temp_dir:
+            token = AbortController(Path(temp_dir)).token()
+        with mock.patch.dict(sys.modules, {"qwen_tts": fake_mod, "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"), "sounddevice": types.SimpleNamespace(play=lambda *a, **k: None, get_stream=lambda: types.SimpleNamespace(active=False), stop=lambda: None)}):
+            adapter.speak("안녕하세요", token)  # type: ignore[arg-type]
+        self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-1.7B")
+        self.assertEqual(adapter._engine.generated["language"], "Korean")
+        self.assertEqual(adapter._engine.generated["speaker"], "ryan")
 
 
 if __name__ == "__main__":
