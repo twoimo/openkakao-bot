@@ -246,7 +246,6 @@ impl Drop for ContextSyncReplicaReader {
 mod tests {
     use super::*;
     use rusqlite::{Connection, OpenFlags};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn wal_fixture() -> Result<(TempDir, PathBuf, Connection)> {
         let tempdir = tempfile::tempdir()?;
@@ -262,31 +261,19 @@ mod tests {
     }
 
     #[test]
-    fn context_sync_local_replica_is_read_only_query_only_and_never_direct_opens_source(
-    ) -> Result<()> {
+    fn context_sync_local_replica_path_is_isolated_and_readable() -> Result<()> {
         let (_tempdir, db_path, _source_connection) = wal_fixture()?;
         let replica = IsolatedSqliteReplica::create(&db_path)?;
-        let direct_open_count = AtomicUsize::new(0);
-        let opened_path = replica.db_path.clone();
-        if opened_path == db_path {
-            direct_open_count.fetch_add(1, Ordering::SeqCst);
-        }
+        assert_ne!(replica.db_path, db_path);
         let connection = Connection::open_with_flags(
-            &opened_path,
+            &replica.db_path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        connection.execute_batch("PRAGMA query_only=ON")?;
-        let query_only: i64 = connection.query_row("PRAGMA query_only", [], |row| row.get(0))?;
-        assert_eq!(query_only, 1);
-        assert_eq!(direct_open_count.load(Ordering::SeqCst), 0);
         assert_eq!(
             connection.query_row("SELECT COUNT(*) FROM messages", [], |row| row
                 .get::<_, i64>(0))?,
             1
         );
-        assert!(connection
-            .execute("INSERT INTO messages(body) VALUES ('blocked')", [])
-            .is_err());
         Ok(())
     }
 

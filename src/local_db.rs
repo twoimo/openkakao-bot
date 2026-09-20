@@ -1411,7 +1411,11 @@ fn parse_local_db_open_timeout(raw: Option<&str>) -> std::time::Duration {
 }
 
 fn local_db_open_timeout() -> std::time::Duration {
-    parse_local_db_open_timeout(std::env::var(LOCAL_DB_OPEN_TIMEOUT_SECS_ENV).ok().as_deref())
+    parse_local_db_open_timeout(
+        std::env::var(LOCAL_DB_OPEN_TIMEOUT_SECS_ENV)
+            .ok()
+            .as_deref(),
+    )
 }
 
 /// Run `op` on a helper thread and give up after `timeout`.
@@ -2255,8 +2259,14 @@ mod tests {
     fn local_db_open_timeout_stays_inside_its_bounds() {
         let default = std::time::Duration::from_secs(LOCAL_DB_OPEN_TIMEOUT_SECS_DEFAULT);
         assert_eq!(parse_local_db_open_timeout(None), default);
-        assert_eq!(parse_local_db_open_timeout(Some("30")), std::time::Duration::from_secs(30));
-        assert_eq!(parse_local_db_open_timeout(Some("  45  ")), std::time::Duration::from_secs(45));
+        assert_eq!(
+            parse_local_db_open_timeout(Some("30")),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_local_db_open_timeout(Some("  45  ")),
+            std::time::Duration::from_secs(45)
+        );
         // Zero, negative, non-numeric and oversized values fall back to the default
         // instead of disabling the bound.
         assert_eq!(parse_local_db_open_timeout(Some("0")), default);
@@ -2566,13 +2576,7 @@ mod tests {
     #[test]
     fn group_title_prefers_extended_kakao_or_extra_name() {
         assert_eq!(
-            resolve_group_title(
-                "NIMDA 인수인계",
-                "NIMDA 인수인계 임원방",
-                "",
-                "",
-                &[]
-            ),
+            resolve_group_title("NIMDA 인수인계", "NIMDA 인수인계 임원방", "", "", &[]),
             Some("NIMDA 인수인계 임원방".to_string()),
         );
         assert_eq!(
@@ -2878,6 +2882,68 @@ mod tests {
         assert!(!is_self_author(900, 0));
         assert!(!is_self_author(0, 0));
         assert!(!is_self_author(901, 900));
+    }
+
+    #[test]
+    fn context_sync_local_open_replica_rejects_source_and_enforces_query_only() -> Result<()> {
+        const FIXTURE_KEY: &str = "context-sync-local-fixture-key";
+
+        let tempdir = tempfile::tempdir()?;
+        let source_path = tempdir.path().join("source.sqlite3");
+        let replica_path = tempdir.path().join("replica.sqlite3");
+
+        {
+            let connection = Connection::open(&source_path)?;
+            connection.pragma_update(None, "key", FIXTURE_KEY)?;
+            connection.pragma_update(None, "cipher_compatibility", 3)?;
+            connection.execute_batch(
+                "CREATE TABLE messages(id INTEGER PRIMARY KEY, body TEXT NOT NULL);\
+                 INSERT INTO messages(body) VALUES ('first');",
+            )?;
+        }
+        std::fs::copy(&source_path, &replica_path)?;
+
+        let source = LocalDbReplicaSource {
+            db_identity: database_identity(&source_path)?,
+            db_path: source_path.clone(),
+            secure_key: FIXTURE_KEY.to_string(),
+            account_fingerprint: "synthetic-context-sync-fixture".to_string(),
+            account_user_id: 42,
+        };
+
+        let direct_error = source
+            .open_replica(&source_path)
+            .err()
+            .expect("production replica API must reject the source database path");
+        assert!(
+            direct_error
+                .to_string()
+                .contains("context sync replica path must not be the source database"),
+            "unexpected direct-open error: {direct_error}"
+        );
+
+        let reader = source.open_replica(&replica_path)?;
+        assert_eq!(reader.db_path, replica_path);
+        assert_ne!(reader.db_path, source_path);
+        let query_only: i64 = reader
+            .conn
+            .query_row("PRAGMA query_only", [], |row| row.get(0))?;
+        assert_eq!(query_only, 1);
+        assert_eq!(
+            reader
+                .conn
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row
+                    .get::<_, i64>(0))?,
+            1
+        );
+        assert!(
+            reader
+                .conn
+                .execute("INSERT INTO messages(body) VALUES ('blocked')", [])
+                .is_err(),
+            "production replica reader must reject writes"
+        );
+        Ok(())
     }
 
     #[test]
