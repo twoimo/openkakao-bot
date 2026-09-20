@@ -6219,7 +6219,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                         ?, 'open', 'usage_limit', 2, ?, NULL, ?
                     )
                     """,
-                    (module._model_circuit_key(), open_until, updated_at),
+                    (module._model_circuit_key(module.REPLY_MODEL), open_until, updated_at),
                 )
                 connection.commit()
             finally:
@@ -6248,6 +6248,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 return 0, (json.dumps(event) + "\n").encode(), b""
 
             module._run_bounded_process = successful_probe
+            module._generation_reply_model = lambda _has_images: module.REPLY_MODEL
             with mock.patch.object(
                 module,
                 "runner_is_trusted",
@@ -6314,7 +6315,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                         ?, 'open', 'usage_limit', 2, ?, NULL, ?
                     )
                     """,
-                    (module._model_circuit_key(), open_until, updated_at),
+                    (module._model_circuit_key(module.REPLY_MODEL), open_until, updated_at),
                 )
                 connection.commit()
             finally:
@@ -6331,6 +6332,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 return 1, (json.dumps(event) + "\n").encode(), b"private-stderr"
 
             module._run_bounded_process = limited
+            module._generation_reply_model = lambda _has_images: module.REPLY_MODEL
             with mock.patch.object(module.random, "random", return_value=0.0):
                 result = module.probe_model_capacity(
                     service_offline_attested=True,
@@ -6383,7 +6385,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                         ?, 'open', 'usage_limit', 2, ?, NULL, ?
                     )
                     """,
-                    (module._model_circuit_key(), open_until, updated_at),
+                    (module._model_circuit_key(module.REPLY_MODEL), open_until, updated_at),
                 )
                 connection.commit()
             finally:
@@ -6406,6 +6408,7 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             module._run_bounded_process = mock.Mock(
                 return_value=(0, (json.dumps(event) + "\n").encode(), b"")
             )
+            module._generation_reply_model = lambda _has_images: module.REPLY_MODEL
             with mock.patch.object(module.random, "random", return_value=0.0):
                 result = module.probe_model_capacity(
                     service_offline_attested=True,
@@ -6545,12 +6548,13 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                         ?, 'open', 'usage_limit', 2, ?, NULL, ?
                     )
                     """,
-                    (module._model_circuit_key(), open_until, updated_at),
+                    (module._model_circuit_key(module.REPLY_MODEL), open_until, updated_at),
                 )
                 connection.commit()
             finally:
                 connection.close()
             module._run_bounded_process = mock.Mock(side_effect=KeyboardInterrupt)
+            module._generation_reply_model = lambda _has_images: module.REPLY_MODEL
             with self.assertRaises(KeyboardInterrupt):
                 module.probe_model_capacity(
                     service_offline_attested=True,

@@ -1782,7 +1782,7 @@ def _acquire_expected_usage_limit_probe_slot(
         connection = _model_circuit_connection()
         connection.execute("BEGIN IMMEDIATE")
         transaction_started = True
-        key = _model_circuit_key(model)
+        key = _model_circuit_key(REPLY_MODEL)
         row = connection.execute(
             """
             SELECT state, failure_class, consecutive_failures,
@@ -12402,20 +12402,14 @@ def generate_reply(
             awe_allowed=awe_allowed,
         )
         if parsed is not None:
-            if _capacity_probe and parsed != {
+            if _capacity_probe and value != {
                 "should_reply": False,
                 "reply": "",
                 "reason": "capacity_probe",
                 "category": "uncertain",
                 "evidence_ids": [],
             }:
-                parsed = {
-                    "should_reply": False,
-                    "reply": "",
-                    "reason": "capacity_probe",
-                    "category": "uncertain",
-                    "evidence_ids": [],
-                }
+                continue
             if not _finish_model_call_success(lease_token, model=active_model):
                 _publish_model_status(
                     "unavailable",
