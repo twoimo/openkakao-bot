@@ -14,13 +14,17 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Iterator, Protocol, Sequence
 
 
 MLX_GATEWAY_BASE_URL = "http://127.0.0.1:10100/v1"
@@ -31,6 +35,7 @@ MLX_GATEWAY_CANDIDATES = (
 FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 QWEN38_27B_MODEL_ID = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
 QWEN38_27B_MIN_MEMORY_GB = 32.0
+QWEN38_27B_DEFAULT_LOADED = False
 PROBE_TIMEOUT_SECONDS = 45.0
 PROBE_HARD_TIMEOUT_SECONDS = 90.0
 PROBE_PROMPT_MAX_CHARS = 160
@@ -57,6 +62,219 @@ class EngineRecommendation:
     engine_paths: dict[str, str] = field(default_factory=dict)
     fallback_models: list[str] = field(default_factory=list)
     worker_model_id: str = ""
+
+
+class SwapStage(str, Enum):
+    IDLE = "idle"
+    DRAIN = "drain"
+    UNLOAD = "unload"
+    MEMORY_CHECK = "memory_check"
+    LOAD = "load"
+    PROBE = "probe"
+    READY = "ready"
+    ABORTED = "aborted"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class MemoryBudget:
+    """Conservative memory view used before a text-model swap."""
+
+    free_bytes: int
+    kv_cache_bytes: int = 0
+    voice_models_bytes: int = 0
+    other_resident_bytes: int = 0
+
+    @property
+    def usable_bytes(self) -> int:
+        reserved = self.kv_cache_bytes + self.voice_models_bytes + self.other_resident_bytes
+        return max(0, self.free_bytes - reserved)
+
+
+@dataclass(frozen=True)
+class ModelSwapResult:
+    ok: bool
+    model: str
+    stage: SwapStage
+    reason: str
+    stages: tuple[str, ...]
+
+
+class MlxModelGateway(Protocol):
+    def unload(self, model_id: str) -> None: ...
+
+    def load(self, model_id: str) -> None: ...
+
+    def probe(self, model_id: str) -> bool: ...
+
+
+class HttpMlxModelGateway:
+    """Control client for an already-running MLX Serve instance."""
+
+    def __init__(self, base_url: str = "http://127.0.0.1:11234/v1", timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = max(0.5, min(float(timeout), 180.0))
+
+    def _model_action(self, model_id: str, action: str) -> None:
+        encoded = urllib.parse.quote(model_id.removeprefix("mlx/"), safe="")
+        request = urllib.request.Request(
+            f"{self.base_url}/models/{encoded}/{action}",
+            data=b"",
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            response.read()
+
+    def unload(self, model_id: str) -> None:
+        self._model_action(model_id, "unload")
+
+    def load(self, model_id: str) -> None:
+        self._model_action(model_id, "load")
+
+    def probe(self, model_id: str) -> bool:
+        payload = json.dumps(
+            {
+                "model": model_id.removeprefix("mlx/"),
+                "messages": [{"role": "user", "content": "LOCAL_OK"}],
+                "max_tokens": 4,
+                "temperature": 0,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=min(self.timeout, PROBE_TIMEOUT_SECONDS)) as response:
+            body = json.loads(response.read().decode("utf-8", "replace"))
+        return bool((body.get("choices") or [{}])[0].get("message", {}).get("content"))
+
+
+class ModelResidencyManager:
+    """Drain -> owned unload -> memory check -> load -> probe state machine.
+
+    27B is disabled by default. A later human-controlled call must explicitly
+    opt in; constructing this manager or reading status can never load it.
+    """
+
+    _ALLOWED_TEXT_MODELS = frozenset({FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID})
+
+    def __init__(
+        self,
+        gateway: MlxModelGateway,
+        *,
+        current_model: str = FLASH_NEXT_MODEL_ID,
+        owned_models: Sequence[str] = (),
+        memory_budget: Callable[[], MemoryBudget] | None = None,
+        required_bytes: dict[str, int] | None = None,
+    ) -> None:
+        self.gateway = gateway
+        self.current_model = current_model
+        self.owned_models = set(owned_models)
+        self.memory_budget = memory_budget or (lambda: MemoryBudget(0))
+        self.required_bytes = dict(required_bytes or {})
+        self._condition = threading.Condition()
+        self._in_flight = 0
+        self._cancelled = False
+
+    @contextmanager
+    def request_lease(self) -> Iterator[None]:
+        with self._condition:
+            if self._cancelled:
+                raise RuntimeError("model_swap_cancelled")
+            self._in_flight += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._in_flight = max(0, self._in_flight - 1)
+                self._condition.notify_all()
+
+    def cancel(self) -> None:
+        with self._condition:
+            self._cancelled = True
+            self._condition.notify_all()
+
+    def reset_after_human_resume(self) -> None:
+        with self._condition:
+            self._cancelled = False
+
+    def _drain(self, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while self._in_flight > 0 and not self._cancelled:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(min(0.1, remaining))
+            return self._in_flight == 0 and not self._cancelled
+
+    def swap(
+        self,
+        target_model: str,
+        *,
+        allow_27b: bool = QWEN38_27B_DEFAULT_LOADED,
+        drain_timeout: float = 30.0,
+    ) -> ModelSwapResult:
+        stages: list[str] = [SwapStage.DRAIN.value]
+        if target_model not in self._ALLOWED_TEXT_MODELS:
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "model_not_allowed", tuple(stages))
+        if target_model == QWEN38_27B_MODEL_ID and not allow_27b:
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "27b_human_opt_in_required", tuple(stages))
+        if not self._drain(drain_timeout):
+            reason = "cancelled" if self._cancelled else "drain_timeout"
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
+        if target_model == self.current_model:
+            stages.extend((SwapStage.PROBE.value, SwapStage.READY.value))
+            try:
+                ok = bool(self.gateway.probe(target_model))
+            except Exception:
+                ok = False
+            return ModelSwapResult(
+                ok,
+                target_model,
+                SwapStage.READY if ok else SwapStage.FAILED,
+                "already_resident" if ok else "probe_failed",
+                tuple(stages),
+            )
+
+        previous = self.current_model
+        if previous in self.owned_models:
+            stages.append(SwapStage.UNLOAD.value)
+            try:
+                self.gateway.unload(previous)
+            except Exception:
+                return ModelSwapResult(False, target_model, SwapStage.FAILED, "unload_failed", tuple(stages))
+            self.owned_models.discard(previous)
+
+        stages.append(SwapStage.MEMORY_CHECK.value)
+        required = max(0, int(self.required_bytes.get(target_model, 0)))
+        try:
+            budget = self.memory_budget()
+        except Exception:
+            return ModelSwapResult(False, target_model, SwapStage.FAILED, "memory_budget_unavailable", tuple(stages))
+        if required and budget.usable_bytes < required:
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "insufficient_free_memory", tuple(stages))
+        if self._cancelled:
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "cancelled", tuple(stages))
+
+        stages.append(SwapStage.LOAD.value)
+        try:
+            self.gateway.load(target_model)
+        except Exception:
+            return ModelSwapResult(False, target_model, SwapStage.FAILED, "load_failed", tuple(stages))
+        self.owned_models.add(target_model)
+        self.current_model = target_model
+
+        stages.append(SwapStage.PROBE.value)
+        try:
+            probe_ok = bool(self.gateway.probe(target_model))
+        except Exception:
+            probe_ok = False
+        if not probe_ok:
+            return ModelSwapResult(False, target_model, SwapStage.FAILED, "probe_failed", tuple(stages))
+        stages.append(SwapStage.READY.value)
+        return ModelSwapResult(True, target_model, SwapStage.READY, "ready", tuple(stages))
 
 
 def _is_apple_silicon_chip(chip: str) -> bool:
@@ -291,10 +509,7 @@ def recommend_ondevice_setup(
     )
 
     served_flash = _model_id(advertised, "Qwen3.8-Flash-Next")
-    served_27b = _model_id(advertised, "Qwen3.8-27B")
     local_flash = _local_model_path(local, "Qwen3.8-Flash-Next")
-    local_27b = _local_model_path(local, "Qwen3.8-27B")
-    can_host_27b = spec.memory_gb >= QWEN38_27B_MIN_MEMORY_GB
 
     if not spec.is_apple_silicon:
         return EngineRecommendation(
@@ -315,34 +530,25 @@ def recommend_ondevice_setup(
 
     if "mlx-gateway" in engine_paths:
         primary = "mlx-serve"
-        if can_host_27b and served_27b:
-            model = served_27b
-            quant = "4bit"
-            model_note = "게이트웨이가 실제 제공 중인 Qwen3.8 27B"
-        elif served_flash:
+        if served_flash:
             model = served_flash
             quant = "mixed 4/8bit"
             model_note = "게이트웨이가 실제 제공 중인 Qwen3.8 Flash-Next"
     if not model and "mlx_lm" in engine_paths:
-        if can_host_27b and local_27b:
-            primary = "mlx_lm"
-            model = local_27b
-            quant = "local"
-            model_note = "로컬 경로에서 확인한 Qwen3.8 27B"
-        elif local_flash:
+        if local_flash:
             primary = "mlx_lm"
             model = local_flash
             quant = "local"
             model_note = "로컬 경로에서 확인한 Qwen3.8 Flash-Next"
     if not model and "mlx-serve" in engine_paths:
         primary = "mlx-serve"
-        model = QWEN38_27B_MODEL_ID if can_host_27b else FLASH_NEXT_MODEL_ID
-        quant = "4bit" if can_host_27b else "mixed 4/8bit"
+        model = FLASH_NEXT_MODEL_ID
+        quant = "mixed 4/8bit"
         model_note = "MLX Serve는 설치됐지만 해당 가중치 제공 여부는 아직 확인되지 않음"
     if not model and not available:
         primary = "mlx-serve"
-        model = QWEN38_27B_MODEL_ID if can_host_27b else FLASH_NEXT_MODEL_ID
-        quant = "4bit" if can_host_27b else "mixed 4/8bit"
+        model = FLASH_NEXT_MODEL_ID
+        quant = "mixed 4/8bit"
         model_note = "설치된 MLX Core/Serve 엔진을 찾지 못함"
 
     reason = (
@@ -351,8 +557,6 @@ def recommend_ondevice_setup(
     fallbacks = [FLASH_NEXT_MODEL_ID]
     if served_flash and served_flash not in fallbacks:
         fallbacks.insert(0, served_flash)
-    if served_27b and served_27b not in fallbacks:
-        fallbacks.append(served_27b)
 
     return EngineRecommendation(
         primary_engine=primary,
@@ -612,11 +816,7 @@ def probe_ondevice_generation(
         mlx_lm = recommendation.engine_paths.get("mlx_lm", "")
         local_models = detect_local_qwen_models()
         local_flash = _local_model_path(local_models, "Qwen3.8-Flash-Next")
-        local_27b = _local_model_path(local_models, "Qwen3.8-27B")
         local_model = local_flash
-        if local_model == "" and local_27b != "":
-            if detect_hardware().memory_gb >= QWEN38_27B_MIN_MEMORY_GB:
-                local_model = local_27b
         if not mlx_lm or not Path(mlx_lm).is_file() or not local_model:
             return _finish_probe(
                 started=started,

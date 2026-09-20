@@ -11,8 +11,11 @@ import os
 import selectors
 import subprocess
 import time
+from dataclasses import dataclass
+from typing import Callable
 from typing import Any
 import auto_reply_metrics as perf
+from jarvis_abort import AbortToken
 
 CHAT = os.environ.get("OPENKAKAO_TARGET_CHAT_NAME", "부자멘토멘티").strip() or "부자멘토멘티"
 _FIELD = chr(31)
@@ -20,6 +23,56 @@ _RECORD = chr(30)
 MAX_AX_OUTPUT_BYTES = 128 * 1024
 MAX_EXACT_WINDOW_ATTEMPTS = 3
 EXACT_WINDOW_RETRY_DELAY_SECONDS = 0.05
+AX_ABORT_FOCUS_REQUIRED = "ax_focus_steal_required"
+AX_ABORT_GLOBAL = "global_abort"
+
+
+@dataclass(frozen=True)
+class VirtualCursor:
+    x: float
+    y: float
+
+
+@dataclass(frozen=True)
+class BackgroundAxResult:
+    ok: bool
+    error_code: str = ""
+    cursor: VirtualCursor | None = None
+
+
+class FocusStealRequired(RuntimeError):
+    pass
+
+
+def background_virtual_cursor_action(
+    *,
+    element_rect: tuple[float, float, float, float],
+    perform_ax_action: Callable[[], bool],
+    token: AbortToken,
+    requires_frontmost_activation: bool = False,
+    requires_real_pointer: bool = False,
+) -> BackgroundAxResult:
+    """Run a background AX action while keeping the real mouse untouched.
+
+    The returned cursor is an overlay/indicator coordinate only. It is never
+    passed to CGEvent, cliclick, pyautogui, or another pointer-moving API.
+    """
+
+    x, y, width, height = element_rect
+    cursor = VirtualCursor(x + max(0.0, width) / 2.0, y + max(0.0, height) / 2.0)
+    if token.is_cancelled():
+        return BackgroundAxResult(False, AX_ABORT_GLOBAL, cursor)
+    if requires_frontmost_activation or requires_real_pointer:
+        return BackgroundAxResult(False, AX_ABORT_FOCUS_REQUIRED, cursor)
+    try:
+        ok = bool(perform_ax_action())
+    except FocusStealRequired:
+        return BackgroundAxResult(False, AX_ABORT_FOCUS_REQUIRED, cursor)
+    except Exception:
+        return BackgroundAxResult(False, "ax_action_failed", cursor)
+    if token.is_cancelled():
+        return BackgroundAxResult(False, AX_ABORT_GLOBAL, cursor)
+    return BackgroundAxResult(ok, "" if ok else "ax_action_failed", cursor)
 
 _EXACT_WINDOW_SCRIPT = r'''
 tell application "System Events"

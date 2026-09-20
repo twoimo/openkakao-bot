@@ -305,7 +305,7 @@ class TestTrainingPlan(unittest.TestCase):
 
     def test_command_masks_the_prompt_and_carries_every_option(self):
         plan = plan_training(
-            model="mlx-community/gemma-3-4b-it-4bit",
+            model="mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
             data_dir=Path("/d"),
             adapter_path=Path("/a"),
             train_examples=10,
@@ -314,7 +314,8 @@ class TestTrainingPlan(unittest.TestCase):
         )
         self.assertIn("--mask-prompt", plan.command)
         self.assertIn("dora", plan.command)
-        self.assertIn("mlx-community/gemma-3-4b-it-4bit", plan.command)
+        self.assertIn("mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit", plan.command)
+        self.assertNotIn("gemma", " ".join(plan.command).casefold())
         self.assertEqual(plan.command[0], "mlx_lm.lora")
 
 
@@ -387,4 +388,3 @@ class TestPrepareDataset(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

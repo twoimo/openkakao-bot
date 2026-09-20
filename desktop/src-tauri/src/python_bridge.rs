@@ -1,7 +1,9 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::Read;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +15,9 @@ use thiserror::Error;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(25);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const ABORT_STATE_NAME: &str = "jarvis-abort.json";
+const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
+const STATE_FILE_LIMIT_BYTES: u64 = 4096;
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -34,6 +39,8 @@ pub enum BridgeError {
     Json,
     #[error("action_not_allowed")]
     ActionNotAllowed,
+    #[error("state_io_failed")]
+    StateIo,
 }
 
 #[derive(Clone)]
@@ -86,6 +93,29 @@ pub struct ContextSync {
     waited: bool,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct SafeVoiceStatus {
+    available: bool,
+    state: String,
+    rms: f64,
+    error_code: Option<String>,
+    wake_source: String,
+    updated_at: u64,
+}
+
+impl Default for SafeVoiceStatus {
+    fn default() -> Self {
+        Self {
+            available: false,
+            state: "unavailable".to_string(),
+            rms: 0.0,
+            error_code: None,
+            wake_source: "none".to_string(),
+            updated_at: 0,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct SafeRuntimeSnapshot {
     available: bool,
@@ -95,6 +125,7 @@ pub struct SafeRuntimeSnapshot {
     terminal_counts: TerminalCounts,
     context_sync: ContextSync,
     reply_model_id: Option<String>,
+    voice: SafeVoiceStatus,
     error_code: Option<String>,
 }
 
@@ -112,7 +143,9 @@ impl PythonBridge {
     ) -> Result<SafeRuntimeSnapshot, BridgeError> {
         let bytes = self.run_python(&[], SNAPSHOT_TIMEOUT, token_id)?;
         let value = parse_json_output(&bytes)?;
-        Ok(sanitize_snapshot(&value))
+        let mut snapshot = sanitize_snapshot(&value);
+        snapshot.voice = read_voice_status(&self.config.state_root);
+        Ok(snapshot)
     }
 
     pub fn fetch_settings_action(&self, action: &str) -> Result<Value, BridgeError> {
@@ -143,6 +176,15 @@ impl PythonBridge {
         };
         flag.store(true, Ordering::SeqCst);
         true
+    }
+
+    pub fn global_abort(&self) -> Result<(), BridgeError> {
+        if let Ok(map) = self.cancellations.lock() {
+            for flag in map.values() {
+                flag.store(true, Ordering::SeqCst);
+            }
+        }
+        write_global_abort(&self.config.state_root)
     }
 
     fn run_python(
@@ -328,6 +370,86 @@ fn clamp01(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
+fn safe_small_json(path: &Path) -> Option<Value> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > STATE_FILE_LIMIT_BYTES {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn read_voice_status(state_root: &Path) -> SafeVoiceStatus {
+    let Some(value) = safe_small_json(&state_root.join(VOICE_STATUS_NAME)) else {
+        return SafeVoiceStatus::default();
+    };
+    let Some(root) = value.as_object() else {
+        return SafeVoiceStatus::default();
+    };
+    if root.get("schema_version").and_then(Value::as_u64) != Some(1) {
+        return SafeVoiceStatus::default();
+    }
+    let state = root
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .chars()
+        .take(32)
+        .collect::<String>();
+    let error_code = root
+        .get("error_code")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(96).collect::<String>());
+    let wake_source = match root.get("wake_source").and_then(Value::as_str) {
+        Some("stock") => "stock",
+        Some("custom") => "custom",
+        _ => "none",
+    };
+    SafeVoiceStatus {
+        available: true,
+        state,
+        rms: clamp01(root.get("rms").and_then(Value::as_f64).unwrap_or(0.0)),
+        error_code,
+        wake_source: wake_source.to_string(),
+        updated_at: as_u64(root.get("updated_at")),
+    }
+}
+
+fn write_global_abort(state_root: &Path) -> Result<(), BridgeError> {
+    fs::create_dir_all(state_root).map_err(|_| BridgeError::StateIo)?;
+    let path = state_root.join(ABORT_STATE_NAME);
+    if fs::symlink_metadata(&path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(BridgeError::StateIo);
+    }
+    let epoch = safe_small_json(&path)
+        .and_then(|value| value.get("epoch").and_then(Value::as_u64))
+        .unwrap_or(0)
+        .saturating_add(1);
+    let payload = json!({
+        "schema_version": 1,
+        "epoch": epoch,
+        "latched": true,
+        "reason": "global_abort"
+    });
+    let temp = state_root.join(format!(".{ABORT_STATE_NAME}.{}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temp)
+        .map_err(|_| BridgeError::StateIo)?;
+    serde_json::to_writer(&mut file, &payload).map_err(|_| BridgeError::StateIo)?;
+    file.flush().map_err(|_| BridgeError::StateIo)?;
+    file.sync_all().map_err(|_| BridgeError::StateIo)?;
+    fs::rename(&temp, &path).map_err(|_| BridgeError::StateIo)?;
+    Ok(())
+}
+
 fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     let Some(root) = value.as_object() else {
         return SafeRuntimeSnapshot {
@@ -341,6 +463,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
                 waited: false,
             },
             reply_model_id: None,
+            voice: SafeVoiceStatus::default(),
             error_code: Some("snapshot_invalid".to_string()),
         };
     };
@@ -458,6 +581,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
             waited: false,
         },
         reply_model_id,
+        voice: SafeVoiceStatus::default(),
         error_code: None,
     }
 }
@@ -577,5 +701,37 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         );
         assert!(matches!(result, Err(BridgeError::OutputTooLarge)));
+    }
+
+    #[test]
+    fn voice_status_is_bounded_and_clamped() {
+        let temp = std::env::temp_dir().join(format!("openkakao-voice-status-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(
+            temp.join(VOICE_STATUS_NAME),
+            br#"{"schema_version":1,"state":"speaking","rms":2.0,"error_code":"","wake_source":"stock","updated_at":7}"#,
+        )
+        .unwrap();
+        let status = read_voice_status(&temp);
+        assert!(status.available);
+        assert_eq!(status.state, "speaking");
+        assert_eq!(status.rms, 1.0);
+        assert_eq!(status.wake_source, "stock");
+        assert_eq!(status.updated_at, 7);
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn global_abort_is_latched_and_increments_epoch() {
+        let temp = std::env::temp_dir().join(format!("openkakao-abort-state-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        write_global_abort(&temp).unwrap();
+        write_global_abort(&temp).unwrap();
+        let value = safe_small_json(&temp.join(ABORT_STATE_NAME)).unwrap();
+        assert_eq!(value.get("epoch").and_then(Value::as_u64), Some(2));
+        assert_eq!(value.get("latched").and_then(Value::as_bool), Some(true));
+        assert_eq!(value.get("reason").and_then(Value::as_str), Some("global_abort"));
+        let _ = fs::remove_dir_all(&temp);
     }
 }

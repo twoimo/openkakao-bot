@@ -66,6 +66,7 @@ QUEUE_FILE_MODE = 0o600
 import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
 from auto_reply_ondevice import (
+    FLASH_NEXT_MODEL_ID,
     _model_id as _ondevice_model_id,
     detect_mlx_gateway_models,
     discover_mlx_gateway,
@@ -144,7 +145,7 @@ REPLY_RUNNER = Path(
 )
 REPLY_RUNNER_KIND = os.environ.get("OPENKAKAO_REPLY_RUNNER_KIND", "gjc").strip()
 REPLY_RUNNER_SHA256 = os.environ.get("OPENKAKAO_REPLY_RUNNER_SHA256", "").strip().lower()
-REPLY_MODEL = os.environ.get("OPENKAKAO_REPLY_MODEL", "").strip()
+REPLY_MODEL = os.environ.get("OPENKAKAO_REPLY_MODEL", FLASH_NEXT_MODEL_ID).strip()
 REPLY_REASONING_EFFORT = os.environ.get(
     "OPENKAKAO_REPLY_REASONING_EFFORT", "low"
 ).strip()
@@ -306,15 +307,13 @@ REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
 DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
 DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
-DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
+DEFAULT_IMAGE_REPLY_MODEL = FLASH_NEXT_MODEL_ID
 _REPLY_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}$")
 # 사용자가 모델 설정 창에서 고른 폴백 사슬. 저장된 목록이 없으면 아래 내장
 # 기본값을 쓴다 (2026-09-15).
 MAX_REPLY_FALLBACK_MODELS = 6
 DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
-    "google-antigravity/gemini-3.8-flash",
-    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
-    "google-antigravity/gemini-3.7-flash-tiered",
+    FLASH_NEXT_MODEL_ID,
 )
 MODEL_CALL_LEASE_SECONDS = 180.0
 MODEL_GENERATION_TIMEOUT_SECONDS = 45.0
@@ -11107,10 +11106,11 @@ def _active_reply_model() -> str:
                 and payload.get("schema_version") == 1
                 and _REPLY_MODEL_ID_RE.fullmatch(model)
             ):
-                return model
+                if _product_local_model_allowed(model):
+                    return model
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         pass
-    return REPLY_MODEL
+    return REPLY_MODEL if _product_local_model_allowed(REPLY_MODEL) else FLASH_NEXT_MODEL_ID
 
 def _active_image_reply_model() -> str:
     path = _operator_state_root() / REPLY_IMAGE_MODEL_OVERRIDE_NAME
@@ -11123,7 +11123,8 @@ def _active_image_reply_model() -> str:
                 and payload.get("schema_version") == 1
                 and _REPLY_MODEL_ID_RE.fullmatch(model)
             ):
-                return model
+                if _product_local_model_allowed(model):
+                    return model
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         pass
     return DEFAULT_IMAGE_REPLY_MODEL
@@ -11152,6 +11153,7 @@ def _reply_fallback_candidates() -> list[str]:
                             model
                             and model not in models
                             and _REPLY_MODEL_ID_RE.fullmatch(model)
+                            and _product_local_model_allowed(model)
                         ):
                             models.append(model)
                         if len(models) >= MAX_REPLY_FALLBACK_MODELS:
@@ -11169,9 +11171,29 @@ def _is_mlx_serve_flash_next_model(model: str) -> bool:
     return "qwen3.8-flash-next" in folded and "mlx-serve" in folded
 
 
+def _is_mlx_serve_27b_model(model: str) -> bool:
+    folded = str(model or "").casefold()
+    return "qwen3.8-27b" in folded and "mlx-serve" in folded
+
+
+def _is_mlx_serve_text_model(model: str) -> bool:
+    return _is_mlx_serve_flash_next_model(model) or _is_mlx_serve_27b_model(model)
+
+
 def _is_local_reply_model(model: str) -> bool:
     folded = str(model or "").casefold()
-    return folded.startswith(("omlx/", "mlx/")) or _is_mlx_serve_flash_next_model(model)
+    return folded.startswith(("omlx/", "mlx/")) or _is_mlx_serve_text_model(model)
+
+
+def _product_local_model_allowed(model: str) -> bool:
+    """Product generation is local-only; configured cloud ids fail closed."""
+
+    folded = str(model or "").strip().casefold()
+    if not folded:
+        return False
+    if "gemma" in folded:
+        return False
+    return _is_local_reply_model(model)
 
 def _fallback_thinking_effort(model: str) -> str:
     """Fallbacks answer at high effort, except the local runtimes."""
@@ -11366,14 +11388,15 @@ def _run_opencodex_generation(
 
     target_base_url = base_url
     target_model = model
-    if _is_mlx_serve_flash_next_model(target_model):
+    if _is_mlx_serve_text_model(target_model):
         gateway_base_url, _ = discover_mlx_gateway()
         if not gateway_base_url:
             return 1, b"", b"mlx_serve_gateway_unavailable"
         advertised = detect_mlx_gateway_models(base_url=gateway_base_url)
-        advertised_model = _ondevice_model_id(advertised, "Qwen3.8-Flash-Next")
+        marker = "Qwen3.8-27B" if _is_mlx_serve_27b_model(target_model) else "Qwen3.8-Flash-Next"
+        advertised_model = _ondevice_model_id(advertised, marker)
         if not advertised_model:
-            return 1, b"", b"mlx_serve_flash_next_not_advertised"
+            return 1, b"", b"mlx_serve_text_model_not_advertised"
         target_base_url = gateway_base_url
         target_model = advertised_model
     elif target_model in (
@@ -11474,7 +11497,9 @@ def _run_generation_candidate(
     image_paths: list[Path] | None,
     timeout: float,
 ) -> tuple[int, bytes, bytes]:
-    if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_flash_next_model(model):
+    if not _product_local_model_allowed(model):
+        return 1, b"", b"product_cloud_fallback_disabled"
+    if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_text_model(model):
         return _run_opencodex_generation(
             model,
             system_prompt,
@@ -12100,10 +12125,13 @@ def generate_reply(
             return fail_model_call("runner_timeout")
         if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_flash_next_model(active_model):
             if not cooldown_fallback_answered:
-                returncode, stdout_bytes, stderr_bytes = _run_opencodex_generation(
+                returncode, stdout_bytes, stderr_bytes = _run_generation_candidate(
                     active_model,
                     system_prompt,
                     prompt_bytes,
+                    command=command,
+                    env=env,
+                    model_stdin_bytes=model_stdin_bytes,
                     image_paths=normalized_image_paths,
                     timeout=_model_generation_timeout(active_model, deadline=generation_deadline),
                 )

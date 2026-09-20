@@ -36,7 +36,17 @@ export interface RuntimeSnapshot {
     waited: false;
   };
   replyModelId: string | null;
+  voice: VoiceStatus;
   errorCode: string | null;
+}
+
+export interface VoiceStatus {
+  available: boolean;
+  state: string;
+  rms: number;
+  errorCode: string | null;
+  wakeSource: "stock" | "custom" | "none";
+  updatedAt: number;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -100,6 +110,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
+    voice: { available: false, state: "unavailable", rms: 0, errorCode: null, wakeSource: "none", updatedAt: 0 },
     errorCode,
   };
 }
@@ -127,6 +138,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
   const jobs = jobsRaw.map(parseJobEvent).filter((item): item is JobEvent => item !== null);
   const terminal = record(input.terminal_counts ?? input.terminal) ?? {};
   const contextSync = record(input.context_sync ?? input.contextSync);
+  const voice = record(input.voice);
   const contextValid = contextSync?.mode === "async" && contextSync.waited === false;
 
   return {
@@ -146,6 +158,22 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
       : typeof input.replyModelId === "string"
         ? input.replyModelId
         : null,
+    voice: {
+      available: voice?.available === true,
+      state: text(voice?.state, "unavailable"),
+      rms: Math.min(1, Math.max(0, finiteNumber(voice?.rms, 0))),
+      errorCode: typeof voice?.error_code === "string"
+        ? voice.error_code
+        : typeof voice?.errorCode === "string"
+          ? voice.errorCode
+          : null,
+      wakeSource: voice?.wake_source === "stock" || voice?.wakeSource === "stock"
+        ? "stock"
+        : voice?.wake_source === "custom" || voice?.wakeSource === "custom"
+          ? "custom"
+          : "none",
+      updatedAt: nonNegativeInt(voice?.updated_at ?? voice?.updatedAt),
+    },
     errorCode: contextValid ? (typeof input.error_code === "string" ? input.error_code : null) : "context_sync_invalid",
   };
 }

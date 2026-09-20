@@ -120,7 +120,7 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
         )
         self.assertTrue(all(data is None for _url, data, _timeout in calls))
 
-    def test_gjc_dispatch_routes_only_mlx_candidate_to_http(self):
+    def test_generation_candidate_blocks_product_cloud_fallback(self):
         module = self.module
         command = ["gjc", "--model", "primary/model"]
         mlx_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
@@ -164,13 +164,9 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 image_paths=None,
                 timeout=45.0,
             )
-            self.assertEqual(result, (0, b"gjc", b""))
+            self.assertEqual(result, (1, b"", b"product_cloud_fallback_disabled"))
             http_runner.assert_not_called()
-            process_runner.assert_called_once()
-            self.assertEqual(
-                process_runner.call_args.args[0],
-                ["gjc", "--model", "google-antigravity/gemini-3.8-flash", "--thinking", "high"],
-            )
+            process_runner.assert_not_called()
 
     def test_prefixless_mlx_keeps_local_generation_timeout(self):
         module = self.module

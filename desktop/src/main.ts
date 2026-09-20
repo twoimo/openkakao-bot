@@ -52,6 +52,16 @@ function renderModels(payload: Record<string, unknown> | null, snapshot: Runtime
     : "현재 모델 ID를 확인할 수 없습니다. 27B는 이 화면에서 로드하지 않습니다.");
 }
 
+function renderVoice(snapshot: RuntimeSnapshot): void {
+  const voice = snapshot.voice;
+  if (!voice.available) {
+    setText("voice-status", "음성 런타임 상태를 아직 받지 못했습니다.");
+    return;
+  }
+  const suffix = voice.errorCode ? ` · ${voice.errorCode}` : "";
+  setText("voice-status", `상태 ${voice.state} · wake ${voice.wakeSource} · RMS ${voice.rms.toFixed(3)}${suffix}`);
+}
+
 async function bootSettings(): Promise<void> {
   app.innerHTML = settingsMarkup();
   const token = createCancellationToken();
@@ -63,6 +73,7 @@ async function bootSettings(): Promise<void> {
   ]);
   renderRooms(snapshot);
   renderModels(models, snapshot);
+  renderVoice(snapshot);
 
   if (dream) {
     setText("settings-dream-rsi-status", `status: ${String(dream.status ?? "unknown")} · selected_policy: ${String(dream.selected_policy ?? "none")}`);
@@ -119,7 +130,7 @@ async function bootPanel(): Promise<void> {
     const snapshot = await fetchRuntimeSnapshot(token);
     if (requestToken === token && !token.cancelled) {
       requestToken = null;
-      core.setSignals(snapshot.jobLoad, 0);
+      core.setSignals(snapshot.jobLoad, snapshot.voice.rms);
       pollTimer = window.setTimeout(() => void poll(), 2500);
     }
   };

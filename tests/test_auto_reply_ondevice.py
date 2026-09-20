@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 from scripts.auto_reply_ondevice import (
     FLASH_NEXT_MODEL_ID,
+    MemoryBudget,
+    ModelResidencyManager,
     QWEN38_27B_MODEL_ID,
     EngineRecommendation,
     HardwareSpec,
@@ -189,12 +191,13 @@ class TestQwenRecommendation(unittest.TestCase):
         self.assertEqual(rec.worker_model_id, FLASH_NEXT_ADVERTISED_ID)
         self.assertIn(FLASH_NEXT_MODEL_ID, rec.fallback_models)
 
-    def test_large_apple_silicon_prefers_actual_served_qwen38_27b(self):
+    def test_large_apple_silicon_keeps_flash_next_resident_default(self):
         rec = _gateway_rec(128.0)
         self.assertEqual(rec.primary_engine, "mlx-serve")
-        self.assertEqual(rec.recommended_model, QWEN38_27B_MODEL_ID)
+        self.assertEqual(rec.recommended_model, FLASH_NEXT_MODEL_ID)
         self.assertEqual(rec.worker_model_id, FLASH_NEXT_MODEL_ID)
         self.assertIn(FLASH_NEXT_MODEL_ID, rec.fallback_models)
+        self.assertNotIn(QWEN38_27B_MODEL_ID, rec.fallback_models)
         self.assertNotIn("gemma", json.dumps(rec.__dict__).casefold())
 
     def test_smaller_apple_silicon_prefers_flash_next(self):
@@ -203,7 +206,7 @@ class TestQwenRecommendation(unittest.TestCase):
         self.assertEqual(rec.recommended_model, FLASH_NEXT_MODEL_ID)
         self.assertEqual(rec.recommended_quant, "mixed 4/8bit")
 
-    def test_mlx_lm_uses_discovered_local_path_not_serving_id(self):
+    def test_mlx_lm_does_not_promote_local_27b_to_default(self):
         with TemporaryDirectory() as temp_dir:
             model_path = Path(temp_dir) / "Qwen3.8-27B-local"
             model_path.mkdir()
@@ -212,9 +215,8 @@ class TestQwenRecommendation(unittest.TestCase):
                 engines={"mlx_lm": sys.executable},
                 local_models={"Qwen3.8-27B-local": str(model_path)},
             )
-        self.assertEqual(rec.primary_engine, "mlx_lm")
-        self.assertEqual(rec.recommended_model, str(model_path))
-        self.assertFalse(rec.recommended_model.startswith("mlx/"))
+        self.assertNotEqual(rec.recommended_model, str(model_path))
+        self.assertNotIn("27b", rec.recommended_model.casefold())
 
     def test_non_mlx_engines_never_become_primary(self):
         rec = recommend_ondevice_setup(
@@ -237,7 +239,7 @@ class TestQwenRecommendation(unittest.TestCase):
     def test_no_engine_installed_is_fail_closed_but_keeps_serving_recommendation(self):
         rec = recommend_ondevice_setup(_hw("Apple M5 Max", 128.0), engines={})
         self.assertEqual(rec.primary_engine, "mlx-serve")
-        self.assertEqual(rec.recommended_model, QWEN38_27B_MODEL_ID)
+        self.assertEqual(rec.recommended_model, FLASH_NEXT_MODEL_ID)
         self.assertIn("찾지 못함", rec.reason)
 
 
@@ -248,7 +250,8 @@ class TestCommandsAndSummary(unittest.TestCase):
     def test_generate_description_uses_mlx_serve(self):
         text = generate_command(_gateway_rec(), "안녕")
         self.assertIn("MLX Serve", text)
-        self.assertIn(QWEN38_27B_MODEL_ID, text)
+        self.assertIn(FLASH_NEXT_MODEL_ID, text)
+        self.assertNotIn(QWEN38_27B_MODEL_ID, text)
         self.assertNotIn("gemma", text.casefold())
 
     def test_summary_is_serializable_and_includes_last_probe_field(self):
@@ -264,8 +267,97 @@ class TestCommandsAndSummary(unittest.TestCase):
         self.assertIn("last_probe", summary)
         self.assertIsNone(summary["last_probe"])
         self.assertIn("MLX Core/Serve", summary["status_label"])
-        self.assertIn("Qwen3.8 27B", summary["status_label"])
+        self.assertIn("Qwen3.8 Flash-Next", summary["status_label"])
         json.dumps(summary, ensure_ascii=False)
+
+
+class TestModelResidencySwap(unittest.TestCase):
+    class FakeGateway:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        def unload(self, model_id: str) -> None:
+            self.calls.append(("unload", model_id))
+
+        def load(self, model_id: str) -> None:
+            self.calls.append(("load", model_id))
+
+        def probe(self, model_id: str) -> bool:
+            self.calls.append(("probe", model_id))
+            return True
+
+    def test_27b_is_never_loaded_by_default(self):
+        gateway = self.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+        result = manager.swap(QWEN38_27B_MODEL_ID)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "27b_human_opt_in_required")
+        self.assertEqual(gateway.calls, [])
+
+    def test_explicit_swap_drains_then_unloads_loads_and_probes(self):
+        gateway = self.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(
+                120 * 1024**3,
+                kv_cache_bytes=2 * 1024**3,
+                voice_models_bytes=4 * 1024**3,
+                other_resident_bytes=8 * 1024**3,
+            ),
+            required_bytes={QWEN38_27B_MODEL_ID: 40 * 1024**3},
+        )
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", QWEN38_27B_MODEL_ID),
+                ("probe", QWEN38_27B_MODEL_ID),
+            ],
+        )
+        self.assertEqual(
+            result.stages,
+            ("drain", "unload", "memory_check", "load", "probe", "ready"),
+        )
+
+    def test_foreign_resident_model_is_never_unloaded(self):
+        gateway = self.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+        self.assertTrue(result.ok)
+        self.assertNotIn(("unload", FLASH_NEXT_MODEL_ID), gateway.calls)
+
+    def test_memory_budget_reserves_kv_voice_and_other_residents(self):
+        gateway = self.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[],
+            memory_budget=lambda: MemoryBudget(
+                50 * 1024**3,
+                kv_cache_bytes=8 * 1024**3,
+                voice_models_bytes=8 * 1024**3,
+                other_resident_bytes=8 * 1024**3,
+            ),
+            required_bytes={QWEN38_27B_MODEL_ID: 30 * 1024**3},
+        )
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "insufficient_free_memory")
+        self.assertEqual(gateway.calls, [])
 
 
 class TestVerification(unittest.TestCase):

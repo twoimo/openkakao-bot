@@ -5,6 +5,7 @@ use serde_json::Value;
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, PhysicalPosition, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_WIDTH: f64 = 276.0;
 
@@ -90,16 +91,32 @@ fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
 }
 
 fn main() {
+    let abort_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
     tauri::Builder::default()
         .manage(PythonBridge::new())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    let expected = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
+                    if shortcut == &expected && event.state() == ShortcutState::Pressed {
+                        let bridge = app.state::<PythonBridge>();
+                        let _ = bridge.global_abort();
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             fetch_runtime_snapshot,
             fetch_settings_action,
             cancel_python,
             open_settings
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
+            handle
+                .global_shortcut()
+                .register(abort_shortcut)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
             TrayIconBuilder::new()
                 .icon(make_tray_icon())
                 .icon_as_template(true)

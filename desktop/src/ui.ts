@@ -49,8 +49,9 @@ export function settingsMarkup(): string {
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">
-      <div class="section-heading"><h2 id="voice-title">Voice</h2><span class="tag muted-tag">후속 연결</span></div>
-      <p>RMS 입력이 연결되면 acoustic pulse lattice 진폭에만 반영됩니다.</p>
+      <div class="section-heading"><h2 id="voice-title">Voice</h2><span class="tag muted-tag">로컬 전용</span></div>
+      <p id="voice-status">음성 런타임 상태를 확인 중입니다.</p>
+      <p class="muted">“헤이 자비스” · RMS는 acoustic pulse lattice 진폭에만 반영됩니다.</p>
     </section>
 
     <section id="settings-sync-card" class="settings-card knowledge-accent" aria-labelledby="sync-title">

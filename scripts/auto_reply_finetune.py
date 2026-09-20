@@ -47,6 +47,7 @@ DEFAULT_SESSION_GAP = 1800.0
 # mlx_lm.lora masks the prompt when told to, so the model is scored on the
 # answer only. The instruction line frames the task the same way every time.
 DEFAULT_INSTRUCTION = "다음 카카오톡 대화에 자연스럽게 답장하세요."
+FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 
 
 @dataclass
@@ -558,7 +559,7 @@ def _resolve_model(explicit: str | None) -> str:
 
         return recommend_ondevice_setup(detect_hardware()).recommended_model
     except Exception:
-        return "mlx-community/gemma-3-4b-it-4bit"
+        return FLASH_NEXT_MODEL_ID
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -680,4 +681,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
