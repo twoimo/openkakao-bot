@@ -4,6 +4,7 @@ use openkakao_cli::ax_send;
 mod auto_reply_runtime;
 mod commands;
 mod config;
+mod context_sync_replica;
 mod credentials;
 use openkakao_cli::error;
 mod export;
@@ -6594,9 +6595,9 @@ fn main() -> Result<()> {
                 )?,
                 None => Vec::new(),
             };
-            let reader = local_db::LocalDbReader::open()?;
-            let account_fingerprint = reader.account_fingerprint().to_owned();
-            let account_user_id = reader.account_user_id();
+            let source = context_sync_replica::ContextSyncReplicaSource::discover()?;
+            let account_fingerprint = source.account_fingerprint().to_owned();
+            let account_user_id = source.account_user_id();
             let state = openkakao_cli::context::live_context_sync_state(
                 &db_path,
                 &account_fingerprint,
@@ -6634,7 +6635,8 @@ fn main() -> Result<()> {
                     &chat,
                     checkpoint,
                     |expected_chat_id, expected_checkpoint| {
-                        reader.poll_after(
+                        let replica = source.open_fresh()?;
+                        replica.reader().poll_after(
                             expected_chat_id,
                             local_db::LOCAL_POLL_MAX_ROWS,
                             Some(expected_checkpoint),

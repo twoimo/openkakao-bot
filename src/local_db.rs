@@ -1296,6 +1296,78 @@ pub struct LocalDbReader {
     account_user_id: i64,
 }
 
+/// Immutable source identity used only by the production context-sync replica
+/// path. Discovering this value never opens the KakaoTalk SQLite database.
+pub struct LocalDbReplicaSource {
+    db_path: PathBuf,
+    db_identity: DatabaseIdentity,
+    secure_key: String,
+    account_fingerprint: String,
+    account_user_id: i64,
+}
+
+impl LocalDbReplicaSource {
+    pub fn discover() -> Result<Self> {
+        let uuid = get_platform_uuid().context("Failed to get IOPlatformUUID")?;
+        let user_id = get_user_id_from_plist().context("Failed to get KakaoTalk user ID")?;
+        let db_name = derive_database_name(user_id, &uuid);
+        let db_path =
+            find_database_path(&db_name).context("Failed to locate KakaoTalk local database")?;
+        let db_identity = database_identity(&db_path)?;
+        Ok(Self {
+            db_path,
+            db_identity,
+            secure_key: derive_secure_key(user_id, &uuid),
+            account_fingerprint: local_account_fingerprint(user_id, &uuid),
+            account_user_id: user_id,
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.db_path
+    }
+
+    pub fn account_fingerprint(&self) -> &str {
+        &self.account_fingerprint
+    }
+
+    pub fn account_user_id(&self) -> i64 {
+        self.account_user_id
+    }
+
+    pub fn ensure_source_identity(&self) -> Result<()> {
+        if database_identity(&self.db_path)? != self.db_identity {
+            anyhow::bail!("Local database identity changed");
+        }
+        Ok(())
+    }
+
+    pub fn open_replica(&self, replica_path: &Path) -> Result<LocalDbReader> {
+        if replica_path == self.db_path {
+            anyhow::bail!("context sync replica path must not be the source database");
+        }
+        self.ensure_source_identity()?;
+        let replica_identity = database_identity(replica_path)?;
+        let conn = open_encrypted_connection_bounded(replica_path, &self.secure_key)?;
+        conn.execute_batch("PRAGMA query_only = ON;")?;
+        let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0))?;
+        if query_only != 1 {
+            anyhow::bail!("context sync replica query_only verification failed");
+        }
+        if database_identity(replica_path)? != replica_identity {
+            anyhow::bail!("context sync replica identity changed during open");
+        }
+        self.ensure_source_identity()?;
+        Ok(LocalDbReader {
+            conn,
+            db_path: replica_path.to_path_buf(),
+            db_identity: replica_identity,
+            account_fingerprint: self.account_fingerprint.clone(),
+            account_user_id: self.account_user_id,
+        })
+    }
+}
+
 fn local_account_fingerprint(user_id: i64, uuid: &str) -> String {
     hex::encode(sha2::Sha256::digest(
         format!("openkakao-local-account-v1\0{uuid}\0{user_id}").as_bytes(),
