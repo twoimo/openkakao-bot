@@ -72,12 +72,12 @@ Verification recorded for the landed implementation: **215 tests OK on UV Python
 
 Current limits:
 
-- Live Extra is still the Swift AutoReplyMenu, pid **20042**. The Tauri app has **not** been cut over as the signed live app.
+- Live Extra is still the Swift AutoReplyMenu, pid **20042**. A local debug Jarvis can run alongside it with `CFBundleIdentifier=com.openkakao.jarvis.desktop` (observed pid **85174**), but the Tauri app has **not** been cut over as the signed live app; Extra keeps the original `com.openkakao.auto-reply.menu` bundle id.
 - The Qwen3.8 27B model is unloaded.
 - DPO output does not promote or replace the live model automatically.
  - `Qwen3TtsAdapter` loads `Qwen3TTSModel.generate_custom_voice` with default id `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`. A live bf16 smoke wrote a 3.2 s Korean WAV (153,644 bytes, speaker `aiden`) without speaker playback. Missing SoX remains a non-blocking warning.
 - style.gallery now loads read-only. Its restrained UI font stack is applied as `--font-ui`; the existing ivory/warm-black + champagne-gold palette remains unchanged.
-- Live Vite/browser hide is measured: visible `renderCount=9`/RAF `1`, then hidden `renderCount=9`/RAF `0` after 650 ms (delta `0`). Dedicated `.venv-voice` imports pass, and a real `MlxWhisperAdapter` smoke with `mlx-community/whisper-tiny-mlx` passes. A local Tauri debug binary/app bundle is built only under `desktop/src-tauri/target`; its bundle identifier collides with the live Extra, so signed cutover remains open. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
+- Live Vite/browser hide is measured: visible `renderCount=9`/RAF `1`, then hidden `renderCount=9`/RAF `0` after 650 ms (delta `0`). The real Tauri/WKWebView hide is also measured: `renderCount=8→8`, pending RAF `1→0`, one RAF cancellation, delta `0` after 674 ms. Dedicated `.venv-voice` imports pass, and a real `MlxWhisperAdapter` smoke with `mlx-community/whisper-tiny-mlx` passes. The local Tauri debug binary/app bundle remains under `desktop/src-tauri/target`; signed cutover remains open because the installed Extra retains the original bundle id. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
 
 Recovery and safety:
 

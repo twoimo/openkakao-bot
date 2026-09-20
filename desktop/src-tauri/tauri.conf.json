@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OpenKakao Jarvis",
   "version": "0.1.0",
-  "identifier": "com.openkakao.auto-reply.menu",
+  "identifier": "com.openkakao.jarvis.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
