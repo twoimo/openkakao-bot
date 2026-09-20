@@ -129,6 +129,7 @@ jobs:
           tests.test_auto_reply_knowledge_graph
           tests.test_jarvis_unit4
           tests.test_local_mlx_model_readiness
+          tests.test_verify_local_models
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
