@@ -463,3 +463,9 @@ Production STT on the existing Korean TTS utterance (`.venv-voice/smoke/qwen3-tt
 
 Both models mis-hear 음성 as 분성/분청 on this aiden TTS clip. That is an audio/model limitation, not a tiny-only defect. Extra pid **20042** stayed alive. 27B stayed unloaded. Signed Extra cutover remains open.
 
+## Rebuilt parallel Tauri at HEAD 96153df — 2026-09-20 KST
+
+`tauri build --debug` finished at `desktop/src-tauri/target/debug/bundle/macos/OpenKakao Jarvis.app` (`com.openkakao.jarvis.desktop`). Extra pid **20042** was not restarted. The previous stale debug pid 36294 was replaced; a nohup launch exited silently, then a foreground launch kept pid **63463** alive with Extra still at 20042.
+
+`resolve_custom_wake_model(None)` on this tree returns the 6,406-byte bundled ONNX. Rust missing-status tests already cover the same selection rule. Hide RAF was not re-measured. Signed Extra cutover remains open. 27B stayed unloaded.
+
