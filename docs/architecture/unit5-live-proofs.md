@@ -320,3 +320,35 @@ Measured at HEAD `fadb271dcb70d5a3407bf3168ae080eb9590b43c` with a temporary loc
 - Background-safe path: `ok=true`, callback calls **1**, counter **0→1**, frontmost **95964→95964**.
 - Focus-required path: `ok=false`, `error_code=ax_focus_steal_required` (`AX_ABORT_FOCUS_REQUIRED`), callback calls **0**, counter stayed **1**, frontmost **95964→95964**.
 - Extra pid **20042** was alive before and after and was not frontmost after the proof.
+
+## Stock openWakeWord score on Korean “헤이 자비스” — 2026-09-20 KST
+
+Measured from `/Users/twoimo/Documents/projects/openkakao-bot` after HEAD `8f1c5d4`, with Extra pid **20042** still owning `/Applications/AutoReplyMenu.app`. The probe used `.venv-voice` Python 3.12 and `OPENKAKAO_VOICE_ENV=1`. No speaker playback, live microphone, Extra restart, 27B/Gemma load, Kakao send, or `/Applications` install was performed.
+
+Qwen3-TTS `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` synthesized the wake phrase without playback:
+
+| Field | Value |
+| --- | --- |
+| path | `.venv-voice/smoke/hey-jarvis-ko.wav` (gitignored) |
+| bytes | **46,124** |
+| rate / duration | **24,000 Hz**, **0.96 s**, 23,040 source samples |
+| speaker / language | `aiden` / Korean |
+| load + generate | 5.499 s + 27.351 s |
+| playback | false |
+
+`OpenWakeVadFrontend.analyze()` previously forwarded raw `bytes` into `openwakeword.model.Model.predict()`, which requires a numpy int16 array. The frontend now converts each **640-byte / 320-sample / 20 ms** frame to int16 for the wake model and still passes the original bytes to WebRTC VAD. UV Python 3.11 `tests.test_jarvis_unit3` is **8 tests OK**, including `test_openwake_frontend_requires_20ms_int16_frames`.
+
+The isolated voice env needed `webrtcvad-wheels` (the old `webrtcvad==2.0.10` import crashed on missing `pkg_resources` under setuptools 84). `voice/pyproject.toml` already pins `webrtcvad-wheels`.
+
+Stock `hey_jarvis` scores versus `WAKE_THRESHOLD=0.65` (threshold was not lowered):
+
+| Clip | 16 kHz samples | 20 ms frames | stock max | accepted |
+| --- | ---: | ---: | ---: | --- |
+| Korean TTS “헤이 자비스” | 15,360 | 48 | **0.001959** | no |
+| Unrelated Korean TTS control | 51,200 | 160 | 0.001959 | no |
+| 1 s silence | 16,000 | 50 | 0.000017 | no |
+
+An 80 ms native-frame diagnostic on the same wake clip also peaked at **0.00136** for `hey_jarvis` (`hey_rhasspy` 0.00264). The English stock model misses this Korean pronunciation.
+
+Readback after the probe: Extra pid **20042** alive; Flash-Next loaded 75,303,252,216 bytes; Krea loaded; Qwen3.8 27B and Gemma unloaded. Custom Korean wake-model training remains open. Live microphone and signed Extra cutover remain open.
+

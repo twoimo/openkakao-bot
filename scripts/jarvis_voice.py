@@ -205,13 +205,30 @@ class OpenWakeVadFrontend:
         mean_square = sum(float(sample) * float(sample) for sample in samples) / len(samples)
         return min(1.0, math.sqrt(mean_square) / 32768.0)
 
+    @staticmethod
+    def _wake_input(pcm16: bytes) -> Any:
+        # openWakeWord requires a numpy int16 array; WebRTC VAD still wants bytes.
+        try:
+            import numpy as np
+
+            return np.frombuffer(pcm16, dtype=np.int16, count=320)
+        except Exception:
+            samples = array("h")
+            samples.frombytes(pcm16)
+            return samples
+
     def analyze(self, pcm16: bytes) -> AudioFrameAnalysis:
         # WebRTC VAD accepts 10/20/30 ms frames. A 20 ms frame at 16 kHz is
         # 320 int16 samples / 640 bytes; callers must keep this boundary.
         if len(pcm16) != 640:
             raise ValueError("voice_frame_size_invalid")
-        stock = self._score(self.stock_model.predict(pcm16))
-        custom = self._score(self.custom_model.predict(pcm16)) if self.custom_model is not None else None
+        wake_input = self._wake_input(pcm16)
+        stock = self._score(self.stock_model.predict(wake_input))
+        custom = (
+            self._score(self.custom_model.predict(wake_input))
+            if self.custom_model is not None
+            else None
+        )
         return AudioFrameAnalysis(
             rms=self._rms(pcm16),
             speech=bool(self.vad.is_speech(pcm16, self.sample_rate)),

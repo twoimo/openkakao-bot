@@ -17,6 +17,7 @@ from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
 from jarvis_voice import JarvisVoicePipeline, VoiceState, WakePhraseGate
 from jarvis_voice import Qwen3TtsAdapter
+from jarvis_voice import OpenWakeVadFrontend
 
 
 class FakeStt:
@@ -97,6 +98,36 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
             )
             self.assertEqual(pipeline.state, VoiceState.SPEAKING)
             self.assertEqual(pipeline.ring.size, 0)
+
+    def test_openwake_frontend_requires_20ms_int16_frames(self):
+        class FakeModel:
+            def __init__(self) -> None:
+                self.seen: list[object] = []
+
+            def predict(self, x):
+                self.seen.append(x)
+                return {"hey_jarvis_v0.1": 0.21}
+
+        class FakeVad:
+            def is_speech(self, frame: bytes, sample_rate: int) -> bool:
+                self.frame = frame
+                self.sample_rate = sample_rate
+                return True
+
+        model = FakeModel()
+        vad = FakeVad()
+        frontend = OpenWakeVadFrontend(stock_model=model, vad=vad)
+        with self.assertRaisesRegex(ValueError, "voice_frame_size_invalid"):
+            frontend.analyze(b"\x00\x00" * 1280)
+        frame = b"\x01\x00" * 320
+        analysis = frontend.analyze(frame)
+        self.assertEqual(len(model.seen), 1)
+        wake_input = model.seen[0]
+        self.assertEqual(len(wake_input), 320)
+        self.assertEqual(vad.frame, frame)
+        self.assertEqual(vad.sample_rate, 16_000)
+        self.assertAlmostEqual(analysis.stock_wake_score, 0.21)
+        self.assertIsNone(analysis.custom_wake_score)
 
     def test_global_abort_clears_queue_and_never_auto_resumes(self):
         with TemporaryDirectory() as temp_dir:
