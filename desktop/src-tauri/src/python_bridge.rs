@@ -25,6 +25,8 @@ const WAKE_PHRASE: &str = "헤이 자비스";
 const WAKE_THRESHOLD: f64 = 0.65;
 const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const BUNDLED_CUSTOM_WAKE_MODEL: &str = resource_layout::WAKE_MODEL;
+const RESIDENT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+const SWAP_MODEL_ID: &str = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
 const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
 
 #[derive(Debug, Error)]
@@ -187,33 +189,9 @@ impl PythonBridge {
         query: Option<&str>,
         node_id: Option<&str>,
         chat_id: Option<&str>,
+        model: Option<&str>,
     ) -> Result<Value, BridgeError> {
-        let allowed = matches!(
-            action,
-            "models"
-                | "dream-rsi-status"
-                | "knowledge-graph-status"
-                | "knowledge-graph"
-                | "knowledge-graph-focus"
-        );
-        if !allowed {
-            return Err(BridgeError::ActionNotAllowed);
-        }
-        let mut args = vec!["--action".to_string(), action.to_string()];
-        if action == "knowledge-graph-focus" {
-            if let Some(value) = bounded_arg(query, 256) {
-                args.push("--knowledge-query".to_string());
-                args.push(value);
-            }
-            if let Some(value) = bounded_arg(node_id, 192) {
-                args.push("--knowledge-node-id".to_string());
-                args.push(value);
-            }
-            if let Some(value) = bounded_arg(chat_id, 128) {
-                args.push("--knowledge-chat".to_string());
-                args.push(value);
-            }
-        }
+        let args = settings_action_args(action, query, node_id, chat_id, model)?;
         let bytes = self.run_python(&args, DEFAULT_TIMEOUT, None)?;
         let value = parse_json_output(&bytes)?;
         Ok(match action {
@@ -222,6 +200,8 @@ impl PythonBridge {
             "knowledge-graph-status" => sanitize_knowledge_status(&value),
             "knowledge-graph" => sanitize_knowledge_graph(&value),
             "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
+            "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
+            "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
             _ => return Err(BridgeError::ActionNotAllowed),
         })
     }
@@ -508,6 +488,45 @@ fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
         return None;
     }
     Some(value.chars().take(max_chars).collect())
+}
+
+fn settings_action_args(
+    action: &str,
+    query: Option<&str>,
+    node_id: Option<&str>,
+    chat_id: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<String>, BridgeError> {
+    let mut args = vec!["--action".to_string(), action.to_string()];
+    match action {
+        "models" | "dream-rsi-status" | "knowledge-graph-status" | "knowledge-graph" => {}
+        "knowledge-graph-focus" => {
+            if let Some(value) = bounded_arg(query, 256) {
+                args.push("--knowledge-query".to_string());
+                args.push(value);
+            }
+            if let Some(value) = bounded_arg(node_id, 192) {
+                args.push("--knowledge-node-id".to_string());
+                args.push(value);
+            }
+            if let Some(value) = bounded_arg(chat_id, 128) {
+                args.push("--knowledge-chat".to_string());
+                args.push(value);
+            }
+        }
+        "model-set" if model == Some(RESIDENT_MODEL_ID) => {
+            args.extend([
+                "--model".to_string(),
+                RESIDENT_MODEL_ID.to_string(),
+                "--no-wait".to_string(),
+            ]);
+        }
+        "model-prepare" if model == Some(SWAP_MODEL_ID) => {
+            args.extend(["--model".to_string(), SWAP_MODEL_ID.to_string()]);
+        }
+        _ => return Err(BridgeError::ActionNotAllowed),
+    }
+    Ok(args)
 }
 
 fn plan_voice_session(
@@ -857,6 +876,33 @@ fn sanitize_models(value: &Value) -> Value {
     json!({"ok": value.get("ok").and_then(Value::as_bool).unwrap_or(true), "model": model, "providers": providers})
 }
 
+fn sanitize_model_action(value: &Value, action: &str, model: &str) -> Value {
+    let contract_matches = value.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && value.get("action").and_then(Value::as_str) == Some(action)
+        && value.get("model").and_then(Value::as_str) == Some(model);
+    let stored = value
+        .get("stored")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let prepared = value
+        .get("prepared")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let completed = match action {
+        "model-set" => stored,
+        "model-prepare" => prepared,
+        _ => false,
+    };
+    json!({
+        "ok": contract_matches && completed,
+        "action": action,
+        "model": model,
+        "stored": stored,
+        "prepared": prepared,
+        "needs_prepare": value.get("needs_prepare").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
 fn sanitize_dream_rsi(value: &Value) -> Value {
     json!({
         "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
@@ -1020,6 +1066,83 @@ mod tests {
     #[test]
     fn rejects_bad_json() {
         assert!(matches!(parse_json_output(b"{bad"), Err(BridgeError::Json)));
+    }
+
+    #[test]
+    fn local_model_actions_are_exactly_allowlisted() {
+        let set_args =
+            settings_action_args("model-set", None, None, None, Some(RESIDENT_MODEL_ID)).unwrap();
+        assert_eq!(
+            set_args,
+            vec![
+                "--action",
+                "model-set",
+                "--model",
+                RESIDENT_MODEL_ID,
+                "--no-wait",
+            ]
+        );
+
+        let prepare_args =
+            settings_action_args("model-prepare", None, None, None, Some(SWAP_MODEL_ID)).unwrap();
+        assert_eq!(
+            prepare_args,
+            vec!["--action", "model-prepare", "--model", SWAP_MODEL_ID]
+        );
+
+        for (action, model) in [
+            ("model-set", SWAP_MODEL_ID),
+            ("model-prepare", RESIDENT_MODEL_ID),
+            ("model-set", "../../tmp/model"),
+            ("model-prepare", "remote/arbitrary --flag"),
+        ] {
+            assert!(matches!(
+                settings_action_args(action, None, None, None, Some(model)),
+                Err(BridgeError::ActionNotAllowed)
+            ));
+        }
+        assert!(matches!(
+            settings_action_args("model-set", None, None, None, None),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+    }
+
+    #[test]
+    fn model_action_response_is_sanitized_and_fail_closed() {
+        let safe = sanitize_model_action(
+            &json!({
+                "ok": true,
+                "action": "model-set",
+                "model": RESIDENT_MODEL_ID,
+                "stored": true,
+                "prepared": true,
+                "needs_prepare": false,
+                "prompt": "private",
+                "body": "private",
+                "secret": "private",
+                "warnings": ["untrusted"],
+            }),
+            "model-set",
+            RESIDENT_MODEL_ID,
+        );
+        assert_eq!(safe["ok"], true);
+        assert_eq!(safe["model"], RESIDENT_MODEL_ID);
+        assert!(safe.get("prompt").is_none());
+        assert!(safe.get("body").is_none());
+        assert!(safe.get("secret").is_none());
+        assert!(safe.get("warnings").is_none());
+
+        let mismatched = sanitize_model_action(
+            &json!({
+                "ok": true,
+                "action": "model-prepare",
+                "model": "remote/arbitrary",
+                "prepared": true,
+            }),
+            "model-prepare",
+            SWAP_MODEL_ID,
+        );
+        assert_eq!(mismatched["ok"], false);
     }
 
     #[test]

@@ -13,7 +13,13 @@ import {
   type KnowledgeNode,
   type KnowledgeView,
 } from "./knowledge/graph-model";
-import { cancelRuntimeRequest, fetchRuntimeSnapshot, fetchSettingsAction } from "./runtime";
+import {
+  cancelRuntimeRequest,
+  fetchRuntimeSnapshot,
+  fetchSettingsAction,
+  prepareSwapModel,
+  setResidentModel,
+} from "./runtime";
 import { mainPanelMarkup, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 
@@ -50,16 +56,85 @@ function renderRooms(snapshot: RuntimeSnapshot): void {
   setText("room-summary", `등록 ${snapshot.rooms.length} · live ${live} · 본문 미전달`);
 }
 
+function modelButton(modelId: string): HTMLButtonElement | null {
+  return document.querySelector<HTMLButtonElement>(`button[data-model-id="${modelId}"]`);
+}
+
+function setModelSelection(modelId: string | null): void {
+  for (const candidate of [RESIDENT_MODEL_ID, SWAP_MODEL_ID]) {
+    const button = modelButton(candidate);
+    const selected = modelId === candidate;
+    button?.classList.toggle("selection", selected);
+    button?.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function setModelBusy(busy: boolean): void {
+  for (const candidate of [RESIDENT_MODEL_ID, SWAP_MODEL_ID]) {
+    const button = modelButton(candidate);
+    if (button) button.disabled = busy;
+  }
+}
+
+function clearModelFailures(): void {
+  modelButton(RESIDENT_MODEL_ID)?.classList.remove("model-failed");
+  modelButton(SWAP_MODEL_ID)?.classList.remove("model-failed");
+}
+
 function renderModels(payload: Record<string, unknown> | null, snapshot: RuntimeSnapshot): void {
   const current = typeof payload?.model === "string" ? payload.model : snapshot.replyModelId;
   const normalized = current?.replace(/^mlx\//, "") ?? null;
-  const residentRow = document.querySelector<HTMLElement>(`[data-model-id="${RESIDENT_MODEL_ID}"]`);
-  const swapRow = document.querySelector<HTMLElement>(`[data-model-id="${SWAP_MODEL_ID}"]`);
-  residentRow?.classList.toggle("selection", normalized === RESIDENT_MODEL_ID || normalized === null);
-  swapRow?.classList.toggle("selection", normalized === SWAP_MODEL_ID);
+  const selected = normalized === RESIDENT_MODEL_ID || normalized === SWAP_MODEL_ID
+    ? normalized
+    : normalized === null ? RESIDENT_MODEL_ID : null;
+  setModelSelection(selected);
   setText("model-status", normalized
     ? `현재 선택: ${normalized}`
     : "현재 모델 ID를 확인할 수 없습니다. 27B는 이 화면에서 로드하지 않습니다.");
+}
+
+function wireModelSelection(): void {
+  const resident = modelButton(RESIDENT_MODEL_ID);
+  const swap = modelButton(SWAP_MODEL_ID);
+  if (!resident || !swap) return;
+  setModelBusy(false);
+
+  resident.addEventListener("click", () => {
+    void (async () => {
+      clearModelFailures();
+      setModelBusy(true);
+      resident.setAttribute("aria-busy", "true");
+      setText("model-status", "Flash-Next 기본 모델을 저장 중입니다…");
+      const result = await setResidentModel();
+      resident.removeAttribute("aria-busy");
+      setModelBusy(false);
+      if (!result.ok) {
+        resident.classList.add("model-failed");
+        setText("model-status", "모델 전환 실패 · 기존 선택 상태를 유지합니다.");
+        return;
+      }
+      setModelSelection(RESIDENT_MODEL_ID);
+      setText("model-status", `현재 선택: ${RESIDENT_MODEL_ID} · 저장 완료`);
+    })();
+  });
+
+  swap.addEventListener("click", () => {
+    void (async () => {
+      clearModelFailures();
+      setModelBusy(true);
+      swap.setAttribute("aria-busy", "true");
+      setText("model-status", "Qwen3.8 27B 준비 요청을 확인 중입니다…");
+      const result = await prepareSwapModel();
+      swap.removeAttribute("aria-busy");
+      setModelBusy(false);
+      if (!result.ok) {
+        swap.classList.add("model-failed");
+        setText("model-status", "27B 준비 요청 실패 · 기존 선택 상태를 유지합니다.");
+        return;
+      }
+      setText("model-status", "27B 준비 요청 확인됨 · 기본 모델 선택은 변경하지 않았습니다.");
+    })();
+  });
 }
 
 function renderVoice(snapshot: RuntimeSnapshot): void {
@@ -194,6 +269,7 @@ async function bootSettings(): Promise<void> {
   ]);
   renderRooms(snapshot);
   renderModels(models, snapshot);
+  wireModelSelection();
   renderVoice(snapshot);
 
   if (dream) {

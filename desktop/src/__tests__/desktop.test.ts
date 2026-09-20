@@ -7,7 +7,8 @@ import {
   ON_SCREEN_NODE_CAP,
   type KnowledgeGraph,
 } from "../knowledge/graph-model";
-import { LAYOUT } from "../tokens";
+import { prepareSwapModel, setResidentModel, type SettingsInvoke } from "../runtime";
+import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
 import { MAIN_PANEL_CONTROLS, mainPanelMarkup, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
@@ -125,6 +126,50 @@ describe("layout and settings contract", () => {
     expect(mainPanelMarkup()).not.toContain('id="voice-start"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
+  });
+
+  it("renders both local models as keyboard-native buttons with explicit selection state", () => {
+    const markup = settingsMarkup();
+    expect(markup).toContain(`data-model-id="${RESIDENT_MODEL_ID}"`);
+    expect(markup).toContain(`data-model-id="${SWAP_MODEL_ID}"`);
+    expect(markup).toContain('class="model-row selection" type="button"');
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('class="model-row" type="button"');
+    expect(markup).toContain('aria-pressed="false"');
+    expect(markup).toContain('id="model-status" class="muted" role="status" aria-live="polite"');
+  });
+});
+
+describe("local model settings bridge", () => {
+  it("invokes only the fixed resident save and swap prepare contracts", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (args?.action === "model-set") {
+        return { ok: true, action: "model-set", model: RESIDENT_MODEL_ID, stored: true, prepared: true, needs_prepare: false, prompt: "drop-me" } as T;
+      }
+      return { ok: true, action: "model-prepare", model: SWAP_MODEL_ID, stored: false, prepared: true, needs_prepare: false, secret: "drop-me" } as T;
+    };
+
+    expect(await setResidentModel(fakeInvoke)).toEqual({
+      ok: true, action: "model-set", model: RESIDENT_MODEL_ID, stored: true, prepared: true, needsPrepare: false,
+    });
+    expect(await prepareSwapModel(fakeInvoke)).toEqual({
+      ok: true, action: "model-prepare", model: SWAP_MODEL_ID, stored: false, prepared: true, needsPrepare: false,
+    });
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-set", model: RESIDENT_MODEL_ID } },
+      { command: "fetch_settings_action", args: { action: "model-prepare", model: SWAP_MODEL_ID } },
+    ]);
+  });
+
+  it("fails closed on invoke failure or a mismatched model response", async () => {
+    const throwing: SettingsInvoke = <T>() => Promise.reject(new Error("python_timed_out")) as Promise<T>;
+    const mismatched: SettingsInvoke = async <T>() => ({
+      ok: true, action: "model-prepare", model: "remote/arbitrary", prepared: true, body: "private",
+    } as T);
+    expect((await setResidentModel(throwing)).ok).toBe(false);
+    expect((await prepareSwapModel(mismatched)).ok).toBe(false);
   });
 });
 

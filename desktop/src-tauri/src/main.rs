@@ -29,6 +29,7 @@ async fn fetch_settings_action(
     query: Option<String>,
     node_id: Option<String>,
     chat_id: Option<String>,
+    model: Option<String>,
 ) -> Result<Value, String> {
     let bridge = bridge.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -37,6 +38,7 @@ async fn fetch_settings_action(
             query.as_deref(),
             node_id.as_deref(),
             chat_id.as_deref(),
+            model.as_deref(),
         )
     })
     .await

@@ -46,13 +46,13 @@ export function settingsMarkup(): string {
 
     <section class="settings-card" aria-labelledby="model-title">
       <div class="section-heading"><h2 id="model-title">AI 모델</h2><span class="tag">온디바이스</span></div>
-      <div class="model-row selection" data-model-id="${RESIDENT_MODEL_ID}">
-        <div><strong>Flash-Next</strong><p>${RESIDENT_MODEL_ID}</p></div><span class="tag">기본 상주</span>
-      </div>
-      <div class="model-row" data-model-id="${SWAP_MODEL_ID}">
-        <div><strong>Qwen3.8 27B</strong><p>${SWAP_MODEL_ID}</p></div><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
-      </div>
-      <p id="model-status" class="muted">모델 목록을 확인 중입니다. 이 화면은 27B를 준비하거나 로드하지 않습니다.</p>
+      <button class="model-row selection" type="button" data-model-id="${RESIDENT_MODEL_ID}" aria-pressed="true" disabled>
+        <span class="model-copy"><strong>Flash-Next</strong><span class="model-id">${RESIDENT_MODEL_ID}</span></span><span class="tag">기본 상주</span>
+      </button>
+      <button class="model-row" type="button" data-model-id="${SWAP_MODEL_ID}" aria-pressed="false" disabled>
+        <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
+      </button>
+      <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 이 화면은 27B를 준비하거나 로드하지 않습니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">
