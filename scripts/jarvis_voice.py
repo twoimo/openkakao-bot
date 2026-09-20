@@ -576,6 +576,11 @@ class Qwen3TtsAdapter:
 
     def speak(self, text: str, token: AbortToken) -> None:
         token.raise_if_cancelled()
+        tts_out = _voice_tts_output_path()
+        if tts_out is not None:
+            self.write_wav(text, tts_out, token)
+            return
+
         import sounddevice as sd
 
         audio, sample_rate = self.synthesize(text, token)
@@ -590,6 +595,25 @@ class Qwen3TtsAdapter:
         finally:
             if token.is_cancelled():
                 sd.stop()
+
+
+def _voice_tts_output_path() -> Path | None:
+    raw = os.environ.get("OPENKAKAO_VOICE_TTS_OUT")
+    if raw is None:
+        return None
+
+    path = Path(raw)
+    try:
+        if not raw or path.suffix.lower() != ".wav" or path.is_symlink():
+            raise RuntimeError("voice_tts_output_invalid")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.parent.is_dir() or not os.access(path.parent, os.W_OK):
+            raise RuntimeError("voice_tts_output_invalid")
+        if path.exists() and (not path.is_file() or not os.access(path, os.W_OK)):
+            raise RuntimeError("voice_tts_output_invalid")
+    except OSError as exc:
+        raise RuntimeError("voice_tts_output_invalid") from exc
+    return path
 
 
 def assert_isolated_voice_environment() -> None:

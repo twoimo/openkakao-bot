@@ -22,6 +22,7 @@ const WAKE_PHRASE: &str = "헤이 자비스";
 const WAKE_THRESHOLD: f64 = 0.65;
 const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const BUNDLED_CUSTOM_WAKE_MODEL: &str = "voice/models/hey_jarvis_ko_ridge.onnx";
+const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -65,6 +66,13 @@ struct BridgeConfig {
     state_root: PathBuf,
     logs_dir: PathBuf,
     bin: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct VoiceSessionPlan {
+    python: PathBuf,
+    script: PathBuf,
+    tts_out: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,19 +237,8 @@ impl PythonBridge {
     }
 
     pub fn start_voice_session(&self) -> Result<(), BridgeError> {
-        let (python, script) = plan_voice_session(&self.config.repo_root)?;
-        Command::new(&python)
-            .env("OPENKAKAO_VOICE_ENV", "1")
-            .args([
-                "-E",
-                "-B",
-                script.to_str().ok_or(BridgeError::VoiceScript)?,
-                "--state-root",
-                self.config.state_root.to_str().ok_or(BridgeError::StateIo)?,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let plan = plan_voice_session(&self.config.repo_root, &self.config.state_root)?;
+        voice_session_command(&plan, &self.config.state_root)?
             .spawn()
             .map(|_| ())
             .map_err(|_| BridgeError::Spawn)
@@ -439,7 +436,7 @@ fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     Some(value.chars().take(max_chars).collect())
 }
 
-fn plan_voice_session(repo_root: &Path) -> Result<(PathBuf, PathBuf), BridgeError> {
+fn plan_voice_session(repo_root: &Path, state_root: &Path) -> Result<VoiceSessionPlan, BridgeError> {
     let python = repo_root.join(".venv-voice/bin/python")
         .canonicalize()
         .map_err(|_| BridgeError::VoiceEnv)?;
@@ -450,7 +447,29 @@ fn plan_voice_session(repo_root: &Path) -> Result<(PathBuf, PathBuf), BridgeErro
     if !script.is_file() || script.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
         return Err(BridgeError::VoiceScript);
     }
-    Ok((python, script))
+    Ok(VoiceSessionPlan {
+        python,
+        script,
+        tts_out: state_root.join(VOICE_TTS_OUT_NAME),
+    })
+}
+
+fn voice_session_command(plan: &VoiceSessionPlan, state_root: &Path) -> Result<Command, BridgeError> {
+    let mut command = Command::new(&plan.python);
+    command
+        .env("OPENKAKAO_VOICE_ENV", "1")
+        .env("OPENKAKAO_VOICE_TTS_OUT", &plan.tts_out)
+        .args([
+            "-E",
+            "-B",
+            plan.script.to_str().ok_or(BridgeError::VoiceScript)?,
+            "--state-root",
+            state_root.to_str().ok_or(BridgeError::StateIo)?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(command)
 }
 
 fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
@@ -1093,8 +1112,9 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
+        let state_root = temp.join("state");
         assert!(matches!(
-            plan_voice_session(&temp),
+            plan_voice_session(&temp, &state_root),
             Err(BridgeError::VoiceEnv)
         ));
 
@@ -1102,16 +1122,31 @@ mod tests {
         fs::create_dir_all(python.parent().unwrap()).unwrap();
         fs::write(&python, b"").unwrap();
         assert!(matches!(
-            plan_voice_session(&temp),
+            plan_voice_session(&temp, &state_root),
             Err(BridgeError::VoiceScript)
         ));
 
         let script = temp.join("scripts/jarvis_voice.py");
         fs::create_dir_all(script.parent().unwrap()).unwrap();
         fs::write(&script, b"").unwrap();
-        let (resolved_python, resolved_script) = plan_voice_session(&temp).unwrap();
-        assert_eq!(resolved_python, python.canonicalize().unwrap());
-        assert_eq!(resolved_script, script);
+        let plan = plan_voice_session(&temp, &state_root).unwrap();
+        assert_eq!(plan.python, python.canonicalize().unwrap());
+        assert_eq!(plan.script, script);
+        assert_eq!(plan.tts_out, state_root.join(VOICE_TTS_OUT_NAME));
+
+        let command = voice_session_command(&plan, &state_root).unwrap();
+        let envs = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("OPENKAKAO_VOICE_ENV")),
+            Some(&Some(std::ffi::OsString::from("1")))
+        );
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("OPENKAKAO_VOICE_TTS_OUT")),
+            Some(&Some(plan.tts_out.clone().into_os_string()))
+        );
         let _ = fs::remove_dir_all(&temp);
     }
 }

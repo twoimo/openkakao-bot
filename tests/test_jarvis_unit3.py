@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -248,6 +249,54 @@ class JarvisBrowserAbortTests(unittest.IsolatedAsyncioTestCase):
 
 
 class Qwen3TtsAdapterApiTests(unittest.TestCase):
+    def test_speak_writes_env_wav_without_playback(self):
+        import types
+        from unittest import mock
+
+        fake_mod = types.ModuleType("qwen_tts")
+
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, _model, **_kwargs):
+                return cls()
+
+            def get_supported_speakers(self):
+                return ["ryan"]
+
+            def generate_custom_voice(self, **_kwargs):
+                return [[0.0, 0.25, -0.25, 0.0]], 24000
+
+        fake_mod.Qwen3TTSModel = FakeModel
+        fake_play = mock.Mock(side_effect=AssertionError("speaker playback must not run"))
+        fake_sounddevice = types.SimpleNamespace(
+            play=fake_play,
+            get_stream=lambda: types.SimpleNamespace(active=False),
+            stop=lambda: None,
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "jarvis-voice-out.wav"
+            token = AbortController(root).token()
+            adapter = Qwen3TtsAdapter()
+            with (
+                mock.patch.dict(os.environ, {"OPENKAKAO_VOICE_TTS_OUT": str(output)}),
+                mock.patch.dict(
+                    sys.modules,
+                    {
+                        "qwen_tts": fake_mod,
+                        "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"),
+                        "sounddevice": fake_sounddevice,
+                    },
+                ),
+            ):
+                adapter.speak("안녕하세요", token)
+
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 44)
+            self.assertEqual(output.read_bytes()[:4], b"RIFF")
+            fake_play.assert_not_called()
+
     def test_load_uses_qwen3ttsmodel_and_custom_voice(self):
         import types
         from unittest import mock
