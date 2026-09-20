@@ -171,6 +171,33 @@ describe("local model settings bridge", () => {
     expect((await setResidentModel(throwing)).ok).toBe(false);
     expect((await prepareSwapModel(mismatched)).ok).toBe(false);
   });
+
+  it("keeps a failed 27B readiness check prepare-only without model promotion", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const unavailable: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        ok: false,
+        action: "model-prepare",
+        model: SWAP_MODEL_ID,
+        stored: false,
+        prepared: false,
+        needs_prepare: true,
+      } as T;
+    };
+
+    expect(await prepareSwapModel(unavailable)).toEqual({
+      ok: false,
+      action: "model-prepare",
+      model: SWAP_MODEL_ID,
+      stored: false,
+      prepared: false,
+      needsPrepare: false,
+    });
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-prepare", model: SWAP_MODEL_ID } },
+    ]);
+  });
 });
 
 function drilldownGraph(): KnowledgeGraph {

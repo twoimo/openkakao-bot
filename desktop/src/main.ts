@@ -124,16 +124,16 @@ function wireModelSelection(): void {
       clearModelFailures();
       setModelBusy(true);
       swap.setAttribute("aria-busy", "true");
-      setText("model-status", "Qwen3.8 27B 준비 요청을 확인 중입니다…");
+      setText("model-status", "Qwen3.8 27B readiness를 읽기 전용으로 확인 중입니다…");
       const result = await prepareSwapModel();
       swap.removeAttribute("aria-busy");
       setModelBusy(false);
       if (!result.ok) {
         swap.classList.add("model-failed");
-        setText("model-status", "27B 준비 요청 실패 · 기존 선택 상태를 유지합니다.");
+        setText("model-status", "27B readiness 확인 실패 · 실제 load/generation은 수행하지 않았고 현재 선택을 유지합니다.");
         return;
       }
-      setText("model-status", "27B 준비 요청 확인됨 · 기본 모델 선택은 변경하지 않았습니다.");
+      setText("model-status", "27B loaded/ready 확인됨 · 실제 load/generation은 수행하지 않았고 현재 선택을 유지합니다.");
     })();
   });
 }

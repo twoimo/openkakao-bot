@@ -28,6 +28,14 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+from local_mlx_model_readiness import (
+    RESIDENT_MODEL_ID as JARVIS_RESIDENT_MODEL_ID,
+    SWAP_MODEL_ID as JARVIS_SWAP_MODEL_ID,
+    canonical_fixed_local_mlx_model_id,
+    read_fixed_local_mlx_readiness,
+    resolve_fixed_local_mlx_catalog_model,
+)
+
 _FROZEN = Path(__file__).resolve().with_name(
     "_auto_reply_menubar_wrapper.cpython-311.pyc"
 )
@@ -1620,7 +1628,7 @@ def set_reply_model(
     del fetcher
     _ignored = dict(allow_fetch=False)
     del _ignored
-    wanted = str(model or "").strip()
+    requested = str(model or "").strip()
     agent_models_path = _gjc_agent_dir(state_root) / "models.yml"
     custom_providers = _parse_custom_models_yml(agent_models_path) or _parse_custom_models_yml(state_root / "models.yml")
     allowed_model_ids = {
@@ -1642,7 +1650,10 @@ def set_reply_model(
         for item in provider.get("models") or []:
             if isinstance(item, dict) and item.get("id"):
                 allowed_model_ids.add(str(item["id"]))
-    if wanted in allowed_model_ids:
+    local_wanted = resolve_fixed_local_mlx_catalog_model(requested, allowed_model_ids)
+    wanted = local_wanted or requested
+    allowed = local_wanted is not None or requested in allowed_model_ids
+    if allowed:
         import time as _time
         stamp = _time.time() if now is None else float(now)
         override_path = _reply_model_override_path(state_root)
@@ -1686,6 +1697,17 @@ def set_reply_model(
             "prepared": prepared,
             "needs_prepare": wanted.startswith("omlx/"),
             "warnings": [prepare_warning] if prepare_warning else [],
+        }
+    # Fixed local IDs must remain on the prefixless Jarvis contract. Do not
+    # fall through to a broader legacy resolver that could persist an mlx/
+    # alias or reinterpret a fixed local request as a remote model.
+    if canonical_fixed_local_mlx_model_id(requested) is not None:
+        return {
+            "ok": False,
+            "action": "model-set",
+            "privacy": "content_redacted",
+            "reason": "model_not_in_catalog",
+            "warnings": ["등록되지 않은 모델은 답변 모델로 쓸 수 없습니다."],
         }
     return _orig_set_reply_model(state_root, model, now=now, fetcher=None)
 
@@ -1874,14 +1896,43 @@ if callable(_orig_reply_model_payload):
 
 
 def prepare_reply_model(state_root: Path, model: str):
-    """Resident-load the model without touching the saved selection.
+    """Prepare legacy models or read fixed Jarvis readiness without saving.
 
     The recheck path used to call ``model-set`` to prepare, which first saves
     the model. A stale recheck could then overwrite a newer selection. This
-    action only prepares, so verification never writes (2026-09-12).
+    action never writes the selection. The fixed Jarvis 27B path is GET-only
+    readiness verification and never initiates a model load (2026-09-21).
     """
 
-    wanted = str(model or "").strip()
+    requested = str(model or "").strip()
+    local_wanted = canonical_fixed_local_mlx_model_id(requested)
+    if local_wanted == JARVIS_RESIDENT_MODEL_ID:
+        return {
+            "ok": False,
+            "action": "model-prepare",
+            "privacy": "content_redacted",
+            "model": JARVIS_RESIDENT_MODEL_ID,
+            "needs_prepare": False,
+            "prepared": False,
+            "reason": "model_prepare_not_allowed",
+            "warnings": ["Flash-Next는 27B 준비 확인 대상으로 사용할 수 없습니다."],
+        }
+    if local_wanted == JARVIS_SWAP_MODEL_ID:
+        readiness = read_fixed_local_mlx_readiness(local_wanted)
+        return {
+            "ok": readiness.prepared,
+            "action": "model-prepare",
+            "privacy": "content_redacted",
+            "model": JARVIS_SWAP_MODEL_ID,
+            "needs_prepare": not readiness.prepared,
+            "prepared": readiness.prepared,
+            "reason": readiness.reason,
+            "warnings": []
+            if readiness.prepared
+            else ["27B는 localhost MLX gateway에서 loaded/ready로 확인되지 않았습니다."],
+        }
+
+    wanted = requested
     needs_prepare = wanted.startswith("omlx/")
     prepared = _ensure_omlx_model_resident(wanted) if needs_prepare else True
     return {

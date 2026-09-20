@@ -63,6 +63,7 @@
     },
     "resources": {
       "bundle-resources/scripts/auto-reply-menubar.py": "scripts/auto-reply-menubar.py",
+      "bundle-resources/scripts/local_mlx_model_readiness.py": "scripts/local_mlx_model_readiness.py",
       "bundle-resources/scripts/_auto_reply_menubar_wrapper.cpython-311.pyc": "scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
       "bundle-resources/scripts/_bujamentor_menubar_overlay.cpython-311.pyc": "scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
       "bundle-resources/scripts/_bujamentor_menubar_impl.cpython-311.pyc": "scripts/_bujamentor_menubar_impl.cpython-311.pyc",

@@ -4,11 +4,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
 pub const MENUBAR_SCRIPT: &str = "scripts/auto-reply-menubar.py";
+pub const LOCAL_MLX_READINESS_SCRIPT: &str = "scripts/local_mlx_model_readiness.py";
 pub const VOICE_SCRIPT: &str = "scripts/jarvis_voice.py";
 pub const CLI: &str = "bin/openkakao-cli";
 pub const WAKE_MODEL: &str = "voice/models/hey_jarvis_ko_ridge.onnx";
 pub const DATA_FILES: &[&str] = &[
     MENUBAR_SCRIPT,
+    LOCAL_MLX_READINESS_SCRIPT,
     "scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
     "scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
     "scripts/_bujamentor_menubar_impl.cpython-311.pyc",
