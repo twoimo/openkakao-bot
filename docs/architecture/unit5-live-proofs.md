@@ -412,3 +412,23 @@ File pipeline (no microphone, no speaker playback) used `.venv-voice` with `OPEN
 A direct Flash-Next `/v1/chat/completions` probe then timed out at 20 s with 0 bytes while Extra still owned the resident model. The wake-accept path is proven; a butler reply was not obtained without displacing Extra's Flash-Next. Live microphone and signed Extra cutover remain open.
 
 UV Python 3.11 `tests.test_jarvis_unit3`: **11 OK**. Desktop vitest: **13 OK**. Rust `voice_status_is_bounded_and_clamped`: **OK**.
+
+## File pipeline wake → STT → Flash-Next → TTS — 2026-09-20 KST
+
+After adding `max_tokens=128` to `LocalMlxLlm`, the file pipeline completed without a microphone or speaker playback. Extra pid **20042** stayed alive. 27B/Gemma stayed unloaded. Whisper for this proof was `mlx-community/whisper-tiny-mlx` (production default remains large-v3-turbo).
+
+| Field | Result |
+| --- | --- |
+| custom_model_selected | true |
+| stock_max | 4.17e-06 |
+| custom_max | **0.767606** |
+| accepted | true, `wake_source=custom` |
+| threshold | 0.65 |
+| transcript | `안녕하세요. 분청 합성 테스트입니다.` (tiny STT misheard 음성→분청) |
+| reply | `네, 분청 합성 정상 작동 중입니다.` |
+| tts wav | `.venv-voice/smoke/jarvis-reply.wav` **145,964** bytes, 24 kHz, 3.04 s, playback false |
+| Extra 20042 | alive |
+| 27B | unloaded |
+
+A bounded Flash-Next probe with `max_tokens=16` returned `확인` in 17.4 s prefill. The earlier `generation_error` was an unbounded completion against the same resident server, not a missing model. Live microphone and signed Extra cutover remain open.
+

@@ -487,6 +487,7 @@ class LocalMlxLlm:
                     {"role": "user", "content": text[:4000]},
                 ],
                 "temperature": 0.3,
+                "max_tokens": 128,
             },
             ensure_ascii=False,
         ).encode("utf-8")
@@ -498,7 +499,9 @@ class LocalMlxLlm:
         with urllib.request.urlopen(request, timeout=90.0) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))
         token.raise_if_cancelled()
-        return str(body["choices"][0]["message"]["content"])
+        message = body["choices"][0]["message"]
+        content = message.get("content") or message.get("reasoning_content") or ""
+        return str(content).strip()
 
 
 class MlxWhisperAdapter:

@@ -19,6 +19,7 @@ from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, Voice
 from jarvis_voice import Qwen3TtsAdapter
 from jarvis_voice import OpenWakeVadFrontend
 from jarvis_voice import BUNDLED_CUSTOM_WAKE_MODEL, resolve_custom_wake_model
+from jarvis_voice import LocalMlxLlm
 
 
 class FakeStt:
@@ -277,6 +278,38 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
         self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
         self.assertEqual(adapter._engine.generated["language"], "Korean")
         self.assertEqual(adapter._engine.generated["speaker"], "ryan")
+
+
+class LocalMlxLlmRequestTests(unittest.TestCase):
+    def test_generate_sends_max_tokens_and_strips_content(self):
+        import json
+        from unittest import mock
+
+        captured: dict[str, object] = {}
+
+        class FakeResp:
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": " 알겠습니다. "}}]}).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> bool:
+                return False
+
+        def fake_urlopen(request, timeout=0):
+            captured["timeout"] = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResp()
+
+        with TemporaryDirectory() as temp_dir:
+            token = AbortController(Path(temp_dir)).token()
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            reply = LocalMlxLlm().generate("안녕", token)
+        self.assertEqual(reply, "알겠습니다.")
+        self.assertEqual(captured["timeout"], 90.0)
+        self.assertEqual(captured["body"]["max_tokens"], 128)
+        self.assertEqual(captured["body"]["model"], "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
 
 
 if __name__ == "__main__":
