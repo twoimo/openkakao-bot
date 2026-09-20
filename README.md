@@ -91,6 +91,7 @@ Current limits:
 - Debug Tauri was rebuilt at `96153df` and is running as pid **63463** (`com.openkakao.jarvis.desktop`) without replacing Extra.
 - Debug Jarvis now ignores SIGHUP: after rebuild, `open` pid **84521** survived `kill -HUP` with Extra **20042** unchanged. An unused LaunchAgent template is in the repo and was not loaded.
 - Settings Voice has an opt-in **마이크 세션 시작** control that spawns the isolated `.venv-voice` `jarvis_voice.py` session. It does not auto-start. Extra was not restarted.
+- Debug Jarvis was rebuilt at `6f76876` as pid **40102**. The settings capture now includes **마이크 세션 시작**. Extra **20042** unchanged.
 
 Recovery and safety:
 

@@ -479,3 +479,9 @@ Settings Voice now has `voice-start` (마이크 세션 시작). The gear-only ma
 
 Rust `plan_voice_session_requires_isolated_interpreter` **OK**. Desktop vitest **13 OK**. Extra pid **20042** and debug pid **84521** were not restarted, so this button is in source until the next debug rebuild. The live microphone was not opened. 27B stayed unloaded.
 
+## Debug rebuild with opt-in mic button — 2026-09-20 KST
+
+Rebuilt `OpenKakao Jarvis.app` at HEAD `6f76876` and replaced only the parallel debug process. New pid **40102**, ppid 1, `com.openkakao.jarvis.desktop`. Extra pid **20042** stayed on LaunchAgent. The live microphone button was not clicked.
+
+Updated capture `docs/architecture/jarvis-settings-panel.png` **760×760 / 75,913 bytes** from the built `dist` settings view. Voice shows 호출어 헤이 자비스, 임계값 0.65, and **마이크 세션 시작**. This static capture has no Tauri IPC, so the custom-head line is the no-snapshot stock-only copy; the live Rust snapshot still selects bundled ONNX when the file validates. 27B stayed unloaded.
+
