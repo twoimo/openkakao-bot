@@ -76,7 +76,7 @@ Current limits:
 - The Qwen3.8 27B model is unloaded.
 - DPO output does not promote or replace the live model automatically.
 - style.gallery was not applied.
-- Live hide-state render-call=0, wake/STT/TTS operation, and signed Tauri cutover remain open Unit 5 live proofs and are not claimed as measured here.
+ - Hide-state render-call=0 is measured on the real `AnimationLoop` with a timer-backed RAF polyfill (hidden/closed/locked each added 0 renders). A live Tauri window hide, host `openwakeword`/`mlx_whisper`/`qwen_tts` imports, and signed Tauri cutover remain open. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
 
 Recovery and safety:
 
@@ -166,4 +166,3 @@ Privacy paths, KakaoTalk table names, and Korean operator notes live in [README.
 ## License
 
 [MIT License](LICENSE)
-
