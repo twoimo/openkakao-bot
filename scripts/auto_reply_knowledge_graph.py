@@ -2431,6 +2431,9 @@ def _keyword_match_score(terms: list[str], haystacks: list[str]) -> float:
 
 
 def _hybrid_score(keyword_score: float, vector_score: float) -> float:
+    # Fail closed on terminology: this is a keyword-gated weighted hash-cosine
+    # blend, not true hybrid RRF. Do not treat it as reciprocal-rank fusion
+    # until independently ranked lists are fused and that behavior is tested.
     return HYBRID_KEYWORD_WEIGHT * keyword_score + HYBRID_VECTOR_WEIGHT * vector_score
 
 
