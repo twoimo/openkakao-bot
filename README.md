@@ -75,7 +75,7 @@ Current limits:
 - Live Extra is still the Swift AutoReplyMenu, pid **20042**. The Tauri app has **not** been cut over as the signed live app.
 - The Qwen3.8 27B model is unloaded.
 - DPO output does not promote or replace the live model automatically.
- - `Qwen3TtsAdapter` now loads `Qwen3TTSModel.generate_custom_voice`. A 1.7B TTS weight smoke is still open; missing SoX remains a separate warning.
+ - `Qwen3TtsAdapter` loads `Qwen3TTSModel.generate_custom_voice` with default id `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`. A live bf16 smoke wrote a 3.2 s Korean WAV (153,644 bytes, speaker `aiden`) without speaker playback. Missing SoX remains a non-blocking warning.
 - style.gallery now loads read-only. Its restrained UI font stack is applied as `--font-ui`; the existing ivory/warm-black + champagne-gold palette remains unchanged.
 - Live Vite/browser hide is measured: visible `renderCount=9`/RAF `1`, then hidden `renderCount=9`/RAF `0` after 650 ms (delta `0`). Dedicated `.venv-voice` imports pass, and a real `MlxWhisperAdapter` smoke with `mlx-community/whisper-tiny-mlx` passes. A local Tauri debug binary/app bundle is built only under `desktop/src-tauri/target`; its bundle identifier collides with the live Extra, so signed cutover remains open. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
 

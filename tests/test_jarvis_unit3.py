@@ -201,7 +201,7 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
             token = AbortController(Path(temp_dir)).token()
         with mock.patch.dict(sys.modules, {"qwen_tts": fake_mod, "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"), "sounddevice": types.SimpleNamespace(play=lambda *a, **k: None, get_stream=lambda: types.SimpleNamespace(active=False), stop=lambda: None)}):
             adapter.speak("안녕하세요", token)  # type: ignore[arg-type]
-        self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-1.7B")
+        self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
         self.assertEqual(adapter._engine.generated["language"], "Korean")
         self.assertEqual(adapter._engine.generated["speaker"], "ryan")
 

@@ -32,7 +32,7 @@ CUSTOM_WAKE_MODEL_MAX_BYTES = 64 * 1024 * 1024
 VOICE_STATUS_NAME = "jarvis-voice-status.json"
 VOICE_STATUS_SCHEMA_VERSION = 1
 WHISPER_MODEL_ID = "mlx-community/whisper-large-v3-turbo"
-QWEN3_TTS_MODEL_ID = "Qwen/Qwen3-TTS-1.7B"
+QWEN3_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 QWEN3_TTS_PRECISION = "bf16"
 VOICE_PERSONA_PROMPT = (
     "당신은 건조하고 절제된 영국식 집사 말투의 Jarvis다. "
