@@ -2491,6 +2491,11 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
 
     def test_reply_question_gate_catches_residual_korean_plan_probes(self):
         module = self._load_auto_reply_module("auto_reply_plan_probe_test")
+        residual_replies = (
+            "주말에 뭐 할 거임",
+            "주말에 뭐 할 건데",
+            "주말에 뭐 하냐",
+        )
         for reply in (
             "이번주말에 뭐 하시게요",
             "주말에 뭐 해",
@@ -2499,12 +2504,18 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             "뭐하세요",
             "주말엔 쉬시게요",
             "같이 가실래요",
+            *residual_replies,
         ):
             with self.subTest(reply=reply):
                 self.assertTrue(module._reply_asks_question(reply))
                 self.assertFalse(module._outbound_question_allows(reply, "이번주말"))
 
         self.assertTrue(module._outbound_question_allows("주말에 뭐 해", "주말에 뭐 해?"))
+        self.assertTrue(
+            module._outbound_question_allows(
+                "주말에 뭐 할 거임", "주말에 뭐 할 거임?"
+            )
+        )
         self.assertTrue(module._outbound_question_allows("뭘 더 말해", "이거 답변해줘"))
         self.assertTrue(
             module._outbound_question_allows(
@@ -2516,18 +2527,21 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
             "그럼 딱 맞겠네요",
             "캡차 솔버도 있네",
             "이미 쓴 거 고쳐서 내면 되죠",
+            "그건 내가 할 거임",
+            "그건 내가 할 건데",
         ):
             with self.subTest(statement=statement):
                 self.assertFalse(module._reply_asks_question(statement))
                 self.assertTrue(module._outbound_question_allows(statement, "이번주말"))
 
-        reasons = []
-        self.assertFalse(
-            module._policy_valid_draft(
-                "이번주말에 뭐 하시게요", "이번주말", [], reasons_out=reasons
+        for reply in residual_replies:
+            reasons = []
+            self.assertFalse(
+                module._policy_valid_draft(
+                    reply, "이번주말", [], reasons_out=reasons
+                )
             )
-        )
-        self.assertEqual(reasons, ["question_unanswered"])
+            self.assertEqual(reasons, ["question_unanswered"])
 
     def test_rank_selection_varies_the_previous_ending(self):
         module = self._load_auto_reply_module("auto_reply_ending_variation_test")

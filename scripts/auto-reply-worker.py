@@ -10353,13 +10353,13 @@ def _reply_asks_question(text: str) -> bool:
         return True
     # Korean plan/follow-up probes often omit a question mark and can end in
     # an invitation-like honorific tail ("하시게요", "가실래요") or a short
-    # colloquial "뭐 하다" form ("뭐 해", "뭐 하심", "뭐하세요"). Keep these
-    # anchored to the end so declarative uses of 뭐 earlier in a sentence do
-    # not buy question rights.
+    # colloquial "뭐 하다" form ("뭐 해", "뭐 하심", "뭐 할 거임"). Keep
+    # these anchored to the end so declarative uses of 뭐 earlier in a sentence
+    # do not buy question rights.
     if re.search(r"(?:시게요|실래요)\s*$", body):
         return True
     if re.search(
-        r"(?:뭐|뭘)\s*(?:해(?:요)?|하세요|하심|하시게요|하실래(?:요)?|할래(?:요)?)\s*$",
+        r"(?:뭐|뭘)\s*(?:해(?:요)?|하세요|하심|하냐|하시게요|하실래(?:요)?|할래(?:요)?|할\s*(?:거임|건데))\s*$",
         body,
     ):
         return True
