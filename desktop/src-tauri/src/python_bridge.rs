@@ -18,6 +18,10 @@ const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
 const STATE_FILE_LIMIT_BYTES: u64 = 4096;
+const WAKE_PHRASE: &str = "헤이 자비스";
+const WAKE_THRESHOLD: f64 = 0.65;
+const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const BUNDLED_CUSTOM_WAKE_MODEL: &str = "voice/models/hey_jarvis_ko_ridge.onnx";
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -53,6 +57,7 @@ pub struct PythonBridge {
 struct BridgeConfig {
     python: String,
     script: PathBuf,
+    repo_root: PathBuf,
     state_root: PathBuf,
     logs_dir: PathBuf,
     bin: Option<PathBuf>,
@@ -115,8 +120,8 @@ impl Default for SafeVoiceStatus {
             error_code: None,
             wake_source: "none".to_string(),
             updated_at: 0,
-            wake_phrase: String::new(),
-            threshold: 0.65,
+            wake_phrase: WAKE_PHRASE.to_string(),
+            threshold: WAKE_THRESHOLD,
             custom_model_selected: false,
         }
     }
@@ -150,7 +155,7 @@ impl PythonBridge {
         let bytes = self.run_python(&[], SNAPSHOT_TIMEOUT, token_id)?;
         let value = parse_json_output(&bytes)?;
         let mut snapshot = sanitize_snapshot(&value);
-        snapshot.voice = read_voice_status(&self.config.state_root);
+        snapshot.voice = read_voice_status(&self.config.state_root, &self.config.repo_root);
         Ok(snapshot)
     }
 
@@ -313,6 +318,7 @@ impl BridgeConfig {
         Self {
             python,
             script,
+            repo_root,
             state_root,
             logs_dir,
             bin,
@@ -421,23 +427,51 @@ fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
 
 fn safe_small_json(path: &Path) -> Option<Value> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > STATE_FILE_LIMIT_BYTES {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > STATE_FILE_LIMIT_BYTES
+    {
         return None;
     }
     let bytes = fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
-fn read_voice_status(state_root: &Path) -> SafeVoiceStatus {
+fn bundled_custom_wake_model_selected(repo_root: &Path) -> bool {
+    let path = repo_root.join(BUNDLED_CUSTOM_WAKE_MODEL);
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return false;
+    };
+    let extension_valid = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("onnx") || value.eq_ignore_ascii_case("tflite"))
+        .unwrap_or(false);
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && extension_valid
+        && metadata.len() > 0
+        && metadata.len() <= CUSTOM_WAKE_MODEL_MAX_BYTES
+}
+
+fn default_voice_status(repo_root: &Path) -> SafeVoiceStatus {
+    SafeVoiceStatus {
+        custom_model_selected: bundled_custom_wake_model_selected(repo_root),
+        ..SafeVoiceStatus::default()
+    }
+}
+
+fn read_voice_status(state_root: &Path, repo_root: &Path) -> SafeVoiceStatus {
     let Some(value) = safe_small_json(&state_root.join(VOICE_STATUS_NAME)) else {
-        return SafeVoiceStatus::default();
+        return default_voice_status(repo_root);
     };
     let Some(root) = value.as_object() else {
-        return SafeVoiceStatus::default();
+        return default_voice_status(repo_root);
     };
     if root.get("schema_version").and_then(Value::as_u64) != Some(1) {
-        return SafeVoiceStatus::default();
+        return default_voice_status(repo_root);
     }
+    let bundled_model_selected = bundled_custom_wake_model_selected(repo_root);
     let state = root
         .get("state")
         .and_then(Value::as_str)
@@ -465,18 +499,27 @@ fn read_voice_status(state_root: &Path) -> SafeVoiceStatus {
         wake_phrase: root
             .get("wake_phrase")
             .and_then(Value::as_str)
-            .unwrap_or("")
+            .unwrap_or(WAKE_PHRASE)
             .chars()
             .take(64)
             .collect::<String>(),
         threshold: {
-            let value = root.get("threshold").and_then(Value::as_f64).unwrap_or(0.65);
-            if value < 0.65 { 0.65 } else if value > 0.95 { 0.95 } else { value }
+            let value = root
+                .get("threshold")
+                .and_then(Value::as_f64)
+                .unwrap_or(WAKE_THRESHOLD);
+            if value < WAKE_THRESHOLD {
+                WAKE_THRESHOLD
+            } else if value > 0.95 {
+                0.95
+            } else {
+                value
+            }
         },
         custom_model_selected: root
             .get("custom_model_selected")
             .and_then(Value::as_bool)
-            .unwrap_or(false),
+            .unwrap_or(bundled_model_selected),
     }
 }
 
@@ -899,8 +942,53 @@ mod tests {
     }
 
     #[test]
+    fn missing_voice_status_selects_valid_bundled_wake_model() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-voice-status-valid-bundle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        let state_root = temp.join("state");
+        let repo_root = temp.join("repo");
+        let bundled_model = repo_root.join(BUNDLED_CUSTOM_WAKE_MODEL);
+        fs::create_dir_all(bundled_model.parent().unwrap()).unwrap();
+        fs::write(&bundled_model, b"onnx").unwrap();
+
+        let status = read_voice_status(&state_root, &repo_root);
+        assert!(!status.available);
+        assert_eq!(status.wake_phrase, WAKE_PHRASE);
+        assert_eq!(status.threshold, WAKE_THRESHOLD);
+        assert!(status.custom_model_selected);
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn missing_voice_status_rejects_missing_or_invalid_bundled_wake_model() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-voice-status-invalid-bundle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        let state_root = temp.join("state");
+        let repo_root = temp.join("repo");
+
+        let missing = read_voice_status(&state_root, &repo_root);
+        assert!(!missing.custom_model_selected);
+
+        let bundled_model = repo_root.join(BUNDLED_CUSTOM_WAKE_MODEL);
+        fs::create_dir_all(bundled_model.parent().unwrap()).unwrap();
+        fs::write(&bundled_model, b"").unwrap();
+        let invalid = read_voice_status(&state_root, &repo_root);
+        assert!(!invalid.custom_model_selected);
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn voice_status_is_bounded_and_clamped() {
-        let temp = std::env::temp_dir().join(format!("openkakao-voice-status-{}", std::process::id()));
+        let temp =
+            std::env::temp_dir().join(format!("openkakao-voice-status-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         fs::write(
@@ -908,14 +996,14 @@ mod tests {
             br#"{"schema_version":1,"state":"speaking","rms":2.0,"error_code":"","wake_source":"stock","updated_at":7}"#,
         )
         .unwrap();
-        let status = read_voice_status(&temp);
+        let status = read_voice_status(&temp, &temp.join("repo-without-bundle"));
         assert!(status.available);
         assert_eq!(status.state, "speaking");
         assert_eq!(status.rms, 1.0);
         assert_eq!(status.wake_source, "stock");
         assert_eq!(status.updated_at, 7);
-        assert_eq!(status.wake_phrase, "");
-        assert_eq!(status.threshold, 0.65);
+        assert_eq!(status.wake_phrase, WAKE_PHRASE);
+        assert_eq!(status.threshold, WAKE_THRESHOLD);
         assert!(!status.custom_model_selected);
         let _ = fs::remove_dir_all(&temp);
     }
@@ -945,14 +1033,18 @@ mod tests {
 
     #[test]
     fn global_abort_is_latched_and_increments_epoch() {
-        let temp = std::env::temp_dir().join(format!("openkakao-abort-state-{}", std::process::id()));
+        let temp =
+            std::env::temp_dir().join(format!("openkakao-abort-state-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_global_abort(&temp).unwrap();
         write_global_abort(&temp).unwrap();
         let value = safe_small_json(&temp.join(ABORT_STATE_NAME)).unwrap();
         assert_eq!(value.get("epoch").and_then(Value::as_u64), Some(2));
         assert_eq!(value.get("latched").and_then(Value::as_bool), Some(true));
-        assert_eq!(value.get("reason").and_then(Value::as_str), Some("global_abort"));
+        assert_eq!(
+            value.get("reason").and_then(Value::as_str),
+            Some("global_abort")
+        );
         let _ = fs::remove_dir_all(&temp);
     }
 }

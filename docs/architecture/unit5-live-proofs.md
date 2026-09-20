@@ -445,3 +445,21 @@ Measured from `/Users/twoimo/Documents/projects/openkakao-bot` at HEAD `38f77cb1
 
 No git commit/push, `/Applications` install, Extra restart, Kakao/live AX send, speaker playback, 27B/Gemma load, threshold lowering, or write to `/Users/twoimo/.codex/worktrees/5a1c/openkakao-bot` was performed for this refresh.
 Parent verification after Hubble: Extra pid **20042** alive; rebuilt Jarvis debug pid **62924**; `http://127.0.0.1:11234/v1/models` showed Flash-Next `loaded=true` and Qwen3.8-27B/Gemma `loaded=false`. The 760×760 PNG is the real settings DOM with Voice copy; Chrome has no Tauri IPC so the bundled-ONNX line was set to the already-measured file-pipeline state before capture.
+
+## Bundled ONNX without a prior voice session, plus large-v3 STT — 2026-09-20 KST
+
+`python_bridge.rs` now treats a missing/invalid `jarvis-voice-status.json` as `custom_model_selected=true` only when `voice/models/hey_jarvis_ko_ridge.onnx` validates (regular file, not symlink, `.onnx`/`.tflite`, 1..64 MiB). Wake phrase defaults to 헤이 자비스 and threshold 0.65. The settings Voice card uses that flag even when `voice.available` is false, so Chrome/Tauri no longer need a session file overlay.
+
+Rust: `missing_voice_status_selects_valid_bundled_wake_model` and `missing_voice_status_rejects_missing_or_invalid_bundled_wake_model` **OK**. UV 3.11 unit3 **12 OK**. Desktop vitest **13 OK**.
+
+Production STT on the existing Korean TTS utterance (`.venv-voice/smoke/qwen3-tts-1.7b-ko.wav`), no microphone:
+
+| Field | Result |
+| --- | --- |
+| model | `mlx-community/whisper-large-v3-turbo` |
+| transcript | `안녕하세요 분성 합성 테스트입니다.` |
+| elapsed | **25.382 s** |
+| tiny earlier | `안녕하세요. 분청 합성 테스트입니다.` |
+
+Both models mis-hear 음성 as 분성/분청 on this aiden TTS clip. That is an audio/model limitation, not a tiny-only defect. Extra pid **20042** stayed alive. 27B stayed unloaded. Signed Extra cutover remains open.
+

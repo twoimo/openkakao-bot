@@ -38,9 +38,9 @@ async fn fetch_settings_action(
             chat_id.as_deref(),
         )
     })
-        .await
-        .map_err(|_| "settings_worker_failed".to_string())?
-        .map_err(|error| error.to_string())
+    .await
+    .map_err(|_| "settings_worker_failed".to_string())?
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -107,7 +107,8 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let expected = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
+                    let expected =
+                        Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
                     if shortcut == &expected && event.state() == ShortcutState::Pressed {
                         let bridge = app.state::<PythonBridge>();
                         let _ = bridge.global_abort();
