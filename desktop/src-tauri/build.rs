@@ -7,7 +7,18 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{env, fs, path::Path};
 
+const SOURCE_CHECK_ENV: &str = "OPENKAKAO_TAURI_SOURCE_CHECK";
+
 fn main() {
+    println!("cargo:rerun-if-env-changed={SOURCE_CHECK_ENV}");
+    if env::var(SOURCE_CHECK_ENV).as_deref() == Ok("1") {
+        // Fresh-checkout CI can compile and test the Rust bridge without the
+        // ignored runtime artifacts. Packaged app builds leave this unset and
+        // retain the fail-closed staging and validation below.
+        tauri_build::build();
+        return;
+    }
+
     let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
     let manifest = Path::new(&manifest);
     let checkout = manifest.parent().unwrap().parent().unwrap();

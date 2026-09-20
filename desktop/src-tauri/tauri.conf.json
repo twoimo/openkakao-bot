@@ -74,6 +74,7 @@
       "bundle-resources/scripts/bujamentor_operator_prompt_store.py": "scripts/bujamentor_operator_prompt_store.py",
       "bundle-resources/scripts/auto-reply-operator-prompts.json": "scripts/auto-reply-operator-prompts.json",
       "bundle-resources/scripts/auto_reply_reference_store.py": "scripts/auto_reply_reference_store.py",
+      "bundle-resources/scripts/auto_reply_reference_search.py": "scripts/auto_reply_reference_search.py",
       "bundle-resources/scripts/auto_reply_knowledge_graph.py": "scripts/auto_reply_knowledge_graph.py",
       "bundle-resources/scripts/auto_reply_ondevice.py": "scripts/auto_reply_ondevice.py",
       "bundle-resources/scripts/jarvis_voice.py": "scripts/jarvis_voice.py",

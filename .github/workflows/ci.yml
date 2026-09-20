@@ -100,3 +100,83 @@ jobs:
             --bin "$PWD/target/debug/openkakao-cli"
           python3 scripts/audit-menubar-layout.py /tmp/layout-audit > /tmp/layout-audit/report.txt
           python3 scripts/check-menubar-layout.py /tmp/layout-audit
+
+  desktop:
+    name: Tauri desktop and focused Python tests
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Bind checkout to the triggering commit
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run focused local AI tests
+        run: >-
+          python3 -m unittest
+          tests.test_auto_reply_ondevice
+          tests.test_auto_reply_reference_search
+          tests.test_auto_reply_knowledge_graph
+          tests.test_jarvis_unit4
+          tests.test_local_mlx_model_readiness
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Test desktop frontend
+        working-directory: desktop
+        run: npm test -- --run
+
+      - name: Build desktop frontend
+        working-directory: desktop
+        run: npm run build
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Cache desktop cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: cargo-desktop-${{ runner.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-desktop-${{ runner.os }}-
+
+      - name: Fetch locked desktop Rust dependencies
+        run: cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
+
+      - name: Test desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked --offline
+
+      - name: Check desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo check --manifest-path desktop/src-tauri/Cargo.toml --locked --offline
+
+      # These Rust steps are source-level Tauri checks, not packaged app proof.
+      # A packaged build still requires the fail-closed frozen CPython and CLI
+      # resources and is validated separately after trusted provisioning.

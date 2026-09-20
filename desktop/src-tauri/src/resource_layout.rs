@@ -21,6 +21,7 @@ pub const DATA_FILES: &[&str] = &[
     "scripts/bujamentor_operator_prompt_store.py",
     "scripts/auto-reply-operator-prompts.json",
     "scripts/auto_reply_reference_store.py",
+    "scripts/auto_reply_reference_search.py",
     "scripts/auto_reply_knowledge_graph.py",
     "scripts/auto_reply_ondevice.py",
     VOICE_SCRIPT,

@@ -71,6 +71,7 @@ class SwapStage(str, Enum):
     MEMORY_CHECK = "memory_check"
     LOAD = "load"
     PROBE = "probe"
+    ROLLBACK = "rollback"
     READY = "ready"
     ABORTED = "aborted"
     FAILED = "failed"
@@ -169,17 +170,20 @@ class ModelResidencyManager:
         required_bytes: dict[str, int] | None = None,
     ) -> None:
         self.gateway = gateway
-        self.current_model = current_model
+        self.current_model: str | None = current_model
         self.owned_models = set(owned_models)
         self.memory_budget = memory_budget or (lambda: MemoryBudget(0))
         self.required_bytes = dict(required_bytes or {})
         self._condition = threading.Condition()
         self._in_flight = 0
         self._cancelled = False
+        self._swap_in_progress = False
 
     @contextmanager
     def request_lease(self) -> Iterator[None]:
         with self._condition:
+            while self._swap_in_progress and not self._cancelled:
+                self._condition.wait()
             if self._cancelled:
                 raise RuntimeError("model_swap_cancelled")
             self._in_flight += 1
@@ -209,6 +213,24 @@ class ModelResidencyManager:
                 self._condition.wait(min(0.1, remaining))
             return self._in_flight == 0 and not self._cancelled
 
+    def _begin_swap(self, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while self._swap_in_progress and not self._cancelled:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(min(0.1, remaining))
+            if self._cancelled:
+                return False
+            self._swap_in_progress = True
+            return True
+
+    def _end_swap(self) -> None:
+        with self._condition:
+            self._swap_in_progress = False
+            self._condition.notify_all()
+
     def swap(
         self,
         target_model: str,
@@ -221,6 +243,26 @@ class ModelResidencyManager:
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, "model_not_allowed", tuple(stages))
         if target_model == QWEN38_27B_MODEL_ID and not allow_27b:
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, "27b_human_opt_in_required", tuple(stages))
+        if not self._begin_swap(drain_timeout):
+            reason = "cancelled" if self._cancelled else "drain_timeout"
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
+        try:
+            return self._swap_gated(
+                target_model,
+                allow_27b=allow_27b,
+                drain_timeout=drain_timeout,
+            )
+        finally:
+            self._end_swap()
+
+    def _swap_gated(
+        self,
+        target_model: str,
+        *,
+        allow_27b: bool,
+        drain_timeout: float,
+    ) -> ModelSwapResult:
+        stages: list[str] = [SwapStage.DRAIN.value]
         if not self._drain(drain_timeout):
             reason = "cancelled" if self._cancelled else "drain_timeout"
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
@@ -239,32 +281,78 @@ class ModelResidencyManager:
             )
 
         previous = self.current_model
-        if previous in self.owned_models:
+        previous_was_owned = previous is not None and previous in self.owned_models
+        previous_was_unloaded = False
+
+        def failure_after_unload(stage: SwapStage, reason: str) -> ModelSwapResult:
+            if not previous_was_unloaded or previous is None:
+                return ModelSwapResult(False, target_model, stage, reason, tuple(stages))
+
+            stages.append(SwapStage.ROLLBACK.value)
+            try:
+                self.gateway.load(previous)
+            except Exception:
+                self.current_model = None
+                return ModelSwapResult(
+                    False,
+                    target_model,
+                    SwapStage.FAILED,
+                    f"{reason}_rollback_failed",
+                    tuple(stages),
+                )
+
+            self.owned_models.add(previous)
+            try:
+                restored = bool(self.gateway.probe(previous))
+            except Exception:
+                restored = False
+            if restored:
+                self.current_model = previous
+                return ModelSwapResult(False, target_model, stage, reason, tuple(stages))
+
+            self.current_model = None
+            try:
+                self.gateway.unload(previous)
+            except Exception:
+                pass
+            else:
+                self.owned_models.discard(previous)
+            return ModelSwapResult(
+                False,
+                target_model,
+                SwapStage.FAILED,
+                f"{reason}_rollback_failed",
+                tuple(stages),
+            )
+
+        if previous_was_owned:
             stages.append(SwapStage.UNLOAD.value)
             try:
                 self.gateway.unload(previous)
             except Exception:
                 return ModelSwapResult(False, target_model, SwapStage.FAILED, "unload_failed", tuple(stages))
             self.owned_models.discard(previous)
+            self.current_model = None
+            previous_was_unloaded = True
 
         stages.append(SwapStage.MEMORY_CHECK.value)
-        required = max(0, int(self.required_bytes.get(target_model, 0)))
         try:
+            required = max(0, int(self.required_bytes.get(target_model, 0)))
             budget = self.memory_budget()
+            usable_bytes = budget.usable_bytes
         except Exception:
-            return ModelSwapResult(False, target_model, SwapStage.FAILED, "memory_budget_unavailable", tuple(stages))
-        if required and budget.usable_bytes < required:
-            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "insufficient_free_memory", tuple(stages))
+            return failure_after_unload(SwapStage.FAILED, "memory_budget_unavailable")
+        if required and usable_bytes < required:
+            return failure_after_unload(SwapStage.ABORTED, "insufficient_free_memory")
         if self._cancelled:
-            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "cancelled", tuple(stages))
+            return failure_after_unload(SwapStage.ABORTED, "cancelled")
 
         stages.append(SwapStage.LOAD.value)
         try:
             self.gateway.load(target_model)
         except Exception:
-            return ModelSwapResult(False, target_model, SwapStage.FAILED, "load_failed", tuple(stages))
+            return failure_after_unload(SwapStage.FAILED, "load_failed")
         self.owned_models.add(target_model)
-        self.current_model = target_model
 
         stages.append(SwapStage.PROBE.value)
         try:
@@ -272,7 +360,20 @@ class ModelResidencyManager:
         except Exception:
             probe_ok = False
         if not probe_ok:
-            return ModelSwapResult(False, target_model, SwapStage.FAILED, "probe_failed", tuple(stages))
+            try:
+                self.gateway.unload(target_model)
+            except Exception:
+                return ModelSwapResult(
+                    False,
+                    target_model,
+                    SwapStage.FAILED,
+                    "probe_failed",
+                    tuple(stages),
+                )
+            else:
+                self.owned_models.discard(target_model)
+            return failure_after_unload(SwapStage.FAILED, "probe_failed")
+        self.current_model = target_model
         stages.append(SwapStage.READY.value)
         return ModelSwapResult(True, target_model, SwapStage.READY, "ready", tuple(stages))
 

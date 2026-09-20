@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -275,16 +276,23 @@ class TestModelResidencySwap(unittest.TestCase):
     class FakeGateway:
         def __init__(self):
             self.calls: list[tuple[str, str]] = []
+            self.load_failures: set[str] = set()
+            self.unload_failures: set[str] = set()
+            self.probe_results: dict[str, bool] = {}
 
         def unload(self, model_id: str) -> None:
             self.calls.append(("unload", model_id))
+            if model_id in self.unload_failures:
+                raise RuntimeError("unload failed")
 
         def load(self, model_id: str) -> None:
             self.calls.append(("load", model_id))
+            if model_id in self.load_failures:
+                raise RuntimeError("load failed")
 
         def probe(self, model_id: str) -> bool:
             self.calls.append(("probe", model_id))
-            return True
+            return self.probe_results.get(model_id, True)
 
     def test_27b_is_never_loaded_by_default(self):
         gateway = self.FakeGateway()
@@ -328,6 +336,59 @@ class TestModelResidencySwap(unittest.TestCase):
             ("drain", "unload", "memory_check", "load", "probe", "ready"),
         )
 
+    def test_request_lease_waits_until_swap_finishes(self):
+        class BlockingGateway(self.FakeGateway):
+            def __init__(self):
+                super().__init__()
+                self.unload_started = threading.Event()
+                self.release_unload = threading.Event()
+
+            def unload(self, model_id: str) -> None:
+                super().unload(model_id)
+                if model_id == FLASH_NEXT_MODEL_ID:
+                    self.unload_started.set()
+                    if not self.release_unload.wait(1.0):
+                        raise RuntimeError("test unload release timed out")
+
+        gateway = BlockingGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+        swap_results = []
+        lease_attempted = threading.Event()
+        lease_entered = threading.Event()
+
+        swap_thread = threading.Thread(
+            target=lambda: swap_results.append(
+                manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+            ),
+            daemon=True,
+        )
+        swap_thread.start()
+        self.assertTrue(gateway.unload_started.wait(1.0))
+
+        def take_lease() -> None:
+            lease_attempted.set()
+            with manager.request_lease():
+                lease_entered.set()
+
+        lease_thread = threading.Thread(target=take_lease, daemon=True)
+        lease_thread.start()
+        self.assertTrue(lease_attempted.wait(1.0))
+        self.assertFalse(lease_entered.wait(0.05))
+
+        gateway.release_unload.set()
+        swap_thread.join(1.0)
+        lease_thread.join(1.0)
+        self.assertFalse(swap_thread.is_alive())
+        self.assertFalse(lease_thread.is_alive())
+        self.assertEqual(len(swap_results), 1)
+        self.assertTrue(swap_results[0].ok)
+        self.assertTrue(lease_entered.is_set())
+
     def test_foreign_resident_model_is_never_unloaded(self):
         gateway = self.FakeGateway()
         manager = ModelResidencyManager(
@@ -358,6 +419,116 @@ class TestModelResidencySwap(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "insufficient_free_memory")
         self.assertEqual(gateway.calls, [])
+
+    def test_memory_check_failure_after_unload_restores_previous_model(self):
+        gateway = self.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=MagicMock(side_effect=RuntimeError("memory unavailable")),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "memory_budget_unavailable")
+        self.assertEqual(manager.current_model, FLASH_NEXT_MODEL_ID)
+        self.assertEqual(manager.owned_models, {FLASH_NEXT_MODEL_ID})
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", FLASH_NEXT_MODEL_ID),
+                ("probe", FLASH_NEXT_MODEL_ID),
+            ],
+        )
+        self.assertEqual(result.stages, ("drain", "unload", "memory_check", "rollback"))
+
+    def test_target_load_failure_restores_previous_model(self):
+        gateway = self.FakeGateway()
+        gateway.load_failures.add(QWEN38_27B_MODEL_ID)
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "load_failed")
+        self.assertEqual(manager.current_model, FLASH_NEXT_MODEL_ID)
+        self.assertEqual(manager.owned_models, {FLASH_NEXT_MODEL_ID})
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", QWEN38_27B_MODEL_ID),
+                ("load", FLASH_NEXT_MODEL_ID),
+                ("probe", FLASH_NEXT_MODEL_ID),
+            ],
+        )
+
+    def test_target_probe_failure_unloads_target_and_restores_previous_model(self):
+        gateway = self.FakeGateway()
+        gateway.probe_results[QWEN38_27B_MODEL_ID] = False
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "probe_failed")
+        self.assertEqual(manager.current_model, FLASH_NEXT_MODEL_ID)
+        self.assertEqual(manager.owned_models, {FLASH_NEXT_MODEL_ID})
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", QWEN38_27B_MODEL_ID),
+                ("probe", QWEN38_27B_MODEL_ID),
+                ("unload", QWEN38_27B_MODEL_ID),
+                ("load", FLASH_NEXT_MODEL_ID),
+                ("probe", FLASH_NEXT_MODEL_ID),
+            ],
+        )
+
+    def test_target_unload_failure_does_not_restore_previous_model(self):
+        gateway = self.FakeGateway()
+        gateway.probe_results[QWEN38_27B_MODEL_ID] = False
+        gateway.unload_failures.add(QWEN38_27B_MODEL_ID)
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "probe_failed")
+        self.assertIsNone(manager.current_model)
+        self.assertEqual(manager.owned_models, {QWEN38_27B_MODEL_ID})
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", QWEN38_27B_MODEL_ID),
+                ("probe", QWEN38_27B_MODEL_ID),
+                ("unload", QWEN38_27B_MODEL_ID),
+            ],
+        )
+        self.assertEqual(
+            result.stages,
+            ("drain", "unload", "memory_check", "load", "probe"),
+        )
 
 
 class TestVerification(unittest.TestCase):

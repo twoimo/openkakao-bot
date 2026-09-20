@@ -1,10 +1,15 @@
-"""Harvest lecture-style Kakao explanations into hashed vector memory.
+"""Harvest lecture-style Kakao explanations into reference memory.
 
 One person explaining in detail to a group — photos plus text — is jointly
 analyzed into a structured pack (who / what / how / why, image role, claims)
 and stored only when the quality gate passes. Raw lecture dumps are not embedded. The menubar 대화 기억 source `references` lists
 these packs. Matching rows are also written into `context_messages` so the
 existing reply-bundle search can ground 최연우-style drafts.
+
+The historical 128-float ``vector`` column is a lexical hash sketch used by
+legacy callers and previews. It is deliberately not described as a Dense
+embedding. Dense retrieval lives in ``auto_reply_reference_search.py`` and
+uses a separately versioned local embedding index.
 """
 
 from __future__ import annotations
@@ -23,7 +28,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
-VECTOR_DIM = 128
+LEGACY_HASH_VECTOR_DIM = 128
+# Compatibility for existing menu/UI callers. New retrieval code must not
+# interpret this dimension or blob as a semantic embedding.
+VECTOR_DIM = LEGACY_HASH_VECTOR_DIM
+LEGACY_VECTOR_KIND = "legacy_lexical_hash"
 PACK_TABLE = "context_reference_packs"
 PACK_SOURCE_KIND = "reference"
 PACK_POLICY_VERSION = "lecture-pack-v2"
@@ -206,7 +215,9 @@ def _tokenize_alnum(text: str) -> list[str]:
     return [part.lower() for part in re.split(r"[^0-9A-Za-z가-힣]+", text) if part]
 
 
-def encode_vector_values(text: str, dim: int = VECTOR_DIM) -> list[float]:
+def encode_legacy_hash_vector_values(
+    text: str, dim: int = LEGACY_HASH_VECTOR_DIM
+) -> list[float]:
     vector = [0.0] * dim
     for token in _tokenize_alnum(text):
         raw = token.encode("utf-8")
@@ -225,9 +236,21 @@ def encode_vector_values(text: str, dim: int = VECTOR_DIM) -> list[float]:
     return vector
 
 
-def encode_vector_blob(text: str, dim: int = VECTOR_DIM) -> bytes:
-    values = encode_vector_values(text, dim)
+def encode_legacy_hash_vector_blob(
+    text: str, dim: int = LEGACY_HASH_VECTOR_DIM
+) -> bytes:
+    values = encode_legacy_hash_vector_values(text, dim)
     return struct.pack("<" + "f" * dim, *values)
+
+
+def encode_vector_values(text: str, dim: int = VECTOR_DIM) -> list[float]:
+    """Compatibility alias for the legacy lexical hash sketch."""
+    return encode_legacy_hash_vector_values(text, dim)
+
+
+def encode_vector_blob(text: str, dim: int = VECTOR_DIM) -> bytes:
+    """Compatibility alias for the legacy lexical hash sketch."""
+    return encode_legacy_hash_vector_blob(text, dim)
 
 
 def vector_preview(blob: object, dim: int = VECTOR_DIM) -> str:
@@ -1852,6 +1875,7 @@ def collect_reference_list(
                     "message": message,
                     "preview": message[:240],
                     "editable": False,
+                    "vector_kind": LEGACY_VECTOR_KIND,
                     "vector_dim": dim if isinstance(blob, (bytes, bytearray)) and len(blob) == dim * 4 else 0,
                     "vector_preview": preview_fn(blob),
                     "kind": PACK_SOURCE_KIND,
@@ -1898,3 +1922,20 @@ def collect_reference_list(
         }
     finally:
         connection.close()
+
+
+def search_reference_packs(
+    db_path: Path,
+    *,
+    query: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Hybrid reference retrieval with independent BM25 and Dense candidates.
+
+    Import lazily so harvesting/menu paths keep their existing lightweight
+    dependency surface. The search module uses only the Python standard
+    library and SQLite; it never falls back to a cloud embedding endpoint.
+    """
+    from auto_reply_reference_search import search_reference_packs as search
+
+    return search(db_path, query=query, **kwargs)
