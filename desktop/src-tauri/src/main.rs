@@ -25,9 +25,19 @@ async fn fetch_runtime_snapshot(
 async fn fetch_settings_action(
     bridge: tauri::State<'_, PythonBridge>,
     action: String,
+    query: Option<String>,
+    node_id: Option<String>,
+    chat_id: Option<String>,
 ) -> Result<Value, String> {
     let bridge = bridge.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || bridge.fetch_settings_action(&action))
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge.fetch_settings_action(
+            &action,
+            query.as_deref(),
+            node_id.as_deref(),
+            chat_id.as_deref(),
+        )
+    })
         .await
         .map_err(|_| "settings_worker_failed".to_string())?
         .map_err(|error| error.to_string())

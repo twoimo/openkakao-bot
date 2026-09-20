@@ -100,6 +100,11 @@ class GraphShapeTests(unittest.TestCase):
             with self.subTest(edge=edge["relation"]):
                 self.assertIn(edge["source"], ids)
                 self.assertIn(edge["target"], ids)
+                self.assertIn("room_id", edge)
+                self.assertIn("valid_from", edge)
+                self.assertIn("valid_to", edge)
+                self.assertIn("evidence_message_id", edge)
+                self.assertIn("evidence", edge)
 
     def test_a_broken_state_root_still_returns_the_seeded_graph(self):
         """A missing ledger must not blank the window."""

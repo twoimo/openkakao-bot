@@ -2181,12 +2181,25 @@ def collect_knowledge_graph(
         edges: list[dict[str, Any]] = []
         for row in conn.execute(
             """
-            SELECT source_id, relation, target_id, context, weight, evidence_json
+            SELECT source_id, relation, target_id, context, weight, evidence_json,
+                   COALESCE(room_id,''), COALESCE(valid_from,''), COALESCE(valid_to,''),
+                   COALESCE(evidence_message_id,'')
             FROM kg_relations
             ORDER BY weight DESC, id ASC
             """
         ):
-            source_id, relation, target_id, context, weight, evidence_json = row
+            (
+                source_id,
+                relation,
+                target_id,
+                context,
+                weight,
+                evidence_json,
+                room_id,
+                valid_from,
+                valid_to,
+                evidence_message_id,
+            ) = row
             if source_id not in node_ids or target_id not in node_ids:
                 continue
             edges.append(
@@ -2196,6 +2209,10 @@ def collect_knowledge_graph(
                     "target": target_id,
                     "context": context,
                     "weight": int(weight or 0),
+                    "room_id": str(room_id or ""),
+                    "valid_from": str(valid_from or ""),
+                    "valid_to": str(valid_to or ""),
+                    "evidence_message_id": str(evidence_message_id or ""),
                     "evidence": _normalize_evidence(
                         json.loads(evidence_json) if evidence_json else None
                     ),

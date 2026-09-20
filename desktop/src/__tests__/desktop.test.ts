@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
 import { RenderLifecycle } from "../core/lifecycle";
 import { parseJobEvent, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
+import {
+  KnowledgeDrilldown,
+  ON_SCREEN_NODE_CAP,
+  type KnowledgeGraph,
+} from "../knowledge/graph-model";
 import { LAYOUT } from "../tokens";
 import { MAIN_PANEL_CONTROLS, mainPanelMarkup, settingsMarkup } from "../ui";
 
@@ -113,5 +118,76 @@ describe("layout and settings contract", () => {
       "settings-slot-morning", "settings-slot-lunch", "settings-slot-evening",
     ]) expect(markup).toContain(`id="${id}"`);
     expect(markup).toContain('id="voice-status"');
+    expect(markup).toContain('id="knowledge-graph-canvas"');
+    expect(markup).toContain('id="knowledge-expand-hop"');
+  });
+});
+
+function drilldownGraph(): KnowledgeGraph {
+  const ids = ["root"];
+  for (const prefix of ["a", "b", "c"]) {
+    for (let index = 0; index < 10; index += 1) ids.push(`${prefix}${index}`);
+  }
+  const nodes = ids.map((id, index) => ({
+    id,
+    label: id,
+    category: "entity",
+    importance: 100 - index,
+    updatedAt: 1,
+    evidence: { kind: "seed" as const, sourceEventIds: [], chatId: "", confirmedAt: null, retracted: false },
+  }));
+  const edge = (source: string, target: string, weight: number) => ({
+    source,
+    relation: "RELATED_TO",
+    target,
+    context: "",
+    weight,
+    roomId: "room-1",
+    validFrom: "2026-09-20T10:00:00+09:00",
+    validTo: "",
+    evidenceMessageId: "db:1",
+    evidence: { kind: "ledger" as const, sourceEventIds: ["db:1"], chatId: "room-1", confirmedAt: null, retracted: false },
+  });
+  const edges = [];
+  for (let index = 0; index < 10; index += 1) {
+    edges.push(edge("root", `a${index}`, 100 - index));
+    edges.push(edge(`a${index}`, `b${index}`, 90 - index));
+    edges.push(edge(`b${index}`, `c${index}`, 80 - index));
+  }
+  return { nodes, edges };
+}
+
+describe("knowledge hologram drilldown", () => {
+  it("click focuses the node at exactly 2 hops; another click does not add a hop", () => {
+    const drilldown = new KnowledgeDrilldown(drilldownGraph());
+    const focused = drilldown.clickNode("root");
+    expect(focused.focusId).toBe("root");
+    expect(focused.hops).toBe(2);
+    expect(focused.nodes.some((node) => node.id === "b0")).toBe(true);
+    expect(focused.nodes.some((node) => node.id === "c0")).toBe(false);
+    expect(drilldown.clickNode("root").hops).toBe(2);
+  });
+
+  it("caps visible nodes and only reaches hop 3 through explicit expansion", () => {
+    const drilldown = new KnowledgeDrilldown(drilldownGraph());
+    expect(drilldown.clickNode("root").nodes).toHaveLength(21);
+    const expanded = drilldown.expandOneHop();
+    expect(expanded.hops).toBe(3);
+    expect(expanded.nodes).toHaveLength(ON_SCREEN_NODE_CAP);
+    expect(expanded.nodes.length).toBeLessThanOrEqual(ON_SCREEN_NODE_CAP);
+  });
+
+  it("has zero queued RAF callbacks while the settings graph is hidden", () => {
+    const scheduler = new FakeScheduler();
+    const loop = new AnimationLoop(() => undefined, scheduler);
+    const lifecycle = new RenderLifecycle(loop, () => undefined, () => undefined);
+    lifecycle.transition("visible");
+    expect(scheduler.callbacks.size).toBe(1);
+    scheduler.step(100);
+    lifecycle.transition("hidden");
+    expect(scheduler.callbacks.size).toBe(0);
+    const frozen = loop.renderCount;
+    scheduler.step(1000);
+    expect(loop.renderCount).toBe(frozen);
   });
 });

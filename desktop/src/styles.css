@@ -101,6 +101,83 @@ body.settings-view { min-width: 600px; min-height: 700px; overflow-y: auto; }
 .model-row strong { font-size: 12px; }
 .model-row p { margin-top: 3px; font-size: 10.5px; }
 .knowledge-accent { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.knowledge-hologram-shell {
+  position: relative;
+  margin-top: 11px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--canvas) 88%, var(--surface));
+}
+#knowledge-graph-canvas {
+  width: 100%;
+  height: 320px;
+  display: block;
+  background: transparent;
+}
+.knowledge-hologram-toolbar {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.knowledge-hologram-toolbar span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+#knowledge-expand-hop {
+  pointer-events: auto;
+  min-width: 64px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+}
+#knowledge-expand-hop:disabled { opacity: 0.42; }
+#knowledge-expand-hop:not(:disabled):hover,
+#knowledge-expand-hop:not(:disabled):focus-visible {
+  background: var(--selection);
+  outline: none;
+}
+.knowledge-focus-card {
+  margin-top: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+}
+.knowledge-focus-card > strong { font-size: 11.5px; color: var(--text); }
+.knowledge-relations { display: grid; gap: 5px; margin-top: 8px; }
+.knowledge-relation-row {
+  display: grid;
+  gap: 2px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  padding: 5px 0 5px 8px;
+}
+.knowledge-relation-row strong {
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 620;
+  overflow-wrap: anywhere;
+}
+.knowledge-relation-row span {
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.knowledge-empty { margin-top: 0 !important; font-size: 10px !important; }
 .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .slot-grid span { border-top: 1px solid var(--border); padding-top: 7px; color: var(--muted); font-size: 11px; }
 .slot-grid b { display: block; margin-top: 2px; color: var(--text); font-weight: 600; }

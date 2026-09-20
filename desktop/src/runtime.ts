@@ -2,7 +2,18 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CancellationToken, RuntimeSnapshot } from "./contracts";
 import { parseRuntimeSnapshot, unavailableSnapshot } from "./contracts";
 
-type SettingsAction = "models" | "dream-rsi-status" | "knowledge-graph-status";
+type SettingsAction =
+  | "models"
+  | "dream-rsi-status"
+  | "knowledge-graph-status"
+  | "knowledge-graph"
+  | "knowledge-graph-focus";
+
+export interface SettingsActionInput {
+  query?: string;
+  nodeId?: string;
+  chatId?: string;
+}
 
 export async function fetchRuntimeSnapshot(token: CancellationToken): Promise<RuntimeSnapshot> {
   if (token.cancelled) return unavailableSnapshot("cancelled");
@@ -25,9 +36,17 @@ export async function cancelRuntimeRequest(token: CancellationToken): Promise<vo
   }
 }
 
-export async function fetchSettingsAction(action: SettingsAction): Promise<Record<string, unknown> | null> {
+export async function fetchSettingsAction(
+  action: SettingsAction,
+  input: SettingsActionInput = {},
+): Promise<Record<string, unknown> | null> {
   try {
-    return await invoke<Record<string, unknown>>("fetch_settings_action", { action });
+    return await invoke<Record<string, unknown>>("fetch_settings_action", {
+      action,
+      query: input.query,
+      nodeId: input.nodeId,
+      chatId: input.chatId,
+    });
   } catch {
     return null;
   }

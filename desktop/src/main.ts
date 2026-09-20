@@ -3,6 +3,16 @@ import "./styles.css";
 import { createCancellationToken, type CancellationToken, type RuntimeSnapshot } from "./contracts";
 import { JarvisCore } from "./core/jarvis-core";
 import { RenderLifecycle } from "./core/lifecycle";
+import { KnowledgeHologram } from "./knowledge/hologram";
+import {
+  MAX_FOCUS_HOPS,
+  ON_SCREEN_NODE_CAP,
+  parseKnowledgeGraph,
+  type KnowledgeEdge,
+  type KnowledgeGraph,
+  type KnowledgeNode,
+  type KnowledgeView,
+} from "./knowledge/graph-model";
 import { cancelRuntimeRequest, fetchRuntimeSnapshot, fetchSettingsAction } from "./runtime";
 import { mainPanelMarkup, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
@@ -62,14 +72,117 @@ function renderVoice(snapshot: RuntimeSnapshot): void {
   setText("voice-status", `상태 ${voice.state} · wake ${voice.wakeSource} · RMS ${voice.rms.toFixed(3)}${suffix}`);
 }
 
+function relationMeta(edge: KnowledgeEdge): string {
+  const room = edge.roomId || edge.evidence.chatId || "room ?";
+  const time = edge.validFrom
+    ? `${edge.validFrom}${edge.validTo ? ` → ${edge.validTo}` : ""}`
+    : "time ?";
+  const evidence = edge.evidenceMessageId
+    || edge.evidence.sourceEventIds[0]
+    || edge.evidence.kind;
+  return `${room} · ${time} · evidence ${evidence}`;
+}
+
+function renderKnowledgeRelations(graph: KnowledgeGraph, node: KnowledgeNode, view: KnowledgeView): void {
+  const container = document.getElementById("knowledge-relations");
+  if (!container) return;
+  container.replaceChildren();
+  const labels = new Map(graph.nodes.map((candidate) => [candidate.id, candidate.label]));
+  const related = view.edges
+    .filter((edge) => edge.source === node.id || edge.target === node.id)
+    .sort((left, right) => right.weight - left.weight)
+    .slice(0, 6);
+
+  if (related.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "knowledge-empty";
+    empty.textContent = "이 범위에 연결된 E-R-E 관계가 없습니다.";
+    container.append(empty);
+    return;
+  }
+
+  related.forEach((edge) => {
+    const row = document.createElement("div");
+    row.className = "knowledge-relation-row";
+    const triple = document.createElement("strong");
+    triple.textContent = `${labels.get(edge.source) ?? edge.source} —${edge.relation || "RELATED"}→ ${labels.get(edge.target) ?? edge.target}`;
+    const meta = document.createElement("span");
+    meta.textContent = relationMeta(edge);
+    row.append(triple, meta);
+    container.append(row);
+  });
+}
+
+function setupKnowledgeGraph(
+  payload: Record<string, unknown> | null,
+  snapshot: RuntimeSnapshot,
+): KnowledgeHologram | null {
+  const graph = parseKnowledgeGraph(payload);
+  const canvas = document.querySelector<HTMLCanvasElement>("#knowledge-graph-canvas");
+  const expand = document.querySelector<HTMLButtonElement>("#knowledge-expand-hop");
+  if (!canvas || !expand || graph.nodes.length === 0) {
+    setText("knowledge-summary", "지식 그래프 payload를 읽지 못했거나 노드가 없습니다.");
+    setText("knowledge-mode", "unavailable");
+    return null;
+  }
+
+  setText(
+    "knowledge-summary",
+    `E-R-E ${graph.nodes.length} nodes · ${graph.edges.length} relations · 화면 최대 ${ON_SCREEN_NODE_CAP} nodes`,
+  );
+  setText("knowledge-mode", payload?.stale === true ? "GraphRAG · stale" : "GraphRAG · ready");
+
+  let activeNodeId = "";
+  const hologram = new KnowledgeHologram(canvas, graph, ({ node, view }) => {
+    activeNodeId = node.id;
+    setText("knowledge-focus-title", node.label);
+    setText("knowledge-focus-meta", `${view.hops}-hop · ${view.nodes.length} nodes · ${view.edges.length} relations`);
+    setText("knowledge-hop-label", `${view.hops}-hop · ${view.nodes.length}/${ON_SCREEN_NODE_CAP} nodes`);
+    expand.disabled = view.hops >= MAX_FOCUS_HOPS;
+    renderKnowledgeRelations(graph, node, view);
+    setText("knowledge-retrieve", "GraphRAG retrieve 확인 중…");
+
+    const localRoom = view.edges.find((edge) => edge.source === node.id || edge.target === node.id)?.roomId
+      || node.evidence.chatId
+      || String(snapshot.rooms[0]?.chatId ?? "");
+    void fetchSettingsAction("knowledge-graph-focus", {
+      query: node.label,
+      nodeId: node.id,
+      chatId: localRoom,
+    }).then((focus) => {
+      if (activeNodeId !== node.id) return;
+      if (!focus || focus.ok !== true) {
+        setText("knowledge-retrieve", "GraphRAG retrieve: 확인 불가");
+        return;
+      }
+      const facts = Array.isArray(focus.facts) ? focus.facts.filter((item): item is string => typeof item === "string") : [];
+      const mode = typeof focus.search_mode === "string" && focus.search_mode ? focus.search_mode : "unknown";
+      setText("knowledge-retrieve", `retrieve ${mode} · facts ${facts.length}${facts[0] ? ` · ${facts[0]}` : ""}`);
+    });
+  });
+
+  expand.addEventListener("click", () => {
+    const view = hologram.expandOneHop();
+    if (!view.focusId) return;
+    const node = graph.nodes.find((candidate) => candidate.id === view.focusId);
+    if (!node) return;
+    setText("knowledge-focus-meta", `${view.hops}-hop · ${view.nodes.length} nodes · ${view.edges.length} relations`);
+    setText("knowledge-hop-label", `${view.hops}-hop · ${view.nodes.length}/${ON_SCREEN_NODE_CAP} nodes`);
+    expand.disabled = view.hops >= MAX_FOCUS_HOPS;
+    renderKnowledgeRelations(graph, node, view);
+  });
+  return hologram;
+}
+
 async function bootSettings(): Promise<void> {
   app.innerHTML = settingsMarkup();
   const token = createCancellationToken();
-  const [snapshot, models, dream, knowledge] = await Promise.all([
+  const [snapshot, models, dream, knowledge, graphPayload] = await Promise.all([
     fetchRuntimeSnapshot(token),
     fetchSettingsAction("models"),
     fetchSettingsAction("dream-rsi-status"),
     fetchSettingsAction("knowledge-graph-status"),
+    fetchSettingsAction("knowledge-graph"),
   ]);
   renderRooms(snapshot);
   renderModels(models, snapshot);
@@ -101,6 +214,25 @@ async function bootSettings(): Promise<void> {
   setText("settings-slot-morning", slots[0]);
   setText("settings-slot-lunch", slots[1]);
   setText("settings-slot-evening", slots[2]);
+
+  const hologram = setupKnowledgeGraph(graphPayload, snapshot);
+  if (hologram) {
+    Object.defineProperty(window, "__knowledgeRenderCount", { configurable: true, get: () => hologram.renderCount });
+    const lifecycle = new RenderLifecycle(hologram, () => undefined, () => undefined);
+    const deactivate = (): void => lifecycle.transition("hidden");
+    window.addEventListener("blur", deactivate);
+    window.addEventListener("pagehide", () => {
+      lifecycle.transition("closed");
+      hologram.dispose();
+    });
+    document.addEventListener("visibilitychange", () => {
+      lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+    });
+    window.addEventListener("focus", () => {
+      if (document.visibilityState === "visible") lifecycle.transition("visible");
+    });
+    lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+  }
 }
 
 async function bootPanel(): Promise<void> {

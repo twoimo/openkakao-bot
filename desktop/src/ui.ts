@@ -11,6 +11,13 @@ export const SETTINGS_IDS = Object.freeze([
   "settings-dream-rsi-status",
   "settings-dream-rsi-gold",
   "settings-dream-rsi-card",
+  "settings-knowledge-card",
+  "knowledge-graph-canvas",
+  "knowledge-expand-hop",
+  "knowledge-focus-title",
+  "knowledge-focus-meta",
+  "knowledge-relations",
+  "knowledge-retrieve",
   "settings-slot-morning",
   "settings-slot-lunch",
   "settings-slot-evening",
@@ -68,9 +75,22 @@ export function settingsMarkup(): string {
       <p id="settings-dream-rsi-gold">gold_rows: 확인 중 · gold_source_policy: 확인 중</p>
     </section>
 
-    <section class="settings-card" aria-labelledby="knowledge-title">
-      <div class="section-heading"><h2 id="knowledge-title">Knowledge</h2><span class="tag muted-tag">drilldown shell</span></div>
-      <p>근거는 신뢰되지 않은 evidence로 취급합니다. GraphRAG drilldown을 위한 자리만 마련하며 true BM25+Dense+RRF는 이 단위에서 구현하지 않습니다.</p>
+    <section id="settings-knowledge-card" class="settings-card knowledge-accent" aria-labelledby="knowledge-title">
+      <div class="section-heading"><h2 id="knowledge-title">Knowledge</h2><span id="knowledge-mode" class="tag">GraphRAG</span></div>
+      <p id="knowledge-summary">E-R-E 그래프를 읽는 중입니다. 메시지는 노드로 만들지 않습니다.</p>
+      <div class="knowledge-hologram-shell">
+        <canvas id="knowledge-graph-canvas" width="1280" height="640" aria-label="Knowledge E-R-E hologram graph"></canvas>
+        <div class="knowledge-hologram-toolbar">
+          <span id="knowledge-hop-label">overview · 최대 24 nodes</span>
+          <button id="knowledge-expand-hop" type="button" disabled>+1 hop</button>
+        </div>
+      </div>
+      <div class="knowledge-focus-card" aria-live="polite">
+        <strong id="knowledge-focus-title">노드를 선택하면 2-hop으로 집중합니다.</strong>
+        <p id="knowledge-focus-meta">subject · relation · object / room · time · evidence</p>
+        <div id="knowledge-relations" class="knowledge-relations"></div>
+        <p id="knowledge-retrieve">선택 시 기존 read-only GraphRAG retrieve를 사용합니다.</p>
+      </div>
       <div class="slot-grid" aria-label="GeekNews 슬롯">
         <span>아침 <b id="settings-slot-morning">대기</b></span>
         <span>점심 <b id="settings-slot-lunch">대기</b></span>

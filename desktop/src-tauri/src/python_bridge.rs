@@ -1,6 +1,6 @@
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -148,21 +148,47 @@ impl PythonBridge {
         Ok(snapshot)
     }
 
-    pub fn fetch_settings_action(&self, action: &str) -> Result<Value, BridgeError> {
+    pub fn fetch_settings_action(
+        &self,
+        action: &str,
+        query: Option<&str>,
+        node_id: Option<&str>,
+        chat_id: Option<&str>,
+    ) -> Result<Value, BridgeError> {
         let allowed = matches!(
             action,
-            "models" | "dream-rsi-status" | "knowledge-graph-status"
+            "models"
+                | "dream-rsi-status"
+                | "knowledge-graph-status"
+                | "knowledge-graph"
+                | "knowledge-graph-focus"
         );
         if !allowed {
             return Err(BridgeError::ActionNotAllowed);
         }
-        let args = ["--action".to_string(), action.to_string()];
+        let mut args = vec!["--action".to_string(), action.to_string()];
+        if action == "knowledge-graph-focus" {
+            if let Some(value) = bounded_arg(query, 256) {
+                args.push("--knowledge-query".to_string());
+                args.push(value);
+            }
+            if let Some(value) = bounded_arg(node_id, 192) {
+                args.push("--knowledge-node-id".to_string());
+                args.push(value);
+            }
+            if let Some(value) = bounded_arg(chat_id, 128) {
+                args.push("--knowledge-chat".to_string());
+                args.push(value);
+            }
+        }
         let bytes = self.run_python(&args, DEFAULT_TIMEOUT, None)?;
         let value = parse_json_output(&bytes)?;
         Ok(match action {
             "models" => sanitize_models(&value),
             "dream-rsi-status" => sanitize_dream_rsi(&value),
             "knowledge-graph-status" => sanitize_knowledge_status(&value),
+            "knowledge-graph" => sanitize_knowledge_graph(&value),
+            "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
             _ => return Err(BridgeError::ActionNotAllowed),
         })
     }
@@ -368,6 +394,23 @@ fn as_u64(value: Option<&Value>) -> u64 {
 
 fn clamp01(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.chars().take(max_chars).collect())
+}
+
+fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
+    value
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(max_chars)
+        .collect()
 }
 
 fn safe_small_json(path: &Path) -> Option<Value> {
@@ -649,6 +692,137 @@ fn sanitize_knowledge_status(value: &Value) -> Value {
     })
 }
 
+fn sanitize_knowledge_evidence(value: Option<&Value>) -> Value {
+    let source_event_ids = value
+        .and_then(|item| item.get("source_event_ids"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .take(16)
+                .map(|item| item.chars().take(128).collect::<String>())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let kind = match value
+        .and_then(|item| item.get("kind"))
+        .and_then(Value::as_str)
+    {
+        Some("ledger") => "ledger",
+        _ => "seed",
+    };
+    json!({
+        "kind": kind,
+        "source_event_ids": source_event_ids,
+        "chat_id": bounded_json_string(value.and_then(|item| item.get("chat_id")), 128),
+        "confirmed_at": value
+            .and_then(|item| item.get("confirmed_at"))
+            .and_then(Value::as_str)
+            .map(|item| item.chars().take(64).collect::<String>()),
+        "retracted": value
+            .and_then(|item| item.get("retracted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn sanitize_knowledge_graph(value: &Value) -> Value {
+    let mut node_ids = HashSet::new();
+    let nodes = value
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|node| {
+                    let id = bounded_json_string(node.get("id"), 192);
+                    if id.is_empty() || id.starts_with("message:") || id.starts_with("msg:") {
+                        return None;
+                    }
+                    node_ids.insert(id.clone());
+                    Some(json!({
+                        "id": id,
+                        "label": bounded_json_string(node.get("label"), 160),
+                        "category": bounded_json_string(node.get("category"), 96),
+                        "importance": node.get("importance").and_then(Value::as_i64).unwrap_or(0).clamp(0, 100),
+                        "updated_at": as_u64(node.get("updated_at")),
+                        "evidence": sanitize_knowledge_evidence(node.get("evidence")),
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let edges = value
+        .get("edges")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|edge| {
+                    let source = bounded_json_string(edge.get("source"), 192);
+                    let target = bounded_json_string(edge.get("target"), 192);
+                    if !node_ids.contains(&source) || !node_ids.contains(&target) {
+                        return None;
+                    }
+                    Some(json!({
+                        "source": source,
+                        "relation": bounded_json_string(edge.get("relation"), 128),
+                        "target": target,
+                        "context": bounded_json_string(edge.get("context"), 320),
+                        "weight": edge.get("weight").and_then(Value::as_i64).unwrap_or(0).clamp(0, 1000),
+                        "room_id": bounded_json_string(edge.get("room_id"), 128),
+                        "valid_from": bounded_json_string(edge.get("valid_from"), 64),
+                        "valid_to": bounded_json_string(edge.get("valid_to"), 64),
+                        "evidence_message_id": bounded_json_string(edge.get("evidence_message_id"), 128),
+                        "evidence": sanitize_knowledge_evidence(edge.get("evidence")),
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    json!({
+        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "nodes": nodes,
+        "edges": edges,
+        "node_count": node_ids.len(),
+        "edge_count": edges.len(),
+        "grounded_nodes": as_u64(value.get("grounded_nodes")),
+        "indexed_at": as_u64(value.get("indexed_at")),
+        "indexed_count": as_u64(value.get("indexed_count")),
+        "stale": value.get("stale").and_then(Value::as_bool).unwrap_or(true),
+    })
+}
+
+fn sanitize_knowledge_focus(value: &Value) -> Value {
+    let facts = value
+        .get("facts")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .take(12)
+                .map(|item| item.chars().take(512).collect::<String>())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "facts": facts,
+        "fact_count": as_u64(value.get("fact_count")),
+        "focus_node_id": bounded_json_string(value.get("focus_node_id"), 192),
+        "focus_k": as_u64(value.get("focus_k")).clamp(0, 3),
+        "focus_node_count": as_u64(value.get("focus_node_count")),
+        "focus_edge_count": as_u64(value.get("focus_edge_count")),
+        "search_mode": bounded_json_string(value.get("search_mode"), 64),
+        "index_version": bounded_json_string(value.get("index_version"), 64),
+        "watermark": bounded_json_string(value.get("watermark"), 96),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +894,29 @@ mod tests {
         assert_eq!(status.wake_source, "stock");
         assert_eq!(status.updated_at, 7);
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn knowledge_graph_keeps_ere_metadata_and_rejects_message_nodes() {
+        let safe = sanitize_knowledge_graph(&json!({
+            "ok": true,
+            "nodes": [
+                {"id":"ent:a","label":"A","importance":80,"evidence":{"kind":"ledger","chat_id":"room-1","source_event_ids":["db:1"]}},
+                {"id":"ent:b","label":"B","importance":40,"evidence":{"kind":"seed"}},
+                {"id":"message:raw:1","label":"raw message","importance":100}
+            ],
+            "edges": [
+                {"source":"ent:a","relation":"USES","target":"ent:b","weight":9,"room_id":"room-1","valid_from":"2026-09-20T10:00:00+09:00","valid_to":"","evidence_message_id":"db:1","evidence":{"kind":"ledger","chat_id":"room-1","source_event_ids":["db:1"]}},
+                {"source":"message:raw:1","relation":"MENTIONS","target":"ent:a","weight":99}
+            ]
+        }));
+        assert_eq!(safe["nodes"].as_array().unwrap().len(), 2);
+        assert_eq!(safe["edges"].as_array().unwrap().len(), 1);
+        assert_eq!(safe["edges"][0]["source"], "ent:a");
+        assert_eq!(safe["edges"][0]["relation"], "USES");
+        assert_eq!(safe["edges"][0]["target"], "ent:b");
+        assert_eq!(safe["edges"][0]["room_id"], "room-1");
+        assert_eq!(safe["edges"][0]["evidence_message_id"], "db:1");
     }
 
     #[test]
