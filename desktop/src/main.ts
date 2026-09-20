@@ -22,6 +22,7 @@ import {
 } from "./runtime";
 import { mainPanelMarkup, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
+import { wireVoiceStart } from "./voice-controls";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 if (!app) throw new Error("app_root_missing");
@@ -271,6 +272,7 @@ async function bootSettings(): Promise<void> {
   renderModels(models, snapshot);
   wireModelSelection();
   renderVoice(snapshot);
+  wireVoiceStart(document, invoke);
 
   if (dream) {
     setText("settings-dream-rsi-status", `status: ${String(dream.status ?? "unknown")} · selected_policy: ${String(dream.selected_policy ?? "none")}`);
@@ -360,9 +362,6 @@ async function bootPanel(): Promise<void> {
 
   gear.addEventListener("click", () => {
     void invoke("open_settings");
-  });
-  document.getElementById("voice-start")?.addEventListener("click", () => {
-    void invoke("start_voice_session");
   });
 
   const deactivate = (): void => lifecycle.transition("hidden");
