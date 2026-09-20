@@ -92,6 +92,7 @@ Current limits:
 - Debug Jarvis now ignores SIGHUP: after rebuild, `open` pid **84521** survived `kill -HUP` with Extra **20042** unchanged. An unused LaunchAgent template is in the repo and was not loaded.
 - Settings Voice has an opt-in **마이크 세션 시작** control that spawns the isolated `.venv-voice` `jarvis_voice.py` session. It does not auto-start. Extra was not restarted.
 - Debug Jarvis was rebuilt at `6f76876` as pid **40102**. The settings capture now includes **마이크 세션 시작**. Extra **20042** unchanged.
+- Unavailability no longer paints Voice as stock-only; the default card shows bundled ONNX plus the mic start control.
 
 Recovery and safety:
 

@@ -71,7 +71,6 @@ function renderVoice(snapshot: RuntimeSnapshot): void {
     setText("voice-status", "음성 런타임 상태를 아직 받지 못했습니다.");
     setText("voice-phrase", `호출어: ${voice.wakePhrase || "헤이 자비스"}`);
     setText("voice-threshold", `임계값: ${voice.threshold.toFixed(2)} 고정`);
-    setText("voice-custom", customWakeText);
     return;
   }
   const suffix = voice.errorCode ? ` · ${voice.errorCode}` : "";

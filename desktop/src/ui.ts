@@ -60,7 +60,7 @@ export function settingsMarkup(): string {
       <p id="voice-status">음성 런타임 상태를 확인 중입니다.</p>
       <p id="voice-phrase">호출어: 헤이 자비스</p>
       <p id="voice-threshold">임계값: 0.65 고정</p>
-      <p id="voice-custom">한국어 커스텀 헤드: 확인 중</p>
+      <p id="voice-custom">한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)</p>
       <p class="muted">RMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.</p>
       <button id="voice-start" type="button">마이크 세션 시작</button>
     </section>

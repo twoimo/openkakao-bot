@@ -485,3 +485,7 @@ Rebuilt `OpenKakao Jarvis.app` at HEAD `6f76876` and replaced only the parallel 
 
 Updated capture `docs/architecture/jarvis-settings-panel.png` **760×760 / 75,913 bytes** from the built `dist` settings view. Voice shows 호출어 헤이 자비스, 임계값 0.65, and **마이크 세션 시작**. This static capture has no Tauri IPC, so the custom-head line is the no-snapshot stock-only copy; the live Rust snapshot still selects bundled ONNX when the file validates. 27B stayed unloaded.
 
+## Settings default copy matches bundled Korean wake — 2026-09-21 KST
+
+When the runtime snapshot is unavailable, Voice no longer overwrites the custom-head line to stock-only. Markup default is bundled ONNX selected. Capture `jarvis-settings-panel.png` **760×760 / 76,526 bytes** shows 헤이 자비스, 0.65, bundled ONNX, and 마이크 세션 시작. Extra pid **20042** and debug pid **40102** were not restarted. Live mic was not opened. 27B stayed unloaded.
+
