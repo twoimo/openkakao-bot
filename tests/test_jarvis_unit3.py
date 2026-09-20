@@ -15,7 +15,7 @@ if str(SCRIPTS) not in sys.path:
 from auto_reply_ax_ui import AX_ABORT_FOCUS_REQUIRED, AX_ABORT_GLOBAL, background_virtual_cursor_action
 from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
-from jarvis_voice import JarvisVoicePipeline, VoiceState, WakePhraseGate
+from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, VoiceState, WakePhraseGate
 from jarvis_voice import Qwen3TtsAdapter
 from jarvis_voice import OpenWakeVadFrontend
 
@@ -128,6 +128,36 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
         self.assertEqual(vad.sample_rate, 16_000)
         self.assertAlmostEqual(analysis.stock_wake_score, 0.21)
         self.assertIsNone(analysis.custom_wake_score)
+
+    def test_custom_wake_model_path_validation_is_bounded(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            model = root / "hey_jarvis_ko.onnx"
+            model.write_bytes(b"onnx")
+            path, framework = OpenWakeVadFrontend._validate_custom_wake_model_path(model)
+            self.assertEqual(path, model)
+            self.assertEqual(framework, "onnx")
+
+            wrong_type = root / "hey_jarvis_ko.bin"
+            wrong_type.write_bytes(b"x")
+            with self.assertRaisesRegex(RuntimeError, "custom_wake_model_invalid"):
+                OpenWakeVadFrontend._validate_custom_wake_model_path(wrong_type)
+
+            oversized = root / "oversized.onnx"
+            with oversized.open("wb") as handle:
+                handle.truncate(CUSTOM_WAKE_MODEL_MAX_BYTES + 1)
+            with self.assertRaisesRegex(RuntimeError, "custom_wake_model_invalid"):
+                OpenWakeVadFrontend._validate_custom_wake_model_path(oversized)
+
+    def test_custom_wake_model_path_rejects_symlink(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "target.onnx"
+            target.write_bytes(b"onnx")
+            symlink = root / "hey_jarvis_ko.onnx"
+            symlink.symlink_to(target)
+            with self.assertRaisesRegex(RuntimeError, "custom_wake_model_invalid"):
+                OpenWakeVadFrontend._validate_custom_wake_model_path(symlink)
 
     def test_global_abort_clears_queue_and_never_auto_resumes(self):
         with TemporaryDirectory() as temp_dir:

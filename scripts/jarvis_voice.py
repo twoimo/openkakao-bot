@@ -163,21 +163,30 @@ class OpenWakeVadFrontend:
         self.vad = vad
 
     @staticmethod
+    def _validate_custom_wake_model_path(custom_path: Path) -> tuple[Path, str]:
+        path = Path(custom_path).expanduser()
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise RuntimeError("custom_wake_model_invalid") from exc
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or path.suffix.casefold() not in {".onnx", ".tflite"}
+            or size <= 0
+            or size > CUSTOM_WAKE_MODEL_MAX_BYTES
+        ):
+            raise RuntimeError("custom_wake_model_invalid")
+        framework = "onnx" if path.suffix.casefold() == ".onnx" else "tflite"
+        return path, framework
+
+    @staticmethod
     def _make_wake_model(custom_path: Path | None) -> Any:
         from openwakeword.model import Model
 
         if custom_path is None:
             return Model(inference_framework="onnx")
-        path = Path(custom_path)
-        if (
-            not path.is_file()
-            or path.is_symlink()
-            or path.suffix.casefold() not in {".onnx", ".tflite"}
-            or path.stat().st_size <= 0
-            or path.stat().st_size > CUSTOM_WAKE_MODEL_MAX_BYTES
-        ):
-            raise RuntimeError("custom_wake_model_invalid")
-        framework = "onnx" if path.suffix.casefold() == ".onnx" else "tflite"
+        path, framework = OpenWakeVadFrontend._validate_custom_wake_model_path(custom_path)
         return Model(wakeword_models=[str(path)], inference_framework=framework)
 
     @staticmethod
