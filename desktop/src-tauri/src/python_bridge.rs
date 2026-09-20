@@ -1,3 +1,6 @@
+use crate::resource_layout::{
+    self, validate_path, DevOverrides, Kind, ResourceError, ResourceLayout,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -21,7 +24,7 @@ const STATE_FILE_LIMIT_BYTES: u64 = 4096;
 const WAKE_PHRASE: &str = "헤이 자비스";
 const WAKE_THRESHOLD: f64 = 0.65;
 const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
-const BUNDLED_CUSTOM_WAKE_MODEL: &str = "voice/models/hey_jarvis_ko_ridge.onnx";
+const BUNDLED_CUSTOM_WAKE_MODEL: &str = resource_layout::WAKE_MODEL;
 const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
 
 #[derive(Debug, Error)]
@@ -46,6 +49,14 @@ pub enum BridgeError {
     ActionNotAllowed,
     #[error("state_io_failed")]
     StateIo,
+    #[error("resource_missing")]
+    ResourceMissing,
+    #[error("resource_unsafe")]
+    ResourceUnsafe,
+    #[error("development_resources_disabled")]
+    DevelopmentDisabled,
+    #[error("python_environment_missing_or_unsafe")]
+    PythonEnv,
     #[error("voice_environment_missing")]
     VoiceEnv,
     #[error("voice_script_missing")]
@@ -60,12 +71,11 @@ pub struct PythonBridge {
 
 #[derive(Debug)]
 struct BridgeConfig {
-    python: String,
-    script: PathBuf,
-    repo_root: PathBuf,
+    python: PathBuf,
+    voice_python: PathBuf,
+    resources: Result<ResourceLayout, ResourceError>,
     state_root: PathBuf,
     logs_dir: PathBuf,
-    bin: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -167,7 +177,7 @@ impl PythonBridge {
         let bytes = self.run_python(&[], SNAPSHOT_TIMEOUT, token_id)?;
         let value = parse_json_output(&bytes)?;
         let mut snapshot = sanitize_snapshot(&value);
-        snapshot.voice = read_voice_status(&self.config.state_root, &self.config.repo_root);
+        snapshot.voice = read_voice_status(&self.config.state_root, &self.config.resources()?.root);
         Ok(snapshot)
     }
 
@@ -237,7 +247,13 @@ impl PythonBridge {
     }
 
     pub fn start_voice_session(&self) -> Result<(), BridgeError> {
-        let plan = plan_voice_session(&self.config.repo_root, &self.config.state_root)?;
+        let resources = self.config.resources()?;
+        resources.validate().map_err(BridgeError::from)?;
+        let plan = plan_voice_session(
+            &resources.root,
+            &self.config.state_root,
+            &self.config.voice_python,
+        )?;
         voice_session_command(&plan, &self.config.state_root)?
             .spawn()
             .map(|_| ())
@@ -250,6 +266,20 @@ impl PythonBridge {
         timeout: Duration,
         token_id: Option<&str>,
     ) -> Result<Vec<u8>, BridgeError> {
+        let resources = self.config.resources()?;
+        resources.validate().map_err(BridgeError::from)?;
+        let python = if !resources.installed && self.config.python == Path::new("python3") {
+            "python3"
+        } else {
+            validate_path(&self.config.python, Kind::Executable)
+                .map_err(|_| BridgeError::PythonEnv)?;
+            self.config.python.to_str().ok_or(BridgeError::PythonEnv)?
+        };
+        let script = resources
+            .script
+            .to_str()
+            .ok_or(BridgeError::ResourceUnsafe)?;
+        let bin = resources.bin.to_str().ok_or(BridgeError::ResourceUnsafe)?;
         let cancel_flag = Arc::new(AtomicBool::new(false));
         if let Some(token) = token_id {
             if let Ok(mut map) = self.cancellations.lock() {
@@ -260,25 +290,18 @@ impl PythonBridge {
         let mut args = vec![
             "-E".to_string(),
             "-B".to_string(),
-            self.config.script.to_string_lossy().into_owned(),
+            "-s".to_string(),
+            script.to_string(),
             "--state-root".to_string(),
             self.config.state_root.to_string_lossy().into_owned(),
             "--logs-dir".to_string(),
             self.config.logs_dir.to_string_lossy().into_owned(),
         ];
-        if let Some(bin) = &self.config.bin {
-            args.push("--bin".to_string());
-            args.push(bin.to_string_lossy().into_owned());
-        }
+        args.push("--bin".to_string());
+        args.push(bin.to_string());
         args.extend(extra.iter().cloned());
 
-        let result = run_process(
-            &self.config.python,
-            &args,
-            timeout,
-            OUTPUT_LIMIT_BYTES,
-            cancel_flag,
-        );
+        let result = run_process(python, &args, timeout, OUTPUT_LIMIT_BYTES, cancel_flag);
         if let Some(token) = token_id {
             if let Ok(mut map) = self.cancellations.lock() {
                 map.remove(token);
@@ -288,60 +311,111 @@ impl PythonBridge {
     }
 }
 
+impl From<ResourceError> for BridgeError {
+    fn from(error: ResourceError) -> Self {
+        match error {
+            ResourceError::Missing => Self::ResourceMissing,
+            ResourceError::Unsafe => Self::ResourceUnsafe,
+            ResourceError::DevelopmentDisabled => Self::DevelopmentDisabled,
+        }
+    }
+}
+
 impl BridgeConfig {
+    fn resources(&self) -> Result<&ResourceLayout, BridgeError> {
+        self.resources
+            .as_ref()
+            .map_err(|error| BridgeError::from(*error))
+    }
+
     fn discover() -> Self {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+            .unwrap()
+            .parent()
+            .unwrap();
+        let executable = std::env::current_exe();
+        // Environment reads for code selection are debug-checkout-only. In
+        // particular a debug .app must use exactly the installed contract.
+        let dev = cfg!(debug_assertions)
+            && executable.as_ref().is_ok_and(|path| {
+                !path
+                    .ancestors()
+                    .any(|p| p.extension().is_some_and(|e| e == "app"))
+            });
+        let get_override = |key| {
+            if dev {
+                std::env::var_os(key).map(PathBuf::from)
+            } else {
+                None
+            }
+        };
+        let resources = executable
+            .map_err(|_| ResourceError::Missing)
+            .and_then(|path| {
+                ResourceLayout::discover(
+                    &path,
+                    checkout,
+                    dev,
+                    DevOverrides {
+                        root: get_override("OPENKAKAO_RESOURCE_ROOT"),
+                        script: get_override("OPENKAKAO_MENUBAR_SCRIPT"),
+                        bin: get_override("OPENKAKAO_BIN"),
+                    },
+                )
+            });
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/nonexistent"));
         let support = home.join("Library/Application Support/openkakao");
         let modern = support.join("auto-reply");
         let legacy = support.join("bujamentor");
-        let state_root = std::env::var_os("OPENKAKAO_STATE_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                if modern.join("enrollment.json").is_file()
-                    || !legacy.join("enrollment.json").is_file()
-                {
-                    modern
-                } else {
-                    legacy
-                }
-            });
-        let script = std::env::var_os("OPENKAKAO_MENUBAR_SCRIPT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| repo_root.join("scripts/auto-reply-menubar.py"));
-        let logs_dir = std::env::var_os("OPENKAKAO_LOGS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("Library/Logs/AutoReplyMenu"));
-        let bin = std::env::var_os("OPENKAKAO_BIN")
-            .map(PathBuf::from)
-            .or_else(|| {
-                let candidate = repo_root.join("target/debug/openkakao-cli");
-                candidate.is_file().then_some(candidate)
-            });
-        let python = std::env::var("OPENKAKAO_PYTHON").unwrap_or_else(|_| {
-            let uv =
-                home.join(".local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11");
-            if uv.is_file() {
-                return uv.to_string_lossy().into_owned();
-            }
-            let homebrew = Path::new("/opt/homebrew/opt/python@3.11/bin/python3.11");
-            if homebrew.is_file() {
-                homebrew.to_string_lossy().into_owned()
+        let state_root = get_override("OPENKAKAO_STATE_ROOT").unwrap_or_else(|| {
+            if modern.join("enrollment.json").is_file() || !legacy.join("enrollment.json").is_file()
+            {
+                modern
             } else {
-                "python3".to_string()
+                legacy
             }
         });
+        let logs_dir = get_override("OPENKAKAO_LOGS_DIR")
+            .unwrap_or_else(|| home.join("Library/Logs/AutoReplyMenu"));
+        let (python, voice_python) = if dev
+            && resources.as_ref().is_ok_and(|layout| !layout.installed)
+        {
+            let root = resources
+                .as_ref()
+                .map(|r| r.root.as_path())
+                .unwrap_or(checkout);
+            (
+                get_override("OPENKAKAO_PYTHON").unwrap_or_else(|| {
+                    let uv = home.join(
+                        ".local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11",
+                    );
+                    if uv.is_file() {
+                        return uv;
+                    }
+                    let homebrew = PathBuf::from("/opt/homebrew/opt/python@3.11/bin/python3.11");
+                    if homebrew.is_file() {
+                        homebrew
+                    } else {
+                        PathBuf::from("python3")
+                    }
+                }),
+                get_override("OPENKAKAO_VOICE_PYTHON")
+                    .unwrap_or_else(|| root.join(".venv-voice/bin/python")),
+            )
+        } else {
+            // Provisioned separately; never copy or inspect a checkout .venv.
+            (
+                support.join("runtimes/menubar/bin/python3.11"),
+                support.join("runtimes/voice/bin/python3.11"),
+            )
+        };
         Self {
             python,
-            script,
-            repo_root,
+            voice_python,
+            resources,
             state_root,
             logs_dir,
-            bin,
         }
     }
 }
@@ -436,25 +510,25 @@ fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     Some(value.chars().take(max_chars).collect())
 }
 
-fn plan_voice_session(repo_root: &Path, state_root: &Path) -> Result<VoiceSessionPlan, BridgeError> {
-    let python = repo_root.join(".venv-voice/bin/python")
-        .canonicalize()
-        .map_err(|_| BridgeError::VoiceEnv)?;
-    let script = repo_root.join("scripts/jarvis_voice.py");
-    if !python.is_file() {
-        return Err(BridgeError::VoiceEnv);
-    }
-    if !script.is_file() || script.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
-        return Err(BridgeError::VoiceScript);
-    }
+fn plan_voice_session(
+    resource_root: &Path,
+    state_root: &Path,
+    python: &Path,
+) -> Result<VoiceSessionPlan, BridgeError> {
+    validate_path(python, Kind::Executable).map_err(|_| BridgeError::VoiceEnv)?;
+    let script = resource_root.join(resource_layout::VOICE_SCRIPT);
+    validate_path(&script, Kind::Data).map_err(|_| BridgeError::VoiceScript)?;
     Ok(VoiceSessionPlan {
-        python,
+        python: python.to_path_buf(),
         script,
         tts_out: state_root.join(VOICE_TTS_OUT_NAME),
     })
 }
 
-fn voice_session_command(plan: &VoiceSessionPlan, state_root: &Path) -> Result<Command, BridgeError> {
+fn voice_session_command(
+    plan: &VoiceSessionPlan,
+    state_root: &Path,
+) -> Result<Command, BridgeError> {
     let mut command = Command::new(&plan.python);
     command
         .env("OPENKAKAO_VOICE_ENV", "1")
@@ -462,6 +536,7 @@ fn voice_session_command(plan: &VoiceSessionPlan, state_root: &Path) -> Result<C
         .args([
             "-E",
             "-B",
+            "-s",
             plan.script.to_str().ok_or(BridgeError::VoiceScript)?,
             "--state-root",
             state_root.to_str().ok_or(BridgeError::StateIo)?,
@@ -495,6 +570,9 @@ fn safe_small_json(path: &Path) -> Option<Value> {
 
 fn bundled_custom_wake_model_selected(repo_root: &Path) -> bool {
     let path = repo_root.join(BUNDLED_CUSTOM_WAKE_MODEL);
+    if validate_path(&path, Kind::Data).is_err() {
+        return false;
+    }
     let Ok(metadata) = fs::symlink_metadata(&path) else {
         return false;
     };
@@ -559,19 +637,11 @@ fn read_voice_status(state_root: &Path, repo_root: &Path) -> SafeVoiceStatus {
             .chars()
             .take(64)
             .collect::<String>(),
-        threshold: {
-            let value = root
-                .get("threshold")
-                .and_then(Value::as_f64)
-                .unwrap_or(WAKE_THRESHOLD);
-            if value < WAKE_THRESHOLD {
-                WAKE_THRESHOLD
-            } else if value > 0.95 {
-                0.95
-            } else {
-                value
-            }
-        },
+        threshold: root
+            .get("threshold")
+            .and_then(Value::as_f64)
+            .unwrap_or(WAKE_THRESHOLD)
+            .clamp(WAKE_THRESHOLD, 0.95),
         custom_model_selected: root
             .get("custom_model_selected")
             .and_then(Value::as_bool)
@@ -985,6 +1055,18 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_kills_owned_child() {
+        let result = run_process(
+            "python3",
+            &["-c".to_string(), "import time; time.sleep(1)".to_string()],
+            Duration::from_secs(2),
+            1024,
+            Arc::new(AtomicBool::new(true)),
+        );
+        assert!(matches!(result, Err(BridgeError::Cancelled)));
+    }
+
+    #[test]
     fn oversized_stdout_is_rejected_after_drain() {
         let args = vec!["-c".to_string(), "print('x' * 8192)".to_string()];
         let result = run_process(
@@ -999,7 +1081,7 @@ mod tests {
 
     #[test]
     fn missing_voice_status_selects_valid_bundled_wake_model() {
-        let temp = std::env::temp_dir().join(format!(
+        let temp = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "openkakao-voice-status-valid-bundle-{}",
             std::process::id()
         ));
@@ -1021,7 +1103,7 @@ mod tests {
 
     #[test]
     fn missing_voice_status_rejects_missing_or_invalid_bundled_wake_model() {
-        let temp = std::env::temp_dir().join(format!(
+        let temp = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "openkakao-voice-status-invalid-bundle-{}",
             std::process::id()
         ));
@@ -1043,8 +1125,10 @@ mod tests {
 
     #[test]
     fn voice_status_is_bounded_and_clamped() {
-        let temp =
-            std::env::temp_dir().join(format!("openkakao-voice-status-{}", std::process::id()));
+        let temp = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("openkakao-voice-status-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         fs::write(
@@ -1089,8 +1173,10 @@ mod tests {
 
     #[test]
     fn global_abort_is_latched_and_increments_epoch() {
-        let temp =
-            std::env::temp_dir().join(format!("openkakao-abort-state-{}", std::process::id()));
+        let temp = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("openkakao-abort-state-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_global_abort(&temp).unwrap();
         write_global_abort(&temp).unwrap();
@@ -1106,33 +1192,50 @@ mod tests {
 
     #[test]
     fn plan_voice_session_requires_isolated_interpreter() {
-        let temp = std::env::temp_dir().join(format!(
-            "openkakao-voice-session-{}",
-            std::process::id()
-        ));
+        let temp = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("openkakao-voice-session-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         let state_root = temp.join("state");
+        let python = temp.join(".venv-voice/bin/python");
         assert!(matches!(
-            plan_voice_session(&temp, &state_root),
+            plan_voice_session(&temp, &state_root, &python),
             Err(BridgeError::VoiceEnv)
         ));
 
         let python = temp.join(".venv-voice/bin/python");
         fs::create_dir_all(python.parent().unwrap()).unwrap();
-        fs::write(&python, b"").unwrap();
+        fs::write(&python, b"fake interpreter; never executed").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(matches!(
-            plan_voice_session(&temp, &state_root),
+            plan_voice_session(&temp, &state_root, &python),
             Err(BridgeError::VoiceScript)
         ));
 
         let script = temp.join("scripts/jarvis_voice.py");
         fs::create_dir_all(script.parent().unwrap()).unwrap();
-        fs::write(&script, b"").unwrap();
-        let plan = plan_voice_session(&temp, &state_root).unwrap();
+        fs::write(&script, b"# fake voice script").unwrap();
+        let plan = plan_voice_session(&temp, &state_root, &python).unwrap();
         assert_eq!(plan.python, python.canonicalize().unwrap());
         assert_eq!(plan.script, script);
         assert_eq!(plan.tts_out, state_root.join(VOICE_TTS_OUT_NAME));
+
+        // The interpreter is never executed. Symlinks and non-executables
+        // are rejected before starting a microphone/model session.
+        let link = temp.join("python-link");
+        std::os::unix::fs::symlink(&python, &link).unwrap();
+        assert!(matches!(
+            plan_voice_session(&temp, &state_root, &link),
+            Err(BridgeError::VoiceEnv)
+        ));
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            plan_voice_session(&temp, &state_root, &python),
+            Err(BridgeError::VoiceEnv)
+        ));
 
         let command = voice_session_command(&plan, &state_root).unwrap();
         let envs = command

@@ -6,6 +6,7 @@ edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+libc = "0.2"
 
 [dependencies]
 dirs = "6"

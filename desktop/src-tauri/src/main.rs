@@ -1,4 +1,5 @@
 mod python_bridge;
+mod resource_layout;
 
 use python_bridge::{PythonBridge, SafeRuntimeSnapshot};
 use serde_json::Value;
@@ -144,7 +145,7 @@ fn main() {
             handle
                 .global_shortcut()
                 .register(abort_shortcut)
-                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+                .map_err(Box::<dyn std::error::Error>::from)?;
             TrayIconBuilder::new()
                 .icon(make_tray_icon())
                 .icon_as_template(true)
