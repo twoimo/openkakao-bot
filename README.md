@@ -31,7 +31,7 @@ Extra is a gold hologram core plus a top-right gear. All operator controls open 
 
 ![Jarvis champagne-gold spherical core panel](docs/architecture/jarvis-core-panel.png)
 
-KakaoTalk indexing copies the live database into a temp snapshot, then opens that copy with `mode=ro` and `PRAGMA query_only`. If the copy cannot be created, the live database is not opened. GraphRAG drill-down reads the existing `knowledge-graph.sqlite3` only; a node click does not copy KakaoTalk or reindex. DREAM-RSI on the settings card is checkpoint provenance, not a live trainer.
+GraphRAG indexing copies the live KakaoTalk database plus WAL/SHM sidecars into a temp snapshot, then opens that copy with `mode=ro` and `PRAGMA query_only`; copy failure fails closed. The production `context-sync-local` path is separate and currently opens the live KakaoTalk database through `LocalDbReader::open()` in read-only mode, so a WAL-aware replica for that path remains an open blocker. GraphRAG drill-down reads the existing `knowledge-graph.sqlite3` only; a node click does not copy KakaoTalk or reindex. DREAM-RSI on the settings card is checkpoint provenance, not a live trainer.
 
 ```text
 KakaoTalk macOS (local SQLCipher DB)

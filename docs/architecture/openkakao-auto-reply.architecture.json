@@ -8,7 +8,7 @@
     "repository": {
       "url": "https://github.com/twoimo/openkakao-bot",
       "provider": "github",
-      "revision": "efee7c81a33ca323835977e61636d9b60bc6a5f9"
+      "revision": "68a549753b59146071b0a61e2ffc8f13d499e0d5"
     },
     "views": [
       {
@@ -23,14 +23,14 @@
       },
       {
         "id": "isolated-index",
-        "label": "격리 색인",
+        "label": "GraphRAG 격리 색인",
         "focus": [
           "kakaotalk",
           "cli",
           "snapshot",
           "graph"
         ],
-        "note": "임시 복사본을 RO로만 열고, 복사 실패 시 원본을 열지 않는다."
+        "note": "GraphRAG는 DB+WAL+SHM 복제본만 연다. context-sync-local의 live DB direct RO는 별도 경로다."
       },
       {
         "id": "grounded-reply",
@@ -204,7 +204,7 @@
       "id": "snapshot",
       "type": "security",
       "label": "격리 스냅샷",
-      "sublabel": "임시 복사 RO",
+      "sublabel": "GraphRAG 복사 RO",
       "pos": [
         48,
         400
@@ -216,8 +216,8 @@
       "sources": [
         {
           "path": "scripts/auto_reply_knowledge_graph.py",
-          "line": 536,
-          "label": "copy fail-closed"
+          "line": 614,
+          "label": "DB+WAL+SHM copy"
         }
       ]
     },
@@ -287,7 +287,7 @@
     },
     {
       "kind": "security-group",
-      "label": "격리 RO 스냅샷",
+      "label": "GraphRAG 격리 RO 스냅샷",
       "wraps": [
         "snapshot"
       ]
@@ -355,7 +355,7 @@
       "id": "isolate-copy",
       "from": "kakaotalk",
       "to": "snapshot",
-      "label": "격리 복사",
+      "label": "GraphRAG 격리 복사",
       "variant": "security",
       "labelAt": [
         126,
@@ -392,10 +392,10 @@
     },
     {
       "dot": "emerald",
-      "title": "격리 색인",
+      "title": "GraphRAG 격리 색인",
       "items": [
-        "임시 복사본을 mode=ro·query_only로만 연다",
-        "복사 실패 시 원본을 열지 않는다"
+        "DB+WAL+SHM 복제본을 mode=ro·query_only로 연다",
+        "context-sync-local은 live DB direct RO; WAL replica 미완료"
       ]
     },
     {
