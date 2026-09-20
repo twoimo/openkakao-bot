@@ -426,6 +426,127 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
         turn_hold.assert_called_once_with(event, None)
         repeat_hold.assert_not_called()
 
+    def test_authoritative_watermark_fails_closed_on_regression_identity_or_unstable_reads(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_watermark_safety_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            unsafe_states = (
+                {**state, "last_observed_log_id": 419},
+                {**state, "target_chat_id": 43},
+                {**state, "owner_id": "other-owner"},
+                {**state, "source_epoch": 8},
+            )
+            for payload in unsafe_states:
+                with self.subTest(payload=payload):
+                    state_path.write_text(json.dumps(payload), encoding="utf-8")
+                    self.assertIsNone(module.conversation_advanced_past_event(event))
+
+            first = (state, json.dumps(state).encode())
+            advanced_state = {**state, "last_observed_log_id": 421}
+            second = (advanced_state, json.dumps(advanced_state).encode())
+            with mock.patch.object(
+                module,
+                "_read_fence_object",
+                side_effect=(first, second),
+            ):
+                self.assertIsNone(module.conversation_advanced_past_event(event))
+
+    def test_send_reply_blocks_watermark_advance_after_preflight_before_mutation(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_late_watermark_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            connection = self._worker_queue_connection(module)
+            try:
+                connection.execute(
+                    "UPDATE reply_jobs SET status='processing' WHERE event_id=?",
+                    (event["event_id"],),
+                )
+                connection.commit()
+                calls = []
+
+                def fake_run(command, **_kwargs):
+                    calls.append(command)
+                    self.assertIn("--preflight", command)
+                    return (
+                        0,
+                        json.dumps(
+                            {
+                                "status": "preflight_ready",
+                                "preflight_ready": True,
+                                "will_send": False,
+                                "network": False,
+                            }
+                        ).encode(),
+                        b"",
+                    )
+
+                def advance_after_preflight():
+                    state_path.write_text(
+                        json.dumps({**state, "last_observed_log_id": 421}),
+                        encoding="utf-8",
+                    )
+                    return True
+
+                hold_reasons = []
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {module.DB_MODE_ENV: "database_authoritative"},
+                        clear=False,
+                    ),
+                    mock.patch.object(module, "BIN", module.Path("/usr/bin/true")),
+                    mock.patch.object(
+                        module,
+                        "numeric_author_identity_status",
+                        return_value="allowed",
+                    ),
+                    mock.patch.object(
+                        module,
+                        "send_readiness_fence",
+                        return_value=(True, ("token",)),
+                    ),
+                    mock.patch.object(
+                        module,
+                        "privacy_attestation_current",
+                        side_effect=advance_after_preflight,
+                    ),
+                    mock.patch.object(
+                        module,
+                        "transition_processing_job",
+                        wraps=module.transition_processing_job,
+                    ) as transition,
+                    mock.patch.object(
+                        module,
+                        "_run_bounded_process",
+                        side_effect=fake_run,
+                    ) as sender,
+                ):
+                    sent = module.send_reply(
+                        "formed reply",
+                        event=event,
+                        event_id=event["event_id"],
+                        connection=connection,
+                        expected_target_chat_id=42,
+                        expected_owner="owner",
+                        expected_epoch=7,
+                        hold_out=hold_reasons,
+                    )
+
+                self.assertFalse(sent)
+                self.assertEqual(hold_reasons, ["conversation_advanced"])
+                self.assertEqual(sender.call_count, 1)
+                self.assertIn("--preflight", calls[0])
+                transition.assert_not_called()
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT status FROM reply_jobs WHERE event_id=?",
+                        (event["event_id"],),
+                    ).fetchone()[0],
+                    "processing",
+                )
+            finally:
+                connection.close()
+
     def test_identity_drift_holds_before_generate(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_drift_generate_test")
         with tempfile.TemporaryDirectory() as temporary:

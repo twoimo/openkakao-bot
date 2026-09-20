@@ -11713,17 +11713,18 @@ print(json.dumps({
             finally:
                 connection.close()
 
-    def test_send_reply_cas_blocks_superseded_job_before_local_send(self):
+    def test_send_reply_blocks_superseded_job_before_sending_transition(self):
         module = self._load_auto_reply_module("auto_reply_burst_presend_test")
         with tempfile.TemporaryDirectory() as temporary:
             module.QUEUE = Path(temporary) / "reply-queue.sqlite3"
-            first = self._burst_event(module, 501, "first", 5_000)
+            now = int(time.time())
+            first = self._burst_event(module, 501, "first", now)
             first["recent_messages"] = [self._recent_row(first)]
             second = self._burst_event(
                 module,
                 502,
                 "second",
-                5_004,
+                now + 1,
                 recent=[self._recent_row(first)],
             )
             second["recent_messages"].append(self._recent_row(second))
@@ -11750,6 +11751,7 @@ print(json.dumps({
                         b"",
                     )
 
+                hold_reasons = []
                 with (
                     mock.patch.object(module, "BIN", Path("/usr/bin/true")),
                     mock.patch.object(
@@ -11777,6 +11779,11 @@ print(json.dumps({
                         "_run_bounded_process",
                         side_effect=preflight_after_successor_arrives,
                     ) as sender,
+                    mock.patch.object(
+                        module,
+                        "transition_processing_job",
+                        wraps=module.transition_processing_job,
+                    ) as transition,
                 ):
                     sent = module.send_reply(
                         "reply",
@@ -11786,15 +11793,18 @@ print(json.dumps({
                         expected_target_chat_id=42,
                         expected_owner="owner",
                         expected_epoch=7,
+                        hold_out=hold_reasons,
                     )
                 self.assertFalse(sent)
+                self.assertEqual(hold_reasons, ["burst_superseded"])
                 self.assertEqual(sender.call_count, 1)
+                transition.assert_not_called()
                 self.assertEqual(
                     connection.execute(
                         "SELECT status FROM reply_jobs WHERE event_id = ?",
                         (first["event_id"],),
                     ).fetchone()[0],
-                    "projection_pending",
+                    "processing",
                 )
             finally:
                 connection.close()
