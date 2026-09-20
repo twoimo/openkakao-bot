@@ -64,7 +64,12 @@
 [model]
 # Required for unattended AutoReply replies: use "local", or explicitly
 # attest remote egress with allow_egress, provider, and retention.
-# The Codex configuration below requires these exact remote-explicit values.
+# Fixed local MLX Qwen3.8 Flash-Next profile (no model egress):
+# privacy_mode = "local"
+# allow_egress = false
+# provider = "mlx-serve"
+#
+# Remote Codex alternative (requires these exact remote-explicit values):
 # privacy_mode = "remote_explicit"
 # allow_egress = true
 # provider = "openai-codex"
@@ -97,6 +102,17 @@
 # 3.13. The 24/7 installer additionally requires the supplied path itself not
 # to be a symlink.
 # python_interpreter = "/opt/homebrew/opt/python@3.13/bin/python3.13"
+# Fixed local MLX profile. The executable is retained only as the validated
+# worker transport placeholder; readiness and generation probes use the exact
+# loopback MLX endpoint directly and never load, unload, or swap a model.
+# reply_runner = "/opt/homebrew/bin/opencodex"
+# reply_runner_kind = "opencodex"
+# reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+# reply_reasoning_effort = "medium"
+# reply_service_tier = "default"
+# The exact `mlx/`-prefixed form of reply_model is also accepted.
+#
+# Remote Gajae-Code alternative:
 # Gajae-Code must point at a private user-owned regular file, not a symlink.
 # reply_runner = "/Users/me/.local/lib/openkakao/gjc.js"
 # reply_runner_kind = "gjc"

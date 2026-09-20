@@ -146,6 +146,9 @@ REPLY_RUNNER = Path(
 REPLY_RUNNER_KIND = os.environ.get("OPENKAKAO_REPLY_RUNNER_KIND", "gjc").strip()
 REPLY_RUNNER_SHA256 = os.environ.get("OPENKAKAO_REPLY_RUNNER_SHA256", "").strip().lower()
 REPLY_MODEL = os.environ.get("OPENKAKAO_REPLY_MODEL", FLASH_NEXT_MODEL_ID).strip()
+MODEL_PRIVACY_MODE = os.environ.get("OPENKAKAO_MODEL_PRIVACY_MODE", "").strip()
+MODEL_ALLOW_EGRESS = os.environ.get("OPENKAKAO_MODEL_ALLOW_EGRESS", "").strip()
+MODEL_PROVIDER = os.environ.get("OPENKAKAO_MODEL_PROVIDER", "").strip()
 REPLY_REASONING_EFFORT = os.environ.get(
     "OPENKAKAO_REPLY_REASONING_EFFORT", "low"
 ).strip()
@@ -11192,6 +11195,21 @@ def _is_mlx_serve_text_model(model: str) -> bool:
     return _is_mlx_serve_flash_next_model(model) or _is_mlx_serve_27b_model(model)
 
 
+def _attested_local_mlx_flash_profile(model: str) -> bool:
+    exact_model = str(model or "")
+    return (
+        REPLY_RUNNER_KIND == "opencodex"
+        and MODEL_PRIVACY_MODE == "local"
+        and MODEL_ALLOW_EGRESS == "0"
+        and MODEL_PROVIDER == "mlx-serve"
+        and exact_model
+        in {
+            FLASH_NEXT_MODEL_ID,
+            FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
+        }
+    )
+
+
 def _is_local_reply_model(model: str) -> bool:
     folded = str(model or "").casefold()
     return folded.startswith(("omlx/", "mlx/")) or _is_mlx_serve_text_model(model)
@@ -11401,7 +11419,12 @@ def _run_opencodex_generation(
     target_base_url = base_url
     target_model = model
     if _is_mlx_serve_text_model(target_model):
-        gateway_base_url, _ = discover_mlx_gateway()
+        if _attested_local_mlx_flash_profile(target_model):
+            gateway_base_url, _ = discover_mlx_gateway(
+                candidates=("http://127.0.0.1:11234/v1",)
+            )
+        else:
+            gateway_base_url, _ = discover_mlx_gateway()
         if not gateway_base_url:
             return 1, b"", b"mlx_serve_gateway_unavailable"
         advertised = detect_mlx_gateway_models(base_url=gateway_base_url)

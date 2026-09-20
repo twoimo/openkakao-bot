@@ -57,7 +57,7 @@ Interactive diagrams (authored node/card/label copy is Korean; Archify Viewer UI
 - [Jarvis Extra render and operator pipeline](docs/architecture/openkakao-auto-reply.html)
 - [GraphRAG drill-down sequence](docs/architecture/openkakao-graphrag.html)
 
-The diagrams reflect `efee7c8`. They are not a live generation trace. On-device generation still fails closed when a probe times out.
+The diagrams are architectural references, not a live generation trace. On-device generation still fails closed when a probe times out.
 
 ## Jarvis local-AI implementation status
 
@@ -77,14 +77,17 @@ The table records the historical Units 1–4 landing commits; it is not a curren
 - Reference-pack retrieval identifies the previous 128-dimensional hash vectors as `legacy_lexical_hash`, separate from local Dense embeddings. BM25 and Dense produce candidates independently and RRF fuses their rankings; the result contract carries room, participant, and time filters together with evidence IDs, index version, and watermark.
 - A missing, stale, mismatched, or failing local embedding engine/index degrades explicitly to `bm25_only`. There is no cloud embedding fallback.
 - `ModelResidencyManager` rolls back an owned prior model when memory admission, target load, or target probe fails after unload. It commits `current_model` only after the target probe succeeds; a failed rollback clears the current model and reports a `*_rollback_failed` fail-closed state. The swap gate also blocks new leases during a swap and fails closed on target-unload failure.
+- Rust startup now fails closed for local AutoReply unless the exact Flash-Next model and local profile are attested. It performs bounded, read-only checks only against `127.0.0.1:11234/v1/models` and `127.0.0.1:11234/v1/chat/completions`; the worker's attested local profile does not fall back to `127.0.0.1:10100`.
+- Validation recorded for this path: `cargo test --lib` passed **624 tests**, and the focused local MLX/readiness/worker Python regression passed **25 tests**. These regression results are separate from the live probe evidence below and do not establish 27B actual generation, signed cutover, or live-microphone success.
 - Current working-tree validation passes the focused local-AI Python CI suite (**139 tests**: 36 on-device, 8 reference search, 61 knowledge graph, 14 Unit 4, 9 model-readiness, and 11 local-model verification), the broader selected Python regression run (**221 tests**), desktop Vitest (**23 tests**), Tauri Rust (**19 tests**), the Vite build, and a local debug Tauri build. The debug bundle contains `scripts/auto_reply_reference_search.py`. The CI workflow includes these focused checks, but no hosted run of the current workflow change has been recorded. These checks do not establish live 27B readiness, signed Tauri cutover, alphaXiv availability, or live-microphone success.
 
 Current limits:
 
 - Live Extra is still the Swift AutoReplyMenu, pid **20042**. A local debug Jarvis can run alongside it with `CFBundleIdentifier=com.openkakao.jarvis.desktop` (observed pid **85174**), but the Tauri app has **not** been cut over as the signed live app; Extra keeps the original `com.openkakao.auto-reply.menu` bundle id.
-- Current 2026-09-21 bounded read-only `GET http://127.0.0.1:11234/v1/models` evidence through the readiness helper: the exact Qwen3.8 27B check returned `mlx_gateway_not_ready`. The helper reports prepared only for `loaded=true` / `state=ready`; this negative result is not used to infer a more specific gateway state or any generation success.
+- In the 2026-09-21 local read-only probe, Flash-Next reported `loaded=true` / `state=ready` and passed bounded generation. Qwen3.8 27B reported `loaded=false` / `state=unloaded`, so no 27B generation check was run.
 - The repository-only `scripts/verify_local_models.py --json` diagnostic probes the fixed Flash-Next and 27B IDs through localhost, performs a bounded generation check only when the gateway already reports `loaded=true` / `state=ready`, and never loads or swaps models. Its exit status is nonzero when either check is not proven; it is not bundled into the Tauri app.
-- A live 2026-09-21 run with `--timeout 3` returned `generation_timeout` for Flash-Next after readiness and `model_not_ready` for 27B; the command exited 1 and performed no model load or swap.
+- The current LaunchAgent points to `runtime/20260920T224139Z-69184`, and the previous remote-runtime process has been removed. The service is `healthy=false` / `backoff` because the target KakaoTalk window was not open and the AX read-only preflight failed. It did not switch focus or open the window automatically and remains fail-closed.
+- Signed cutover, Qwen3.8 27B actual generation, and live-microphone verification remain open.
 - The Jarvis 27B `model-prepare` path is a readiness-only gate: it performs no load/swap POST and no generation, reports prepared only when that exact 27B row is both `loaded=true` and `state=ready`, and does not change the saved model selection. No 27B load/swap was performed for this state check.
 - On 2026-09-21 `npm run tauri build -- --debug` completed and the debug `.app` contained `scripts/local_mlx_model_readiness.py` and `scripts/auto_reply_reference_search.py`; its macOS signature is ad hoc, so this validates bundling only and does not establish signed cutover.
 - DPO output does not promote or replace the live model automatically.
@@ -100,8 +103,8 @@ Current limits:
 - Voice settings now show the locked 0.65 Korean wake path. Bundled `hey_jarvis_ko_ridge.onnx` is selected when it validates. A file pipeline accepted custom wake at **0.768**, then Flash-Next replied `네, 분청 합성 정상 작동 중입니다.` after `max_tokens=128`; TTS wrote a 3.04 s wav without playback. Extra still owns the live menu. Live mic and signed cutover remain open.
 - At commit `38f77cb`, the parallel Tauri debug bundle was rebuilt and restarted as pid **62924**. The updated **760 x 760** Voice settings capture is [jarvis-settings-panel.png](docs/architecture/jarvis-settings-panel.png) (**76,125 bytes**); Extra pid **20042** remained alive and process readback showed only Flash-Next on `mlx-serve`, with no Qwen3.8 27B or Gemma process. The real Tauri hide RAF probe was not repeated because its temporary telemetry hook had been removed.
 - Snapshot Voice now selects bundled Korean ONNX from the file on disk when no session status exists. Production `whisper-large-v3-turbo` on the same TTS clip transcribed `안녕하세요 분성 합성 테스트입니다.` in 25.4 s (tiny had 분청). Extra pid **20042** unchanged.
-- Debug Tauri was rebuilt at `96153df` and is running as pid **63463** (`com.openkakao.jarvis.desktop`) without replacing Extra.
-- Debug Jarvis now ignores SIGHUP: after rebuild, `open` pid **84521** survived `kill -HUP` with Extra **20042** unchanged. An unused LaunchAgent template is in the repo and was not loaded.
+- At `96153df`, a debug Tauri build was observed as pid **63463** (`com.openkakao.jarvis.desktop`) without replacing Extra.
+- The rebuilt debug Jarvis SIGHUP check observed `open` pid **84521** survive `kill -HUP` with Extra **20042** unchanged. That historical process check does not supersede the current LaunchAgent/runtime state above.
 - Settings Voice has an opt-in **마이크 세션 시작** control that spawns the isolated `.venv-voice` `jarvis_voice.py` session. It does not auto-start. Extra was not restarted.
 - Debug Jarvis was rebuilt at `6f76876` as pid **40102**. The settings capture now includes **마이크 세션 시작**. Extra **20042** unchanged.
 - Unavailability no longer paints Voice as stock-only; the default card shows bundled ONNX plus the mic start control.
@@ -164,6 +167,11 @@ cp config.example.toml ~/.config/openkakao/config.toml
 Minimal `~/.config/openkakao/config.toml`:
 
 ```toml
+[model]
+privacy_mode = "local"
+allow_egress = false
+provider = "mlx-serve"
+
 [auto_reply]
 # Allowed chatrooms: ["bind:<chatId>:<exactOnScreenName>"]
 chats = ["bind:123456789012345:TeamChannel"]
@@ -171,10 +179,13 @@ chats = ["bind:123456789012345:TeamChannel"]
 # Your display name in KakaoTalk
 self_nickname = "Your Name"
 
-# Recommended on-device engine (MLX), not Gemma / llama.cpp / Ollama:
-# reply_runner_kind = "mlx"
-# reply_model = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+# Recommended on-device engine (MLX), not Gemma / llama.cpp / Ollama
+reply_runner = "/absolute/path/to/installed/opencodex"
+reply_runner_kind = "opencodex"
+reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ```
+
+`reply_runner` is a validated transport placeholder for this local MLX profile and must point to the installed `opencodex` executable.
 
 ### 4. Run
 

@@ -6,6 +6,11 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+pub(crate) const MLX_FLASH_NEXT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+pub(crate) const MLX_FLASH_NEXT_PREFIXED_MODEL_ID: &str =
+    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+pub(crate) const MLX_SERVE_PROVIDER: &str = "mlx-serve";
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct OpenKakaoConfig {
     #[serde(default)]
@@ -82,7 +87,7 @@ pub struct AutoReplyConfig {
     #[serde(default)]
     pub reply_runner: Option<String>,
     /// Reply runner protocol. The unattended worker currently supports
-    /// `codex` and the legacy `gjc` adapter.
+    /// `codex`, `gjc`, and the `opencodex` transport placeholder.
     #[serde(default)]
     pub reply_runner_kind: Option<String>,
     /// Exact model passed to the configured reply runner.
@@ -251,7 +256,10 @@ pub fn verify_config_attestation(config: &OpenKakaoConfig) -> Result<(PathBuf, S
 /// Validate the model privacy contract before an unattended worker starts.
 pub fn validate_model_privacy(config: &OpenKakaoConfig) -> Result<()> {
     match config.model.privacy_mode.as_deref() {
-        Some("local") => Ok(()),
+        Some("local") if !config.model.allow_egress => Ok(()),
+        Some("local") => {
+            anyhow::bail!("local model privacy requires model.allow_egress=false")
+        }
         Some("remote_explicit")
             if config.model.allow_egress
                 && config
@@ -272,6 +280,37 @@ pub fn validate_model_privacy(config: &OpenKakaoConfig) -> Result<()> {
         }
         None => anyhow::bail!("model privacy mode must be explicitly configured"),
     }
+}
+
+pub(crate) fn canonical_mlx_flash_next_model(model: Option<&str>) -> Option<&'static str> {
+    match model {
+        Some(MLX_FLASH_NEXT_MODEL_ID | MLX_FLASH_NEXT_PREFIXED_MODEL_ID) => {
+            Some(MLX_FLASH_NEXT_MODEL_ID)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_auto_reply_local_mlx_profile(config: &OpenKakaoConfig) -> Result<()> {
+    if config.model.privacy_mode.as_deref() != Some("local")
+        || config.model.allow_egress
+        || config.model.provider.as_deref() != Some(MLX_SERVE_PROVIDER)
+    {
+        anyhow::bail!(
+            "local MLX AutoReply requires model.privacy_mode=local, model.allow_egress=false, and model.provider=mlx-serve"
+        );
+    }
+    if config.auto_reply.reply_runner_kind.as_deref() != Some("opencodex") {
+        anyhow::bail!(
+            "local MLX AutoReply requires reply_runner_kind=opencodex as its validated transport placeholder"
+        );
+    }
+    if canonical_mlx_flash_next_model(config.auto_reply.reply_model.as_deref()).is_none() {
+        anyhow::bail!(
+            "local MLX AutoReply requires the exact Qwen3.8 Flash-Next MLX-Serve model ID"
+        );
+    }
+    Ok(())
 }
 
 pub fn unattended_auto_reply_enabled(config: &OpenKakaoConfig) -> bool {
@@ -415,6 +454,10 @@ pub fn validate_auto_reply_startup(
         anyhow::bail!("AX sending is disabled; set safety.allow_ax_send = true");
     }
     validate_model_privacy(config).context("AutoReply model privacy attestation failed")?;
+    let local_mlx_profile = config.model.privacy_mode.as_deref() == Some("local");
+    if local_mlx_profile {
+        validate_auto_reply_local_mlx_profile(config)?;
+    }
     if config.auto_reply.reply_runner_kind.as_deref() == Some("codex") {
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || config.model.provider.as_deref() != Some("openai-codex")
@@ -435,7 +478,8 @@ pub fn validate_auto_reply_startup(
     if matches!(
         config.auto_reply.reply_runner_kind.as_deref(),
         Some("opencodex") | Some("gjc")
-    ) {
+    ) && !local_mlx_profile
+    {
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || !matches!(
                 config.model.provider.as_deref(),
@@ -578,6 +622,9 @@ mod tests {
         config.safety.allow_auto_reply = true;
         assert!(validate_model_privacy(&config).is_ok());
         assert!(unattended_auto_reply_enabled(&config));
+
+        config.model.allow_egress = true;
+        assert!(validate_model_privacy(&config).is_err());
     }
 
     #[test]
@@ -586,6 +633,9 @@ mod tests {
         config.safety.allow_auto_reply = true;
         config.safety.allow_ax_send = true;
         config.model.privacy_mode = Some("local".into());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("opencodex".into());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
         config.auto_reply.self_nickname = Some("self".into());
         config.auto_reply.reply_authors = vec!["author".into()];
         config.safety.allowed_send_chats = vec!["room".into()];
@@ -593,6 +643,31 @@ mod tests {
         assert!(validate_auto_reply_startup(&config, &["other".into()], &[2]).is_err());
         config.safety.allow_ax_send = false;
         assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_err());
+    }
+
+    #[test]
+    fn local_mlx_auto_reply_profile_requires_exact_privacy_provider_and_model() {
+        let mut config = OpenKakaoConfig::default();
+        config.model.privacy_mode = Some("local".into());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("opencodex".into());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_ok());
+
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_PREFIXED_MODEL_ID.into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_ok());
+
+        config.auto_reply.reply_model = Some("google-antigravity/gemini-3.8-flash".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
+        config.model.allow_egress = true;
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.model.allow_egress = false;
+        config.model.provider = Some("opencodex".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("gjc".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
     }
 
     #[test]

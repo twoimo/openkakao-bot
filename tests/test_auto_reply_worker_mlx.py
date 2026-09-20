@@ -120,6 +120,42 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
         )
         self.assertTrue(all(data is None for _url, data, _timeout in calls))
 
+    def test_attested_local_flash_profile_never_falls_back_to_10100(self):
+        module = self.module
+        for selected_model in (
+            "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+            "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+        ):
+            with self.subTest(selected_model=selected_model):
+                calls = []
+
+                def fake_urlopen(request, timeout=None):
+                    calls.append((request.full_url, request.data, timeout))
+                    raise urllib.error.URLError("offline")
+
+                with (
+                    mock.patch.object(module, "REPLY_RUNNER_KIND", "opencodex"),
+                    mock.patch.object(module, "MODEL_PRIVACY_MODE", "local"),
+                    mock.patch.object(module, "MODEL_ALLOW_EGRESS", "0"),
+                    mock.patch.object(module, "MODEL_PROVIDER", "mlx-serve"),
+                    mock.patch("urllib.request.urlopen", side_effect=fake_urlopen),
+                ):
+                    code, stdout, stderr = module._run_opencodex_generation(
+                        selected_model,
+                        "system",
+                        b'{"inbound":"hello"}',
+                        timeout=90.0,
+                    )
+
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, b"")
+                self.assertEqual(stderr, b"mlx_serve_gateway_unavailable")
+                self.assertEqual(
+                    [url for url, _data, _timeout in calls],
+                    ["http://127.0.0.1:11234/v1/models"],
+                )
+                self.assertTrue(all(data is None for _url, data, _timeout in calls))
+
     def test_generation_candidate_blocks_product_cloud_fallback(self):
         module = self.module
         command = ["gjc", "--model", "primary/model"]
