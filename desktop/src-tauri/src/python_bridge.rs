@@ -101,6 +101,9 @@ pub struct SafeVoiceStatus {
     error_code: Option<String>,
     wake_source: String,
     updated_at: u64,
+    wake_phrase: String,
+    threshold: f64,
+    custom_model_selected: bool,
 }
 
 impl Default for SafeVoiceStatus {
@@ -112,6 +115,9 @@ impl Default for SafeVoiceStatus {
             error_code: None,
             wake_source: "none".to_string(),
             updated_at: 0,
+            wake_phrase: String::new(),
+            threshold: 0.65,
+            custom_model_selected: false,
         }
     }
 }
@@ -456,6 +462,21 @@ fn read_voice_status(state_root: &Path) -> SafeVoiceStatus {
         error_code,
         wake_source: wake_source.to_string(),
         updated_at: as_u64(root.get("updated_at")),
+        wake_phrase: root
+            .get("wake_phrase")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .take(64)
+            .collect::<String>(),
+        threshold: {
+            let value = root.get("threshold").and_then(Value::as_f64).unwrap_or(0.65);
+            if value < 0.65 { 0.65 } else if value > 0.95 { 0.95 } else { value }
+        },
+        custom_model_selected: root
+            .get("custom_model_selected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -893,6 +914,9 @@ mod tests {
         assert_eq!(status.rms, 1.0);
         assert_eq!(status.wake_source, "stock");
         assert_eq!(status.updated_at, 7);
+        assert_eq!(status.wake_phrase, "");
+        assert_eq!(status.threshold, 0.65);
+        assert!(!status.custom_model_selected);
         let _ = fs::remove_dir_all(&temp);
     }
 

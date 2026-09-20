@@ -86,7 +86,7 @@ describe("safe shared contracts", () => {
     expect(snapshot.terminal).toEqual({ sent: 3, skipped: 2, deliveryUnknown: 1, burstSuperseded: 4 });
     expect(snapshot.contextSync).toEqual({ mode: "async", waited: false });
     expect(snapshot.jobLoad).toBe(0.7);
-    expect(snapshot.voice).toEqual({ available: true, state: "speaking", rms: 0.42, errorCode: null, wakeSource: "stock", updatedAt: 10 });
+    expect(snapshot.voice).toEqual({ available: true, state: "speaking", rms: 0.42, errorCode: null, wakeSource: "stock", updatedAt: 10, wakePhrase: "", threshold: 0.65, customModelSelected: false });
   });
 
   it("fails closed on bad JSON, empty lists, and a missing model id", () => {
@@ -118,6 +118,9 @@ describe("layout and settings contract", () => {
       "settings-slot-morning", "settings-slot-lunch", "settings-slot-evening",
     ]) expect(markup).toContain(`id="${id}"`);
     expect(markup).toContain('id="voice-status"');
+    expect(markup).toContain('id="voice-phrase"');
+    expect(markup).toContain('id="voice-threshold"');
+    expect(markup).toContain('id="voice-custom"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
   });

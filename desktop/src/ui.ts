@@ -58,7 +58,10 @@ export function settingsMarkup(): string {
     <section class="settings-card" aria-labelledby="voice-title">
       <div class="section-heading"><h2 id="voice-title">Voice</h2><span class="tag muted-tag">로컬 전용</span></div>
       <p id="voice-status">음성 런타임 상태를 확인 중입니다.</p>
-      <p class="muted">“헤이 자비스” · RMS는 acoustic pulse lattice 진폭에만 반영됩니다.</p>
+      <p id="voice-phrase">호출어: 헤이 자비스</p>
+      <p id="voice-threshold">임계값: 0.65 고정</p>
+      <p id="voice-custom">한국어 커스텀 헤드: 확인 중</p>
+      <p class="muted">RMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.</p>
     </section>
 
     <section id="settings-sync-card" class="settings-card knowledge-accent" aria-labelledby="sync-title">

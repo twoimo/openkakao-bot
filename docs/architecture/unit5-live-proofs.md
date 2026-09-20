@@ -383,3 +383,32 @@ OK
 
 The two added tests cover accepted model path/extension, the 64 MiB bound, and symbolic-link rejection. Training/export used the isolated `.venv-voice` interpreter with the optional local `onnx` training dependency. No cloud inference fallback was added.
 Parent re-score in a fresh `.venv-voice` process after Ramanujan returned: wake **0.895084** accept, control **0.218323** reject, silence **0.142663** reject. Decision vs 0.65 is unchanged; small score drift is preprocessor-state variance, not a threshold change.
+
+## Bundled Korean wake wired into Voice settings and file pipeline — 2026-09-20 KST
+
+Measured from `/Users/twoimo/Documents/projects/openkakao-bot` starting at HEAD `fb718c3`. Codex Web extra-high (Bernoulli) hit ChatGPT rate limit mid-task; the parent finished the wiring locally. Extra pid **20042** was not restarted. 27B/Gemma stayed unloaded.
+
+`resolve_custom_wake_model()` now selects `voice/models/hey_jarvis_ko_ridge.onnx` when the file validates. The microphone session and the file pipeline both load stock + custom. Invalid/missing bundle fails closed to stock-only and does not lower `WAKE_THRESHOLD=0.65`.
+
+Tauri Voice card copy (gear-only main panel unchanged):
+
+- `voice-phrase`: 호출어 헤이 자비스
+- `voice-threshold`: 0.65 고정
+- `voice-custom`: bundled ONNX selected vs stock-only Korean miss
+
+File pipeline (no microphone, no speaker playback) used `.venv-voice` with `OPENKAKAO_WHISPER_MODEL=mlx-community/whisper-tiny-mlx`:
+
+| Field | Result |
+| --- | --- |
+| custom_model_selected | true |
+| stock_max | 2.06e-06 |
+| custom_max | **0.784400** |
+| accepted | true (`wake_source=custom`) |
+| threshold | 0.65 |
+| STT/LLM/TTS | `state=error`, `error_code=generation_error` |
+| Extra 20042 | alive |
+| 27B | unloaded |
+
+A direct Flash-Next `/v1/chat/completions` probe then timed out at 20 s with 0 bytes while Extra still owned the resident model. The wake-accept path is proven; a butler reply was not obtained without displacing Extra's Flash-Next. Live microphone and signed Extra cutover remain open.
+
+UV Python 3.11 `tests.test_jarvis_unit3`: **11 OK**. Desktop vitest: **13 OK**. Rust `voice_status_is_bounded_and_clamped`: **OK**.

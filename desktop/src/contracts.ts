@@ -47,6 +47,9 @@ export interface VoiceStatus {
   errorCode: string | null;
   wakeSource: "stock" | "custom" | "none";
   updatedAt: number;
+  wakePhrase: string;
+  threshold: number;
+  customModelSelected: boolean;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -110,7 +113,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
-    voice: { available: false, state: "unavailable", rms: 0, errorCode: null, wakeSource: "none", updatedAt: 0 },
+    voice: { available: false, state: "unavailable", rms: 0, errorCode: null, wakeSource: "none", updatedAt: 0, wakePhrase: "", threshold: 0.65, customModelSelected: false },
     errorCode,
   };
 }
@@ -173,6 +176,9 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
           ? "custom"
           : "none",
       updatedAt: nonNegativeInt(voice?.updated_at ?? voice?.updatedAt),
+      wakePhrase: text(voice?.wake_phrase ?? voice?.wakePhrase, ""),
+      threshold: Math.min(0.95, Math.max(0.65, finiteNumber(voice?.threshold, 0.65))),
+      customModelSelected: voice?.custom_model_selected === true || voice?.customModelSelected === true,
     },
     errorCode: contextValid ? (typeof input.error_code === "string" ? input.error_code : null) : "context_sync_invalid",
   };

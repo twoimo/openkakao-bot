@@ -66,10 +66,18 @@ function renderVoice(snapshot: RuntimeSnapshot): void {
   const voice = snapshot.voice;
   if (!voice.available) {
     setText("voice-status", "음성 런타임 상태를 아직 받지 못했습니다.");
+    setText("voice-phrase", "호출어: 헤이 자비스");
+    setText("voice-threshold", "임계값: 0.65 고정");
+    setText("voice-custom", "한국어 커스텀 헤드: 상태 없음 · 영어 스톡만이면 한국어 호출은 실패합니다.");
     return;
   }
   const suffix = voice.errorCode ? ` · ${voice.errorCode}` : "";
   setText("voice-status", `상태 ${voice.state} · wake ${voice.wakeSource} · RMS ${voice.rms.toFixed(3)}${suffix}`);
+  setText("voice-phrase", `호출어: ${voice.wakePhrase || "헤이 자비스"}`);
+  setText("voice-threshold", `임계값: ${voice.threshold.toFixed(2)} 고정`);
+  setText("voice-custom", voice.customModelSelected
+    ? "한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)"
+    : "한국어 커스텀 헤드: 없음 · 영어 스톡만 사용 중, 한국어 호출은 실패합니다.");
 }
 
 function relationMeta(edge: KnowledgeEdge): string {

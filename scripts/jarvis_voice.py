@@ -29,6 +29,7 @@ from jarvis_abort import AbortToken, JarvisCancelled
 WAKE_PHRASE = "헤이 자비스"
 WAKE_THRESHOLD = 0.65
 CUSTOM_WAKE_MODEL_MAX_BYTES = 64 * 1024 * 1024
+BUNDLED_CUSTOM_WAKE_MODEL = Path(__file__).resolve().parents[1] / "voice" / "models" / "hey_jarvis_ko_ridge.onnx"
 VOICE_STATUS_NAME = "jarvis-voice-status.json"
 VOICE_STATUS_SCHEMA_VERSION = 1
 WHISPER_MODEL_ID = "mlx-community/whisper-large-v3-turbo"
@@ -246,12 +247,37 @@ class OpenWakeVadFrontend:
         )
 
 
+def resolve_custom_wake_model(explicit: Path | None = None) -> Path | None:
+    """Return a validated custom-model path, or None when only stock is available.
+
+    An explicit path fails closed. The bundled Korean head is selected when it
+    validates; a missing/invalid bundle does not lower the wake threshold.
+    """
+
+    if explicit is not None:
+        path, _framework = OpenWakeVadFrontend._validate_custom_wake_model_path(explicit)
+        return path
+    try:
+        path, _framework = OpenWakeVadFrontend._validate_custom_wake_model_path(BUNDLED_CUSTOM_WAKE_MODEL)
+        return path
+    except RuntimeError:
+        return None
+
+
 class VoiceStatusStore:
     def __init__(self, state_root: Path):
         self.path = state_root / VOICE_STATUS_NAME
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
-    def write(self, *, state: VoiceState, rms: float, error_code: str = "", wake_source: str = "stock") -> None:
+    def write(
+        self,
+        *,
+        state: VoiceState,
+        rms: float,
+        error_code: str = "",
+        wake_source: str = "stock",
+        custom_model_selected: bool = False,
+    ) -> None:
         payload = {
             "schema_version": VOICE_STATUS_SCHEMA_VERSION,
             "state": state.value,
@@ -259,6 +285,8 @@ class VoiceStatusStore:
             "error_code": str(error_code or "")[:96],
             "wake_phrase": WAKE_PHRASE,
             "wake_source": wake_source if wake_source in {"stock", "custom", "none"} else "none",
+            "threshold": WAKE_THRESHOLD,
+            "custom_model_selected": bool(custom_model_selected),
             "updated_at": int(time.time()),
         }
         temp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
@@ -297,6 +325,9 @@ class JarvisVoicePipeline:
         self.state = VoiceState.WAKE_LISTEN
         self.last_rms = 0.0
         self._wake_source = "none"
+        self._custom_model_selected = False
+        self._transcript = ""
+        self._reply = ""
         self._speech_frames = 0
         self._silence_frames = 0
         self._noise_frames = 0
@@ -310,13 +341,14 @@ class JarvisVoicePipeline:
                 rms=self.last_rms,
                 error_code=error_code,
                 wake_source=self._wake_source,
+                custom_model_selected=self._custom_model_selected,
             )
 
     def _end(self, state: VoiceState, error_code: str) -> VoiceResult:
         self.state = state
         self.ring.clear()
         self._publish(error_code)
-        return VoiceResult(state=state, error_code=error_code)
+        return VoiceResult(state=state, error_code=error_code, transcript=getattr(self, "_transcript", ""), reply=getattr(self, "_reply", ""))
 
     def mic_disconnected(self) -> VoiceResult:
         return self._end(VoiceState.ERROR, "mic_disconnected")
@@ -401,6 +433,7 @@ class JarvisVoicePipeline:
             self._publish()
             transcript = self.stt.transcribe(pcm16, self.sample_rate, self.token).strip()
             self.token.raise_if_cancelled()
+            self._transcript = transcript
             if not transcript:
                 return self._end(VoiceState.ERROR, "stt_empty")
         except JarvisCancelled:
@@ -503,10 +536,8 @@ class Qwen3TtsAdapter:
             self._engine = Qwen3TTSModel.from_pretrained(self.model, dtype=dtype)
         return self._engine
 
-    def speak(self, text: str, token: AbortToken) -> None:
+    def synthesize(self, text: str, token: AbortToken) -> tuple[Any, int]:
         token.raise_if_cancelled()
-        import sounddevice as sd
-
         engine = self._load()
         speakers = engine.get_supported_speakers() or []
         speaker = speakers[0] if speakers else "ryan"
@@ -516,6 +547,35 @@ class Qwen3TtsAdapter:
             language="Korean",
         )
         audio = wavs[0] if isinstance(wavs, list) else wavs
+        token.raise_if_cancelled()
+        return audio, int(sample_rate)
+
+    def write_wav(self, text: str, path: Path, token: AbortToken) -> dict[str, Any]:
+        import numpy as np
+        import wave
+
+        audio, sample_rate = self.synthesize(text, token)
+        if hasattr(audio, "detach"):
+            audio = audio.detach().cpu().numpy()
+        samples = np.asarray(audio).squeeze().astype(np.float32)
+        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+        if peak > 1.0:
+            samples = samples / peak
+        pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(sample_rate)
+            handle.writeframes(pcm.tobytes())
+        return {"path": str(path), "bytes": path.stat().st_size, "sample_rate": sample_rate, "nframes": int(pcm.size)}
+
+    def speak(self, text: str, token: AbortToken) -> None:
+        token.raise_if_cancelled()
+        import sounddevice as sd
+
+        audio, sample_rate = self.synthesize(text, token)
         token.raise_if_cancelled()
         sd.play(audio, int(sample_rate), blocking=False)
         try:
@@ -561,7 +621,10 @@ def run_microphone_session(
         return pipeline._end(VoiceState.ABORTED, "global_abort")
 
     try:
-        frontend = OpenWakeVadFrontend(custom_wake_model=custom_wake_model)
+        selected = resolve_custom_wake_model(custom_wake_model)
+        pipeline._custom_model_selected = selected is not None
+        pipeline._publish()
+        frontend = OpenWakeVadFrontend(custom_wake_model=selected)
         # Blocking reads keep capture bounded to one 20 ms frame. When STT/LLM/TTS
         # runs, the stream is not read; the session returns immediately after TTS,
         # so playback cannot become a fresh wake/user utterance.
@@ -593,15 +656,147 @@ def _default_state_root() -> Path:
     return Path.home() / "Library/Application Support/openkakao/auto-reply"
 
 
+def _load_wav_pcm16(path: Path, sample_rate: int = 16_000) -> bytes:
+    import numpy as np
+    import wave
+
+    with wave.open(str(path), "rb") as handle:
+        channels = handle.getnchannels()
+        width = handle.getsampwidth()
+        rate = handle.getframerate()
+        raw = handle.readframes(handle.getnframes())
+    if width != 2:
+        raise ValueError("voice_wav_sample_width_invalid")
+    samples = np.frombuffer(raw, dtype=np.int16)
+    if channels > 1:
+        samples = samples.reshape(-1, channels).mean(axis=1).astype(np.int16)
+    if rate != sample_rate:
+        n_out = int(round(len(samples) * sample_rate / rate))
+        if n_out <= 1 or len(samples) <= 1:
+            samples = np.zeros(max(n_out, 0), dtype=np.int16)
+        else:
+            x_src = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
+            x_dst = np.linspace(0.0, 1.0, num=n_out, endpoint=False)
+            samples = np.clip(np.interp(x_dst, x_src, samples.astype(np.float32)), -32768, 32767).astype(np.int16)
+    return samples.tobytes()
+
+
+def run_file_pipeline(
+    *,
+    state_root: Path,
+    wake_wav: Path,
+    utterance_wav: Path,
+    tts_out: Path,
+    custom_wake_model: Path | None = None,
+) -> dict[str, Any]:
+    """Wake from a file, then STT -> local LLM -> TTS file. Never opens the mic."""
+
+    assert_isolated_voice_environment()
+    from jarvis_abort import AbortController
+
+    selected = resolve_custom_wake_model(custom_wake_model)
+    controller = AbortController(state_root)
+    token = controller.token()
+    status = VoiceStatusStore(state_root)
+    engine = Qwen3TtsAdapter()
+
+    class _FileTts:
+        def __init__(self) -> None:
+            self.meta: dict[str, Any] = {}
+
+        def speak(self, text: str, speak_token: AbortToken) -> None:
+            self.meta = engine.write_wav(text, tts_out, speak_token)
+
+    tts = _FileTts()
+    pipeline = JarvisVoicePipeline(
+        stt=MlxWhisperAdapter(model=os.environ.get("OPENKAKAO_WHISPER_MODEL", WHISPER_MODEL_ID)),
+        llm=LocalMlxLlm(),
+        tts=tts,
+        token=token,
+        status=status,
+    )
+    pipeline._custom_model_selected = selected is not None
+    pipeline._publish()
+    frontend = OpenWakeVadFrontend(custom_wake_model=selected)
+    wake_pcm = _load_wav_pcm16(wake_wav)
+    accepted = False
+    stock_max = 0.0
+    custom_max = 0.0
+    for offset in range(0, len(wake_pcm) - 639, 640):
+        analysis = frontend.analyze(wake_pcm[offset : offset + 640])
+        stock_max = max(stock_max, analysis.stock_wake_score)
+        if analysis.custom_wake_score is not None:
+            custom_max = max(custom_max, analysis.custom_wake_score)
+        result = pipeline.feed_audio(
+            wake_pcm[offset : offset + 640],
+            rms=analysis.rms,
+            speech=analysis.speech,
+            stock_wake_score=analysis.stock_wake_score,
+            custom_wake_score=analysis.custom_wake_score,
+        )
+        if pipeline.state == VoiceState.USER_LISTEN:
+            accepted = True
+            break
+        if result is not None:
+            return {
+                "accepted": False,
+                "state": result.state.value,
+                "error_code": result.error_code,
+                "stock_max": stock_max,
+                "custom_max": custom_max,
+                "custom_model_selected": selected is not None,
+            }
+    if not accepted:
+        ended = pipeline._end(VoiceState.ENDED, "wake_miss")
+        return {
+            "accepted": False,
+            "state": ended.state.value,
+            "error_code": ended.error_code,
+            "stock_max": stock_max,
+            "custom_max": custom_max,
+            "custom_model_selected": selected is not None,
+        }
+
+    utterance = _load_wav_pcm16(utterance_wav)
+    voice = pipeline.process_utterance(utterance)
+    return {
+        "accepted": True,
+        "state": voice.state.value,
+        "error_code": voice.error_code,
+        "transcript": voice.transcript,
+        "reply": voice.reply,
+        "stock_max": stock_max,
+        "custom_max": custom_max,
+        "custom_model_selected": selected is not None,
+        "threshold": WAKE_THRESHOLD,
+        "tts": tts.meta,
+        "wake_source": pipeline._wake_source,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one local Jarvis voice session.")
     parser.add_argument("--state-root", type=Path, default=None)
     parser.add_argument("--custom-wake-model", type=Path, default=None)
+    parser.add_argument("--file-wake", type=Path, default=None)
+    parser.add_argument("--file-utterance", type=Path, default=None)
+    parser.add_argument("--tts-out", type=Path, default=None)
     args = parser.parse_args(argv)
-    result = run_microphone_session(
-        state_root=(args.state_root or _default_state_root()).expanduser(),
-        custom_wake_model=args.custom_wake_model.expanduser() if args.custom_wake_model else None,
-    )
+    state_root = (args.state_root or _default_state_root()).expanduser()
+    custom = args.custom_wake_model.expanduser() if args.custom_wake_model else None
+    if args.file_wake is not None or args.file_utterance is not None or args.tts_out is not None:
+        if args.file_wake is None or args.file_utterance is None or args.tts_out is None:
+            raise SystemExit("file_pipeline_args_incomplete")
+        report = run_file_pipeline(
+            state_root=state_root,
+            wake_wav=args.file_wake.expanduser(),
+            utterance_wav=args.file_utterance.expanduser(),
+            tts_out=args.tts_out.expanduser(),
+            custom_wake_model=custom,
+        )
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report.get("accepted") and report.get("state") == "ended" else 1
+    result = run_microphone_session(state_root=state_root, custom_wake_model=custom)
     print(json.dumps({"state": result.state.value, "error_code": result.error_code}, ensure_ascii=False))
     return 0 if result.state in {VoiceState.ENDED, VoiceState.ABORTED} else 1
 

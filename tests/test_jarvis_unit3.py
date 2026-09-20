@@ -18,6 +18,7 @@ from jarvis_browser_use import BrowserUseRunner
 from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, VoiceState, WakePhraseGate
 from jarvis_voice import Qwen3TtsAdapter
 from jarvis_voice import OpenWakeVadFrontend
+from jarvis_voice import BUNDLED_CUSTOM_WAKE_MODEL, resolve_custom_wake_model
 
 
 class FakeStt:
@@ -158,6 +159,17 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
             symlink.symlink_to(target)
             with self.assertRaisesRegex(RuntimeError, "custom_wake_model_invalid"):
                 OpenWakeVadFrontend._validate_custom_wake_model_path(symlink)
+
+    def test_resolve_custom_wake_model_uses_bundled_or_fails_closed(self):
+        if BUNDLED_CUSTOM_WAKE_MODEL.is_file():
+            self.assertEqual(resolve_custom_wake_model(None), BUNDLED_CUSTOM_WAKE_MODEL)
+        with TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing.onnx"
+            with self.assertRaisesRegex(RuntimeError, "custom_wake_model_invalid"):
+                resolve_custom_wake_model(missing)
+            valid = Path(temp_dir) / "ok.onnx"
+            valid.write_bytes(b"onnx")
+            self.assertEqual(resolve_custom_wake_model(valid), valid)
 
     def test_global_abort_clears_queue_and_never_auto_resumes(self):
         with TemporaryDirectory() as temp_dir:
