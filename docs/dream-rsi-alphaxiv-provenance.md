@@ -36,10 +36,14 @@ timeout, non-zero exit, oversized/invalid JSON, identity mismatch, or an
 incomplete summary returns `paper_analysis.status="unavailable"` with
 `evidence=null`.
 
-As verified on 2026-09-21 in this repository environment, `alphaxiv` is not on
-`PATH`. `orx` is installed, but it is a different openresearch CLI and is not
-silently substituted for the `alphaxiv` command. Therefore no successful
-alphaXiv paper analysis is claimed for the current machine state.
+As verified on 2026-09-21 in this repository environment, the persistent
+`PATH` has no alphaXiv CLI that implements the paper-analysis commands above.
+PyPI `alphaxiv==0.0.13` is instead a TTY-based W&B experiment synchronization
+CLI and provides none of the required `search`, `context`, or `paper summary`
+commands. `orx` is installed, but it is a different openresearch CLI and is not
+used as a substitute. Therefore `scripts/dream_rsi_alphaxiv.py` continues to
+fail closed with `paper_analysis.status="unavailable"` and `evidence=null`; no
+successful alphaXiv paper analysis is claimed for the current machine state.
 
 ## Provenance report schema
 

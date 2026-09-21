@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -45,6 +46,8 @@ MODEL_RESIDENCY_STATE_NAME = "mlx-model-residency.json"
 MODEL_RESIDENCY_STATE_MAX_BYTES = 4096
 MODEL_RESIDENCY_STATE_MAX_AGE_SECONDS = 30.0
 QWEN38_27B_REQUIRED_BYTES = 40 * 1024**3
+# Admission includes runtime/KV headroom, not just weight bytes on disk.
+FLASH_NEXT_REQUIRED_BYTES = 88 * 1024**3
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -69,6 +72,8 @@ def _valid_mlx_gateway_url(value: str) -> bool:
             and parsed.hostname == "127.0.0.1"
             and parsed.port == 11234
             and parsed.path == "/v1"
+            and not parsed.username
+            and not parsed.password
             and not parsed.query
             and not parsed.fragment
         )
@@ -119,6 +124,13 @@ class MemoryBudget:
     voice_models_bytes: int = 0
     other_resident_bytes: int = 0
 
+    def __post_init__(self) -> None:
+        if any(type(value) is not int or value < 0 for value in (
+            self.free_bytes, self.kv_cache_bytes,
+            self.voice_models_bytes, self.other_resident_bytes,
+        )):
+            raise ValueError("memory_budget_unavailable")
+
     @property
     def usable_bytes(self) -> int:
         reserved = self.kv_cache_bytes + self.voice_models_bytes + self.other_resident_bytes
@@ -157,6 +169,14 @@ class MlxModelGateway(Protocol):
     def probe(self, model_id: str) -> bool: ...
 
 
+class ModelResidencyUncertain(RuntimeError):
+    """A control request may have committed; no subsequent mutation is safe."""
+
+
+class ModelSwapCommitError(RuntimeError):
+    """Persistence failed before the model selection was committed."""
+
+
 class HttpMlxModelGateway:
     """Control client for an already-running MLX Serve instance."""
 
@@ -167,14 +187,34 @@ class HttpMlxModelGateway:
         self.timeout = max(0.5, min(float(timeout), 180.0))
 
     def _model_action(self, model_id: str, action: str) -> None:
+        if not _canonical_managed_model_id(model_id):
+            raise ValueError("model_not_allowed")
         encoded = urllib.parse.quote(model_id.removeprefix("mlx/"), safe="")
         request = urllib.request.Request(
             f"{self.base_url}/models/{encoded}/{action}",
             data=b"",
             method="POST",
         )
-        with _local_only_urlopen(request, timeout=self.timeout) as response:
-            response.read(MLX_GATEWAY_MAX_RESPONSE_BYTES)
+        try:
+            with _local_only_urlopen(request, timeout=self.timeout) as response:
+                raw = response.read(MLX_GATEWAY_MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
+                raise ValueError("mlx_gateway_response_too_large")
+            expected = (True, "ready") if action == "load" else (False, "unloaded")
+            if self._resident_state(model_id) != expected:
+                raise ValueError("mlx_gateway_state_unverified")
+        except Exception as exc:
+            # Even a timeout/HTTP error may follow a committed control operation.
+            # In particular, an unloaded catalog row after a timed-out load does
+            # not prove the server has stopped loading. Never retry or roll back.
+            raise ModelResidencyUncertain("model_residency_uncertain") from exc
+
+    def _resident_state(self, model_id: str) -> tuple[bool, str] | None:
+        answered, rows = _read_mlx_gateway_models(base_url=self.base_url, timeout=self.timeout)
+        matches = [row for row in rows if _canonical_managed_model_id(row.get("id")) == model_id]
+        if not answered or len(matches) != 1 or type(matches[0].get("loaded")) is not bool:
+            return None
+        return matches[0]["loaded"], matches[0].get("state", "")
 
     def unload(self, model_id: str) -> None:
         self._model_action(model_id, "unload")
@@ -183,12 +223,21 @@ class HttpMlxModelGateway:
         self._model_action(model_id, "load")
 
     def probe(self, model_id: str) -> bool:
+        try:
+            return self._probe(model_id)
+        except Exception as exc:
+            raise ModelResidencyUncertain("model_residency_uncertain") from exc
+
+    def _probe(self, model_id: str) -> bool:
+        if not _canonical_managed_model_id(model_id) or self._resident_state(model_id) != (True, "ready"):
+            return False
         payload = json.dumps(
             {
                 "model": model_id.removeprefix("mlx/"),
                 "messages": [{"role": "user", "content": "LOCAL_OK"}],
                 "max_tokens": 4,
                 "temperature": 0,
+                "stream": False,
             }
         ).encode("utf-8")
         request = urllib.request.Request(
@@ -201,7 +250,14 @@ class HttpMlxModelGateway:
         if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
             raise ValueError("mlx_gateway_response_too_large")
         body = json.loads(raw.decode("utf-8", "replace"))
-        return bool((body.get("choices") or [{}])[0].get("message", {}).get("content"))
+        if not isinstance(body, dict) or _canonical_managed_model_id(body.get("model")) != model_id:
+            return False
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return False
+        message = choices[0].get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        return isinstance(content, str) and bool(content.strip()) and self._resident_state(model_id) == (True, "ready")
 
 
 class ModelResidencyManager:
@@ -227,7 +283,14 @@ class ModelResidencyManager:
         self.current_model: str | None = current_model
         self.owned_models = set(owned_models)
         self.memory_budget = memory_budget or (lambda: MemoryBudget(0))
-        self.required_bytes = dict(required_bytes or {})
+        self.required_bytes = {
+            FLASH_NEXT_MODEL_ID: FLASH_NEXT_REQUIRED_BYTES,
+            QWEN38_27B_MODEL_ID: QWEN38_27B_REQUIRED_BYTES,
+        }
+        for model, amount in (required_bytes or {}).items():
+            if type(amount) is not int or amount <= 0:
+                raise ValueError("memory_budget_unavailable")
+            self.required_bytes[model] = max(self.required_bytes.get(model, 0), amount)
         self.cancel_check = cancel_check
         self._condition = threading.Condition()
         self._in_flight = 0
@@ -249,7 +312,7 @@ class ModelResidencyManager:
     def request_lease(self) -> Iterator[None]:
         with self._condition:
             while self._swap_in_progress and not self._is_cancelled():
-                self._condition.wait()
+                self._condition.wait(0.1)
             if self._is_cancelled():
                 raise RuntimeError("model_swap_cancelled")
             self._in_flight += 1
@@ -303,6 +366,7 @@ class ModelResidencyManager:
         *,
         allow_27b: bool = QWEN38_27B_DEFAULT_LOADED,
         drain_timeout: float = 30.0,
+        commit: Callable[[ModelResidencyManager], None] | None = None,
     ) -> ModelSwapResult:
         stages: list[str] = [SwapStage.DRAIN.value]
         if target_model not in self._ALLOWED_TEXT_MODELS:
@@ -317,6 +381,7 @@ class ModelResidencyManager:
                 target_model,
                 allow_27b=allow_27b,
                 drain_timeout=drain_timeout,
+                commit=commit,
             )
         finally:
             self._end_swap()
@@ -327,17 +392,32 @@ class ModelResidencyManager:
         *,
         allow_27b: bool,
         drain_timeout: float,
+        commit: Callable[[ModelResidencyManager], None] | None,
     ) -> ModelSwapResult:
         stages: list[str] = [SwapStage.DRAIN.value]
         if not self._drain(drain_timeout):
             reason = "cancelled" if self._is_cancelled() else "drain_timeout"
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
+        if self.current_model is not None and self.current_model not in self.owned_models:
+            return ModelSwapResult(False, target_model, SwapStage.ABORTED, "model_owner_unknown", tuple(stages))
         if target_model == self.current_model:
-            stages.extend((SwapStage.PROBE.value, SwapStage.READY.value))
+            stages.append(SwapStage.PROBE.value)
             try:
                 ok = bool(self.gateway.probe(target_model))
+            except ModelResidencyUncertain:
+                self.current_model = None
+                return ModelSwapResult(False, target_model, SwapStage.FAILED, "model_residency_uncertain", tuple(stages))
             except Exception:
                 ok = False
+            if self._is_cancelled():
+                return ModelSwapResult(False, target_model, SwapStage.ABORTED, "cancelled", tuple(stages))
+            if ok and commit is not None:
+                try:
+                    commit(self)
+                except ModelSwapCommitError as exc:
+                    return ModelSwapResult(False, target_model, SwapStage.FAILED, str(exc), tuple(stages))
+            if ok:
+                stages.append(SwapStage.READY.value)
             return ModelSwapResult(
                 ok,
                 target_model,
@@ -350,21 +430,14 @@ class ModelResidencyManager:
         previous_was_owned = previous is not None and previous in self.owned_models
         previous_was_unloaded = False
 
-        if previous is not None and not previous_was_owned:
-            return ModelSwapResult(
-                False,
-                target_model,
-                SwapStage.ABORTED,
-                "model_owner_unknown",
-                tuple(stages),
-            )
-
         def failure_after_unload(stage: SwapStage, reason: str) -> ModelSwapResult:
             if not previous_was_unloaded or previous is None:
                 return ModelSwapResult(False, target_model, stage, reason, tuple(stages))
 
             stages.append(SwapStage.ROLLBACK.value)
             try:
+                if self.memory_budget().usable_bytes < self.required_bytes[previous]:
+                    raise RuntimeError("insufficient_free_memory")
                 self.gateway.load(previous)
             except Exception:
                 self.current_model = None
@@ -379,6 +452,9 @@ class ModelResidencyManager:
             self.owned_models.add(previous)
             try:
                 restored = bool(self.gateway.probe(previous))
+            except ModelResidencyUncertain:
+                self.current_model = None
+                return ModelSwapResult(False, target_model, SwapStage.FAILED, f"{reason}_rollback_failed", tuple(stages))
             except Exception:
                 restored = False
             if restored:
@@ -408,6 +484,9 @@ class ModelResidencyManager:
             stages.append(SwapStage.UNLOAD.value)
             try:
                 self.gateway.unload(previous)
+            except ModelResidencyUncertain:
+                self.current_model = None
+                return ModelSwapResult(False, target_model, SwapStage.FAILED, "model_residency_uncertain", tuple(stages))
             except Exception:
                 return ModelSwapResult(False, target_model, SwapStage.FAILED, "unload_failed", tuple(stages))
             self.owned_models.discard(previous)
@@ -429,6 +508,9 @@ class ModelResidencyManager:
         stages.append(SwapStage.LOAD.value)
         try:
             self.gateway.load(target_model)
+        except ModelResidencyUncertain:
+            self.current_model = None
+            return ModelSwapResult(False, target_model, SwapStage.FAILED, "model_residency_uncertain", tuple(stages))
         except Exception:
             return failure_after_unload(SwapStage.FAILED, "load_failed")
         self.owned_models.add(target_model)
@@ -451,11 +533,21 @@ class ModelResidencyManager:
         stages.append(SwapStage.PROBE.value)
         try:
             probe_ok = bool(self.gateway.probe(target_model))
+        except ModelResidencyUncertain:
+            self.current_model = None
+            return ModelSwapResult(False, target_model, SwapStage.FAILED, "model_residency_uncertain", tuple(stages))
         except Exception:
             probe_ok = False
         probe_cancelled = self._is_cancelled()
-        if not probe_ok or probe_cancelled:
-            failure_reason = "cancelled" if probe_cancelled else "probe_failed"
+        failure_reason = "cancelled" if probe_cancelled else "probe_failed" if not probe_ok else ""
+        if not failure_reason and commit is not None:
+            self.current_model = target_model
+            try:
+                commit(self)
+            except ModelSwapCommitError as exc:
+                failure_reason = str(exc)
+        if failure_reason:
+            self.current_model = None
             try:
                 self.gateway.unload(target_model)
             except Exception:
@@ -463,15 +555,13 @@ class ModelResidencyManager:
                     False,
                     target_model,
                     SwapStage.FAILED,
-                    f"{failure_reason}_rollback_failed"
-                    if probe_cancelled
-                    else "probe_failed",
+                    f"{failure_reason}_rollback_failed",
                     tuple(stages),
                 )
             else:
                 self.owned_models.discard(target_model)
             return failure_after_unload(
-                SwapStage.ABORTED if probe_cancelled else SwapStage.FAILED,
+                SwapStage.ABORTED if failure_reason == "cancelled" else SwapStage.FAILED,
                 failure_reason,
             )
         self.current_model = target_model
@@ -632,6 +722,8 @@ def read_managed_model_residency(
     if "" in owned or current not in owned:
         return unknown("model_owner_state_invalid")
     stamp = time.time() if now is None else float(now)
+    if not math.isfinite(updated_at) or not math.isfinite(stamp) or in_flight < 0 or owner_pid <= 1:
+        return unknown("model_owner_state_invalid")
     if updated_at > stamp + 5.0 or stamp - updated_at > MODEL_RESIDENCY_STATE_MAX_AGE_SECONDS:
         return unknown("model_owner_state_stale")
     probe = process_probe or _pid_owns_mlx_gateway
@@ -651,12 +743,27 @@ def read_managed_model_residency(
     if not answered:
         return unknown("model_gateway_unavailable")
     loaded: list[str] = []
+    other_resident_bytes = 0
+    seen: set[str] = set()
     for item in models:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            return unknown("model_residency_mismatch")
+        identity = item["id"].removeprefix("mlx/")
+        if identity in seen:
+            return unknown("model_residency_mismatch")
+        seen.add(identity)
         model_id = _canonical_managed_model_id(item.get("id"))
-        state = str(item.get("state") or "").strip().casefold()
-        if model_id and (item.get("loaded") is True or state in {"loaded", "ready"}):
-            loaded.append(model_id)
-    if list(dict.fromkeys(loaded)) != [current]:
+        if item.get("loaded") is True and item.get("state") == "ready":
+            if model_id:
+                loaded.append(model_id)
+            else:
+                amount = item.get("bytes_resident")
+                if type(amount) is not int or amount <= 0:
+                    return unknown("model_residency_mismatch")
+                other_resident_bytes += amount
+        elif item.get("loaded") is not False or item.get("state") != "unloaded":
+            return unknown("model_residency_mismatch")
+    if loaded != [current]:
         return unknown("model_residency_mismatch")
     drained = raw.get("accepting_requests") is False and in_flight == 0
     return ManagedModelResidency(
@@ -666,7 +773,7 @@ def read_managed_model_residency(
         True,
         drained,
         "ready" if drained else "model_drain_unverified",
-        *reserves,
+        reserves[0], reserves[1], max(reserves[2], other_resident_bytes),
     )
 
 
@@ -779,15 +886,15 @@ def _read_mlx_gateway_models(
         if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
             return False, []
         payload = json.loads(raw.decode("utf-8", "replace"))
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             return False, []
     except Exception:
         return False, []
 
     models: list[dict[str, Any]] = []
-    for item in payload.get("data") or []:
+    for item in payload["data"]:
         if not isinstance(item, dict):
-            continue
+            return False, []
         model_id = str(item.get("id") or "").strip()
         owner = str(item.get("owned_by") or "").strip()
         if model_id and (model_id.startswith("mlx/") or owner.casefold() == "mlx-serve"):
@@ -796,6 +903,8 @@ def _read_mlx_gateway_models(
                 model["loaded"] = item.get("loaded")
             if "state" in item:
                 model["state"] = str(item.get("state") or "")
+            if "bytes_resident" in item:
+                model["bytes_resident"] = item["bytes_resident"]
             models.append(model)
     return True, models
 

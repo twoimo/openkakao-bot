@@ -44,6 +44,7 @@ from auto_reply_ondevice import (
     ManagedModelResidency,
     MemoryBudget,
     ModelResidencyManager,
+    ModelSwapCommitError,
     detect_memory_budget,
     read_managed_model_residency,
     write_managed_model_residency,
@@ -2024,6 +2025,31 @@ def swap_reply_model(
             ok=False, stage="aborted", reason="explicit_opt_in_required"
         )
 
+    # Serialize the entire read/modify/persist transaction across IPC children.
+    # This lock does not attest or drain gateway requests; the owner gate below
+    # must already have that independent evidence.
+    try:
+        descriptor = os.open(root / "mlx-model-swap.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return _model_swap_result(ok=False, stage="aborted", reason="model_owner_unknown")
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return _model_swap_result(ok=False, stage="aborted", reason="model_swap_busy")
+        return _swap_reply_model_locked(
+            root, token, residency_probe=residency_probe, memory_probe=memory_probe,
+            gateway_factory=gateway_factory, persist_residency=persist_residency,
+            cancel_check=cancel_check, now=now,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _swap_reply_model_locked(
+    root: Path, token: str, *, residency_probe, memory_probe,
+    gateway_factory, persist_residency, cancel_check, now,
+) -> dict[str, Any]:
     probe = residency_probe or read_managed_model_residency
     try:
         residency = probe(root)
@@ -2095,8 +2121,6 @@ def swap_reply_model(
         required_bytes={QWEN38_27B_MODEL_ID: QWEN38_27B_REQUIRED_BYTES},
         cancel_check=cancelled,
     )
-    result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True, drain_timeout=30.0)
-
     persist = persist_residency or write_managed_model_residency
 
     def persist_manager_state() -> bool:
@@ -2123,52 +2147,37 @@ def swap_reply_model(
         except Exception:
             return False
 
+    def commit_selection(_manager: ModelResidencyManager) -> None:
+        if not persist_manager_state():
+            raise ModelSwapCommitError("model_state_write_failed")
+        if manager._is_cancelled():
+            raise ModelSwapCommitError("cancelled")
+        try:
+            _atomic_write_json(
+                _reply_model_override_path(root),
+                {
+                    "schema_version": 1,
+                    "model": JARVIS_SWAP_MODEL_ID,
+                    "updated_at": int(time.time() if now is None else float(now)),
+                },
+            )
+        except OSError as exc:
+            raise ModelSwapCommitError("model_override_write_failed") from exc
+
+    result = manager.swap(
+        QWEN38_27B_MODEL_ID, allow_27b=True, drain_timeout=30.0,
+        commit=commit_selection,
+    )
     if not result.ok:
-        persist_manager_state()
+        # Do not refresh an untouched ownership/drain attestation on preflight
+        # failure. After mutation, record restored or explicitly unknown state.
+        if "unload" in result.stages or "load" in result.stages:
+            persist_manager_state()
         return _model_swap_result(
             ok=False,
             stage=result.stage.value,
             reason=result.reason,
             stages=result.stages,
-        )
-
-    if not persist_manager_state():
-        rollback = manager.swap(
-            residency.current_model, allow_27b=True, drain_timeout=30.0
-        )
-        persist_manager_state()
-        reason = "model_state_write_failed"
-        if not rollback.ok:
-            reason += "_rollback_failed"
-        return _model_swap_result(
-            ok=False,
-            stage="failed",
-            reason=reason,
-            stages=tuple(result.stages) + tuple(rollback.stages),
-        )
-
-    try:
-        _atomic_write_json(
-            _reply_model_override_path(root),
-            {
-                "schema_version": 1,
-                "model": JARVIS_SWAP_MODEL_ID,
-                "updated_at": int(time.time() if now is None else float(now)),
-            },
-        )
-    except OSError:
-        rollback = manager.swap(
-            residency.current_model, allow_27b=True, drain_timeout=30.0
-        )
-        persist_manager_state()
-        reason = "model_override_write_failed"
-        if not rollback.ok:
-            reason += "_rollback_failed"
-        return _model_swap_result(
-            ok=False,
-            stage="failed",
-            reason=reason,
-            stages=tuple(result.stages) + tuple(rollback.stages),
         )
     return _model_swap_result(
         ok=True,

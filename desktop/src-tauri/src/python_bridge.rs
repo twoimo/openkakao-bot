@@ -18,6 +18,7 @@ use thiserror::Error;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(25);
 const MODEL_SWAP_TIMEOUT: Duration = Duration::from_secs(120);
+const MODEL_SWAP_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
@@ -251,16 +252,28 @@ impl PythonBridge {
     }
 
     pub fn cancel_model_swap(&self, token_id: &str) -> bool {
+        if !valid_model_swap_token(token_id) {
+            return false;
+        }
         let Ok(map) = self.cancellations.lock() else {
             return false;
         };
-        let Some(handle) = map.get(token_id) else {
-            return false;
-        };
-        let Some(marker) = handle.cooperative_marker.as_deref() else {
-            return false;
-        };
-        write_model_swap_cancel_marker(marker).is_ok()
+        if let Some(handle) = map.get(token_id) {
+            return handle
+                .cooperative_marker
+                .as_deref()
+                .is_some_and(|marker| write_model_swap_cancel_marker(marker).is_ok());
+        }
+        // The UI can cancel before spawn_blocking has registered the child.
+        // Keep a token-scoped tombstone that startup must not erase.
+        write_model_swap_cancel_marker(
+            &self
+                .config
+                .state_root
+                .join(MODEL_SWAP_CANCEL_DIR)
+                .join(format!("{token_id}.json")),
+        )
+        .is_ok()
     }
 
     pub fn global_abort(&self) -> Result<(), BridgeError> {
@@ -323,13 +336,19 @@ impl PythonBridge {
             if marker.is_symlink() {
                 return Err(BridgeError::StateIo);
             }
-            let _ = fs::remove_file(&marker);
             Some(marker)
         } else {
             None
         };
         if let Some(token) = token_id {
-            if let Ok(mut map) = self.cancellations.lock() {
+            {
+                let mut map = self
+                    .cancellations
+                    .lock()
+                    .map_err(|_| BridgeError::StateIo)?;
+                if map.contains_key(token) {
+                    return Err(BridgeError::ActionNotAllowed);
+                }
                 map.insert(
                     token.to_string(),
                     CancellationHandle {
@@ -354,7 +373,15 @@ impl PythonBridge {
         args.push(bin.to_string());
         args.extend(extra.iter().cloned());
 
-        let result = run_process(python, &args, timeout, OUTPUT_LIMIT_BYTES, cancel_flag);
+        let result = run_process_with_recovery(
+            python,
+            &args,
+            timeout,
+            OUTPUT_LIMIT_BYTES,
+            cancel_flag,
+            cooperative_marker.as_deref(),
+            MODEL_SWAP_RECOVERY_TIMEOUT,
+        );
         if let Some(token) = token_id {
             if let Ok(mut map) = self.cancellations.lock() {
                 map.remove(token);
@@ -476,12 +503,33 @@ impl BridgeConfig {
     }
 }
 
+#[cfg(test)]
 fn run_process(
     executable: &str,
     args: &[String],
     timeout: Duration,
     output_limit: usize,
     cancel_flag: Arc<AtomicBool>,
+) -> Result<Vec<u8>, BridgeError> {
+    run_process_with_recovery(
+        executable,
+        args,
+        timeout,
+        output_limit,
+        cancel_flag,
+        None,
+        Duration::ZERO,
+    )
+}
+
+fn run_process_with_recovery(
+    executable: &str,
+    args: &[String],
+    timeout: Duration,
+    output_limit: usize,
+    cancel_flag: Arc<AtomicBool>,
+    cooperative_marker: Option<&Path>,
+    recovery_timeout: Duration,
 ) -> Result<Vec<u8>, BridgeError> {
     let mut child = Command::new(executable)
         .args(args)
@@ -514,6 +562,7 @@ fn run_process(
     });
 
     let started = Instant::now();
+    let mut recovery_started = None;
     let status = loop {
         if cancel_flag.load(Ordering::SeqCst) {
             let _ = child.kill();
@@ -522,10 +571,18 @@ fn run_process(
             return Err(BridgeError::Cancelled);
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader.join();
-            return Err(BridgeError::Timeout);
+            if let Some(marker) = cooperative_marker {
+                if recovery_started.is_none() {
+                    let _ = write_model_swap_cancel_marker(marker);
+                    recovery_started = Some(Instant::now());
+                }
+            }
+            if recovery_started.is_none_or(|since| since.elapsed() >= recovery_timeout) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(BridgeError::Timeout);
+            }
         }
         match child.try_wait().map_err(|_| BridgeError::Wait)? {
             Some(status) => break status,
@@ -1079,6 +1136,10 @@ fn sanitize_model_swap_action(value: &Value) -> Value {
         "model_state_write_failed_rollback_failed",
         "model_override_write_failed",
         "model_override_write_failed_rollback_failed",
+        "model_swap_busy",
+        "model_residency_uncertain",
+        "memory_budget_unavailable_rollback_failed",
+        "insufficient_free_memory_rollback_failed",
     ];
     let stage = value
         .get("stage")
@@ -1114,6 +1175,7 @@ fn sanitize_model_swap_action(value: &Value) -> Value {
         && value.get("action").and_then(Value::as_str) == Some("model-swap")
         && value.get("model").and_then(Value::as_str) == Some(SWAP_MODEL_ID)
         && stage == "ready"
+        && matches!(reason, "ready" | "already_resident")
         && stored
         && prepared;
     json!({
@@ -1425,7 +1487,7 @@ mod tests {
         {
             let mut map = bridge.cancellations.lock().unwrap();
             map.insert(
-                "swap".to_string(),
+                "123e4567-e89b-42d3-a456-426614174000".to_string(),
                 CancellationHandle {
                     flag: cooperative_flag.clone(),
                     cooperative_marker: Some(marker.clone()),
@@ -1440,9 +1502,9 @@ mod tests {
             );
         }
 
-        assert!(!bridge.cancel("swap"));
+        assert!(!bridge.cancel("123e4567-e89b-42d3-a456-426614174000"));
         assert!(!cooperative_flag.load(Ordering::SeqCst));
-        assert!(bridge.cancel_model_swap("swap"));
+        assert!(bridge.cancel_model_swap("123e4567-e89b-42d3-a456-426614174000"));
         assert_eq!(
             safe_small_json(&marker)
                 .and_then(|value| value.get("cancelled").and_then(Value::as_bool)),
@@ -1453,6 +1515,84 @@ mod tests {
         assert!(normal_flag.load(Ordering::SeqCst));
         assert!(!bridge.cancel_model_swap("snapshot"));
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn cancellation_before_child_registration_is_preserved() {
+        let temp =
+            std::env::temp_dir().join(format!("openkakao-early-cancel-{}", std::process::id()));
+        let mut bridge = PythonBridge::new();
+        Arc::get_mut(&mut bridge.config).unwrap().state_root = temp.clone();
+        let token = "123e4567-e89b-42d3-a456-426614174001";
+        assert!(!bridge.cancel_model_swap("../invalid"));
+        assert!(bridge.cancel_model_swap(token));
+        let marker = temp
+            .join(MODEL_SWAP_CANCEL_DIR)
+            .join(format!("{token}.json"));
+        assert_eq!(safe_small_json(&marker).unwrap()["cancelled"], true);
+        assert!(bridge.cancel_model_swap(token));
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn swap_timeout_allows_cooperative_recovery_result() {
+        let temp =
+            std::env::temp_dir().join(format!("openkakao-timeout-recovery-{}", std::process::id()));
+        let marker = temp.join("cancel.json");
+        let args = vec!["-c".to_string(),
+            "import pathlib,sys,time; p=pathlib.Path(sys.argv[1]);\nwhile not p.exists(): time.sleep(.01)\nprint('{\"reason\":\"cancelled_rollback_failed\"}')".to_string(),
+            marker.to_string_lossy().into_owned()];
+        let result = run_process_with_recovery(
+            "python3",
+            &args,
+            Duration::from_millis(30),
+            1024,
+            Arc::new(AtomicBool::new(false)),
+            Some(&marker),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(
+            parse_json_output(&result).unwrap()["reason"],
+            "cancelled_rollback_failed"
+        );
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn unresponsive_swap_has_a_bounded_recovery_deadline() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-recovery-deadline-{}",
+            std::process::id()
+        ));
+        let marker = temp.join("cancel.json");
+        let result = run_process_with_recovery(
+            "python3",
+            &["-c".into(), "import time; time.sleep(5)".into()],
+            Duration::from_millis(20),
+            1024,
+            Arc::new(AtomicBool::new(false)),
+            Some(&marker),
+            Duration::from_millis(30),
+        );
+        assert!(matches!(result, Err(BridgeError::Timeout)));
+        assert!(marker.exists());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn swap_success_cannot_carry_a_failure_reason() {
+        for reason in [
+            "cancelled_rollback_failed",
+            "insufficient_free_memory_rollback_failed",
+            "private-error",
+        ] {
+            let value = sanitize_model_swap_action(&json!({
+                "ok": true, "action": "model-swap", "model": SWAP_MODEL_ID,
+                "stage": "ready", "reason": reason, "stored": true, "prepared": true,
+            }));
+            assert_eq!(value["ok"], false);
+        }
     }
 
     #[test]

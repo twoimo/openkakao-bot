@@ -13,9 +13,14 @@ from unittest.mock import MagicMock, patch
 
 from scripts.auto_reply_ondevice import (
     FLASH_NEXT_MODEL_ID,
+    FLASH_NEXT_REQUIRED_BYTES,
+    ManagedModelResidency,
     MemoryBudget,
     ModelResidencyManager,
+    ModelResidencyUncertain,
+    MODEL_RESIDENCY_STATE_NAME,
     QWEN38_27B_MODEL_ID,
+    QWEN38_27B_REQUIRED_BYTES,
     EngineRecommendation,
     HttpMlxModelGateway,
     HardwareSpec,
@@ -29,8 +34,10 @@ from scripts.auto_reply_ondevice import (
     ondevice_summary_dict,
     probe_ondevice_generation,
     read_last_probe,
+    read_managed_model_residency,
     recommend_ondevice_setup,
     verify_ondevice_setup,
+    write_managed_model_residency,
 )
 
 
@@ -427,12 +434,10 @@ class TestModelResidencySwap(unittest.TestCase):
             gateway,
             current_model=FLASH_NEXT_MODEL_ID,
             owned_models=[FLASH_NEXT_MODEL_ID],
-            memory_budget=lambda: MemoryBudget(
-                50 * 1024**3,
-                kv_cache_bytes=8 * 1024**3,
-                voice_models_bytes=8 * 1024**3,
-                other_resident_bytes=8 * 1024**3,
-            ),
+            memory_budget=MagicMock(side_effect=[
+                MemoryBudget(50 * 1024**3, 8 * 1024**3, 8 * 1024**3, 8 * 1024**3),
+                MemoryBudget(120 * 1024**3),
+            ]),
             required_bytes={QWEN38_27B_MODEL_ID: 30 * 1024**3},
         )
         result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
@@ -546,7 +551,7 @@ class TestModelResidencySwap(unittest.TestCase):
             gateway,
             current_model=FLASH_NEXT_MODEL_ID,
             owned_models=[FLASH_NEXT_MODEL_ID],
-            memory_budget=MagicMock(side_effect=RuntimeError("memory unavailable")),
+            memory_budget=MagicMock(side_effect=[RuntimeError("memory unavailable"), MemoryBudget(120 * 1024**3)]),
         )
 
         result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
@@ -633,7 +638,7 @@ class TestModelResidencySwap(unittest.TestCase):
         result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.reason, "probe_failed")
+        self.assertEqual(result.reason, "probe_failed_rollback_failed")
         self.assertIsNone(manager.current_model)
         self.assertEqual(manager.owned_models, {QWEN38_27B_MODEL_ID})
         self.assertEqual(
@@ -649,6 +654,196 @@ class TestModelResidencySwap(unittest.TestCase):
             result.stages,
             ("drain", "unload", "memory_check", "load", "probe"),
         )
+
+
+class TestHttpSwapContract(unittest.TestCase):
+    """Exercise the real HTTP adapter and manager with an in-memory transport."""
+
+    def setUp(self):
+        transport = patch("scripts.auto_reply_ondevice._local_only_urlopen")
+        self.http = transport.start()
+        self.addCleanup(transport.stop)
+        self.http.side_effect = AssertionError("test must supply every HTTP response")
+        self.gateway = HttpMlxModelGateway()
+
+    @staticmethod
+    def catalog(loaded, state):
+        return {"data": [{"id": QWEN38_27B_ADVERTISED_ID,
+                          "owned_by": "mlx-serve", "loaded": loaded, "state": state}]}
+
+    def test_control_requires_exact_postcondition_and_unique_catalog_identity(self):
+        for action, loaded, state in (("load", True, "ready"), ("unload", False, "unloaded")):
+            with self.subTest(action=action, valid=True):
+                self.http.reset_mock()
+                self.http.side_effect = [_HTTPResponse({}), _HTTPResponse(self.catalog(loaded, state))]
+                getattr(self.gateway, action)(QWEN38_27B_MODEL_ID)
+                requests = [call.args[0] for call in self.http.call_args_list]
+                self.assertEqual([req.get_method() for req in requests], ["POST", "GET"])
+                self.assertTrue(requests[0].full_url.endswith(f"Qwen3.8-27B-MLX-Serve-4bit/{action}"))
+                self.assertEqual(requests[1].full_url, "http://127.0.0.1:11234/v1/models")
+            duplicate = self.catalog(loaded, state)
+            duplicate["data"].append({**duplicate["data"][0], "id": QWEN38_27B_MODEL_ID})
+            for catalog in (
+                self.catalog(not loaded, state), self.catalog(loaded, "loading"),
+                self.catalog(int(loaded), state), self.catalog(loaded, state.upper()),
+                {"data": []}, {"data": [None]}, {"data": {}}, duplicate,
+            ):
+                with self.subTest(action=action, catalog=catalog):
+                    self.http.reset_mock()
+                    self.http.side_effect = [_HTTPResponse({}), _HTTPResponse(catalog)]
+                    with self.assertRaises(ModelResidencyUncertain):
+                        getattr(self.gateway, action)(QWEN38_27B_MODEL_ID)
+                    self.assertEqual(self.http.call_count, 2)
+
+    def test_uncertain_control_or_generation_never_triggers_compensating_load(self):
+        for failure in ("unload", "load", "probe"):
+            with self.subTest(failure=failure):
+                self.http.reset_mock()
+                resident = {FLASH_NEXT_ADVERTISED_ID: True, QWEN38_27B_ADVERTISED_ID: False}
+                actions = []
+
+                def transport(request, timeout):
+                    if request.get_method() == "GET":
+                        return _HTTPResponse({"data": [
+                            {"id": model, "owned_by": "mlx-serve", "loaded": loaded,
+                             "state": "ready" if loaded else "unloaded"}
+                            for model, loaded in resident.items()
+                        ]})
+                    action = request.full_url.rsplit("/", 1)[-1]
+                    action = "probe" if action == "completions" else action
+                    actions.append(action)
+                    if action == failure:
+                        # The server may have committed before its response was lost.
+                        raise TimeoutError("response lost")
+                    model = FLASH_NEXT_ADVERTISED_ID if action == "unload" else QWEN38_27B_ADVERTISED_ID
+                    resident[model] = action == "load"
+                    return _HTTPResponse({})
+
+                self.http.side_effect = transport
+                manager = ModelResidencyManager(
+                    self.gateway, owned_models=[FLASH_NEXT_MODEL_ID],
+                    memory_budget=lambda: MemoryBudget(120 * 1024**3),
+                )
+                commit = MagicMock()
+                result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True, commit=commit)
+                self.assertEqual(result.reason, "model_residency_uncertain")
+                self.assertFalse(result.ok)
+                self.assertIsNone(manager.current_model)
+                self.assertEqual(actions, ["unload", "load", "probe"][:["unload", "load", "probe"].index(failure) + 1])
+                commit.assert_not_called()
+
+    def test_probe_requires_ready_before_generation_and_exact_text_response_model(self):
+        self.http.side_effect = [_HTTPResponse(self.catalog(False, "unloaded"))]
+        self.assertFalse(self.gateway.probe(QWEN38_27B_MODEL_ID))
+        self.assertEqual(self.http.call_count, 1)
+        for model, content, expected in (
+            (FLASH_NEXT_ADVERTISED_ID, "LOCAL_OK", False),
+            (None, "LOCAL_OK", False),
+            (QWEN38_27B_ADVERTISED_ID, "   ", False),
+            (QWEN38_27B_ADVERTISED_ID, {"text": "LOCAL_OK"}, False),
+            (QWEN38_27B_ADVERTISED_ID, "LOCAL_OK", True),
+        ):
+            with self.subTest(model=model, content=content):
+                self.http.reset_mock()
+                ready = _HTTPResponse(self.catalog(True, "ready"))
+                self.http.side_effect = [ready, _HTTPResponse({
+                    "model": model, "choices": [{"message": {"content": content}}],
+                }), ready]
+                self.assertEqual(self.gateway.probe(QWEN38_27B_MODEL_ID), expected)
+                body = json.loads(self.http.call_args_list[1].args[0].data)
+                self.assertEqual(body["model"], QWEN38_27B_ADVERTISED_ID)
+                self.assertIs(body["stream"], False)
+                self.assertEqual(self.http.call_count, 3 if expected else 2)
+
+    def test_probe_does_not_accept_generation_after_residency_changed(self):
+        self.http.side_effect = [
+            _HTTPResponse(self.catalog(True, "ready")),
+            _HTTPResponse({"model": QWEN38_27B_ADVERTISED_ID,
+                           "choices": [{"message": {"content": "LOCAL_OK"}}]}),
+            _HTTPResponse(self.catalog(False, "unloaded")),
+        ]
+        self.assertFalse(self.gateway.probe(QWEN38_27B_MODEL_ID))
+        self.assertEqual(self.http.call_count, 3)
+
+
+class TestManagedResidencyAdmission(unittest.TestCase):
+    def setUp(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        write_managed_model_residency(
+            self.root, ManagedModelResidency(FLASH_NEXT_MODEL_ID, (FLASH_NEXT_MODEL_ID,), 4242, True, True, "ready"),
+            accepting_requests=False, in_flight=0, updated_at=100.0,
+        )
+
+    def read(self, extra=()):
+        return read_managed_model_residency(
+            self.root, now=100.0, process_probe=lambda pid: pid == 4242,
+            gateway_reader=lambda: (True, _prefixless_gateway_models() + list(extra)),
+        )
+
+    def test_unknown_loaded_models_must_have_measured_resident_memory(self):
+        for amount in (None, 0, -1, True, "123", 1.5):
+            with self.subTest(amount=amount):
+                result = self.read([{"id": "other/image", "loaded": True, "state": "ready", "bytes_resident": amount}])
+                self.assertFalse(result.owner_verified)
+                self.assertEqual(result.reason, "model_residency_mismatch")
+        known_bytes = self.read([
+            {"id": "other/image", "loaded": True, "state": "ready", "bytes_resident": 16 * 1024**3},
+            {"id": "other/voice", "loaded": True, "state": "ready", "bytes_resident": 4 * 1024**3},
+            {"id": "other/unloaded", "loaded": False, "state": "unloaded"},
+        ])
+        self.assertTrue(known_bytes.owner_verified)
+        self.assertEqual(known_bytes.other_resident_bytes, 20 * 1024**3)
+        self.assertEqual(known_bytes.owned_models, (FLASH_NEXT_MODEL_ID,))
+
+    def test_catalog_mismatch_never_attests_owner_or_drain(self):
+        for extra in (
+            [{"id": FLASH_NEXT_MODEL_ID, "loaded": True, "state": "ready"}],
+            [{"id": "other/image", "loaded": False, "state": "ready"}],
+            [{"id": "other/image", "loaded": True, "state": "loading", "bytes_resident": 123}],
+        ):
+            with self.subTest(extra=extra):
+                result = self.read(extra)
+                self.assertFalse(result.owner_verified)
+                self.assertFalse(result.drain_verified)
+
+    def test_nonfinite_or_stale_owner_evidence_is_rejected_before_gateway(self):
+        path = self.root / MODEL_RESIDENCY_STATE_NAME
+        original = json.loads(path.read_text())
+        for stamp in (float("nan"), float("inf"), 0.0, 106.0):
+            with self.subTest(stamp=stamp):
+                path.write_text(json.dumps({**original, "updated_at": stamp}))
+                reader = MagicMock(side_effect=AssertionError("stale owner cannot reach gateway"))
+                result = read_managed_model_residency(self.root, now=100.0, gateway_reader=reader)
+                self.assertFalse(result.owner_verified)
+                reader.assert_not_called()
+
+    def test_default_admission_and_rollback_cannot_be_disabled_by_small_override(self):
+        gateway = TestModelResidencySwap.FakeGateway()
+        manager = ModelResidencyManager(
+            gateway, owned_models=[FLASH_NEXT_MODEL_ID],
+            required_bytes={QWEN38_27B_MODEL_ID: 1},
+            memory_budget=lambda: MemoryBudget(QWEN38_27B_REQUIRED_BYTES - 1),
+        )
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+        self.assertEqual(result.reason, "insufficient_free_memory_rollback_failed")
+        self.assertEqual(gateway.calls, [("unload", FLASH_NEXT_MODEL_ID)])
+        self.assertIsNone(manager.current_model)
+
+    def test_rollback_rechecks_memory_before_restoring_the_larger_model(self):
+        for available in (FLASH_NEXT_REQUIRED_BYTES - 1, FLASH_NEXT_REQUIRED_BYTES):
+            with self.subTest(available=available):
+                gateway = TestModelResidencySwap.FakeGateway()
+                gateway.probe_results[QWEN38_27B_MODEL_ID] = False
+                manager = ModelResidencyManager(
+                    gateway, owned_models=[FLASH_NEXT_MODEL_ID],
+                    memory_budget=MagicMock(side_effect=[MemoryBudget(120 * 1024**3), MemoryBudget(available)]),
+                )
+                result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+                admitted = available == FLASH_NEXT_REQUIRED_BYTES
+                self.assertEqual(("load", FLASH_NEXT_MODEL_ID) in gateway.calls, admitted)
+                self.assertEqual(result.reason, "probe_failed" if admitted else "probe_failed_rollback_failed")
 
 
 class TestVerification(unittest.TestCase):

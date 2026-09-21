@@ -296,6 +296,42 @@ describe("local model settings bridge", () => {
       args: { tokenId: token.id },
     }]);
   });
+
+  it.each(["cancelled_rollback_failed", "memory_budget_unavailable_rollback_failed", "ready"])(
+    "preserves the backend outcome after cancellation: %s", async (reason) => {
+      const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+      const backend: SettingsInvoke = async <T>() => {
+        token.cancelled = true;
+        return { ok: reason === "ready", action: "model-swap", model: SWAP_MODEL_ID,
+          stage: reason === "ready" ? "ready" : "failed", reason,
+          stored: reason === "ready", prepared: reason === "ready", stages: [] } as T;
+      };
+      const result = await swapToLargeModel(token, backend);
+      expect(result.reason).toBe(reason);
+      expect(result.ok).toBe(reason === "ready");
+    },
+  );
+
+  it("does not turn a transport failure into confirmed cancellation", async () => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const failed: SettingsInvoke = async () => { token.cancelled = true; throw new Error("python_timed_out"); };
+    expect((await swapToLargeModel(token, failed)).reason).toBe("model_residency_uncertain");
+  });
+
+  it("keeps an unacknowledged cancellation retryable", async () => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    await cancelModelSwap(token, async <T>() => false as T);
+    expect(token.cancelled).toBe(false);
+    await cancelModelSwap(token, async <T>() => true as T);
+    expect(token.cancelled).toBe(true);
+  });
+
+  it("rejects ready envelopes carrying a failure reason", async () => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const invalid: SettingsInvoke = async <T>() => ({ ok: true, action: "model-swap", model: SWAP_MODEL_ID,
+      stage: "ready", reason: "cancelled_rollback_failed", stored: true, prepared: true } as T);
+    expect((await swapToLargeModel(token, invalid)).ok).toBe(false);
+  });
 });
 
 function drilldownGraph(): KnowledgeGraph {

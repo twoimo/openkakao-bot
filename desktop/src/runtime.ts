@@ -130,6 +130,8 @@ const MODEL_SWAP_REASONS = new Set([
   "load_failed_rollback_failed", "probe_failed_rollback_failed", "cancelled_rollback_failed",
   "model_state_write_failed", "model_state_write_failed_rollback_failed", "model_override_write_failed",
   "model_override_write_failed_rollback_failed",
+  "model_swap_busy", "model_residency_uncertain",
+  "memory_budget_unavailable_rollback_failed", "insufficient_free_memory_rollback_failed",
 ]);
 
 function failedModelSwap(reason = "model_owner_unknown", stage = "failed"): ModelSwapActionResult {
@@ -161,7 +163,8 @@ function parseModelSwapAction(value: unknown): ModelSwapActionResult {
   const stored = record.stored === true;
   const prepared = record.prepared === true;
   return {
-    ok: record.ok === true && stage === "ready" && stored && prepared,
+    ok: record.ok === true && stage === "ready" && stored && prepared
+      && (reason === "ready" || reason === "already_resident"),
     action: "model-swap",
     model: SWAP_MODEL_ID,
     stage,
@@ -184,11 +187,11 @@ export async function swapToLargeModel(
       explicitOptIn: true,
       tokenId: token.id,
     });
-    if (token.cancelled) return failedModelSwap("cancelled", "aborted");
+    // The backend outcome includes rollback (or a commit that won the race).
+    // A cancellation request alone cannot establish either result.
     return parseModelSwapAction(value);
-  } catch (error) {
-    const reason = error instanceof Error && error.message.includes("cancel") ? "cancelled" : "model_gateway_unavailable";
-    return failedModelSwap(reason, reason === "cancelled" ? "aborted" : "failed");
+  } catch {
+    return failedModelSwap("model_residency_uncertain");
   }
 }
 
@@ -197,10 +200,10 @@ export async function cancelModelSwap(
   invokeFn: SettingsInvoke = invoke,
 ): Promise<void> {
   if (token.cancelled) return;
-  token.cancelled = true;
   try {
-    await invokeFn("cancel_model_swap", { tokenId: token.id });
+    const accepted = await invokeFn<unknown>("cancel_model_swap", { tokenId: token.id });
+    if (accepted === true) token.cancelled = true;
   } catch {
-    // The cooperative marker is best-effort; Rust's bounded timeout is final.
+    // Leave the request retryable; keep waiting for the authoritative outcome.
   }
 }

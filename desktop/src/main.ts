@@ -159,6 +159,10 @@ function renderModels(payload: Record<string, unknown> | null, snapshot: Runtime
 }
 
 function modelSwapFailureText(reason: string): string {
+  if (reason === "model_residency_uncertain") {
+    return "27B 전환 결과를 확인하지 못했습니다. 재시도 전에 상주 모델과 진행 중인 요청을 점검해 주세요.";
+  }
+  if (reason === "model_swap_busy") return "다른 모델 전환이 진행 중입니다. 결과를 기다려 주세요.";
   if (reason === "cancelled") return "27B 전환을 취소했습니다. 기존 모델 상태를 유지합니다.";
   if (reason === "insufficient_free_memory" || reason === "memory_budget_unavailable") {
     return "27B 전환 중단 · 안전한 메모리 여유를 확인하지 못했습니다.";
@@ -170,7 +174,7 @@ function modelSwapFailureText(reason: string): string {
     return "27B 전환 실패 · 복구도 확인되지 않았습니다. 모델 상태를 점검해 주세요.";
   }
   if (reason === "load_failed" || reason === "probe_failed" || reason === "unload_failed") {
-    return "27B 전환 실패 · 기존 모델 복구 절차를 수행했습니다.";
+    return "27B 전환 실패 · 상주 모델 상태를 확인해 주세요.";
   }
   return "27B 전환 실패 · 기존 선택을 유지합니다.";
 }

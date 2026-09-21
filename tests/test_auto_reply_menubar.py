@@ -2291,8 +2291,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
             insufficient_gateway = FakeGateway()
             insufficient = run(root, insufficient_gateway, memory_bytes=1)
-            self.assertEqual(insufficient["reason"], "insufficient_free_memory")
-            self.assertIn(("load", previous), insufficient_gateway.calls)
+            self.assertEqual(insufficient["reason"], "insufficient_free_memory_rollback_failed")
+            self.assertNotIn(("load", previous), insufficient_gateway.calls)
 
             load_gateway = FakeGateway()
             load_gateway.load_failures.update({target, previous})
