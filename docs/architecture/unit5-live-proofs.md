@@ -761,3 +761,13 @@ staging 수정을 포함한 pre-commit working tree(그 변경은 이후 commit 
 
 - Jarvis의 read-only 색인은 auto-reply의 authoritative 승격 게이트를 그대로 지난다. `src/context/mod.rs`의 `live_source_has_required_summaries`는 방마다 owner 스타일 샘플 1개 이상과 응답 타이밍 샘플 2개 이상을 요구하고, 못 채우면 exit 1로 끝나며 그 페이지의 색인 행이 롤백된다. 위 측정에서 이름 있는 방 12개 중 11개가 이 경로였고(temp 색인 `context_messages = 0`, `context_sources = 0`), 한 방은 메시지 199행이 먼저 커밋된 뒤 exit 1이었다. 스타일·타이밍 샘플이 없는 방은 그래프와 검색에 아무것도 남기지 않는다. 이 게이트는 발신 승인 경로를 지키는 장치이므로 Jarvis 색인만을 위해 완화하지 않았고, 완화 여부는 운영자 판단으로 남긴다.
 - dense RRF는 유효한 loopback 임베딩 endpoint를 전제로 한다. 이 호스트에는 그 endpoint가 없었으므로(`127.0.0.1:8000` closed) live 하이브리드는 in-process stub으로만 검증했고, 해시 벡터 stub을 쓴 측정에서는 dense 후보가 ANN 버킷에 충돌하지 않아 `search_mode = "rrf"`이면서 후보가 0개였다. `search_mode`는 dense 조회가 성공했음을 뜻하지 dense 후보가 존재함을 뜻하지 않는다.
+
+## dense 상태의 앱 노출과 설치 번들 재검증 — 2026-09-21 KST
+
+commit `d96aa7f`에서 두 가지를 바꿨다. (1) `desktop/src-tauri/src/python_bridge.rs`의 `sanitize_knowledge_status()` allowlist에 `dense_status`(400자 상한, 제어문자 제거, 값이 없으면 `unknown`)와 `dense_indexed_at`(비음수 정수)를 추가하고 Rust 단위 테스트로 긴 문자열·제어문자·누락 필드·음수/실수/문자열 경계값을 고정했다. (2) `desktop/src/ui.ts`·`desktop/src/main.ts`의 카카오 DB 동기화·색인 카드에 `settings-sync-dense` 한 줄을 추가해 `dense: <status> · indexed_at <n>` 또는 `dense: 확인 불가`로 닫는다. 새 버튼·카드·토글은 만들지 않았고 메인 패널은 톱니바퀴 하나라는 규칙을 유지했다.
+
+부모 재측정(고정 Python 3.11): CI focused 10개 모듈 **298 tests, OK**, `tests.test_auto_reply_menubar` **165 tests, OK**, `sh desktop/scripts/smoke.sh` exit 0으로 Vitest **78/78**, Rust **59/59**, `tsc`와 Vite production build 성공.
+
+설치 번들 재검증: `OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`(exit 0) 뒤 `sh scripts/install-jarvis-desktop.sh`로 2026-09-21 21:23:04에 재설치했고, 번들 바이너리(21:22)에서 `dense_indexed_at` 심볼이, 번들 `scripts/auto_reply_knowledge_graph.py`에서 `last_dense_status`가 확인됐다. 설치본의 `--action knowledge-graph-status`를 provisioned menubar runtime으로 실행한 read-only 프로브는 exit 0, stderr 0 bytes였고 payload에 `dense_status = "unavailable:RuntimeError:local dense embedding unavailable"`, `dense_indexed_at = 0`, `snapshot_status = "copy_ok"`가 들어 있었다. 같은 payload의 `node_count`/`edge_count`는 이 action이 노드 목록을 읽지 않기 때문에 설계상 0이며, 노드 목록은 별도 `knowledge-graph` action이 제공한다.
+
+이 검증이 덮는 범위는 Python → menubar action → Rust allowlist 데이터 경로와 Rust/Vitest 단위 증거까지다. live UI 스크린샷은 여전히 확보하지 못했으므로 화면에 실제로 그려진 문구는 육안으로 확인하지 않았다.
