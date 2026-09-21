@@ -741,7 +741,7 @@ menubar CPython runtime도 문서화된 `~/Library/Application Support/openkakao
 
 ### 수정 후 설치 번들 재검증 (parent 측정) — 2026-09-21 KST
 
-staging 수정을 포함한 HEAD에서 `OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`(exit 0)와 `sh scripts/install-jarvis-desktop.sh`로 2026-09-21 19:28:08에 재설치했다. `/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts`는 22개 파일을 포함했고 `mlx_serve_lifecycle.py`는 repo 사본과 byte-identical이었다.
+staging 수정이 commit `deca45a`로 기록된 소스 상태에서 `OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`(exit 0)와 `sh scripts/install-jarvis-desktop.sh`로 2026-09-21 19:28:08에 재설치했다. `/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts`는 22개 파일을 포함했고 `mlx_serve_lifecycle.py`는 repo 사본과 byte-identical이었다.
 
 설치 번들 자체의 `scripts/auto-reply-menubar.py`를 provisioned menubar runtime으로 실행한 read-only 프로브(별도 temp state/logs root)는 exit 0이었고 stderr는 비어 있었으며 stdout은 39,552-byte JSON이었다. parsed snapshot은 `schema_version=3`, top-level key 31개였고 `pipeline`, `background`, `open_jobs`를 포함했다. LaunchAgent `com.openkakao.jarvis.desktop`은 `state = running`(pid 86344)이었다.
 

@@ -113,7 +113,7 @@ The diagrams are architectural references, not a live generation trace. On-devic
 - `docs/architecture/unit5-live-proofs.md` records browser and Tauri/WKWebView hide probes where the outstanding RAF was cancelled and render-count delta remained zero while hidden.
 - The same proof log records controlled browser, abort, and isolated voice/STT checks. Those records are bounded component evidence; they do not establish an end-to-end KakaoTalk reply flow.
 - The same proof log holds the volatile cutover values (installed bundle paths, LaunchAgent state, individual probe timings, and per-run counts) that this summary deliberately does not duplicate.
-- 설치 앱 검증: staging 누락(`scripts/mlx_serve_lifecycle.py`)을 수정한 `deca45a` 이후 설치 번들의 Python bridge 경로가 정상 동작한다. 설치본 자체의 `auto-reply-menubar.py`를 provisioned menubar runtime으로 실행한 read-only 프로브는 exit 0과 유효한 `schema_version=3` snapshot JSON을 반환했고, LaunchAgent `com.openkakao.jarvis.desktop`은 running 상태다. 설치 시각, 설치본 파일 수, runtime 크기·버전, snapshot byte 수, PID 같은 volatile cutover 값은 바로 위 방침대로 이 요약에 옮기지 않고 날짜가 붙은 proof log에만 둔다. 이 검증은 설치 번들의 Python bridge 경로에 대한 것이며 live UI 스크린샷이나 live KakaoTalk 전송을 입증하지 않는다.
+- 설치 앱 검증: staging 누락(`scripts/mlx_serve_lifecycle.py`)을 수정한 `deca45a` 소스로 재빌드·재설치한 설치 번들의 Python bridge 경로가 정상 동작한다. 설치본 자체의 `auto-reply-menubar.py`를 provisioned menubar runtime으로 실행한 read-only 프로브는 exit 0과 유효한 `schema_version=3` snapshot JSON을 반환했다. 설치 시각, 설치본 파일 수, runtime 크기·버전, snapshot byte 수, PID, LaunchAgent 상태처럼 시점에 따라 변하는 cutover 값은 바로 위 방침대로 이 요약에 옮기지 않고 날짜가 붙은 proof log에만 둔다. 이 검증은 설치 번들의 Python bridge 경로에 대한 것이며 live UI 스크린샷이나 live KakaoTalk 전송을 입증하지 않는다.
 
 ### Known limitations
 
