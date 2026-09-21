@@ -200,6 +200,29 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
             valid.write_bytes(b"onnx")
             self.assertEqual(resolve_custom_wake_model(valid), valid)
 
+    def test_missing_bundled_head_falls_back_to_stock_without_lowering_threshold(self):
+        """번들 헤드가 없거나 무효하면 stock으로 내려가고 임계값은 그대로다."""
+        from unittest import mock
+
+        from jarvis_voice import WAKE_THRESHOLD
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            empty = root / "empty.onnx"
+            empty.write_bytes(b"")
+            wrong_suffix = root / "head.txt"
+            wrong_suffix.write_bytes(b"onnx")
+            symlinked = root / "linked.onnx"
+            symlinked.symlink_to(wrong_suffix)
+            for candidate in (root / "absent.onnx", empty, wrong_suffix, symlinked):
+                with mock.patch("jarvis_voice.BUNDLED_CUSTOM_WAKE_MODEL", candidate):
+                    self.assertIsNone(resolve_custom_wake_model(None))
+        self.assertEqual(WAKE_THRESHOLD, 0.65)
+        gate = WakePhraseGate()
+        self.assertFalse(gate.accepts(0.64))
+        self.assertTrue(gate.accepts(0.65))
+
+
     def test_global_abort_clears_queue_and_never_auto_resumes(self):
         with TemporaryDirectory() as temp_dir:
             controller = AbortController(Path(temp_dir))

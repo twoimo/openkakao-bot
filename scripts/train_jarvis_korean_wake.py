@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Export a tiny opt-in Korean Jarvis wake classifier for openWakeWord.
+"""Export a tiny Korean Jarvis wake classifier for openWakeWord.
 
 This is intentionally a bounded calibration/distillation path. It reuses the
 local openWakeWord audio embedding frontend, fits a regularized linear head to
 one positive wake clip plus explicit non-wake and silence negatives, exports a
 real ONNX model, then scores all three clips through OpenWakeVadFrontend.
 
-The produced model proves the custom-model loading path and local scoring
-contract. A single synthesized positive clip is not enough evidence for human
-speaker generalization, so the model stays opt-in.
+Running this exporter is an explicit operator step; its output at
+voice/models/hey_jarvis_ko_ridge.onnx is then bundled and auto-selected by
+resolve_custom_wake_model whenever it validates, with the stock head as the
+fallback and no change to WAKE_THRESHOLD. That auto-selection only proves the
+custom-model loading path and the local scoring contract: a single synthesized
+positive clip is not enough evidence for human speaker generalization.
 """
 
 from __future__ import annotations
