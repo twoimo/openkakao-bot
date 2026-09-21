@@ -16,6 +16,9 @@ LAUNCHCTL=${OPENKAKAO_LAUNCHCTL:-/bin/launchctl}
 DITTO=${OPENKAKAO_DITTO:-/usr/bin/ditto}
 PLISTBUDDY=${OPENKAKAO_PLISTBUDDY:-/usr/libexec/PlistBuddy}
 PLUTIL=${OPENKAKAO_PLUTIL:-/usr/bin/plutil}
+PS=${OPENKAKAO_PS:-/bin/ps}
+PGREP=${OPENKAKAO_PGREP:-/usr/bin/pgrep}
+LSOF=${OPENKAKAO_LSOF:-/usr/sbin/lsof}
 
 LEGACY_LABEL="com.openkakao.auto-reply.menu"
 JARVIS_LABEL="com.openkakao.jarvis.desktop"
@@ -53,7 +56,7 @@ if [ ! -f "$TEMPLATE" ]; then
   echo "install-jarvis-desktop: LaunchAgent template is missing: $TEMPLATE" >&2
   exit 2
 fi
-for tool in "$LAUNCHCTL" "$DITTO" "$PLISTBUDDY" "$PLUTIL"; do
+for tool in "$LAUNCHCTL" "$DITTO" "$PLISTBUDDY" "$PLUTIL" "$PS"; do
   if [ ! -x "$tool" ]; then
     echo "install-jarvis-desktop: required tool is not executable: $tool" >&2
     exit 2
@@ -128,6 +131,71 @@ wait_for_absent() {
   return 1
 }
 
+wait_for_pid() {
+  wait_service=$1
+  wait_log=$2
+  wait_attempt=1
+
+  while [ "$wait_attempt" -le 10 ]; do
+    if "$LAUNCHCTL" print "$wait_service" >"$wait_log" 2>&1; then
+      wait_pid=$(/usr/bin/awk '
+        /^[[:space:]]*pid = [0-9]+/ { print $3; exit }
+      ' "$wait_log")
+      case "$wait_pid" in
+        ''|*[!0-9]*)
+          ;;
+        *)
+          printf '%s\n' "$wait_pid"
+          return 0
+          ;;
+      esac
+    fi
+    if [ "$wait_attempt" -lt 10 ]; then
+      /bin/sleep 0.5
+    fi
+    wait_attempt=$((wait_attempt + 1))
+  done
+  return 1
+}
+
+list_live_app_pids() {
+  if [ -x "$PGREP" ]; then
+    "$PGREP" -f "$APP_EXECUTABLE" 2>/dev/null || true
+    return 0
+  fi
+
+  "$PS" -axo pid=,command= 2>/dev/null |
+    /usr/bin/awk -v executable="$APP_EXECUTABLE" '
+      {
+        pid = $1
+        $1 = ""
+        if ($0 ~ "(^|[[:space:]/])" executable "([[:space:]]|$)") {
+          print pid
+        }
+      }
+    ' || true
+}
+
+reported_app_path() {
+  reported_pid=$1
+  reported_path=""
+
+  # Path reporting is diagnostic only: macOS ps may show the exec-time argv
+  # path after that bundle has moved or been deleted. PID identity gates cleanup.
+  if [ -x "$LSOF" ]; then
+    reported_path=$("$LSOF" -p "$reported_pid" -a -d txt -Fn 2>/dev/null |
+      /usr/bin/sed -n 's/^n//p' | /usr/bin/sed -n '1p' || true)
+  fi
+  if [ -z "$reported_path" ]; then
+    reported_path=$("$PS" -p "$reported_pid" -o comm= 2>/dev/null |
+      /usr/bin/sed -n '1p' || true)
+  fi
+  if [ -z "$reported_path" ]; then
+    reported_path="(unresolved)"
+  fi
+  printf '%s\n' "$reported_path"
+}
+
 "$DITTO" "$SOURCE_APP" "$STAGED_APP"
 if [ ! -x "$STAGED_APP/Contents/MacOS/$APP_EXECUTABLE" ]; then
   echo "install-jarvis-desktop: staged app is incomplete" >&2
@@ -185,6 +253,30 @@ PLIST_STAGE=""
 if ! "$LAUNCHCTL" print "$JARVIS_SERVICE" \
   >"$BACKUP_DIR/$JARVIS_LABEL.installed.txt" 2>&1; then
   echo "install-jarvis-desktop: LaunchAgent readback failed" >&2
+  exit 3
+fi
+
+# Fail closed before deleting the previous bundle. A surviving process may be
+# executing an older bundle even when launchd itself reports only this service.
+if ! LAUNCHD_PID=$(wait_for_pid "$JARVIS_SERVICE" \
+  "$BACKUP_DIR/$JARVIS_LABEL.installed.txt"); then
+  echo "install-jarvis-desktop: LaunchAgent pid was never reported; previous bundle is being kept" >&2
+  exit 3
+fi
+
+STRAY_PIDS=$(list_live_app_pids |
+  /usr/bin/awk -v launchd_pid="$LAUNCHD_PID" -v installer_pid="$$" '
+    /^[0-9]+$/ && $0 != launchd_pid && $0 != installer_pid && !seen[$0]++ {
+      print $0
+    }
+  ')
+if [ -n "$STRAY_PIDS" ]; then
+  echo "install-jarvis-desktop: stray Jarvis process detected; previous bundle is being kept" >&2
+  for stray_pid in $STRAY_PIDS; do
+    stray_path=$(reported_app_path "$stray_pid")
+    printf 'install-jarvis-desktop: stray pid %s reported path: %s\n' \
+      "$stray_pid" "$stray_path" >&2
+  done
   exit 3
 fi
 
