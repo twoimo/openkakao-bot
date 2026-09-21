@@ -929,3 +929,16 @@ print("posted click at \(x),\(y)")
 - 27B는 `readiness false`·`generation false`·`reason model_not_ready`, 2 ms였고 `owner = model_owner_unmanaged`였다. 외부 `mlx-serve`가 11234를 점유하므로 앱은 시작·정지·전환을 하지 않고 fail-closed하며, 이는 설정 카드의 `외부 소유 · 27B 전환 차단`과 일치한다.
 - 설정 카드의 `실추론 통과 (Qwen3.8 Flash-Next)` 문자열 출처는 `~/Library/Application Support/openkakao/bujamentor/ondevice-last-probe.json`에 영속된 레코드다: `timestamp 2026-09-19T18:47:40+00:00`, `engine mlx-serve-gateway`, `model ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`, `latency_ms 15617`, `ok true`, `preview OK`(파일 mtime 2026-09-20 03:47 KST). 카드 문구는 과거에 성공한 게이트웨이 생성을 가리키는 기록이며, 위 프로브가 그 결론을 새 시각에 재현했다.
 - 이 절은 Flash-Next 텍스트 생성만 확인한다. 27B 생성과 비전, 실제 카카오톡 전송, Developer ID 서명·notarization은 여전히 미입증이다.
+
+## 숨김 상태 렌더 루프 정지의 live CPU 확인 — 2026-09-21 KST
+
+설치본(pid 50870)에서 메뉴바 패널을 실제 클릭으로 열고 닫으면서 프로세스 CPU를 2초 간격 6회 샘플링했다. 상태 아이템 클릭은 Tauri `toggle_panel`을 발화시키므로 같은 좌표를 다시 클릭하면 닫힌다.
+
+| 상태 | `count of windows` | `ps -p 50870 -o %cpu=` 샘플 6회 |
+| --- | --- | --- |
+| 패널 열림(유휴) | 1 | 3.0, 3.0, 2.9, 3.1, 2.9, 3.0 |
+| 패널 닫힘 | 0 | 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 |
+
+패널을 닫은 뒤 12초 동안 프로세스 CPU는 6회 모두 0.0이었다. 이 값은 macOS `ps`의 감쇠 평균이라 순간값이 아니고 프로세스 전체를 재는 값이므로 RAF 호출 수를 직접 세는 증거는 아니다. 창 숨김 시 미해결 RAF 취소와 render-count delta 0을 직접 측정한 기존 기록은 그대로 유효하며, 이 절은 같은 결론을 설치본 CPU에서 독립적으로 확인한 보조 증거다.
+
+이 프로브도 어떤 프로세스를 종료·재시작하지 않았고 앱 설정을 바꾸지 않았다. 닫힘 상태 샘플 뒤 패널은 다시 열지 않았으므로 프로브 종료 시점에 창은 0개였다.
