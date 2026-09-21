@@ -19,7 +19,7 @@ import {
 } from "../runtime";
 import { RuntimeSnapshotPoller } from "../runtime-poller";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHardware, renderHistory, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -659,7 +659,7 @@ describe("layout and settings contract", () => {
     const markup = settingsMarkup();
     expect(markup.indexOf('id="settings-sync-card"')).toBeLessThan(markup.indexOf('id="settings-dream-rsi-card"'));
     for (const id of [
-      "settings-room-popup", "settings-sync-source", "settings-sync-copy", "settings-sync-mode", "settings-sync-index",
+      "settings-room-popup", "settings-sync-source", "settings-sync-copy", "settings-sync-mode", "settings-sync-index", "settings-sync-dense",
       "settings-activity-source",
       "settings-sync-card", "settings-dream-rsi-status", "settings-dream-rsi-gold", "settings-dream-rsi-card",
       "settings-slot-morning", "settings-slot-lunch", "settings-slot-evening",
@@ -672,6 +672,23 @@ describe("layout and settings contract", () => {
     expect(mainPanelMarkup()).not.toContain('id="voice-start"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
+  });
+
+  it("renders dense status and closes unavailable knowledge safely", () => {
+    document.body.innerHTML = settingsMarkup();
+    renderDenseStatus({
+      dense_status: "unavailable:RuntimeError:local dense embedding unavailable",
+      dense_indexed_at: 12345,
+    });
+    expect(document.getElementById("settings-sync-dense")?.textContent)
+      .toBe("dense: unavailable:RuntimeError:local dense embedding unavailable · indexed_at 12345");
+
+    renderDenseStatus(null);
+    expect(document.getElementById("settings-sync-dense")?.textContent).toBe("dense: 확인 불가");
+
+    const invalidStatus = { toString: () => { throw new Error("invalid status"); } };
+    expect(() => renderDenseStatus({ dense_status: invalidStatus, dense_indexed_at: { invalid: true } })).not.toThrow();
+    expect(document.getElementById("settings-sync-dense")?.textContent).toBe("dense: unknown");
   });
 
   it("renders both local models as keyboard-native buttons with explicit selection state", () => {

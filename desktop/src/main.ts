@@ -34,7 +34,7 @@ import {
   type SnapshotCanceller,
   type SnapshotLoader,
 } from "./runtime-poller";
-import { mainPanelMarkup, renderBackground, renderHardware, renderHistory, settingsMarkup } from "./ui";
+import { mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
 
@@ -316,6 +316,7 @@ function renderSettingsUnavailable(): void {
   setText("settings-sync-copy", "격리 복제: 확인 불가");
   setText("settings-sync-mode", "색인 모드: 확인 불가");
   setText("settings-sync-index", "마지막 색인: 확인 불가");
+  renderDenseStatus(null);
   setText("knowledge-summary", "지식 그래프 상태를 확인할 수 없습니다.");
   setText("knowledge-mode", "unavailable");
   setText("settings-slot-morning", "미확인");
@@ -504,11 +505,13 @@ export async function bootSettings(
       setText("settings-sync-copy", `격리 복제: ${String(knowledge.snapshot_status ?? "unknown")}`);
       setText("settings-sync-mode", `색인 모드: ${String(knowledge.indexing_mode ?? "unknown")}`);
       setText("settings-sync-index", `마지막 색인: ${String(knowledge.indexed_at ?? "unknown")} · indexed ${String(knowledge.indexed_count ?? 0)}`);
+      renderDenseStatus(knowledge);
     } else {
       setText("settings-sync-source", "동기화: 확인 불가");
       setText("settings-sync-copy", "격리 복제: 확인 불가");
       setText("settings-sync-mode", "색인 모드: 확인 불가");
       setText("settings-sync-index", "마지막 색인: 확인 불가");
+      renderDenseStatus(null);
     }
 
     const room = snapshot.rooms[0];

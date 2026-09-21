@@ -288,6 +288,42 @@ class LiveRetrievalTests(unittest.TestCase):
             self.assertIn("dense unavailable", KG.read_meta(conn, "last_dense_status"))
             conn.close()
 
+    def test_reindex_all_graph_failure_still_runs_dense_without_success_stamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            KG.ensure_seeded(conn)
+            KG.write_meta(conn, "last_indexed_at", "12345")
+            KG.write_meta(conn, "last_snapshot_status", "previous_snapshot")
+            with mock.patch.object(
+                KG,
+                "index_topic_entities",
+                side_effect=RuntimeError("graph unavailable"),
+            ), mock.patch.multiple(
+                KG,
+                index_topic_relations=mock.DEFAULT,
+                index_chat_entities=mock.DEFAULT,
+                index_person_entities=mock.DEFAULT,
+                index_membership_relations=mock.DEFAULT,
+                prune_indexed_entities=mock.DEFAULT,
+                _merge_seed_rooms=mock.DEFAULT,
+                attach_ledger_evidence=mock.DEFAULT,
+            ), mock.patch.object(
+                KG,
+                "refresh_dense_index",
+                side_effect=RuntimeError("dense unavailable"),
+            ) as refresh:
+                KG._reindex_all(conn, root, cycle_started_at=1)
+
+            refresh.assert_called_once_with(conn, root)
+            index_error = KG.read_meta(conn, "last_index_error")
+            self.assertIn("topics: RuntimeError: graph unavailable", index_error)
+            self.assertNotIn("dense unavailable", index_error)
+            self.assertEqual(KG.read_meta(conn, "last_indexed_at"), "12345")
+            self.assertEqual(KG.read_meta(conn, "last_snapshot_status"), "previous_snapshot")
+            self.assertIn("dense unavailable", KG.read_meta(conn, "last_dense_status"))
+            conn.close()
+
     def test_empty_graph_marks_dense_empty_without_creating_dense_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

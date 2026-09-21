@@ -1395,6 +1395,16 @@ fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
         .collect()
 }
 
+fn bounded_status_string(value: Option<&Value>, max_chars: usize, fallback: &str) -> String {
+    value
+        .and_then(Value::as_str)
+        .unwrap_or(fallback)
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max_chars)
+        .collect()
+}
+
 fn sanitize_browser_tool_result(value: &Value) -> SafeBrowserToolResult {
     const STATUSES: &[&str] = &["completed", "aborted", "rejected", "failed"];
     const ERROR_CODES: &[&str] = &[
@@ -2214,6 +2224,8 @@ fn sanitize_knowledge_status(value: &Value) -> Value {
         "grounded_nodes": as_u64(value.get("grounded_nodes")),
         "indexed_at": as_u64(value.get("indexed_at")),
         "indexed_count": as_u64(value.get("indexed_count")),
+        "dense_status": bounded_status_string(value.get("dense_status"), 400, "unknown"),
+        "dense_indexed_at": as_u64(value.get("dense_indexed_at")),
         "stale": value.get("stale").and_then(Value::as_bool).unwrap_or(true),
         "snapshot_status": value.get("snapshot_status").and_then(Value::as_str).unwrap_or("unknown"),
         "indexing_mode": value.get("indexing_mode").and_then(Value::as_str).unwrap_or("unknown")
@@ -3966,6 +3978,28 @@ mod tests {
         assert_eq!(safe["edges"][0]["target"], "ent:b");
         assert_eq!(safe["edges"][0]["room_id"], "room-1");
         assert_eq!(safe["edges"][0]["evidence_message_id"], "db:1");
+    }
+
+    #[test]
+    fn knowledge_status_sanitizes_dense_metadata() {
+        let dense_status = format!("prefix\n\t\u{0007}{}tail", "x".repeat(450));
+        let safe = sanitize_knowledge_status(&json!({
+            "dense_status": dense_status,
+            "dense_indexed_at": 12345
+        }));
+        let status = safe["dense_status"].as_str().unwrap();
+        assert_eq!(status.chars().count(), 400);
+        assert!(status.chars().all(|character| !character.is_control()));
+        assert_eq!(safe["dense_indexed_at"], 12345);
+
+        let missing = sanitize_knowledge_status(&json!({}));
+        assert_eq!(missing["dense_status"], "unknown");
+        assert_eq!(missing["dense_indexed_at"], 0);
+
+        for invalid in [json!(-1), json!(1.5), json!("12345")] {
+            let invalid = sanitize_knowledge_status(&json!({ "dense_indexed_at": invalid }));
+            assert_eq!(invalid["dense_indexed_at"], 0);
+        }
     }
 
     #[test]

@@ -12,6 +12,7 @@ export const SETTINGS_IDS = Object.freeze([
   "settings-sync-copy",
   "settings-sync-mode",
   "settings-sync-index",
+  "settings-sync-dense",
   "settings-sync-card",
   "settings-dream-rsi-status",
   "settings-dream-rsi-gold",
@@ -80,6 +81,7 @@ export function settingsMarkup(): string {
       <p id="settings-sync-copy">격리 복제: 확인 중</p>
       <p id="settings-sync-mode">색인 모드: 확인 중</p>
       <p id="settings-sync-index">마지막 색인: 확인 중</p>
+      <p id="settings-sync-dense">dense: 확인 중</p>
     </section>
 
     <section id="settings-dream-rsi-card" class="settings-card" aria-labelledby="dream-title">
@@ -196,4 +198,34 @@ export function renderHardware(snapshot: RuntimeSnapshot, root: Document = docum
   }
   const chip = snapshot.onDevice.chip || "칩 미확인";
   target.textContent = `온디바이스: ${chip} · ${snapshot.onDevice.memoryGb.toFixed(1)}GB`;
+}
+
+function safeDisplayString(value: unknown, fallback: string): string {
+  if (value === undefined || value === null) return fallback;
+  try {
+    return String(value);
+  } catch {
+    return fallback;
+  }
+}
+
+export function renderDenseStatus(
+  knowledge: Record<string, unknown> | null | undefined,
+  root: Document = document,
+): void {
+  const target = root.getElementById("settings-sync-dense");
+  if (!target) return;
+  if (!knowledge || Array.isArray(knowledge)) {
+    target.textContent = "dense: 확인 불가";
+    return;
+  }
+
+  const status = safeDisplayString(knowledge.dense_status, "unknown").slice(0, 400);
+  const indexedAt = safeDisplayString(knowledge.dense_indexed_at, "0");
+  const validIndexedAt = /^\d+$/.test(indexedAt)
+    && Number.isSafeInteger(Number(indexedAt))
+    && Number(indexedAt) > 0;
+  target.textContent = validIndexedAt
+    ? `dense: ${status} · indexed_at ${indexedAt}`
+    : `dense: ${status}`;
 }
