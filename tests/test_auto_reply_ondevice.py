@@ -11,7 +11,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
-from scripts.auto_reply_ondevice import (
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from scripts.auto_reply_ondevice import (  # noqa: E402
     FLASH_NEXT_MODEL_ID,
     FLASH_NEXT_REQUIRED_BYTES,
     ManagedModelResidency,
