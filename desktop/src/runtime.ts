@@ -56,6 +56,90 @@ export async function fetchSettingsAction(
 export type LocalModelId = typeof RESIDENT_MODEL_ID | typeof SWAP_MODEL_ID;
 export type SettingsInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
+export type BrowserToolStatus = "completed" | "aborted" | "rejected" | "failed";
+
+export interface BrowserToolInput {
+  jobId: string;
+  task: string;
+}
+
+export interface BrowserToolResult {
+  ok: boolean;
+  status: BrowserToolStatus;
+  errorCode: string;
+  result: string;
+}
+
+const BROWSER_TOOL_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const BROWSER_TOOL_TASK_LIMIT_BYTES = 16 * 1024;
+const BROWSER_TOOL_RESULT_LIMIT_BYTES = 64 * 1024;
+const BROWSER_TOOL_STATUSES = new Set<BrowserToolStatus>([
+  "completed", "aborted", "rejected", "failed",
+]);
+const BROWSER_TOOL_ERROR_CODES = new Set([
+  "global_abort", "state_root_invalid", "job_id_invalid", "browser_task_invalid",
+  "browser_task_too_large", "browser_runtime_unavailable", "browser_job_failed",
+  "browser_result_invalid", "browser_result_too_large",
+]);
+
+function failedBrowserTool(errorCode: string, status: BrowserToolStatus = "failed"): BrowserToolResult {
+  return { ok: false, status, errorCode, result: "" };
+}
+
+function validBrowserToolInput(input: BrowserToolInput, token: CancellationToken): boolean {
+  return BROWSER_TOOL_JOB_ID.test(input.jobId)
+    && BROWSER_TOOL_JOB_ID.test(token.id)
+    && input.task.trim().length > 0
+    && !input.task.includes("\0")
+    && new TextEncoder().encode(input.task).byteLength <= BROWSER_TOOL_TASK_LIMIT_BYTES;
+}
+
+function parseBrowserToolResult(value: unknown): BrowserToolResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return failedBrowserTool("browser_bridge_unavailable");
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.join(",") !== "errorCode,ok,result,status") {
+    return failedBrowserTool("browser_bridge_unavailable");
+  }
+  const status = typeof record.status === "string" && BROWSER_TOOL_STATUSES.has(record.status as BrowserToolStatus)
+    ? record.status as BrowserToolStatus
+    : null;
+  const errorCode = typeof record.errorCode === "string" ? record.errorCode : "";
+  const result = typeof record.result === "string" ? record.result : null;
+  if (!status || result === null || new TextEncoder().encode(result).byteLength > BROWSER_TOOL_RESULT_LIMIT_BYTES) {
+    return failedBrowserTool("browser_result_invalid");
+  }
+  if (record.ok === true && status === "completed" && errorCode === "") {
+    return { ok: true, status, errorCode, result };
+  }
+  if (record.ok !== false || !BROWSER_TOOL_ERROR_CODES.has(errorCode) || result !== "") {
+    return failedBrowserTool("browser_bridge_unavailable");
+  }
+  return { ok: false, status, errorCode, result: "" };
+}
+
+export async function runBrowserTool(
+  input: BrowserToolInput,
+  token: CancellationToken,
+  invokeFn: SettingsInvoke = invoke,
+): Promise<BrowserToolResult> {
+  if (token.cancelled) return failedBrowserTool("browser_request_cancelled", "aborted");
+  if (!validBrowserToolInput(input, token)) return failedBrowserTool("browser_input_invalid", "rejected");
+  try {
+    const value = await invokeFn<unknown>("run_browser_tool", {
+      jobId: input.jobId,
+      task: input.task,
+      tokenId: token.id,
+    });
+    if (token.cancelled) return failedBrowserTool("browser_request_cancelled", "aborted");
+    return parseBrowserToolResult(value);
+  } catch {
+    return failedBrowserTool("browser_bridge_unavailable");
+  }
+}
+
 type ModelAction = "model-set" | "model-prepare";
 
 export interface ModelActionResult {

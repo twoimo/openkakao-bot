@@ -9,6 +9,7 @@ catalog mutate and browser OAuth onto that surface.
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import fcntl
 import io
 import json
@@ -2304,6 +2305,114 @@ def _dream_rsi_status_payload(state_root: Path) -> dict[str, Any]:
     }
 
 
+_TOOL_STATE_ROOT_MAX_BYTES = 4096
+_TOOL_BROWSER_FALLBACK = {
+    "ok": False,
+    "status": "failed",
+    "errorCode": "browser_runtime_unavailable",
+    "result": "",
+}
+_TOOL_BROWSER_STATUSES = frozenset({"completed", "aborted", "rejected", "failed"})
+_TOOL_BROWSER_ERROR_CODES = frozenset(
+    {
+        "",
+        "global_abort",
+        "job_id_invalid",
+        "browser_task_invalid",
+        "browser_task_too_large",
+        "browser_job_failed",
+        "browser_result_invalid",
+        "browser_result_too_large",
+    }
+)
+
+
+def _tool_state_root(value: str) -> Path | None:
+    raw = value or str(_DEFAULT_STATE_ROOT)
+    try:
+        if "\x00" in raw or len(raw.encode("utf-8")) > _TOOL_STATE_ROOT_MAX_BYTES:
+            return None
+    except UnicodeEncodeError:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else None
+
+
+async def _tool_browser_payload(
+    *, state_root_raw: str, job_id: str, task: str
+) -> dict[str, Any]:
+    """Run one owned-browser job and expose only the redacted bridge envelope."""
+
+    state_root = _tool_state_root(state_root_raw)
+    if state_root is None:
+        return {
+            "ok": False,
+            "status": "rejected",
+            "errorCode": "state_root_invalid",
+            "result": "",
+        }
+    try:
+        from jarvis_tool_runtime import (
+            MAX_TOOL_RESULT_BYTES,
+            BrowserToolJob,
+            JarvisToolRuntime,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return dict(_TOOL_BROWSER_FALLBACK)
+
+    try:
+        outcome = await JarvisToolRuntime(state_root).run_browser(
+            BrowserToolJob(job_id=job_id, task=task)
+        )
+    except (ImportError, ModuleNotFoundError):
+        return dict(_TOOL_BROWSER_FALLBACK)
+    except Exception:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+
+    status = getattr(getattr(outcome, "status", None), "value", "")
+    error_code = getattr(outcome, "error_code", "")
+    result = getattr(outcome, "result", "")
+    ok = getattr(outcome, "ok", False) is True
+    if status not in _TOOL_BROWSER_STATUSES or error_code not in _TOOL_BROWSER_ERROR_CODES:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+    if not isinstance(result, str):
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_result_invalid",
+            "result": "",
+        }
+    try:
+        result_bytes = len(result.encode("utf-8"))
+    except UnicodeEncodeError:
+        result_bytes = MAX_TOOL_RESULT_BYTES + 1
+    if result_bytes > MAX_TOOL_RESULT_BYTES:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_result_too_large",
+            "result": "",
+        }
+    if not ok or status != "completed" or error_code:
+        return {
+            "ok": False,
+            "status": status,
+            "errorCode": error_code or "browser_job_failed",
+            "result": "",
+        }
+    return {"ok": True, "status": status, "errorCode": "", "result": result}
+
+
 def main():
     try:
         _scope_menubar_rooms_to_enrollment()
@@ -2322,6 +2431,16 @@ def main():
         )
         return 0
     action = _argv_flag_value("--action")
+    if action == "tool-browser":
+        payload = asyncio.run(
+            _tool_browser_payload(
+                state_root_raw=_argv_flag_value("--state-root"),
+                job_id=_argv_flag_value("--job-id"),
+                task=_argv_flag_value("--task"),
+            )
+        )
+        _print_json(payload)
+        return 0
     if action == "dream-rsi-status":
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT

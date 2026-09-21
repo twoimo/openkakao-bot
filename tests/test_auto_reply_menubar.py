@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import importlib.util
 import json
@@ -4813,6 +4814,136 @@ class LayoutGateTests(unittest.TestCase):
         self.assertIn("final class TableScrollView: NSScrollView", source)
         self.assertIn("override func tile()", source)
         self.assertIn("let scroll = TableScrollView()", source)
+
+
+class JarvisBrowserBridgeActionTests(unittest.TestCase):
+    def test_invalid_input_and_global_abort_return_redacted_fixed_envelopes(self):
+        from jarvis_abort import AbortController
+
+        module = load(f"auto_reply_menubar_tool_browser_{id(self)}")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            invalid = asyncio.run(
+                module._tool_browser_payload(
+                    state_root_raw=str(root), job_id="../bad", task="private task"
+                )
+            )
+            self.assertEqual(
+                invalid,
+                {
+                    "ok": False,
+                    "status": "rejected",
+                    "errorCode": "job_id_invalid",
+                    "result": "",
+                },
+            )
+
+            AbortController(root).abort("operator stop")
+            aborted = asyncio.run(
+                module._tool_browser_payload(
+                    state_root_raw=str(root), job_id="browser-1", task="private task"
+                )
+            )
+            self.assertEqual(
+                aborted,
+                {
+                    "ok": False,
+                    "status": "aborted",
+                    "errorCode": "global_abort",
+                    "result": "",
+                },
+            )
+            self.assertNotIn("private task", repr((invalid, aborted)))
+
+    def test_oversized_result_and_missing_runtime_fail_closed(self):
+        from jarvis_tool_runtime import (
+            MAX_TOOL_RESULT_BYTES,
+            ToolJobResult,
+            ToolKind,
+            ToolStatus,
+        )
+
+        module = load(f"auto_reply_menubar_tool_bounds_{id(self)}")
+
+        class OversizedRuntime:
+            def __init__(self, _state_root):
+                pass
+
+            async def run_browser(self, job):
+                return ToolJobResult(
+                    job_id=job.job_id,
+                    kind=ToolKind.BROWSER,
+                    status=ToolStatus.COMPLETED,
+                    ok=True,
+                    result="x" * (MAX_TOOL_RESULT_BYTES + 1),
+                )
+
+        class MissingRuntime:
+            def __init__(self, _state_root):
+                pass
+
+            async def run_browser(self, _job):
+                raise ModuleNotFoundError("browser_use secret path")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", OversizedRuntime):
+                oversized = asyncio.run(
+                    module._tool_browser_payload(
+                        state_root_raw=temporary, job_id="browser-2", task="task"
+                    )
+                )
+            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", MissingRuntime):
+                unavailable = asyncio.run(
+                    module._tool_browser_payload(
+                        state_root_raw=temporary, job_id="browser-3", task="task"
+                    )
+                )
+
+        self.assertEqual(oversized["errorCode"], "browser_result_too_large")
+        self.assertEqual(oversized["result"], "")
+        self.assertEqual(unavailable["errorCode"], "browser_runtime_unavailable")
+        self.assertEqual(set(unavailable), {"ok", "status", "errorCode", "result"})
+        self.assertNotIn("secret path", repr(unavailable))
+
+    def test_main_dispatches_only_the_internal_browser_arguments(self):
+        module = load(f"auto_reply_menubar_tool_dispatch_{id(self)}")
+        expected = {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+        argv = sys.argv
+        try:
+            sys.argv = [
+                "auto-reply-menubar.py",
+                "--action",
+                "tool-browser",
+                "--state-root",
+                "/tmp/jarvis-state",
+                "--job-id",
+                "browser-4",
+                "--task",
+                "bounded task",
+            ]
+            with mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"), mock.patch.object(
+                module, "_apply_catalog_mutates"
+            ), mock.patch.object(
+                module, "_tool_browser_payload", new=mock.AsyncMock(return_value=expected)
+            ) as run_browser, mock.patch.object(module, "_print_json") as print_json, mock.patch.object(
+                module, "_orig_main"
+            ) as legacy_main:
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = argv
+
+        run_browser.assert_awaited_once_with(
+            state_root_raw="/tmp/jarvis-state",
+            job_id="browser-4",
+            task="bounded task",
+        )
+        print_json.assert_called_once_with(expected)
+        legacy_main.assert_not_called()
 
 
 if __name__ == "__main__":

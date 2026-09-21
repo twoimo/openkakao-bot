@@ -10,6 +10,7 @@ import {
 import {
   cancelModelSwap,
   prepareSwapModel,
+  runBrowserTool,
   setResidentModel,
   swapToLargeModel,
   type SettingsInvoke,
@@ -331,6 +332,81 @@ describe("local model settings bridge", () => {
     const invalid: SettingsInvoke = async <T>() => ({ ok: true, action: "model-swap", model: SWAP_MODEL_ID,
       stage: "ready", reason: "cancelled_rollback_failed", stored: true, prepared: true } as T);
     expect((await swapToLargeModel(token, invalid)).ok).toBe(false);
+  });
+});
+
+describe("owned browser tool bridge", () => {
+  it("invokes only the bounded browser command without model or profile arguments", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return { ok: true, status: "completed", errorCode: "", result: "owned result" } as T;
+    };
+
+    expect(await runBrowserTool({ jobId: "browser-1", task: "inspect page" }, token, fakeInvoke)).toEqual({
+      ok: true,
+      status: "completed",
+      errorCode: "",
+      result: "owned result",
+    });
+    expect(calls).toEqual([{
+      command: "run_browser_tool",
+      args: { jobId: "browser-1", task: "inspect page", tokenId: token.id },
+    }]);
+    expect(JSON.stringify(calls)).not.toContain("profile");
+    expect(JSON.stringify(calls)).not.toContain("model");
+  });
+
+  it("rejects invalid input before invoke and bounds untrusted results", async () => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    let invoked = false;
+    const invokeFn: SettingsInvoke = async <T>() => {
+      invoked = true;
+      return {} as T;
+    };
+    expect((await runBrowserTool({ jobId: "../bad", task: "task" }, token, invokeFn)).errorCode)
+      .toBe("browser_input_invalid");
+    expect(invoked).toBe(false);
+
+    const oversized: SettingsInvoke = async <T>() => ({
+      ok: true,
+      status: "completed",
+      errorCode: "",
+      result: "x".repeat(64 * 1024 + 1),
+    } as T);
+    expect((await runBrowserTool({ jobId: "browser-2", task: "task" }, token, oversized)).errorCode)
+      .toBe("browser_result_invalid");
+
+    const leaked: SettingsInvoke = async <T>() => ({
+      ok: false,
+      status: "failed",
+      errorCode: "browser_job_failed",
+      result: "",
+      secret: "must not cross",
+    } as T);
+    expect((await runBrowserTool({ jobId: "browser-3", task: "task" }, token, leaked)).errorCode)
+      .toBe("browser_bridge_unavailable");
+  });
+
+  it("preserves global abort and fails closed on timeout", async () => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const aborted: SettingsInvoke = async <T>() => ({
+      ok: false,
+      status: "aborted",
+      errorCode: "global_abort",
+      result: "",
+    } as T);
+    expect(await runBrowserTool({ jobId: "browser-4", task: "task" }, token, aborted)).toEqual({
+      ok: false,
+      status: "aborted",
+      errorCode: "global_abort",
+      result: "",
+    });
+
+    const timedOut: SettingsInvoke = <T>() => Promise.reject(new Error("python_timed_out")) as Promise<T>;
+    expect((await runBrowserTool({ jobId: "browser-5", task: "task" }, token, timedOut)).errorCode)
+      .toBe("browser_bridge_unavailable");
   });
 });
 

@@ -17,9 +17,14 @@ use thiserror::Error;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(25);
+const BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(90);
 const MODEL_SWAP_TIMEOUT: Duration = Duration::from_secs(120);
 const MODEL_SWAP_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const BROWSER_TOOL_OUTPUT_LIMIT_BYTES: usize = 96 * 1024;
+const BROWSER_TOOL_RESULT_LIMIT_BYTES: usize = 64 * 1024;
+const BROWSER_TOOL_TASK_LIMIT_BYTES: usize = 16 * 1024;
+const BROWSER_TOOL_JOB_ID_LIMIT: usize = 64;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
 const STATE_FILE_LIMIT_BYTES: u64 = 4096;
@@ -174,6 +179,26 @@ pub struct SafeRuntimeSnapshot {
     error_code: Option<String>,
 }
 
+#[derive(Debug, Serialize, PartialEq)]
+pub struct SafeBrowserToolResult {
+    ok: bool,
+    status: String,
+    #[serde(rename = "errorCode")]
+    error_code: String,
+    result: String,
+}
+
+impl SafeBrowserToolResult {
+    fn failed(error_code: &str) -> Self {
+        Self {
+            ok: false,
+            status: "failed".to_string(),
+            error_code: error_code.to_string(),
+            result: String::new(),
+        }
+    }
+}
+
 impl PythonBridge {
     pub fn new() -> Self {
         Self {
@@ -235,6 +260,27 @@ impl PythonBridge {
             "model-swap" => sanitize_model_swap_action(&value),
             _ => return Err(BridgeError::ActionNotAllowed),
         })
+    }
+
+    pub fn run_browser_tool(
+        &self,
+        job_id: &str,
+        task: &str,
+        token_id: Option<&str>,
+    ) -> Result<SafeBrowserToolResult, BridgeError> {
+        if token_id.is_some_and(|token| !valid_browser_tool_job_id(token)) {
+            return Err(BridgeError::ActionNotAllowed);
+        }
+        let args = browser_tool_args(job_id, task)?;
+        let bytes = self.run_python_with_output_limit(
+            &args,
+            BROWSER_TOOL_TIMEOUT,
+            token_id,
+            false,
+            BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
+        )?;
+        let value = parse_json_output(&bytes)?;
+        Ok(sanitize_browser_tool_result(&value))
     }
 
     pub fn cancel(&self, token_id: &str) -> bool {
@@ -310,6 +356,23 @@ impl PythonBridge {
         token_id: Option<&str>,
         cooperative_cancel: bool,
     ) -> Result<Vec<u8>, BridgeError> {
+        self.run_python_with_output_limit(
+            extra,
+            timeout,
+            token_id,
+            cooperative_cancel,
+            OUTPUT_LIMIT_BYTES,
+        )
+    }
+
+    fn run_python_with_output_limit(
+        &self,
+        extra: &[String],
+        timeout: Duration,
+        token_id: Option<&str>,
+        cooperative_cancel: bool,
+        output_limit: usize,
+    ) -> Result<Vec<u8>, BridgeError> {
         let resources = self.config.resources()?;
         resources.validate().map_err(BridgeError::from)?;
         let python = if !resources.installed && self.config.python == Path::new("python3") {
@@ -377,7 +440,7 @@ impl PythonBridge {
             python,
             &args,
             timeout,
-            OUTPUT_LIMIT_BYTES,
+            output_limit,
             cancel_flag,
             cooperative_marker.as_deref(),
             MODEL_SWAP_RECOVERY_TIMEOUT,
@@ -623,6 +686,37 @@ fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     Some(value.chars().take(max_chars).collect())
 }
 
+fn valid_browser_tool_job_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > BROWSER_TOOL_JOB_ID_LIMIT
+        || !bytes[0].is_ascii_alphanumeric()
+    {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-'))
+}
+
+fn browser_tool_args(job_id: &str, task: &str) -> Result<Vec<String>, BridgeError> {
+    if !valid_browser_tool_job_id(job_id)
+        || task.trim().is_empty()
+        || task.contains('\0')
+        || task.len() > BROWSER_TOOL_TASK_LIMIT_BYTES
+    {
+        return Err(BridgeError::ActionNotAllowed);
+    }
+    Ok(vec![
+        "--action".to_string(),
+        "tool-browser".to_string(),
+        "--job-id".to_string(),
+        job_id.to_string(),
+        "--task".to_string(),
+        task.to_string(),
+    ])
+}
+
 fn settings_action_args(
     action: &str,
     query: Option<&str>,
@@ -738,6 +832,49 @@ fn bounded_json_string(value: Option<&Value>, max_chars: usize) -> String {
         .chars()
         .take(max_chars)
         .collect()
+}
+
+fn sanitize_browser_tool_result(value: &Value) -> SafeBrowserToolResult {
+    const STATUSES: &[&str] = &["completed", "aborted", "rejected", "failed"];
+    const ERROR_CODES: &[&str] = &[
+        "global_abort",
+        "state_root_invalid",
+        "job_id_invalid",
+        "browser_task_invalid",
+        "browser_task_too_large",
+        "browser_runtime_unavailable",
+        "browser_job_failed",
+        "browser_result_invalid",
+        "browser_result_too_large",
+    ];
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("");
+    let error_code = value.get("errorCode").and_then(Value::as_str).unwrap_or("");
+    let Some(result) = value.get("result").and_then(Value::as_str) else {
+        return SafeBrowserToolResult::failed("browser_result_invalid");
+    };
+    if result.len() > BROWSER_TOOL_RESULT_LIMIT_BYTES {
+        return SafeBrowserToolResult::failed("browser_result_too_large");
+    }
+    if value.get("ok").and_then(Value::as_bool) == Some(true)
+        && status == "completed"
+        && error_code.is_empty()
+    {
+        return SafeBrowserToolResult {
+            ok: true,
+            status: status.to_string(),
+            error_code: String::new(),
+            result: result.to_string(),
+        };
+    }
+    if !STATUSES.contains(&status) || !ERROR_CODES.contains(&error_code) {
+        return SafeBrowserToolResult::failed("browser_job_failed");
+    }
+    SafeBrowserToolResult {
+        ok: false,
+        status: status.to_string(),
+        error_code: error_code.to_string(),
+        result: String::new(),
+    }
 }
 
 fn safe_small_json(path: &Path) -> Option<Value> {
@@ -1353,6 +1490,94 @@ mod tests {
     #[test]
     fn rejects_bad_json() {
         assert!(matches!(parse_json_output(b"{bad"), Err(BridgeError::Json)));
+    }
+
+    #[test]
+    fn browser_tool_action_is_exactly_allowlisted_and_bounded() {
+        let args = browser_tool_args("browser-1", "inspect the owned page").unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "--action",
+                "tool-browser",
+                "--job-id",
+                "browser-1",
+                "--task",
+                "inspect the owned page",
+            ]
+        );
+        assert!(!args.iter().any(|value| {
+            value == "--model" || value == "--profile" || value == "--browser-profile"
+        }));
+
+        for (job_id, task) in [
+            ("../bad", "task"),
+            ("", "task"),
+            ("browser-2", "   "),
+            ("browser-3", "bad\0task"),
+        ] {
+            assert!(matches!(
+                browser_tool_args(job_id, task),
+                Err(BridgeError::ActionNotAllowed)
+            ));
+        }
+        let oversized = "가".repeat(BROWSER_TOOL_TASK_LIMIT_BYTES / 3 + 1);
+        assert!(matches!(
+            browser_tool_args("browser-4", &oversized),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+        assert!(valid_browser_tool_job_id(
+            "123e4567-e89b-42d3-a456-426614174000"
+        ));
+        assert!(!valid_browser_tool_job_id(
+            &"a".repeat(BROWSER_TOOL_JOB_ID_LIMIT + 1)
+        ));
+    }
+
+    #[test]
+    fn browser_tool_result_is_bounded_and_redacted() {
+        let completed = sanitize_browser_tool_result(&json!({
+            "ok": true,
+            "status": "completed",
+            "errorCode": "",
+            "result": "safe result",
+            "secret": "drop-me",
+        }));
+        assert_eq!(
+            completed,
+            SafeBrowserToolResult {
+                ok: true,
+                status: "completed".to_string(),
+                error_code: String::new(),
+                result: "safe result".to_string(),
+            }
+        );
+
+        let failed = sanitize_browser_tool_result(&json!({
+            "ok": false,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "private body must be dropped",
+        }));
+        assert_eq!(failed.result, "");
+        assert_eq!(failed.error_code, "browser_job_failed");
+
+        let oversized = sanitize_browser_tool_result(&json!({
+            "ok": true,
+            "status": "completed",
+            "errorCode": "",
+            "result": "x".repeat(BROWSER_TOOL_RESULT_LIMIT_BYTES + 1),
+        }));
+        assert_eq!(oversized.error_code, "browser_result_too_large");
+        assert_eq!(oversized.result, "");
+
+        let unknown = sanitize_browser_tool_result(&json!({
+            "ok": false,
+            "status": "failed",
+            "errorCode": "credential=private",
+            "result": "",
+        }));
+        assert_eq!(unknown.error_code, "browser_job_failed");
     }
 
     #[test]

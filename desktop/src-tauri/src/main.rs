@@ -1,7 +1,7 @@
 mod python_bridge;
 mod resource_layout;
 
-use python_bridge::{PythonBridge, SafeRuntimeSnapshot};
+use python_bridge::{PythonBridge, SafeBrowserToolResult, SafeRuntimeSnapshot};
 use serde_json::Value;
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -47,6 +47,22 @@ async fn fetch_settings_action(
     })
     .await
     .map_err(|_| "settings_worker_failed".to_string())?
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn run_browser_tool(
+    bridge: tauri::State<'_, PythonBridge>,
+    job_id: String,
+    task: String,
+    token_id: Option<String>,
+) -> Result<SafeBrowserToolResult, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge.run_browser_tool(&job_id, &task, token_id.as_deref())
+    })
+    .await
+    .map_err(|_| "browser_tool_worker_failed".to_string())?
     .map_err(|error| error.to_string())
 }
 
@@ -147,6 +163,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             fetch_runtime_snapshot,
             fetch_settings_action,
+            run_browser_tool,
             cancel_python,
             cancel_model_swap,
             open_settings,

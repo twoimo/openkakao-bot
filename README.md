@@ -84,7 +84,7 @@ The table records the historical Units 1–4 landing commits; it is not a curren
 
 `JarvisToolRuntime` is a local, non-UI boundary for bounded browser and background AX jobs. Browser jobs use a fresh owned `DedicatedPlaywrightContext` and the fixed loopback MLX endpoint only; they do not attach to a live browser profile. AX jobs return a virtual cursor coordinate and status without moving the real pointer or activating/focusing a window, and requests that require either fail closed as `ax_focus_steal_required`. Every job observes the latched global abort and the runtime never resumes it automatically. Task, rectangle, and result sizes are bounded, failures expose fixed error codes, and status events contain only `jobId`, `kind`, `stage`, `load`, `time`, and `errorCode`.
 
-Current `JarvisToolRuntime` verification is centered on fake owned-browser, agent, and AX adapters plus local bundle-staging/import checks. It does not verify an authenticated website flow, perform an AX focus transition, send a real KakaoTalk message, or add a new UI or bridge action.
+The Tauri `run_browser_tool` command now reaches this runtime through the internal `tool-browser` Python action. The command accepts only bounded job, task, and cancellation-token strings; it reuses the owned-child timeout/cancellation path and returns only `ok`, `status`, `errorCode`, and a bounded result string. It exposes no model or browser-profile override and adds no UI. Current verification is centered on fake owned-browser/agent adapters and bridge contract tests; it does not prove an authenticated website flow, perform an AX action, or send a KakaoTalk message.
 
 ### Retrieval and model-residency contracts
 
