@@ -727,7 +727,7 @@ parent 재측정 결과는 다음과 같다.
 
 - 이 Computer Use 프로브 당시 설치 번들의 빌드 시각 관측값은 2026-09-21 14:50:30이었다. commit `4b25149` 기준으로 그 시각 뒤에 17개 커밋이 있었고 가장 이른 커밋은 `7387aa1`(15:13)이었다. 이 커밋에 고정한 관측으로 당시 설치본은 pipeline stage, bridge job ring, on-device hardware 카드, DREAM-RSI provenance를 포함하지 않았다.
 - 같은 프로브에서 LaunchAgent `com.openkakao.jarvis.desktop`(`KeepAlive=false`, `RunAtLoad=true`)는 pid 68708로 관측됐고 child process는 없었다. unattended host는 별도 `com.openkakao.auto-reply.session-monitor`이며 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다. 빌드 시각 14:50:30과 pid 68708은 모두 이 프로브 실행 당시의 관측값이며, 설치 번들은 이후 2026-09-21 19:15:27에 재설치됐다.
-- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.0초 뒤 오류 **-10005 timeoutReached**로 실패했다. 2026-09-21 21:23:04 설치본(번들 바이너리 21:22, `dense_status` 노출 포함)에 대해 같은 프로브를 다시 실행했고 결과는 동일했다: `cua.getState()`는 실행 중 앱을 나열했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.08초 뒤 **-10005 timeoutReached**로 실패했다. 따라서 이번 재설치 이후에도 live UI 스크린샷은 확보하지 못했고, 메뉴바 패널을 여는 사용자 클릭 없이 스크린샷을 대체하지 않았다. 이를 `LSUIElement` 메뉴바 앱 특성에 기인한 것으로 보는 설명은 한 환경에서 1회 관측한 결과에 대한 미검증 attribution이며 원인은 격리되지 않았다. 따라서 이 프로브에서는 live UI 스크린샷을 얻지 못했고, 스크린샷 기반 크로스 체크로 대체하지 않았다.
+- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.0초 뒤 오류 **-10005 timeoutReached**로 실패했다. 2026-09-21 21:23:04 설치본(번들 바이너리 21:22, `dense_status` 노출 포함)에 대해 같은 프로브를 다시 실행했고 결과는 동일했다: `cua.getState()`는 실행 중 앱을 나열했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.08초 뒤 **-10005 timeoutReached**로 실패했다. 따라서 이번 재설치 이후에도 live UI 스크린샷은 확보하지 못했고, 메뉴바 패널을 여는 사용자 클릭 없이 스크린샷을 대체하지 않았다. 이를 `LSUIElement` 메뉴바 앱 특성에 기인한 것으로 보는 설명은 한 환경에서 1회 관측한 결과에 대한 미검증 attribution이며 원인은 격리되지 않았다. (이 attribution은 아래 `live UI 스크린샷 확보와 Computer Use attach 실패 원인 격리` 절의 실측으로 대체됐다: attach timeout은 visible window 개수로 재현·격리됐고, 같은 날 패널과 설정 창 스크린샷을 확보했다.) 당시 이 프로브에서는 live UI 스크린샷을 얻지 못했고 스크린샷 기반 크로스 체크로 대체하지 않았다(그 제한은 아래 절에서 닫혔다).
 
 ### 설치 번들 Python 스크립트 패키징 누락 — 2026-09-21 KST
 
@@ -797,3 +797,99 @@ exit 0, stderr 0 bytes였고 stdout은 한 줄로 다음 payload였다.
 이 state root는 `mktemp -d` 방식 임시 디렉터리라 macOS가 정리할 수 있고 durable copy를 남기지 않았다. 그래서 값 자체보다 재현 경로와 명령을 남긴다. 빈 state root로 같은 프로브를 실행하면 `snapshot_status`와 `dense_status`가 모두 `unknown`이 된다(부모 관측). 최초 프로브 기록은 state root를 임시 디렉터리로만 적고 경로를 남기지 않았으며, 이 절이 그 공백을 닫는다.
 
 재색인·dense ANN 갱신 단계와 dense 상태의 설정 노출 경로는 두 개의 sequence 다이어그램으로 기록했다. [재색인·dense ANN 갱신 시퀀스](graphrag-reindex-dense-refresh.html)는 `validate sequence --quality showcase`에서 9/9 artifact checks, 0 errors / 0 warnings, `deliver` artifact SHA-256 `4ae11d79e98d2dd9c975626e18a631f54f14a9b3cd0421eb7c05f00579908c3b`(806,740 bytes), 표준 `visual-check` `status="pass"`와 diagnostics 0, 1440x900·1600x1000·1920x1080·2048x1320 light containment와 1440x900·2048x1320 light/dark capture를 기록했다. 빈 그래프에서는 dense 연결 없이 `last_dense_status="empty"`·`last_dense_indexed_at=0`으로 닫히는 분기도 함께 담았다. [dense 상태 노출 경로 시퀀스](graphrag-dense-status-exposure.html)도 같은 검사에서 9/9 artifact checks, 0 errors / 0 warnings, artifact SHA-256 `7cc3b096f4b5b4f2b0a35e931b86ef6a0749d329dc922406a09e924250ed2078`(803,834 bytes), `visual-check` `status="pass"`, diagnostics 0을 기록했다. 두 다이어그램은 1080x560과 1080x500 viewBox로 나눠 dense 단계의 실패 분기와 상태 노출 읽기 경로를 각각 담았고, 발광·네온 계열 표현은 쓰지 않았다.
+
+## live UI 스크린샷 확보와 Computer Use attach 실패 원인 격리 — 2026-09-21 KST
+
+앞선 `Computer Use attach 프로브 (negative)` 절이 남긴 제한(live UI 스크린샷 미확보)을 이 절에서 닫는다. 2026-09-21 KST에 설치본 `/Applications/OpenKakao Jarvis.app`(번들 바이너리 mtime 2026-09-21 21:22, `CFBundleShortVersionString=0.1.0`, `LSUIElement=1`)에서 메뉴바 패널과 설정 창이 실제로 렌더한 스크린샷과 AX 트리를 확보했다. 대상 프로세스는 pid 50870, 기동 시각 21:23:15였고 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다.
+
+### 원인 격리 — attach timeout은 visible window 개수 문제였다
+
+`-10005 timeoutReached`는 메뉴바 앱 성격이나 `LSUIElement` 때문이 아니라 attach 시점의 visible window 개수 때문이었다. `desktop/src-tauri/src/main.rs`는 패널 창(`label() == "jarvis"`)이 포커스를 잃으면 즉시 hide한다.
+
+```rust
+WindowEvent::Focused(false) if window.label() == "jarvis" => {
+    let _ = window.hide();
+}
+```
+
+따라서 사용자가 패널이나 설정 창을 열어 두지 않은 평소 상태에서 그 프로세스의 창은 0개다. 같은 앱에 대해 조건만 바꿔 측정한 결과는 다음과 같다.
+
+| 조건 | `cua.getApp` 결과 |
+| --- | --- |
+| visible window 1개(패널 또는 `Jarvis 설정` 창) | 경로 지정 **69 ms** 성공 · 표시 이름 지정 **43 ms** 성공 |
+| visible window 0개(`AXCloseButton` 클릭 후 창 수 0) | **5.05초** 뒤 `Computer Use server error -10005: timeoutReached` |
+
+즉 경로 조회와 표시 이름 조회 모두 창이 있으면 즉시 붙고, 창이 0개면 둘 다 5초 timeout으로 닫힌다. 종전 절이 적은 `LSUIElement` 기인 설명은 미검증 attribution이었고 이 실측으로 대체한다. `LSUIElement=true`는 Info.plist 사실로 남지만 Dock·앱 전환기 노출을 끄는 accessory 설정이며 attach timeout의 원인이 아니었다.
+
+### 패널 열기 재현 절차
+
+상태 아이템 위치는 AX로 읽고 클릭은 합성 HID 이벤트로 보낸다. AppleScript의 `click menu bar item 1 of menu bar 2`와 `perform action "AXPress"`는 success를 반환했지만 Tauri tray handler를 발화시키지 못했고 창 수는 0으로 남았다(handler가 `MouseButtonState::Up`, 즉 실제 마우스 up 이벤트를 요구한다).
+
+```bash
+osascript -e 'tell application "System Events" to tell process "openkakao-jarvis-desktop" to get {position, size} of menu bar item 1 of menu bar 2'
+# -> 1030, 3, 36, 24
+
+swiftc -O -o /tmp/jarvis_click /tmp/jarvis_click.swift
+/tmp/jarvis_click 1048 15
+# -> posted click at 1048.0,15.0
+# -> System Events count of windows: 0 -> 1, window size 276x260
+```
+
+```swift
+// /tmp/jarvis_click.swift
+import CoreGraphics
+import Foundation
+
+let args = CommandLine.arguments
+guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
+    FileHandle.standardError.write("usage: clicker x y".data(using: .utf8)!)
+    exit(2)
+}
+let point = CGPoint(x: x, y: y)
+guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left),
+      let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+      let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+    FileHandle.standardError.write("event create failed\n".data(using: .utf8)!)
+    exit(3)
+}
+move.post(tap: .cghidEventTap)
+usleep(40_000)
+down.post(tap: .cghidEventTap)
+usleep(80_000)
+up.post(tap: .cghidEventTap)
+print("posted click at \(x),\(y)")
+```
+
+그 뒤 `cua.getApp("/Applications/OpenKakao Jarvis.app")`은 약 0.1초에 붙고 `getScreenshot()`과 `getAXState()`를 그대로 쓸 수 있다.
+
+### 관측 결과 — 패널
+
+패널은 276x260(`desktop/src-tauri/tauri.conf.json`의 패널 크기와 일치)이며 캡처는 [jarvis-live-panel.png](jarvis-live-panel.png)다. AX 트리는 `0 standard window` → `1 scroll area` → `2 HTML content`(URL `tauri://localhost`) → `3 container Jarvis` → `4 image Jarvis core` + `5 button 설정 열기`였다. 창 안의 조작 요소는 톱니바퀴 버튼 1개뿐이다. 렌더는 어두운 배경 위 샴페인 골드 구체 코어, 다중 동심원 짐벌 링, 얇은 시냅스 네트워크, 작은 입자로 관측됐고 bloom 후처리나 발광 텍스트는 없었다.
+
+### 관측 결과 — 설정 창
+
+`5 button 설정 열기` 클릭은 별도 창 `Jarvis 설정`(760x760, `tauri://localhost/index.html?view=settings`)을 연다. `getAXStateAndScreenshot()`으로 트리와 이미지를 함께 받았다(760x760, [jarvis-live-settings.png](jarvis-live-settings.png)). 그 창의 내용은 아래가 전부다.
+
+| 카드 | 값 |
+| --- | --- |
+| 대상 채팅방 | pop up `NIMDA 인수인계 임원방 ⚠` · `등록 3 · live 3 · 본문 미전달` |
+| AI 모델 | toggle `Flash-Next ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit 기본 상주` = on · toggle `Qwen3.8 27B ddalcu/Qwen3.8-27B-MLX-Serve-4bit 온디맨드 스왑 · 미로딩` = off |
+| AI 모델 상태 | `현재 선택: ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` · `외부 소유 · 27B 전환 차단` · `외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다` · `온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve · Qwen3.8 Flash-Next · 설정 검증 통과 · 실추론 통과 (Qwen3.8 Flash-Next)` |
+| Voice | `음성 런타임 상태를 아직 받지 못했습니다.` · `호출어: 헤이 자비스` · `임계값: 0.65 고정` · `한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)` · `마이크 세션 시작` 버튼 1개 |
+| 카카오 DB 동기화 · 색인 | `동기화: stale` · `백그라운드 · 답변 대기 0 · 긱뉴스 idle · DB 동기화 stalled` · `격리 복제: copy_ok` · `색인 모드: wal+isolated-copy+mode=ro+query_only` · `마지막 색인: 1789986516 · indexed 31` · `dense: unknown` |
+| DREAM-RSI | `status: evaluated · selected_policy: mirror_prompt_tail` · `gold_rows: 400 · gold_source_policy: human_only` |
+| Knowledge | `GraphRAG · stale` · `E-R-E 50 nodes · 341 relations · 화면 최대 24 nodes` · 홀로그램 image 1개 · `overview · 최대 24 nodes` · 비활성 `+1 hop` |
+| GeekNews 슬롯 | `아침 대기 점심 대기 저녁 대기` |
+| History | `최근 12건 · 본문·프롬프트 제외` + 12개 행(`검색 ok` 11개, `검색 error` 1개) |
+
+이 창에는 대량 검증, 기능 점검, 권한 관리, 자기개선 조작 화면이 없다. `dense: unknown`은 그 state root에 dense 결과 기록이 아직 없다는 뜻이며, 같은 시각 `http://127.0.0.1:8000/v1/embeddings`는 curl 응답 `000`(closed)이었다. 그래서 이 실행 경로의 검색은 여전히 BM25 한정이다.
+
+프로브 중 AX 창 목록에는 정체를 확인하지 못한 66x20 창 하나(`AXTitle` 없음, 위치 586,181)가 함께 있었고 설정 창을 닫자 함께 사라졌다. 이 창은 패널이 아니며(크기가 276x260과 다르다) 기능 판정에 쓰지 않았다.
+
+### 캡처 경로와 도구 제약
+
+`getScreenshot()`이 돌려준 버퍼는 PNG가 아니라 JPEG(`ff d8 ff e0 00 10 4a 46 49 46`)였다. 이 호스트에서 `screencapture -x /tmp/jv_probe.png`는 실행 후 파일을 만들지 않았다. 그래서 화면 기록은 Computer Use 버퍼만 사용했고, 파일로 남기려고 두 파일명만 허용하는 allowlist를 둔 loopback sink(`127.0.0.1:8799`)에 POST한 뒤 `sips -s format png`로 PNG로 변환했다. sink는 이 호스트 loopback에만 바인딩했고 작업 후 종료했다. 남긴 파일은 패널 276x260(72,037 bytes)과 설정 760x760(199,920 bytes)이다.
+
+### 이 절의 한계
+
+이 증거는 설치된 Tauri 빌드의 UI 렌더 결과, 창 생명주기, 설정 표면 구성에 대한 것이다. live model generation, live KakaoTalk 전송, Developer ID 서명·notarization, 사람 음성에 대한 한국어 호출어 일반화는 입증하지 않는다. 또 `cua.getApp`이 성공하려면 대상 앱에 최소 1개의 visible window가 있어야 한다는 제약을 이 실측 범위에서 기록한다. 창이 0개인 메뉴바 상주 앱은 Computer Use로 attach할 수 없으므로 같은 확인을 다시 하려면 위 클릭 절차로 패널을 먼저 열어야 한다.
