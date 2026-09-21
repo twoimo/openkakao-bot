@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -148,7 +149,14 @@ def _sanitize_stderr(value: Any) -> str:
             text = ""
         else:
             text = str(value)
-        text = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
+        sanitized = []
+        for character in text:
+            category = unicodedata.category(character)
+            if category == "Cc":
+                sanitized.append(" ")
+            elif not category.startswith("C"):
+                sanitized.append(character)
+        text = "".join(sanitized)
         text = re.sub(r"\s+", " ", text).strip()
         text = re.sub(r"[A-Za-z0-9_-]{32,}", "<redacted>", text)
         return text[:200]

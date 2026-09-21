@@ -6,6 +6,7 @@ import json
 import io
 import subprocess
 import tempfile
+import unicodedata
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -24,6 +25,7 @@ from scripts.dream_rsi_alphaxiv import (
     collect_orx_paper_report,
     collect_paper_report,
     main,
+    _sanitize_stderr,
 )
 
 
@@ -250,6 +252,40 @@ class OpenResearchProviderTests(unittest.TestCase):
         self.assertIn("<redacted>", stderr)
         self.assertNotIn("A" * 64, stderr)
         self.assertEqual(len(stderr), 200)
+
+    def test_sanitize_stderr_removes_c0_del_and_c1_controls(self):
+        code_points = [*range(0x00, 0x20), 0x7F, *range(0x80, 0xA0)]
+        for code_point in code_points:
+            with self.subTest(code_point=hex(code_point)):
+                out = _sanitize_stderr(chr(code_point))
+                self.assertFalse(
+                    any(unicodedata.category(character).startswith("C") for character in out)
+                )
+
+    def test_sanitize_stderr_c1_control_becomes_separator(self):
+        self.assertEqual(_sanitize_stderr("a\u0085b"), "a b")
+
+    def test_sanitize_stderr_removes_format_and_other_c_categories(self):
+        out = _sanitize_stderr("saf\u202eevil\u200btext\ufeff\ud800\ue000\u0378")
+        self.assertEqual(out, "safeviltext")
+        self.assertFalse(
+            any(unicodedata.category(character).startswith("C") for character in out)
+        )
+        serialized = json.dumps(out)
+        self.assertNotIn("\\u00", serialized)
+        self.assertNotIn("\\x", serialized)
+
+    def test_sanitize_stderr_preserves_bounded_redacted_bytes_contract(self):
+        token = b"A" * 64
+        payload = b"left\x80" + token + b"\x85right " + (b"word " * 80)
+        out = _sanitize_stderr(payload)
+        self.assertIsInstance(out, str)
+        self.assertIn("<redacted>", out)
+        self.assertNotIn("A" * 64, out)
+        self.assertLessEqual(len(out), 200)
+        self.assertFalse(
+            any(unicodedata.category(character).startswith("C") for character in out)
+        )
 
     @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
     @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")

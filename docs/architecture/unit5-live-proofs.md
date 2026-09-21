@@ -708,3 +708,23 @@ orx paper 2609.14858
 결과는 `Ran 68 tests in 0.033s`, `OK`였다. 별도 `py_compile scripts/auto_reply_dream_rsi.py`도 `COMPILE_OK`였다.
 
 이 기록은 paper retrieval provenance와 offline fixed-replay evaluation에 대한 component-level 증거다. live KakaoTalk send, live model generation, future online performance의 non-degradation, 모델 train/promote/replace/start를 입증하지 않는다.
+
+## 두 번째 독립 리뷰 패스와 Computer Use attach 프로브 — 2026-09-21 KST
+
+두 번째 독립 서브에이전트 리뷰는 직전 HEAD `91010ff`에서 fix 1·3·4를 완전 수정, fix 2를 부분 수정으로 판정하고 AHP **96/100**을 부여했다. 남은 지적은 `_sanitize_stderr`가 ASCII C0/DEL만 제거해 Unicode C1 control(U+0080-U+009F, category `Cc`)이 직렬화된 provenance에 남는다는 점이었고, 이번 패스에서 전체 Unicode `C*` 클래스(Cc는 공백 치환, Cf/Cs/Co/Cn은 삭제)로 확장하고 회귀 테스트 4개를 추가했다.
+
+parent 재측정 결과는 다음과 같다.
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 -m unittest tests.test_dream_rsi_alphaxiv tests.test_auto_reply_dream_rsi
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 -m unittest tests.test_auto_reply_ondevice tests.test_auto_reply_reference_search tests.test_auto_reply_knowledge_graph tests.test_jarvis_unit4 tests.test_jarvis_desktop_launchers tests.test_local_mlx_model_readiness tests.test_verify_local_models tests.test_mlx_serve_lifecycle tests.test_auto_reply_dream_rsi tests.test_dream_rsi_alphaxiv
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/dream_rsi_alphaxiv.py --paper-source orx --paper-id 2609.14858
+```
+
+결과는 `Ran 75 tests ... OK`, `Ran 287 tests ... OK`였고 paper 명령은 exit 0, `status="ok"`, `provider="orx_cli"`, `reason="orx_report_verified"`, summary 14,515 chars였다. U+0000-U+00FF 전체와 U+200B-U+200F, U+202A-U+202E, U+2066-U+2069, U+FEFF, U+061C, U+00AD, U+E000, U+0378, lone surrogate에 대한 직접 프로브에서 `C*` category 잔존은 0건이었고, JSON 직렬화 결과에도 control escape가 없었다.
+
+### Computer Use attach 프로브 (negative)
+
+- 설치 번들 `/Applications/OpenKakao Jarvis.app`의 빌드 시각은 2026-09-21 14:50:30이고, 그 이후 커밋이 16개(가장 이른 커밋 `7387aa1`, 15:13)이므로 설치본은 pipeline stage, bridge job ring, on-device hardware 카드, DREAM-RSI provenance를 포함하지 않는다.
+- LaunchAgent `com.openkakao.jarvis.desktop`(`KeepAlive=false`, `RunAtLoad=true`)는 pid 68708로 실행 중이었고 child process는 없었다. unattended host는 별도 `com.openkakao.auto-reply.session-monitor`이며 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다.
+- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 오류 **-10005 timeoutReached**(5.0초)로 실패했다. `LSUIElement` 메뉴바 앱이 attach 가능한 window를 제공하지 않기 때문이며, 따라서 설치본의 live UI 스크린샷은 이번 패스에서 얻지 못했다. 이 항목은 확인된 한계로 남으며 스크린샷 기반 크로스 체크로 대체하지 않는다.
