@@ -124,6 +124,7 @@ Interactive Unit 5 diagrams:
 - [Jarvis/openkakao architecture after Units 1–4](docs/architecture/jarvis-openkakao-units1-4.html)
 - [Jarvis Three.js render lifecycle](docs/architecture/jarvis-three-render-lifecycle.html)
 - [GraphRAG ranked search sequence](docs/architecture/graphrag-search-sequence.html)
+- [Jarvis 27B model-swap lifecycle](docs/architecture/jarvis-model-swap-lifecycle.html) — validate 9/9 showcase, 0 errors/0 warnings; specification SHA `c94a0a02e004a9c1149e13db80cf53dce8e50406eac6dfacd8593c7c4830a25`; artifact SHA `d5472fd8b4aa72239056bdf4f532b104c6ac6b01667be379984a8d4252a3d995`; visual-check pass, no overflow at 1440x900/1600x1000/1920x1080/2048x1320, light/dark capture.
 
 <h2 id="features">Features</h2>
 
