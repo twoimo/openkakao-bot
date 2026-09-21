@@ -1195,3 +1195,22 @@ OK
 - 직전 ANN 저장소는 `knowledge-dense-ann.sqlite3`(00:51, 2,940,928 bytes)이다. `/tmp` 격리 복사본에서 `dense_vectors` 50 · `ann_buckets` 400 · `dense_meta` `bge-m3-lsh-v1`·watermark 1790005898을 읽어, dense 재색인이 실패한 뒤에도 직전 색인이 남아 있음을 확인했다.
 - 이 절이 닫지 않는 것: 이번 측정은 BM25·그래프 상태와 dense의 현재 실패만 보여준다. dense 하이브리드 검색(`search_mode "rrf"`)은 00:51 기록이며 이번에 재현하지 않았고, endpoint가 응답하지 않는 동안 검색은 `bm25_only`다. `stale` true는 원본 대비 색인이 오래됐다는 뜻이며 이번 절에서 원인을 분해하지 않았다.
 - 관측(정정 기록): 상태 action 자체는 read-only지만, 이 절의 확인 과정에서 `sqlite3`로 dense 저장소를 직접 열었을 때 SQLite가 0바이트 `knowledge-dense-ann.sqlite3-wal`과 32,768바이트 `-shm`을 만들었다. 본 DB 파일(2,940,928 bytes, 00:51)은 바뀌지 않았고, 그 뒤 dense 확인은 `/tmp`로 복사한 사본에서만 수행했다. 앱 데이터 디렉터리에는 그 두 파일이 남아 있으며 삭제하지 않았다.
+
+### 설치본 UI Computer Use 재크로스체크 — 2026-09-22 KST
+
+2026-09-22 03:47 KST에 설치본 /Applications/OpenKakao Jarvis.app을 Computer Use(cua_repl)로 다시 확인했다. 설치 번들은 00:51:21 이후 변경되지 않았고 앱 pid는 84125(01:44:30 시작)다. 이번 확인에서 재빌드·재설치·재색인·전송은 실행하지 않았다.
+
+- 상태 항목을 CGEvent 클릭으로 열고 cua.getApp("OpenKakao Jarvis.app")로 붙어 AX 트리를 받았다. 트리는 0 standard window → 1 scroll area → 2 HTML content(URL tauri://localhost) → 3 container Jarvis → 4 image Jarvis core + 5 button 설정 열기 였다. 패널 창의 조작 요소는 톱니바퀴 버튼 1개뿐이다.
+- 패널 캡처(276x260, docs/architecture/jarvis-live-panel.png, 이번에 갱신)에서 웜 블랙 배경, 샴페인 골드 구체 코어, 다중 동심원 짐벌 링, 얇은 시냅스 선, 작은 입자가 관측됐다. bloom 후처리·발광 텍스트·네온은 없었다.
+- 5 button 설정 열기 클릭은 별도 창 Jarvis 설정(760x760, tauri://localhost/index.html?view=settings)을 연다. 03:47:09 캡처로 docs/architecture/jarvis-live-settings.png를 760x760으로 갱신했다. 이 창에 있는 섹션은 아래가 전부다.
+  - 대상 채팅방: pop up button 대상 채팅방(NIMDA 인수인계 임원방) · 등록 3 · live 3 · 본문 미전달
+  - AI 모델: 온디바이스 · Flash-Next 토글 on(기본 상주) · Qwen3.8 27B 토글 off(온디맨드 스왑 · 미로딩) · 현재 선택 ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit · 외부 소유 · 27B 전환 차단 · 외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다 · 온디바이스 감지 Apple M5 Max (128GB RAM) · MLX Core/Serve · Qwen3.8 Flash-Next · 설정 검증 통과 · 실추론 통과 (Qwen3.8 Flash-Next)
+  - Voice: 로컬 전용 · 상태 wake_listen · wake none · RMS 0.000 · 호출어 헤이 자비스 · 임계값 0.65 고정 · 한국어 커스텀 헤드 bundled ONNX 선택됨(TTS 보정, 사람 음성 일반화 아님) · 마이크 세션 시작 버튼
+  - 카카오 DB 동기화 · 색인: GraphRAG 준비 · 동기화 stale · 백그라운드 · 답변 대기 0 · 긱뉴스 idle · DB 동기화 stalled · 격리 복제 copy_ok · 색인 모드 wal+isolated-copy+mode=ro+query_only · 마지막 색인 1790005905 · indexed 31 · dense indexed:50 · indexed_at 1790005911
+  - DREAM-RSI: 체크포인트 provenance · status evaluated · selected_policy mirror_prompt_tail · gold_rows 400 · gold_source_policy human_only
+  - Knowledge: GraphRAG · stale · E-R-E 50 nodes · 341 relations · 화면 최대 24 nodes · 홀로그램 그래프 이미지 · +1 hop 버튼(비활성) · GeekNews 슬롯(아침 대기 · 점심 대기 · 저녁 대기)
+  - History: 안전 요약 · 최근 12건 · 본문·프롬프트 제외
+- 대량 검증·기능 점검·권한 관리 화면은 이 창에 없고 설치본에서 노출되지 않는다.
+- 설정 창의 close button을 누른 뒤 앱은 창 0개 · isRunning true(app id com.openkakao.jarvis.desktop)였고 pid 84125는 살아 있었다. 이 리비전도 포커스 상실·닫기에서 패널을 hide하고 프로세스를 유지한다.
+- 캡처 출처: 이번 PNG는 screencapture 대신 CUA 서비스가 자체 저장한 캡처(임시 디렉터리 com.openai.sky.CUAService, 03:47:04 · 03:47:09 JPEG)를 sips로 PNG 변환해 기록했다. 이 호스트 세션에서 screencapture -l windowID는 30초 안에 끝나지 않아 중단했다(호스트 프로세스에 화면 기록 권한 없음). 갱신한 PNG SHA-256은 jarvis-live-panel.png 0cedac6cc227464b06ae1801cfb386c97630b883714f0ecd7876fe6ed9c60903, jarvis-live-settings.png eac575b0b316398c636b6da171dd2853de86ff1bacd75de649efd6fa5c77532b이다.
+- 이 절의 한계: 이번 확인은 AX 트리·렌더 픽셀·창 생명주기에 대한 것이다. live 모델 생성, dense 재색인, 실제 카카오톡 전송을 입증하지 않는다. 설정 화면의 dense indexed:50 · indexed_at 1790005911과 마지막 색인 값은 00:51 성공 시점의 영속 상태를 읽은 것이며 이번에 재측정한 값이 아니다.
