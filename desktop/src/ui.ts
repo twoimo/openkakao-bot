@@ -6,6 +6,7 @@ export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
   "model-owner-state",
   "mlx-server-state",
+  "settings-hardware-status",
   "settings-sync-source",
   "settings-activity-source",
   "settings-sync-copy",
@@ -59,6 +60,7 @@ export function settingsMarkup(): string {
       <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
       <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
       <p id="mlx-server-state" class="muted">앱 소유 MLX 서버 상태를 확인 중입니다.</p>
+      <p id="settings-hardware-status" class="muted" role="status" aria-live="polite">온디바이스 하드웨어를 확인 중입니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">
@@ -173,4 +175,21 @@ export function renderBackground(snapshot: RuntimeSnapshot, root: Document = doc
   const pendingReplies = Math.round(Math.min(1, Math.max(0, background.replyLoad)) * 4);
   const caption = background.caption ? ` · ${background.caption.slice(0, 120)}` : "";
   target.textContent = `백그라운드 · 답변 대기 ${pendingReplies} · 긱뉴스 ${background.geeknews.state} · DB 동기화 ${background.dbSync.state}${caption}`;
+}
+
+export function renderHardware(snapshot: RuntimeSnapshot, root: Document = document): void {
+  const target = root.getElementById("settings-hardware-status");
+  if (!target) return;
+  if (!snapshot.onDevice.available) {
+    target.textContent = "하드웨어 정보를 확인할 수 없습니다.";
+    return;
+  }
+
+  const statusLabel = snapshot.onDevice.statusLabel.slice(0, 240);
+  if (statusLabel) {
+    target.textContent = `온디바이스: ${statusLabel}`;
+    return;
+  }
+  const chip = snapshot.onDevice.chip || "칩 미확인";
+  target.textContent = `온디바이스: ${chip} · ${snapshot.onDevice.memoryGb.toFixed(1)}GB`;
 }

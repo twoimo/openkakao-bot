@@ -45,6 +45,20 @@ export interface BackgroundStatus {
   dbSync: BackgroundSource;
 }
 
+export interface OnDeviceStatus {
+  available: boolean;
+  chip: string;
+  cores: number;
+  memoryGb: number;
+  appleSilicon: boolean;
+  engine: string;
+  recommendedModel: string;
+  quant: string;
+  verified: boolean;
+  statusLabel: string;
+  statusDetail: string;
+}
+
 export interface RuntimeSnapshot {
   available: boolean;
   rooms: RoomSummary[];
@@ -52,6 +66,7 @@ export interface RuntimeSnapshot {
   recentReceipts: RecentReceipt[];
   jobLoad: number;
   background: BackgroundStatus;
+  onDevice: OnDeviceStatus;
   terminal: {
     sent: number;
     skipped: number;
@@ -156,6 +171,58 @@ export function parseBackground(value: unknown): BackgroundStatus {
   };
 }
 
+function unavailableOnDevice(): OnDeviceStatus {
+  return {
+    available: false,
+    chip: "",
+    cores: 0,
+    memoryGb: 0,
+    appleSilicon: false,
+    engine: "",
+    recommendedModel: "",
+    quant: "",
+    verified: false,
+    statusLabel: "",
+    statusDetail: "",
+  };
+}
+
+export function parseOnDevice(value: unknown): OnDeviceStatus {
+  const input = record(value);
+  if (!input) return unavailableOnDevice();
+
+  const hardware = record(input.hardware);
+  const recommendation = record(input.recommendation);
+  const verification = record(input.verification);
+  const isRawSummary = hardware !== null && recommendation !== null && verification !== null;
+  const isSafeSummary = typeof input.available === "boolean";
+  if (!isRawSummary && !isSafeSummary) return unavailableOnDevice();
+
+  const rawMemory = isRawSummary
+    ? hardware?.memory_gb ?? hardware?.memoryGb
+    : input.memoryGb ?? input.memory_gb;
+  const memoryGb = Math.round(Math.min(4096, Math.max(0, finiteNumber(rawMemory, 0))) * 10) / 10;
+  const rawCores = isRawSummary ? hardware?.cores : input.cores;
+
+  return {
+    available: isRawSummary ? true : input.available === true,
+    chip: text(isRawSummary ? hardware?.chip : input.chip).slice(0, 64),
+    cores: Math.min(1024, nonNegativeInt(rawCores)),
+    memoryGb,
+    appleSilicon: isRawSummary
+      ? hardware?.is_apple_silicon === true || hardware?.appleSilicon === true
+      : input.appleSilicon === true || input.apple_silicon === true,
+    engine: text(isRawSummary ? recommendation?.primary_engine : input.engine).slice(0, 32),
+    recommendedModel: text(
+      isRawSummary ? recommendation?.recommended_model : input.recommendedModel ?? input.recommended_model,
+    ).slice(0, 128),
+    quant: text(isRawSummary ? recommendation?.recommended_quant : input.quant).slice(0, 32),
+    verified: isRawSummary ? verification?.ok === true : input.verified === true,
+    statusLabel: text(isRawSummary ? input.status_label ?? input.statusLabel : input.statusLabel ?? input.status_label).slice(0, 240),
+    statusDetail: text(isRawSummary ? input.status_detail ?? input.statusDetail : input.statusDetail ?? input.status_detail).slice(0, 240),
+  };
+}
+
 export function parseJobEvent(value: unknown): JobEvent | null {
   const input = record(value);
   if (!input) return null;
@@ -195,6 +262,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     recentReceipts: [],
     jobLoad: 0,
     background: parseBackground(null),
+    onDevice: unavailableOnDevice(),
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
@@ -276,6 +344,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
     recentReceipts,
     jobLoad: Math.min(1, Math.max(0, finiteNumber(input.job_load ?? input.jobLoad, 0))),
     background: parseBackground(input.background),
+    onDevice: parseOnDevice(input.onDevice ?? input.ondevice_hardware),
     terminal: {
       sent: nonNegativeInt(terminal.sent),
       skipped: nonNegativeInt(terminal.skipped),

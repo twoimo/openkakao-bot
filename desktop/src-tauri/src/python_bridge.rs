@@ -191,11 +191,47 @@ pub struct SafeRuntimeSnapshot {
     recent_receipts: Vec<SafeRecentReceipt>,
     job_load: f64,
     background: SafeBackground,
+    #[serde(rename = "onDevice")]
+    on_device: SafeOnDevice,
     terminal_counts: TerminalCounts,
     context_sync: ContextSync,
     reply_model_id: Option<String>,
     voice: SafeVoiceStatus,
     error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SafeOnDevice {
+    available: bool,
+    chip: String,
+    cores: u32,
+    memory_gb: f64,
+    apple_silicon: bool,
+    engine: String,
+    recommended_model: String,
+    quant: String,
+    verified: bool,
+    status_label: String,
+    status_detail: String,
+}
+
+impl Default for SafeOnDevice {
+    fn default() -> Self {
+        Self {
+            available: false,
+            chip: String::new(),
+            cores: 0,
+            memory_gb: 0.0,
+            apple_silicon: false,
+            engine: String::new(),
+            recommended_model: String::new(),
+            quant: String::new(),
+            verified: false,
+            status_label: String::new(),
+            status_detail: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -904,6 +940,50 @@ fn sanitize_background(value: Option<&Value>, job_load: f64, reply_load: f64) ->
     }
 }
 
+fn sanitize_ondevice(value: Option<&Value>) -> SafeOnDevice {
+    let Some(root) = value.and_then(Value::as_object) else {
+        return SafeOnDevice::default();
+    };
+    let (Some(hardware), Some(recommendation), Some(verification)) = (
+        root.get("hardware").and_then(Value::as_object),
+        root.get("recommendation").and_then(Value::as_object),
+        root.get("verification").and_then(Value::as_object),
+    ) else {
+        return SafeOnDevice::default();
+    };
+    let memory_gb = hardware
+        .get("memory_gb")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, 4096.0);
+    let cores = hardware
+        .get("cores")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(1024) as u32;
+
+    SafeOnDevice {
+        available: true,
+        chip: bounded_json_string(hardware.get("chip"), 64),
+        cores,
+        memory_gb: (memory_gb * 10.0).round() / 10.0,
+        apple_silicon: hardware
+            .get("is_apple_silicon")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        engine: bounded_json_string(recommendation.get("primary_engine"), 32),
+        recommended_model: bounded_json_string(recommendation.get("recommended_model"), 128),
+        quant: bounded_json_string(recommendation.get("recommended_quant"), 32),
+        verified: verification
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        status_label: bounded_json_string(root.get("status_label"), 240),
+        status_detail: bounded_json_string(root.get("status_detail"), 240),
+    }
+}
+
 fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     let value = value?.trim();
     if value.is_empty() {
@@ -1435,6 +1515,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
             recent_receipts: Vec::new(),
             job_load: 0.0,
             background: SafeBackground::fallback(0.0, 0.0),
+            on_device: SafeOnDevice::default(),
             terminal_counts: TerminalCounts::default(),
             context_sync: ContextSync {
                 mode: "async",
@@ -1508,6 +1589,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     let reply_load = open_jobs as f64 / 4.0;
     let job_load = clamp01(reply_load.max(background_activity));
     let background = sanitize_background(root.get("background"), job_load, reply_load);
+    let on_device = sanitize_ondevice(root.get("ondevice_hardware"));
 
     let mut burst_superseded = 0_u64;
     if let Some(receipt_rooms) = root
@@ -1551,6 +1633,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         recent_receipts,
         job_load,
         background,
+        on_device,
         terminal_counts: TerminalCounts {
             sent: as_u64(root.get("sent")),
             skipped: as_u64(root.get("skipped")),
@@ -2959,6 +3042,125 @@ mod tests {
             "body-value",
             "cap-value",
             "fence-value",
+        ] {
+            assert!(!text.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn snapshot_ondevice_bounds_and_truncates_safe_fields() {
+        let safe = sanitize_snapshot(&json!({
+            "ondevice_hardware": {
+                "hardware": {
+                    "chip": "M".repeat(80),
+                    "cores": 5000,
+                    "memory_bytes": 999999999999_u64,
+                    "memory_gb": 127.96,
+                    "is_apple_silicon": true
+                },
+                "recommendation": {
+                    "primary_engine": "e".repeat(40),
+                    "recommended_model": "m".repeat(150),
+                    "recommended_quant": "q".repeat(40)
+                },
+                "verification": {"ok": true},
+                "status_label": "상".repeat(260),
+                "status_detail": "세".repeat(260)
+            }
+        }));
+        assert!(safe.on_device.available);
+        assert_eq!(safe.on_device.chip.chars().count(), 64);
+        assert_eq!(safe.on_device.cores, 1024);
+        assert_eq!(safe.on_device.memory_gb, 128.0);
+        assert!(safe.on_device.apple_silicon);
+        assert_eq!(safe.on_device.engine.chars().count(), 32);
+        assert_eq!(safe.on_device.recommended_model.chars().count(), 128);
+        assert_eq!(safe.on_device.quant.chars().count(), 32);
+        assert!(safe.on_device.verified);
+        assert_eq!(safe.on_device.status_label.chars().count(), 240);
+        assert_eq!(safe.on_device.status_detail.chars().count(), 240);
+
+        let clamped = sanitize_snapshot(&json!({
+            "ondevice_hardware": {
+                "hardware": {"memory_gb": 9999.0},
+                "recommendation": {},
+                "verification": {}
+            }
+        }));
+        assert_eq!(clamped.on_device.memory_gb, 4096.0);
+    }
+
+    #[test]
+    fn snapshot_ondevice_missing_or_corrupt_fails_closed() {
+        let missing = sanitize_snapshot(&json!({}));
+        assert_eq!(missing.on_device, SafeOnDevice::default());
+        let corrupt = sanitize_snapshot(&json!({"ondevice_hardware": "invalid"}));
+        assert_eq!(corrupt.on_device, SafeOnDevice::default());
+        let empty = sanitize_snapshot(&json!({"ondevice_hardware": {}}));
+        assert_eq!(empty.on_device, SafeOnDevice::default());
+        let partial = sanitize_snapshot(&json!({
+            "ondevice_hardware": {"hardware": {}, "recommendation": {}}
+        }));
+        assert_eq!(partial.on_device, SafeOnDevice::default());
+    }
+
+    #[test]
+    fn snapshot_ondevice_serializes_only_allowlisted_fields() {
+        let safe = sanitize_snapshot(&json!({
+            "ondevice_hardware": {
+                "hardware": {
+                    "chip": "Apple M5 Max",
+                    "cores": 16,
+                    "memory_bytes": 137438953472_u64,
+                    "memory_gb": 128.0,
+                    "is_apple_silicon": true
+                },
+                "recommendation": {
+                    "primary_engine": "mlx-serve",
+                    "recommended_model": "safe-model",
+                    "recommended_quant": "4bit",
+                    "reason": "FORBIDDEN_REASON_VALUE",
+                    "engine_paths": {"secret": "FORBIDDEN_ENGINE_PATH"},
+                    "fallback_models": ["FORBIDDEN_FALLBACK"],
+                    "worker_model_id": "FORBIDDEN_WORKER_MODEL"
+                },
+                "verification": {"ok": true},
+                "last_probe": {"model": "FORBIDDEN_LAST_PROBE"},
+                "status_label": "safe label",
+                "status_detail": "safe detail"
+            }
+        }));
+        let serialized = serde_json::to_value(&safe).unwrap();
+        let on_device = serialized["onDevice"].as_object().unwrap();
+        assert_eq!(
+            on_device.keys().map(String::as_str).collect::<HashSet<_>>(),
+            HashSet::from([
+                "available",
+                "chip",
+                "cores",
+                "memoryGb",
+                "appleSilicon",
+                "engine",
+                "recommendedModel",
+                "quant",
+                "verified",
+                "statusLabel",
+                "statusDetail",
+            ])
+        );
+        let text = serde_json::to_string(on_device).unwrap();
+        for forbidden in [
+            "memory_bytes",
+            "reason",
+            "engine_paths",
+            "fallback_models",
+            "worker_model_id",
+            "last_probe",
+            "FORBIDDEN_REASON_VALUE",
+            "FORBIDDEN_ENGINE_PATH",
+            "FORBIDDEN_FALLBACK",
+            "FORBIDDEN_WORKER_MODEL",
+            "FORBIDDEN_LAST_PROBE",
         ] {
             assert!(!text.contains(forbidden));
         }

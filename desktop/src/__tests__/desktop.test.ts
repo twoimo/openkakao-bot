@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
 import { JarvisCore } from "../core/jarvis-core";
 import { RenderLifecycle } from "../core/lifecycle";
-import { parseBackground, parseJobEvent, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
+import { parseBackground, parseJobEvent, parseOnDevice, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
 import {
   KnowledgeDrilldown,
   ON_SCREEN_NODE_CAP,
@@ -19,7 +19,7 @@ import {
 } from "../runtime";
 import { RuntimeSnapshotPoller } from "../runtime-poller";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHistory, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHardware, renderHistory, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -150,6 +150,77 @@ describe("safe shared contracts", () => {
     expect(snapshot.background.replyLoad).toBe(0.25);
     expect(snapshot.background.geeknews.state).toBe("confirmed");
     expect(snapshot.background.dbSync.state).toBe("ready");
+  });
+
+  it("parses bounded on-device summaries from raw and bridged shapes", () => {
+    const raw = parseOnDevice({
+      hardware: {
+        chip: "M".repeat(80),
+        cores: 5000,
+        memory_gb: 127.96,
+        is_apple_silicon: true,
+        memory_bytes: 999999,
+      },
+      recommendation: {
+        primary_engine: "mlx-serve",
+        recommended_model: "m".repeat(140),
+        recommended_quant: "4bit",
+        reason: "raw reason",
+      },
+      verification: { ok: true },
+      status_label: "상".repeat(250),
+      status_detail: "세".repeat(250),
+      last_probe: { model: "secret" },
+    });
+    expect(raw.available).toBe(true);
+    expect(raw.chip).toHaveLength(64);
+    expect(raw.cores).toBe(1024);
+    expect(raw.memoryGb).toBe(128);
+    expect(raw.appleSilicon).toBe(true);
+    expect(raw.engine).toBe("mlx-serve");
+    expect(raw.recommendedModel).toHaveLength(128);
+    expect(raw.quant).toBe("4bit");
+    expect(raw.verified).toBe(true);
+    expect(raw.statusLabel).toHaveLength(240);
+    expect(raw.statusDetail).toHaveLength(240);
+
+    const bridged = parseOnDevice({
+      available: true,
+      chip: "Apple M5 Max",
+      cores: 16,
+      memory_gb: 5000,
+      apple_silicon: true,
+      engine: "mlx-serve",
+      recommended_model: "model-a",
+      quant: "4bit",
+      verified: true,
+      status_label: "ready",
+      status_detail: "detail",
+    });
+    expect(bridged.memoryGb).toBe(4096);
+    expect(bridged.appleSilicon).toBe(true);
+    expect(bridged.recommendedModel).toBe("model-a");
+    expect(bridged.statusLabel).toBe("ready");
+  });
+
+  it("fails closed for missing, corrupt, and non-finite on-device data", () => {
+    expect(parseOnDevice(undefined).available).toBe(false);
+    expect(parseOnDevice({}).available).toBe(false);
+    expect(parseOnDevice({ hardware: {} }).available).toBe(false);
+    expect(parseOnDevice("bad").available).toBe(false);
+    expect(parseOnDevice({ available: true, memoryGb: Number.POSITIVE_INFINITY, cores: -3 })).toMatchObject({
+      available: true,
+      memoryGb: 0,
+      cores: 0,
+    });
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      onDevice: { available: true, chip: "Apple", memoryGb: 64 },
+    });
+    expect(snapshot.onDevice).toMatchObject({ available: true, chip: "Apple", memoryGb: 64 });
   });
 
   it("fails closed on bad JSON, empty lists, and a missing model id", () => {
@@ -327,6 +398,70 @@ describe("background settings activity", () => {
 
     renderBackground(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
     expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 상태를 확인할 수 없습니다.");
+  });
+});
+
+describe("on-device hardware settings", () => {
+  it("renders the bounded status label without raw fields", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      ondevice_hardware: {
+        hardware: { chip: "Apple M5 Max", cores: 16, memory_gb: 128, memory_bytes: 123456 },
+        recommendation: {
+          primary_engine: "mlx-serve",
+          recommended_model: "safe-model",
+          recommended_quant: "4bit",
+          reason: "RAW_REASON_SHOULD_NOT_RENDER",
+          engine_paths: ["RAW_ENGINE_PATH"],
+          fallback_models: ["RAW_FALLBACK"],
+          worker_model_id: "RAW_WORKER_ID",
+        },
+        verification: { ok: true },
+        last_probe: { model: "RAW_PROBE_MODEL" },
+        status_label: "온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve",
+        status_detail: "RAW_DETAIL_SHOULD_NOT_RENDER",
+      },
+    });
+    renderHardware(snapshot);
+    expect(document.getElementById("settings-hardware-status")?.textContent)
+      .toBe("온디바이스: 온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve");
+    for (const forbidden of [
+      "RAW_REASON_SHOULD_NOT_RENDER",
+      "RAW_ENGINE_PATH",
+      "RAW_FALLBACK",
+      "RAW_WORKER_ID",
+      "RAW_PROBE_MODEL",
+      "RAW_DETAIL_SHOULD_NOT_RENDER",
+      "123456",
+    ]) {
+      expect(document.body.textContent).not.toContain(forbidden);
+    }
+  });
+
+  it("renders chip and memory fallback when the safe label is empty", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      onDevice: { available: true, chip: "Apple M5 Max", memoryGb: 128 },
+    });
+    renderHardware(snapshot);
+    expect(document.getElementById("settings-hardware-status")?.textContent)
+      .toBe("온디바이스: Apple M5 Max · 128.0GB");
+  });
+
+  it("renders unavailable state", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } });
+    renderHardware(snapshot);
+    expect(document.getElementById("settings-hardware-status")?.textContent)
+      .toBe("하드웨어 정보를 확인할 수 없습니다.");
   });
 });
 
