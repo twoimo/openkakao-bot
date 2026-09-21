@@ -668,3 +668,23 @@ pid = 5823
 같은 객체에서 `recommendation.primary_engine`은 `"mlx-serve"`, `recommendation.recommended_model`은 `"ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"`, `recommendation.recommended_quant`은 `"mixed 4/8bit"`, `last_probe`는 `null`이었다. `recommendation.engine_paths`에는 절대 로컬 경로도 포함되어 있으므로 desktop bridge는 이를 포함한 원본 상세 필드를 전달하지 않고 allowlist 요약만 전달한다.
 
 이는 snapshot shape와 하드웨어 감지 결과에 대한 component-level 증거다. live model generation이나 KakaoTalk 전송을 입증하지 않는다.
+
+## Reply pipeline and bridge job-ring snapshot readback — 2026-09-21 KST
+
+답변 파이프라인 입력 shape와 bridge가 자체 long-running 작업을 전달하는 bounded job-ring 계약을 component 단위로 확인했다. 사용한 read-only snapshot 명령은 다음과 같다.
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/auto-reply-menubar.py --state-root <temp dir>
+```
+
+readback의 raw `pipeline` 값은 다음과 같았다.
+
+```json
+{"active_index":null,"event_id":"none","outcome":"none","stages":[{"id":"detect","state":"idle"},{"id":"authorize","state":"idle"},{"id":"queue","state":"idle"},{"id":"context","state":"idle"},{"id":"model","state":"idle"},{"id":"delay","state":"idle"},{"id":"send","state":"idle"},{"id":"confirm","state":"idle"}]}
+```
+
+고정 stage id 순서는 `detect`, `authorize`, `queue`, `context`, `model`, `delay`, `send`, `confirm`이며 stage state 집합은 `active`, `done`, `skipped`, `failed`, `blocked`, `idle`이다. `desktop/src-tauri/src/python_bridge.rs`의 `sanitize_pipeline`은 이 원본에서 `active`, 닫힌 stage id 또는 `none`/`unknown`, `stageIndex` 0..16, `stageTotal` 0..16, allowlisted `outcome`만 전달하고 `event_id`와 stage별 state는 직렬화하지 않는다. `active_index`가 유효하면 이를 우선하고, 아니면 첫 `active` stage를 선택하며, 둘 다 없으면 `none`으로 처리한다.
+
+같은 bridge의 in-flight job registry는 최신순 최대 8건(`JOB_EVENT_CAP = 8`), 300초 초과 제거(`JOB_EVENT_MAX_AGE_SECS = 300.0`)를 적용한다. 각 event의 직렬화 키는 정확히 `{jobId, kind, stage, load, time, errorCode}`이며 prompt, task text, token/secret, 대화 내용은 포함하지 않는다. browser 작업은 `kind="browser"`, `stage="running"`, `load=0.7`, model swap은 `kind="model_swap"`, `stage="swap"`, `load=0.9`로 등록된다.
+
+이 두 단위에 대한 측정 검증은 desktop Vitest **77/77**(5 files), Rust **58/58**, clean `tsc`, 성공한 Vite production build, Python menubar suite **165 tests, OK**, `sh desktop/scripts/smoke.sh` exit 0이었다. 이 기록은 component-level snapshot-shape와 bounded bridge contract 증거이며 live KakaoTalk 전송이나 live model generation을 입증하지 않는다.
