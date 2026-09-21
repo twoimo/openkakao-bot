@@ -9,6 +9,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+JARVIS_LABEL = "com.openkakao.jarvis.desktop"
+
+
+def read_optional(path: Path) -> str | None:
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return None
 
 
 def read_repo_file(relative_path: str) -> str:
@@ -16,6 +23,244 @@ def read_repo_file(relative_path: str) -> str:
 
 
 class JarvisDesktopLauncherTests(unittest.TestCase):
+    def _run_installer_fixture(
+        self,
+        *,
+        has_previous_app: bool = True,
+        has_previous_plist: bool = True,
+        pgrep_status: int = 0,
+        ps_mode: str = "healthy",
+        stray: bool = False,
+        kickstart_output: str = "4242",
+        pid_never: bool = False,
+    ) -> dict[str, object]:
+        installer = ROOT / "scripts/install-jarvis-desktop.sh"
+
+        def write_executable(path: Path, body: str) -> None:
+            path.write_text(body, encoding="utf-8")
+            path.chmod(0o755)
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            bin_dir = tmp / "bin"
+            applications_dir = tmp / "Applications"
+            launch_agents_dir = tmp / "LaunchAgents"
+            backup_dir = tmp / "backups"
+            source_app = tmp / "source" / "OpenKakao Jarvis.app"
+            source_bin = (
+                source_app / "Contents" / "MacOS" / "openkakao-jarvis-desktop"
+            )
+            target_app = applications_dir / "OpenKakao Jarvis.app"
+            target_bin = (
+                target_app / "Contents" / "MacOS" / "openkakao-jarvis-desktop"
+            )
+            target_marker = target_app / "marker.txt"
+            jarvis_plist = launch_agents_dir / "com.openkakao.jarvis.desktop.plist"
+            state_file = tmp / "launchctl.loaded"
+            calls_file = tmp / "launchctl.calls"
+            print_count_file = tmp / "launchctl.post-bootstrap-print-count"
+
+            bin_dir.mkdir()
+            applications_dir.mkdir()
+            launch_agents_dir.mkdir()
+            backup_dir.mkdir()
+            source_bin.parent.mkdir(parents=True)
+            source_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            source_bin.chmod(0o755)
+            (source_app / "marker.txt").write_text("new\n", encoding="utf-8")
+
+            if has_previous_app:
+                target_bin.parent.mkdir(parents=True)
+                target_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                target_bin.chmod(0o755)
+                target_marker.write_text("old\n", encoding="utf-8")
+            if has_previous_plist:
+                jarvis_plist.write_text("previous-plist\n", encoding="utf-8")
+
+            write_executable(
+                bin_dir / "launchctl",
+                """#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$OPENKAKAO_FAKE_LAUNCHCTL_CALLS"
+case "$1" in
+  print)
+    if [ ! -f "$OPENKAKAO_FAKE_LAUNCHCTL_STATE" ]; then
+      exit 1
+    fi
+    count=0
+    if [ -f "$OPENKAKAO_FAKE_PRINT_COUNT" ]; then
+      count=$(/bin/cat "$OPENKAKAO_FAKE_PRINT_COUNT")
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$OPENKAKAO_FAKE_PRINT_COUNT"
+    if [ "$OPENKAKAO_FAKE_PID_NEVER" = 1 ]; then
+      printf '{\n    state = spawn scheduled\n}\n'
+    else
+      printf '{\n    pid = 4242\n}\n'
+    fi
+    ;;
+  bootstrap)
+    : >"$OPENKAKAO_FAKE_LAUNCHCTL_STATE"
+    ;;
+  kickstart)
+    if [ "${2:-}" = "-kp" ]; then
+      case "$OPENKAKAO_FAKE_KICKSTART_OUTPUT" in
+        fail)
+          exit 2
+          ;;
+        '')
+          ;;
+        *)
+          printf '%s\n' "$OPENKAKAO_FAKE_KICKSTART_OUTPUT"
+          ;;
+      esac
+    fi
+    ;;
+  bootout)
+    /bin/rm -f "$OPENKAKAO_FAKE_LAUNCHCTL_STATE"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+""",
+            )
+            write_executable(
+                bin_dir / "ditto",
+                "#!/bin/sh\nset -eu\n/bin/cp -R \"$1\" \"$2\"\n",
+            )
+            write_executable(bin_dir / "PlistBuddy", "#!/bin/sh\nexit 0\n")
+            write_executable(bin_dir / "plutil", "#!/bin/sh\nexit 0\n")
+            write_executable(
+                bin_dir / "pgrep",
+                """#!/bin/sh
+set -eu
+status=$OPENKAKAO_FAKE_PGREP_STATUS
+if [ "$status" -eq 0 ]; then
+  printf '4242\n'
+  if [ "$OPENKAKAO_FAKE_STRAY" = 1 ]; then
+    printf '7777\n'
+  fi
+fi
+exit "$status"
+""",
+            )
+            write_executable(
+                bin_dir / "ps",
+                """#!/bin/sh
+set -eu
+if [ "$1" = "-axo" ]; then
+  case "$OPENKAKAO_FAKE_PS_MODE" in
+    fail)
+      exit 2
+      ;;
+    unparsable)
+      printf 'PID COMMAND\n'
+      exit 0
+      ;;
+    *)
+      printf ' 4242 %s\n' "$OPENKAKAO_FAKE_INSTALLED_BIN"
+      if [ "$OPENKAKAO_FAKE_PS_MODE" = stray ]; then
+        printf ' 7777 %s\n' "$OPENKAKAO_FAKE_INSTALLED_BIN"
+      fi
+      exit 0
+      ;;
+  esac
+fi
+if [ "$1" = "-p" ]; then
+  case "$2" in
+    4242|7777)
+      printf '%s\n' "$OPENKAKAO_FAKE_INSTALLED_BIN"
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+""",
+            )
+            write_executable(bin_dir / "lsof", "#!/bin/sh\nexit 1\n")
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "OPENKAKAO_APPLICATIONS_DIR": str(applications_dir),
+                    "OPENKAKAO_LAUNCH_AGENTS_DIR": str(launch_agents_dir),
+                    "OPENKAKAO_JARVIS_BACKUP_DIR": str(backup_dir),
+                    "OPENKAKAO_JARVIS_APP_SOURCE": str(source_app),
+                    "OPENKAKAO_LAUNCHCTL": str(bin_dir / "launchctl"),
+                    "OPENKAKAO_DITTO": str(bin_dir / "ditto"),
+                    "OPENKAKAO_PLISTBUDDY": str(bin_dir / "PlistBuddy"),
+                    "OPENKAKAO_PLUTIL": str(bin_dir / "plutil"),
+                    "OPENKAKAO_PS": str(bin_dir / "ps"),
+                    "OPENKAKAO_PGREP": str(bin_dir / "pgrep"),
+                    "OPENKAKAO_LSOF": str(bin_dir / "lsof"),
+                    "OPENKAKAO_FAKE_LAUNCHCTL_STATE": str(state_file),
+                    "OPENKAKAO_FAKE_LAUNCHCTL_CALLS": str(calls_file),
+                    "OPENKAKAO_FAKE_PRINT_COUNT": str(print_count_file),
+                    "OPENKAKAO_FAKE_PID_NEVER": "1" if pid_never else "0",
+                    "OPENKAKAO_FAKE_KICKSTART_OUTPUT": kickstart_output,
+                    "OPENKAKAO_FAKE_PGREP_STATUS": str(pgrep_status),
+                    "OPENKAKAO_FAKE_PS_MODE": "stray" if stray else ps_mode,
+                    "OPENKAKAO_FAKE_STRAY": "1" if stray else "0",
+                    "OPENKAKAO_FAKE_INSTALLED_BIN": str(target_bin),
+                }
+            )
+
+            result = subprocess.run(
+                ["/bin/sh", str(installer)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            backup_entries = list(backup_dir.iterdir())
+            self.assertEqual(len(backup_entries), 1)
+
+            return {
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "target_app": str(target_app),
+                "target_exists": target_app.exists(),
+                "target_marker": (
+                    target_marker.read_text(encoding="utf-8").strip()
+                    if target_marker.exists()
+                    else None
+                ),
+                "plist_exists": jarvis_plist.exists(),
+                "plist_content": (
+                    jarvis_plist.read_text(encoding="utf-8")
+                    if jarvis_plist.exists()
+                    else None
+                ),
+                "previous_apps": [
+                    path.name
+                    for path in applications_dir.glob(
+                        ".openkakao-jarvis.previous.*.app"
+                    )
+                ],
+                "service_loaded": state_file.exists(),
+                "launchctl_calls": calls_file.read_text(encoding="utf-8"),
+                "post_bootstrap_print_count": (
+                    int(print_count_file.read_text(encoding="utf-8").strip())
+                    if print_count_file.exists()
+                    else 0
+                ),
+                "backup_path": str(backup_entries[0]),
+                "backup_exists": backup_entries[0].is_dir(),
+                "source_exists": source_app.exists(),
+                "installed_readback": read_optional(
+                    backup_entries[0] / f"{JARVIS_LABEL}.installed.txt"
+                ),
+                "wait_readback": read_optional(
+                    backup_entries[0] / f"{JARVIS_LABEL}.wait.txt"
+                ),
+                "rollback_readback": read_optional(
+                    backup_entries[0] / f"{JARVIS_LABEL}.rollback.txt"
+                ),
+            }
+
     def test_staged_python_entrypoint_dependencies_are_complete_and_staging_lists_match(
         self,
     ) -> None:
@@ -210,9 +455,12 @@ class JarvisDesktopLauncherTests(unittest.TestCase):
         self.assertIn("list_live_app_pids() {", source)
         self.assertIn('if [ -x "$PGREP" ]; then', source)
         self.assertIn('"$PGREP" -f "$APP_EXECUTABLE"', source)
+        self.assertIn('case "$pgrep_status" in', source)
+        self.assertIn("2|3)", source)
         self.assertIn('"$PS" -axo pid=,command=', source)
         self.assertIn("reported_app_path() {", source)
         self.assertIn('"$LSOF" -p "$reported_pid" -a -d txt -Fn', source)
+        self.assertIn("not authoritative process", source)
         self.assertIn("wait_for_pid() {", source)
         self.assertIn('while [ "$wait_attempt" -le 10 ]; do', source)
         self.assertIn(
@@ -220,19 +468,17 @@ class JarvisDesktopLauncherTests(unittest.TestCase):
         )
         self.assertIn("/bin/sleep 0.5", source)
         self.assertIn('wait_attempt=$((wait_attempt + 1))', source)
-        self.assertIn('if ! LAUNCHD_PID=$(wait_for_pid "$JARVIS_SERVICE"', source)
+        self.assertIn('kickstart -kp "$JARVIS_SERVICE"', source)
+        self.assertIn('LAUNCHD_PID=$(wait_for_pid "$JARVIS_SERVICE"', source)
         self.assertIn("LaunchAgent pid was never reported", source)
-        self.assertIn('-v launchd_pid="$LAUNCHD_PID" -v installer_pid="$$"', source)
+        self.assertIn('-v launchd_pid="$guard_launchd_pid" -v installer_pid="$$"', source)
         self.assertIn('$0 != launchd_pid && $0 != installer_pid', source)
-        self.assertIn("previous bundle is being kept", source)
-        self.assertRegex(
-            source,
-            re.compile(
-                r'if \[ -n "\$STRAY_PIDS" \]; then.*?exit 3.*?'
-                r'if \[ -n "\$PREVIOUS_APP" \]',
-                re.DOTALL,
-            ),
-        )
+        self.assertIn("cannot prove there is no duplicate instance", source)
+        self.assertIn("post_activation_failure() {", source)
+        self.assertIn("rollback was attempted", source)
+        self.assertIn('trap cleanup EXIT', source)
+        self.assertIn("trap 'signal_exit 130' INT", source)
+        self.assertGreaterEqual(source.count('check_duplicate_guard "$LAUNCHD_PID"'), 2)
 
     def test_installer_duplicate_process_guard_with_fake_adapters(self) -> None:
         installer = ROOT / "scripts/install-jarvis-desktop.sh"
@@ -386,9 +632,11 @@ exit 1
                     self.assertIn(
                         f"reported path: {target_bin}", result.stderr
                     )
-                    self.assertIn("previous bundle is being kept", result.stderr)
-                    self.assertEqual(len(previous_apps), 1)
-                    self.assertTrue(previous_apps[0].is_dir())
+                    self.assertIn("rollback was attempted", result.stderr)
+                    self.assertIn("previous bundle restored", result.stderr)
+                    self.assertEqual(previous_apps, [])
+                    self.assertTrue(target_app.is_dir())
+                    self.assertFalse(state_file.exists())
                 else:
                     self.assertEqual(result.returncode, 0, msg=result.stderr)
                     self.assertEqual(previous_apps, [])
@@ -637,10 +885,165 @@ esac
 
             self.assertEqual(result.returncode, 3, msg=result.stderr)
             self.assertIn("LaunchAgent pid was never reported", result.stderr)
-            self.assertIn("previous bundle is being kept", result.stderr)
-            self.assertEqual(len(previous_apps), 1)
-            self.assertTrue(previous_apps[0].is_dir())
-            self.assertEqual(count_file.read_text(encoding="utf-8").strip(), "11")
+            self.assertIn("rollback was attempted", result.stderr)
+            self.assertIn("previous bundle restored", result.stderr)
+            self.assertEqual(previous_apps, [])
+            self.assertTrue(target_bin.is_file())
+            self.assertFalse(state_file.exists())
+            self.assertEqual(count_file.read_text(encoding="utf-8").strip(), "10")
+
+    def test_installer_pgrep_errors_use_ps_fallback(self) -> None:
+        for pgrep_status in (2, 3):
+            with self.subTest(pgrep_status=pgrep_status):
+                case = self._run_installer_fixture(
+                    pgrep_status=pgrep_status,
+                    ps_mode="healthy",
+                )
+
+                self.assertEqual(case["returncode"], 0, msg=case["stderr"])
+                self.assertEqual(case["stderr"], "")
+                self.assertEqual(case["target_marker"], "new")
+                self.assertEqual(case["previous_apps"], [])
+                self.assertTrue(case["service_loaded"])
+                self.assertIn("pid: 4242", case["installed_readback"])
+                self.assertIsNone(case["rollback_readback"])
+
+    def test_installer_unknown_process_enumeration_rolls_back(self) -> None:
+        for pgrep_status in (2, 3):
+            with self.subTest(pgrep_status=pgrep_status):
+                case = self._run_installer_fixture(
+                    pgrep_status=pgrep_status,
+                    ps_mode="fail",
+                )
+
+                self.assertEqual(case["returncode"], 3)
+                self.assertIn(
+                    "cannot prove there is no duplicate instance",
+                    case["stderr"],
+                )
+                self.assertIn("rollback was attempted", case["stderr"])
+                self.assertEqual(case["target_marker"], "old")
+                self.assertEqual(case["plist_content"], "previous-plist\n")
+                self.assertEqual(case["previous_apps"], [])
+                self.assertFalse(case["service_loaded"])
+                self.assertTrue(case["backup_exists"])
+                self.assertTrue(case["source_exists"])
+                self.assertIsNone(case["installed_readback"])
+                self.assertIsNotNone(case["rollback_readback"])
+
+        unparsable = self._run_installer_fixture(
+            pgrep_status=2,
+            ps_mode="unparsable",
+        )
+        self.assertEqual(unparsable["returncode"], 3)
+        self.assertIn(
+            "cannot prove there is no duplicate instance",
+            unparsable["stderr"],
+        )
+        self.assertEqual(unparsable["target_marker"], "old")
+
+    def test_installer_stray_instance_rolls_back_app_service_and_plist(self) -> None:
+        case = self._run_installer_fixture(stray=True)
+
+        self.assertEqual(case["returncode"], 3)
+        self.assertIn("stray pid 7777", case["stderr"])
+        self.assertIn("rollback was attempted", case["stderr"])
+        self.assertEqual(case["target_marker"], "old")
+        self.assertEqual(case["plist_content"], "previous-plist\n")
+        self.assertEqual(case["previous_apps"], [])
+        self.assertFalse(case["service_loaded"])
+        self.assertIn(
+            f"bootout gui/{os.getuid()}/com.openkakao.jarvis.desktop",
+            case["launchctl_calls"],
+        )
+
+    def test_installer_pid_never_reported_rolls_back(self) -> None:
+        case = self._run_installer_fixture(
+            kickstart_output="",
+            pid_never=True,
+        )
+
+        self.assertEqual(case["returncode"], 3)
+        self.assertIn("LaunchAgent pid was never reported", case["stderr"])
+        self.assertIn("rollback was attempted", case["stderr"])
+        self.assertEqual(case["target_marker"], "old")
+        self.assertEqual(case["plist_content"], "previous-plist\n")
+        self.assertFalse(case["service_loaded"])
+        self.assertEqual(case["post_bootstrap_print_count"], 10)
+        self.assertIn(
+            f"bootout gui/{os.getuid()}/com.openkakao.jarvis.desktop",
+            case["launchctl_calls"],
+        )
+
+    def test_installer_first_install_healthy_is_exact_and_has_no_previous_bundle(
+        self,
+    ) -> None:
+        case = self._run_installer_fixture(
+            has_previous_app=False,
+            has_previous_plist=False,
+        )
+
+        self.assertEqual(case["returncode"], 0, msg=case["stderr"])
+        self.assertEqual(case["stderr"], "")
+        self.assertTrue(case["target_exists"])
+        self.assertEqual(case["target_marker"], "new")
+        self.assertEqual(case["previous_apps"], [])
+        self.assertEqual(
+            case["stdout"].splitlines(),
+            [
+                f"installed: {case['target_app']}",
+                f"LaunchAgent: gui/{os.getuid()}/com.openkakao.jarvis.desktop",
+                f"backup: {case['backup_path']}",
+            ],
+        )
+        self.assertIn("pid: 4242", case["installed_readback"])
+        self.assertIsNone(case["wait_readback"])
+        self.assertIsNone(case["rollback_readback"])
+
+    def test_installer_first_install_guard_failure_removes_new_state(self) -> None:
+        case = self._run_installer_fixture(
+            has_previous_app=False,
+            has_previous_plist=False,
+            stray=True,
+        )
+
+        self.assertEqual(case["returncode"], 3)
+        self.assertIn("rollback was attempted", case["stderr"])
+        self.assertFalse(case["target_exists"])
+        self.assertFalse(case["plist_exists"])
+        self.assertFalse(case["service_loaded"])
+        self.assertEqual(case["previous_apps"], [])
+        self.assertTrue(case["source_exists"])
+        self.assertIsNone(case["installed_readback"])
+        self.assertIsNotNone(case["rollback_readback"])
+        self.assertIn(
+            f"bootout gui/{os.getuid()}/com.openkakao.jarvis.desktop",
+            case["launchctl_calls"],
+        )
+
+    def test_installer_uses_kickstart_printed_pid_without_print_wait(self) -> None:
+        case = self._run_installer_fixture()
+
+        self.assertEqual(case["returncode"], 0, msg=case["stderr"])
+        self.assertIn(
+            f"kickstart -kp gui/{os.getuid()}/com.openkakao.jarvis.desktop",
+            case["launchctl_calls"],
+        )
+        self.assertEqual(case["post_bootstrap_print_count"], 0)
+        self.assertIn("pid: 4242", case["installed_readback"])
+        self.assertIsNone(case["wait_readback"])
+
+    def test_installer_records_wait_readback_when_kickstart_prints_no_pid(
+        self,
+    ) -> None:
+        case = self._run_installer_fixture(kickstart_output="")
+
+        self.assertEqual(case["returncode"], 0, msg=case["stderr"])
+        self.assertEqual(case["post_bootstrap_print_count"], 1)
+        self.assertIn("pid: 4242", case["installed_readback"])
+        self.assertIn("wait-readback:", case["installed_readback"])
+        self.assertIn("pid = 4242", case["wait_readback"])
+        self.assertIsNone(case["rollback_readback"])
 
     def test_renamed_swift_scripts_use_legacy_paths_directly(self) -> None:
         legacy_scripts = (
