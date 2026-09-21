@@ -979,3 +979,54 @@ print("posted click at \(x),\(y)")
 패널을 닫은 뒤 12초 동안 프로세스 CPU는 6회 모두 0.0이었다. 이 값은 macOS `ps`의 감쇠 평균이라 순간값이 아니고 프로세스 전체를 재는 값이므로 RAF 호출 수를 직접 세는 증거는 아니다. 창 숨김 시 미해결 RAF 취소와 render-count delta 0을 직접 측정한 기존 기록은 그대로 유효하며, 이 절은 같은 결론을 설치본 CPU에서 독립적으로 확인한 보조 증거다.
 
 이 프로브도 어떤 프로세스를 종료·재시작하지 않았고 앱 설정을 바꾸지 않았다. 닫힘 상태 샘플 뒤 패널은 다시 열지 않았으므로 프로브 종료 시점에 창은 0개였다.
+
+## 설치 번들의 dense endpoint 정렬과 콜드 스타트 허용 — 2026-09-22 KST
+
+설치본이 스스로 dense 색인을 끝내지 못하는 결함을 찾아 원인을 분리하고, 두 번의 수정 뒤 설치 번들에서 다시 읽어 확인했다.
+
+### 결함과 원인 — 2026-09-22 00:13 KST 설치본
+
+- 2026-09-22 00:13:48에 설치한 번들(모듈 sha256 `a1ec95b7e0520b2160b008033aef8a25f8b020dde0f4936bfe906a9b99b93896`, `batch_size` 기본 8)은 앱 자신의 state root(`~/Library/Application Support/openkakao/bujamentor`)에서 그래프 재색인을 마치고도 `last_dense_status = unavailable:RuntimeError:local dense embedding unavailable`, `dense_vectors` 0행을 남겼다.
+- 원인은 배치·timeout이 아니라 endpoint 기본값이다. 당시 `DENSE_EMBEDDING_URL` 기본값은 `http://127.0.0.1:8000/v1/embeddings`였고, 이 호스트에서 `nc -z 127.0.0.1 8000`은 실패(닫힘), `11234`는 성공이다. LaunchAgent plist `~/Library/LaunchAgents/com.openkakao.jarvis.desktop.plist`에는 `EnvironmentVariables` 절이 없고 앱 프로세스 환경에도 `OPENKAKAO_LOCAL_EMBEDDING_URL`이 없어, 설치 앱은 항상 닫힌 포트만 호출했다.
+- 반면 같은 앱의 온디바이스 경로는 이미 로컬 게이트웨이를 고정해 쓰고 있었다(`scripts/auto_reply_ondevice.py`의 `MLX_GATEWAY_BASE_URL = "http://127.0.0.1:11234/v1"`). 그 11234가 `/v1/embeddings`에서 `BAAI/bge-m3` 2560차원 벡터를 `index`와 함께 실제로 반환한다.
+
+### 수정 1 — 기본 endpoint를 앱 자신의 게이트웨이로 정렬 (commit `5fcf47b`)
+
+- `scripts/local_mlx_gateway.py`에 `MLX_GATEWAY_BASE_URL`과 `MLX_GATEWAY_EMBEDDINGS_URL`을 단일 출처로 두고, `auto_reply_knowledge_graph.py`의 dense 기본값과 `auto_reply_ondevice.py`가 같은 상수를 참조하게 했다.
+- 새 모듈을 번들 resource allowlist에 등록해 설치본에도 포함되게 했다(`desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/src/resource_layout.rs`).
+- `OPENKAKAO_LOCAL_EMBEDDING_URL` 오버라이드 우선순위, loopback-only 검증, fail-closed, `unavailable:RuntimeError:...` 상태 형식은 그대로다.
+- 설치본 재검증(00:34:21 재설치): 설치 번들의 모듈을 앱 런타임(`~/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11`)으로 import하면 `module_file = /Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/auto_reply_knowledge_graph.py`, `DEFAULT_DENSE_EMBEDDING_URL`과 실제 해석값이 모두 `http://127.0.0.1:11234/v1/embeddings`, `timeout_s 4.0`, `batch_default`가 `batch_size` 8이었다.
+
+### 수정 2 — 재색인 1회당 콜드 스타트 예산 1회 (commit `d2948e3`)
+
+- endpoint가 정렬된 뒤에도 실패가 남았다. 같은 설치 런타임에서 `_local_dense_embeddings`를 직접 호출하면 1건 4.009초 `_DenseEmbeddingTimeoutError`, 8건 4.002초 같은 오류였다. 즉 게이트웨이가 생성 작업과 겹치거나 임베딩 모델을 다시 올릴 때는 singleton 요청도 4.0초 예산을 넘어 배치 분할로 회복할 수 없다.
+- `DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 30.0`을 추가해 재색인 1회의 첫 HTTP 시도에만 이 예산을 쓰고, 이후 시도와 분할된 자식 요청은 기존 4.0초를 그대로 쓴다. `2N-1` 시도 상한, 순서 보존, permanent 실패는 분할하지 않는 규칙, singleton timeout의 즉시 fail-closed, 롤백만 수행하는 실패 경로는 바뀌지 않았다.
+
+### 설치본 최종 readback — 2026-09-22 00:51:21 재설치
+
+재빌드(`OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`)와 재설치(`sh scripts/install-jarvis-desktop.sh`, 백업 `.../install-backups/jarvis-desktop/20260922T005121-98225`) 뒤, 설치 번들의 스크립트를 앱 provisioned 런타임으로 실행했다.
+
+```
+RB="$HOME/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11"
+ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
+"$RB" "/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/auto_reply_knowledge_graph.py" --reindex-once --state-root "$ROOT"
+"$RB" "/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/auto-reply-menubar.py" --action knowledge-graph-status --state-root "$ROOT"
+```
+
+- 재색인은 exit 0, 11초였다.
+- 앱 상태 action은 exit 0으로 다음 payload를 반환했다.
+
+```json
+{"dense_indexed_at": 1790005911, "dense_status": "indexed:50", "edge_count": 0, "edges": [], "grounded_nodes": 0, "indexed_at": 1790005905, "indexed_count": 31, "indexing_mode": "wal+isolated-copy+mode=ro+query_only", "node_count": 0, "nodes": [], "ok": true, "snapshot_status": "copy_ok", "stale": false}
+```
+
+- 앱 state root의 그래프·dense 저장소 실측: `kg_entities` 50, `kg_relations` 341, `last_index_error` 빈 값, `last_dense_status` `indexed:50`, `last_dense_indexed_at` `1790005911`, `dense_vectors` 50행, `ann_buckets` 400행, `dense_meta` `index_version=bge-m3-lsh-v1`·`watermark=1790005898`.
+- 같은 설치 모듈로 질의 경로를 확인하면 해석 endpoint가 `http://127.0.0.1:11234/v1/embeddings`이고 네 개 한국어 질의가 모두 `search_mode "rrf"`였다: `"알쫀쿠"` candidate 24·entities 7, `"가성비 좋은 클라우드 추천"` 40·12, `"야외 러닝 사진 자주 올리는 사람"` 40·12, `"누가 마라톤 훈련 기록을 공유하나"` 40·13, relations는 모두 3이다. 설치 앱 자신의 그래프에서 dense 기반 하이브리드 검색이 확인된 첫 기록이다.
+- 검증 명령: `tests.test_auto_reply_knowledge_graph` **72 tests, OK**, 11개 모듈 합계 **474 tests, OK**, `sh desktop/scripts/smoke.sh`의 Vitest **78/78**·Rust **59/59**·Vite build 성공.
+
+### 이 절이 닫지 않는 것
+
+- 30.0초도 부족한 포화 상태는 그대로 fail-closed다. 앞선 측정에서 첫 요청 60.008초 timeout 뒤 다음 요청 26.341초가 나온 사례가 있었고, 그 조건에서는 배치 정책으로도 dense 색인이 끝나지 않는다. 이때는 `unavailable:...`이 남고 다음 재색인 사이클(모듈 기본 300초)에서 다시 시도한다.
+- 동시 실행 주의: 앱이 재색인 중일 때 같은 state root로 `--reindex-once`를 직접 실행하면 ANN 저장소에서 `unavailable:OperationalError:database is locked`가 기록됐다. fail-closed로 닫히고 직전 색인은 유지되지만, `collect_knowledge_graph` 경로의 재색인 가드와 달리 이 독립 실행 경로에는 가드가 없으므로 앱 재색인이 없는 시점에만 실행해야 한다.
+- dense 경로는 여전히 앱이 소유하지 않는 외부 `mlx-serve` 프로세스의 상태에 의존한다. 앱은 그 프로세스를 시작·정지·전환하지 않는다.
+- 이 절은 실제 카카오톡 전송, Qwen3.8 27B 생성, Developer ID 서명·notarization을 입증하지 않는다. 설치본 서명은 여전히 ad-hoc이다(`codesign -dv`에서 `flags=adhoc,runtime`, `TeamIdentifier=not set`).
