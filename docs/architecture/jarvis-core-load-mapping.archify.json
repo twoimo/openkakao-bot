@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Jarvis per-source core load mapping",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1068,
+      580
+    ]
+  },
+  "stages": [
+    {
+      "label": "Snapshot"
+    },
+    {
+      "label": "Rust safety boundary"
+    },
+    {
+      "label": "TS contract"
+    },
+    {
+      "label": "Pure load mapping"
+    },
+    {
+      "label": "Three.js core"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "snapshot",
+      "type": "external",
+      "label": "menubar snapshot",
+      "stage": 0,
+      "row": 1,
+      "tag": "JSON"
+    },
+    {
+      "id": "sanitize",
+      "type": "security",
+      "label": "sanitize_background",
+      "stage": 1,
+      "row": 1,
+      "tag": "fail closed"
+    },
+    {
+      "id": "contracts",
+      "type": "backend",
+      "label": "parseBackground",
+      "stage": 2,
+      "row": 1,
+      "tag": "BackgroundStatus"
+    },
+    {
+      "id": "mapping",
+      "type": "backend",
+      "label": "core/load-mapping.ts",
+      "stage": 3,
+      "row": 1,
+      "tag": "pure",
+      "width": 140
+    },
+    {
+      "id": "core",
+      "type": "frontend",
+      "label": "JarvisCore.render",
+      "stage": 4,
+      "row": 1,
+      "tag": "Three.js"
+    }
+  ],
+  "flows": [
+    {
+      "id": "snapshot-safe",
+      "from": "snapshot",
+      "to": "sanitize",
+      "label": "runtime fields",
+      "classification": "local runtime state",
+      "variant": "emphasis"
+    },
+    {
+      "id": "safe-contract",
+      "from": "sanitize",
+      "to": "contracts",
+      "label": "SafeBackground",
+      "classification": "allowlisted data",
+      "variant": "security"
+    },
+    {
+      "id": "contract-loads",
+      "from": "contracts",
+      "to": "mapping",
+      "label": "BackgroundStatus",
+      "classification": "typed signal",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mapping-core",
+      "from": "mapping",
+      "to": "core",
+      "label": "signals",
+      "classification": "motion",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Rust safety boundary",
+      "items": [
+        "geeknews: sending / confirmed / idle; all other states become unknown",
+        "db_sync: retrying / stalled / syncing / behind / ready; all other states become unknown",
+        "Every activity is clamped to [0,1] and rounded to 3 decimals; captions are bounded to 120 characters; reply_load = clamp01(open_jobs / 4)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Per-source motion equations",
+      "items": [
+        "sourceLoads maps source order [reply, geeknews, dbSync] plus total activity",
+        "v_i = base_i × (1 + gain_i × clamp01(source_i)); base = [0.17, -0.12, 0.09], gain = [1.4, 1.65, 1.9]",
+        "ringTargetVelocities produces one target per ring; JarvisCore damps each ring toward its own target"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Lattice and lifecycle",
+      "items": [
+        "latticePulse uses F = 1.0 × (1 + 0.8L), A = 0.05 + 0.05L, O = 0.06 + 0.12L with L = clamp01(total)",
+        "JarvisCore applies the lattice pulse while retaining the voice-RMS acoustic pulse",
+        "RenderLifecycle stops the animation loop while hidden, so renderCount stays at 0 until resume"
+      ]
+    }
+  ]
+}

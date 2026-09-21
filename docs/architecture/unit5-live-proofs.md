@@ -634,3 +634,19 @@ pid = 5823
 ```
 
 동일 시점에 `AutoReplyMenu` 프로세스는 없었다. 이 readback은 source와 local release bundle의 음성 스크립트 일치, ad hoc 서명 검증, 로컬 설치 및 LaunchAgent 실행을 입증한다. `Signature=adhoc`이고 `TeamIdentifier=not set`이므로 Developer ID 서명과 notarization은 여전히 미검증이다.
+
+## Default menubar background snapshot readback — 2026-09-21 KST
+
+백그라운드 소스별 신호 경로의 입력 shape를 읽기 전용으로 확인했다.
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/auto-reply-menubar.py --state-root <temp dir>
+```
+
+출력 JSON의 top-level keys에 `background`가 포함되었고, 해당 값은 다음과 같았다.
+
+```json
+{"activity":0.0,"caption":"","db_sync":{"activity":0.0,"age_seconds":null,"capability_state":"","caption":"","fence_reason":"","state":"unknown"},"geeknews":{"activity":0.0,"age_seconds":null,"caption":"","posted_slots":0,"state":"unknown"},"rooms":[],"schema_version":1}
+```
+
+이는 menubar snapshot이 `background` 객체를 내보내는지 확인한 component-level snapshot-shape 증거다. 실제 KakaoTalk 전송이나 live model generation을 입증하지 않는다.

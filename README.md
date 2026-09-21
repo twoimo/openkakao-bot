@@ -65,6 +65,7 @@ The diagrams are architectural references, not a live generation trace. On-devic
 ### Implementation status
 
 - The desktop app is a Tauri v2 menu-bar application with TypeScript and Three.js (`desktop/package.json`, `desktop/src-tauri/Cargo.toml`, `desktop/src/`). `RenderLifecycle`, `AnimationLoop`, `RuntimeSnapshotPoller`, and `JarvisCore` implement the visible/hidden render path and load/voice signal handling (`desktop/src/core/lifecycle.ts`, `desktop/src/core/animation-loop.ts`, `desktop/src/runtime-poller.ts`, `desktop/src/core/jarvis-core.ts`). Diagram source: [Jarvis render lifecycle](docs/architecture/jarvis-three-render-lifecycle.archify.json).
+- 백그라운드 소스별 신호는 menubar snapshot의 `background` 객체에서 시작해 `desktop/src-tauri/src/python_bridge.rs`의 `sanitize_background`에서 allowlist·범위 제한을 거치고, `desktop/src/contracts.ts`의 `parseBackground`와 `desktop/src/core/load-mapping.ts`를 통과해 `JarvisCore`에 전달된다. 답변 대기·GeekNews·DB 동기화가 각각 독립 ring target velocity를 구동한다. Diagram: [Jarvis core load mapping](docs/architecture/jarvis-core-load-mapping.html), source: [Archify JSON](docs/architecture/jarvis-core-load-mapping.archify.json).
 - Local MLX hardware detection, model residency/ownership checks, leases, and swap rollback live in `scripts/auto_reply_ondevice.py` through `ModelResidencyManager` and the swap gate.
 - Bounded tool runtime, owned Playwright browser use, voice control, and the emergency abort latch are implemented in `scripts/jarvis_tool_runtime.py`, `scripts/jarvis_browser_use.py`, `scripts/jarvis_voice.py`, and `scripts/jarvis_abort.py`.
 - Graph and retrieval code is implemented in `scripts/auto_reply_knowledge_graph.py` and `scripts/auto_reply_reference_search.py`: query normalization feeds BM25/FTS5 and dense ANN candidate paths, RRF fuses successful dual rankings, graph expansion uses `k_hop_neighborhood`, and result metadata includes evidence IDs and index/watermark fields. Diagram source: [GraphRAG retrieval sequence](docs/architecture/graphrag-search-sequence.archify.json).
@@ -73,8 +74,20 @@ The diagrams are architectural references, not a live generation trace. On-devic
 
 ### Verified results
 
-- Render-lifecycle diagram: `validate lifecycle --quality showcase` reports 9/9 artifact checks with 0 errors / 0 warnings, `deliver` succeeds, and `visual-check` passes with no diagnostics at 1440x900, 1600x1000, 1920x1080, and 2048x1320 in light and dark themes (`scrollHeight <= innerHeight` at every viewport). Receipt: [jarvis-three-render-lifecycle.visual-check.json](docs/architecture/jarvis-three-render-lifecycle.visual-check.json).
-- GraphRAG retrieval diagram: the same 9/9 showcase validation, successful delivery, and four-viewport visual-check pass with zero diagnostics. Receipt: [graphrag-search-sequence.visual-check.json](docs/architecture/graphrag-search-sequence.visual-check.json).
+- Render-lifecycle diagram: `validate lifecycle --quality showcase` reports 9/9 artifact checks with 0 errors / 0 warnings, `deliver` succeeds, and `visual-check` exits 0 with zero diagnostics; its receipt records light containment at 1440x900, 1600x1000, 1920x1080, and 2048x1320, plus light and dark captures at 1440x900 and 2048x1320. Receipt: [jarvis-three-render-lifecycle.visual-check.json](docs/architecture/jarvis-three-render-lifecycle.visual-check.json).
+- GraphRAG retrieval diagram: the same 9/9 showcase validation and successful delivery, and `visual-check` exits 0 with zero diagnostics; its receipt records light containment at 1440x900, 1600x1000, 1920x1080, and 2048x1320, plus light and dark captures at 1440x900 and 2048x1320. Receipt: [graphrag-search-sequence.visual-check.json](docs/architecture/graphrag-search-sequence.visual-check.json).
+- Core-load mapping diagram: `validate dataflow --quality showcase`는 9/9 artifact checks, 0 errors / 0 warnings로 통과했고, `deliver`는 artifact SHA-256 `fb51d156dd630e66f7e876c0c5c6295e2dd00edc395753fb84519b2c64bd7a18`로 성공했다. 표준 `visual-check`는 1440x900, 1600x1000, 1920x1080, 2048x1320의 light containment와 1440x900·2048x1320의 light/dark capture를 모두 통과했고 diagnostics는 0이다. Receipt: [jarvis-core-load-mapping.visual-check.json](docs/architecture/jarvis-core-load-mapping.visual-check.json).
+- 기본 menubar snapshot의 readback에서도 `background` shape를 확인했다. 실행 명령은 다음과 같다.
+
+  ```bash
+  /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/auto-reply-menubar.py --state-root <temp dir>
+  ```
+
+  출력 JSON의 top-level keys에 `background`가 포함되었으며 해당 값은 아래와 같았다.
+
+  ```json
+  {"activity":0.0,"caption":"","db_sync":{"activity":0.0,"age_seconds":null,"capability_state":"","caption":"","fence_reason":"","state":"unknown"},"geeknews":{"activity":0.0,"age_seconds":null,"caption":"","posted_slots":0,"state":"unknown"},"rooms":[],"schema_version":1}
+  ```
 - `docs/architecture/unit5-live-proofs.md` records browser and Tauri/WKWebView hide probes where the outstanding RAF was cancelled and render-count delta remained zero while hidden.
 - The same proof log records controlled browser, abort, and isolated voice/STT checks. Those records are bounded component evidence; they do not establish an end-to-end KakaoTalk reply flow.
 - The same proof log holds the volatile cutover values (installed bundle paths, LaunchAgent state, individual probe timings, and per-run counts) that this summary deliberately does not duplicate.
