@@ -725,6 +725,24 @@ parent 재측정 결과는 다음과 같다.
 
 ### Computer Use attach 프로브 (negative)
 
-- 설치 번들 `/Applications/OpenKakao Jarvis.app`의 빌드 시각은 2026-09-21 14:50:30이고, 그 이후 커밋이 16개(가장 이른 커밋 `7387aa1`, 15:13)이므로 설치본은 pipeline stage, bridge job ring, on-device hardware 카드, DREAM-RSI provenance를 포함하지 않는다.
-- LaunchAgent `com.openkakao.jarvis.desktop`(`KeepAlive=false`, `RunAtLoad=true`)는 pid 68708로 실행 중이었고 child process는 없었다. unattended host는 별도 `com.openkakao.auto-reply.session-monitor`이며 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다.
-- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 오류 **-10005 timeoutReached**(5.0초)로 실패했다. `LSUIElement` 메뉴바 앱이 attach 가능한 window를 제공하지 않기 때문이며, 따라서 설치본의 live UI 스크린샷은 이번 패스에서 얻지 못했다. 이 항목은 확인된 한계로 남으며 스크린샷 기반 크로스 체크로 대체하지 않는다.
+- 이 Computer Use 프로브 당시 설치 번들의 빌드 시각 관측값은 2026-09-21 14:50:30이었다. commit `4b25149` 기준으로 그 시각 뒤에 17개 커밋이 있었고 가장 이른 커밋은 `7387aa1`(15:13)이었다. 이 커밋에 고정한 관측으로 당시 설치본은 pipeline stage, bridge job ring, on-device hardware 카드, DREAM-RSI provenance를 포함하지 않았다.
+- 같은 프로브에서 LaunchAgent `com.openkakao.jarvis.desktop`(`KeepAlive=false`, `RunAtLoad=true`)는 pid 68708로 관측됐고 child process는 없었다. unattended host는 별도 `com.openkakao.auto-reply.session-monitor`이며 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다. 빌드 시각 14:50:30과 pid 68708은 모두 이 프로브 실행 당시의 관측값이며, 설치 번들은 이후 2026-09-21 19:15:27에 재설치됐다.
+- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.0초 뒤 오류 **-10005 timeoutReached**로 실패했다. 이를 `LSUIElement` 메뉴바 앱 특성에 기인한 것으로 보는 설명은 한 환경에서 1회 관측한 결과에 대한 미검증 attribution이며 원인은 격리되지 않았다. 따라서 이 프로브에서는 live UI 스크린샷을 얻지 못했고, 스크린샷 기반 크로스 체크로 대체하지 않았다.
+
+### 설치 번들 Python 스크립트 패키징 누락 — 2026-09-21 KST
+
+2026-09-21 19:15:27에 source `4b25149`에서 설치되고 ad hoc signed 된 재설치 번들 `/Applications/OpenKakao Jarvis.app`은 `Contents/Resources/scripts` 아래에 21개 파일을 포함했지만 `scripts/mlx_serve_lifecycle.py`는 포함하지 않았다. 설치 번들의 자체 `scripts/auto-reply-menubar.py`를 provisioned menubar runtime으로 실행하면 line 54에서 `ModuleNotFoundError: No module named 'mlx_serve_lifecycle'`가 재현됐고 exit 1이었다.
+
+menubar CPython runtime도 문서화된 `~/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11` 경로에 없었다. `desktop/README.md`는 이 위치에 별도 provisioned CPython 3.11을 요구하며, 이번 작업에서 uv CPython 3.11.9 설치본으로 provision했다. 크기는 63 MB였고 `bin/python3.11`은 symlink가 아닌 regular Mach-O arm64 executable이었다. `python3.11 -E -B -s -c 'import sys; print(sys.version)'`은 3.11.9를 보고했다.
+
+이 runtime과 repository copy의 스크립트를 함께 사용한 menubar command는 exit 0으로 끝났고, 39,553-byte JSON snapshot을 출력했다. top-level key에는 `available_chats`, `background`, `pipeline`, `open_jobs`, `ondevice_hardware`, `reply_model`, `watermark`가 포함됐으며 temporary state root에는 `gjc-agent/`와 `gjc-global-model-cache.json`이 생겼다.
+
+이 누락은 기능 공백이지만 fail closed로 동작해 조용히 전송하거나 누출하지 않는다. 수정은 `desktop/src-tauri/src/resource_layout.rs`와 `desktop/src-tauri/tauri.conf.json`의 staging 목록에 `scripts/mlx_serve_lifecycle.py`를 추가하고, staged entry script의 로컬 Python module closure와 두 staging 목록의 일치를 검증하는 회귀 테스트를 추가하는 것이다. 수정 후 설치 앱의 end-to-end 검증은 이 기록에 포함하지 않으며 다음 HEAD에서 parent가 측정한다.
+
+### 수정 후 설치 번들 재검증 (parent 측정) — 2026-09-21 KST
+
+staging 수정을 포함한 HEAD에서 `OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`(exit 0)와 `sh scripts/install-jarvis-desktop.sh`로 2026-09-21 19:28:08에 재설치했다. `/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts`는 22개 파일을 포함했고 `mlx_serve_lifecycle.py`는 repo 사본과 byte-identical이었다.
+
+설치 번들 자체의 `scripts/auto-reply-menubar.py`를 provisioned menubar runtime으로 실행한 read-only 프로브(별도 temp state/logs root)는 exit 0이었고 stderr는 비어 있었으며 stdout은 39,552-byte JSON이었다. parsed snapshot은 `schema_version=3`, top-level key 31개였고 `pipeline`, `background`, `open_jobs`를 포함했다. LaunchAgent `com.openkakao.jarvis.desktop`은 `state = running`(pid 86344)이었다.
+
+이 검증은 설치 번들의 Python bridge 경로에 대한 read-only 증거이며 live UI 스크린샷(Computer Use attach 불가), live KakaoTalk 전송, live model generation, Developer ID signing을 입증하지 않는다.

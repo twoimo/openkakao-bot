@@ -113,6 +113,7 @@ The diagrams are architectural references, not a live generation trace. On-devic
 - `docs/architecture/unit5-live-proofs.md` records browser and Tauri/WKWebView hide probes where the outstanding RAF was cancelled and render-count delta remained zero while hidden.
 - The same proof log records controlled browser, abort, and isolated voice/STT checks. Those records are bounded component evidence; they do not establish an end-to-end KakaoTalk reply flow.
 - The same proof log holds the volatile cutover values (installed bundle paths, LaunchAgent state, individual probe timings, and per-run counts) that this summary deliberately does not duplicate.
+- 설치 앱 검증: staging 누락(`scripts/mlx_serve_lifecycle.py`)을 수정한 HEAD에서 2026-09-21 19:28:08에 재빌드·재설치했고 `/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts`는 22개 파일을 포함한다(누락 모듈은 repo 사본과 byte-identical). 설치 번들 자체의 `auto-reply-menubar.py`를 provisioned menubar runtime(`~/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11`, uv CPython 3.11.9 복사본, 63 MB, symlink 아님)으로 실행한 read-only 프로브는 exit 0, 39,552-byte JSON snapshot, `schema_version=3`, top-level key 31개(`pipeline`/`background`/`open_jobs` 포함)였다. LaunchAgent `com.openkakao.jarvis.desktop`은 `state = running`(pid 86344)이다. 이 검증은 설치 번들의 Python bridge 경로에 대한 것이며 live UI 스크린샷이나 live KakaoTalk 전송을 입증하지 않는다.
 
 ### Known limitations
 
