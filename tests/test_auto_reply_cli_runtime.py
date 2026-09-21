@@ -10378,7 +10378,7 @@ print(json.dumps({
         )
         self.assertEqual(occurrences, 1)
 
-    def test_enqueue_debounces_and_durably_links_superseded_job(self):
+    def test_enqueue_durably_links_newer_same_author_before_generation(self):
         module = self._load_auto_reply_module("auto_reply_burst_queue_test")
         with tempfile.TemporaryDirectory() as temporary:
             module.QUEUE = Path(temporary) / "reply-queue.sqlite3"
@@ -10388,7 +10388,7 @@ print(json.dumps({
                 module,
                 202,
                 "second",
-                2_004,
+                2_001,
                 recent=[self._recent_row(first)],
             )
             second["recent_messages"].append(self._recent_row(second))
@@ -10414,7 +10414,11 @@ print(json.dumps({
                     (first["event_id"],),
                 ).fetchone()
                 self.assertEqual(first_row["status"], "pending")
-                self.assertIsNone(link)
+                self.assertIsNotNone(link)
+                self.assertEqual(
+                    link["superseded_by_event_id"],
+                    second["event_id"],
+                )
                 self.assertEqual(second_row["status"], "pending")
                 self.assertGreaterEqual(
                     second_row["due_at"] - before,
@@ -10794,6 +10798,72 @@ print(json.dumps({
                             "burst_superseded",
                         )
                     supersession.assert_called_once_with(connection, event)
+            finally:
+                connection.close()
+
+    def test_process_job_cancels_when_watermark_advances_during_analysis(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_process_late_watermark_test"
+        )
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            connection = self._worker_queue_connection(module)
+            try:
+                claimed = module.claim_job(
+                    time.time() + module.BURST_SETTLE_SECONDS + 1,
+                    connection,
+                )
+                self.assertIsNotNone(claimed)
+                job, previous_status = claimed
+                queued_event = json.loads(job["event_json"])
+
+                def analyze_after_newer_inbound(_event):
+                    state_path.write_text(
+                        json.dumps({**state, "last_observed_log_id": 421}),
+                        encoding="utf-8",
+                    )
+                    return {
+                        "decision": "reply",
+                        "reason": "direct_question",
+                        "category": "question",
+                        "reply": "formed reply",
+                        "provenance": {},
+                    }
+
+                with (
+                    mock.patch.object(
+                        module,
+                        "db_authoritative_event_allowed",
+                        return_value=True,
+                    ),
+                    mock.patch.object(
+                        module,
+                        "privacy_attestation_current",
+                        return_value=True,
+                    ),
+                    mock.patch.object(
+                        module,
+                        "analyze_event",
+                        side_effect=analyze_after_newer_inbound,
+                    ) as analyze,
+                    mock.patch.object(module, "finish_turn_policy_skip") as finish,
+                    mock.patch.object(module, "send_reply") as send,
+                ):
+                    module.process_job(job, previous_status, connection)
+
+                analyze.assert_called_once()
+                finish.assert_called_once_with(
+                    queued_event,
+                    event["event_id"],
+                    connection,
+                    "conversation_advanced",
+                )
+                send.assert_not_called()
+                row = connection.execute(
+                    "SELECT status, reply FROM reply_jobs WHERE event_id = ?",
+                    (event["event_id"],),
+                ).fetchone()
+                self.assertEqual(tuple(row), ("processing", "formed reply"))
             finally:
                 connection.close()
 
