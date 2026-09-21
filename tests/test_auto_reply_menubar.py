@@ -2244,6 +2244,68 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(owner_unknown["reason"], "model_owner_unknown")
             gateway_factory.assert_not_called()
 
+    def test_external_owner_is_reported_without_touching_the_gateway(self):
+        module = load("auto_reply_menubar_model_swap_external_owner")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
+            external = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: module.ManagedModelResidency(
+                    None, (), 0, False, False, "model_owner_unmanaged"
+                ),
+                gateway_factory=gateway_factory,
+            )
+            self.assertFalse(external["ok"])
+            self.assertEqual(external["stage"], "aborted")
+            self.assertEqual(external["reason"], "model_owner_unmanaged")
+            gateway_factory.assert_not_called()
+
+    def test_main_dispatches_model_owner_status_read_only(self):
+        module = load(f"auto_reply_menubar_owner_dispatch_{id(self)}")
+        expected = {
+            "ok": True,
+            "action": "model-owner-status",
+            "owner_state": "model_owner_unmanaged",
+            "owner_verified": False,
+            "drain_verified": False,
+            "current_model": None,
+        }
+        argv = sys.argv
+        try:
+            sys.argv = [
+                "auto-reply-menubar.py",
+                "--action",
+                "model-owner-status",
+                "--state-root",
+                "/tmp/jarvis-owner-state",
+            ]
+            with mock.patch.object(
+                module, "_scope_menubar_rooms_to_enrollment"
+            ), mock.patch.object(
+                module, "_apply_catalog_mutates"
+            ), mock.patch.object(
+                module, "managed_residency_status", return_value=expected
+            ) as status, mock.patch.object(
+                module, "_print_json"
+            ) as print_json, mock.patch.object(
+                module, "swap_reply_model"
+            ) as swap, mock.patch.object(
+                module, "_orig_main"
+            ) as legacy_main:
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = argv
+
+        status.assert_called_once_with(Path("/tmp/jarvis-owner-state"))
+        print_json.assert_called_once_with(expected)
+        swap.assert_not_called()
+        legacy_main.assert_not_called()
+
     def test_model_swap_fake_failures_cancellation_and_safe_success(self):
         module = load("auto_reply_menubar_model_swap_fakes")
         token = "123e4567-e89b-42d3-a456-426614174000"

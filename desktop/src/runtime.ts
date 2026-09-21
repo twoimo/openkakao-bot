@@ -5,6 +5,7 @@ import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 
 type SettingsAction =
   | "models"
+  | "model-owner-status"
   | "dream-rsi-status"
   | "knowledge-graph-status"
   | "knowledge-graph"
@@ -208,7 +209,7 @@ const MODEL_SWAP_STAGES = new Set([
 ]);
 const MODEL_SWAP_REASONS = new Set([
   "ready", "already_resident", "cancelled", "drain_timeout", "explicit_opt_in_required",
-  "model_not_allowed", "model_owner_unknown", "model_owner_state_invalid", "model_owner_state_stale",
+  "model_not_allowed", "model_owner_unknown", "model_owner_unmanaged", "model_owner_state_invalid", "model_owner_state_stale",
   "model_gateway_unavailable", "model_residency_mismatch", "model_drain_unverified",
   "memory_budget_unavailable", "insufficient_free_memory", "unload_failed", "load_failed", "probe_failed",
   "load_failed_rollback_failed", "probe_failed_rollback_failed", "cancelled_rollback_failed",

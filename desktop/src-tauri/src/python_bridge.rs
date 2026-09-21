@@ -265,6 +265,7 @@ impl PythonBridge {
             "knowledge-graph-status" => sanitize_knowledge_status(&value),
             "knowledge-graph" => sanitize_knowledge_graph(&value),
             "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
+            "model-owner-status" => sanitize_model_owner_status(&value),
             "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
             "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
             "model-swap" => sanitize_model_swap_action(&value),
@@ -837,7 +838,11 @@ fn settings_action_args(
         return Err(BridgeError::ActionNotAllowed);
     }
     match action {
-        "models" | "dream-rsi-status" | "knowledge-graph-status" | "knowledge-graph" => {}
+        "models"
+        | "dream-rsi-status"
+        | "knowledge-graph-status"
+        | "knowledge-graph"
+        | "model-owner-status" => {}
         "knowledge-graph-focus" => {
             if let Some(value) = bounded_arg(query, 256) {
                 args.push("--knowledge-query".to_string());
@@ -1320,6 +1325,44 @@ fn sanitize_models(value: &Value) -> Value {
     json!({"ok": value.get("ok").and_then(Value::as_bool).unwrap_or(true), "model": model, "providers": providers})
 }
 
+fn sanitize_model_owner_status(value: &Value) -> Value {
+    const OWNER_STATES: &[&str] = &[
+        "app_owned",
+        "model_owner_unknown",
+        "model_owner_unmanaged",
+        "model_owner_state_invalid",
+        "model_owner_state_stale",
+        "model_gateway_unavailable",
+        "model_residency_mismatch",
+        "model_drain_unverified",
+    ];
+    let reported = value
+        .get("owner_state")
+        .and_then(Value::as_str)
+        .filter(|candidate| OWNER_STATES.contains(candidate))
+        .unwrap_or("model_owner_unknown");
+    let owner_verified = value
+        .get("owner_verified")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && reported == "app_owned";
+    let current = value
+        .get("current_model")
+        .and_then(Value::as_str)
+        .filter(|candidate| *candidate == RESIDENT_MODEL_ID || *candidate == SWAP_MODEL_ID);
+    json!({
+        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "action": "model-owner-status",
+        "owner_state": if owner_verified { "app_owned" } else { reported },
+        "owner_verified": owner_verified,
+        "drain_verified": value
+            .get("drain_verified")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "current_model": current,
+    })
+}
+
 fn sanitize_model_action(value: &Value, action: &str, model: &str) -> Value {
     let contract_matches = value.get("ok").and_then(Value::as_bool).unwrap_or(false)
         && value.get("action").and_then(Value::as_str) == Some(action)
@@ -1368,6 +1411,7 @@ fn sanitize_model_swap_action(value: &Value) -> Value {
         "explicit_opt_in_required",
         "model_not_allowed",
         "model_owner_unknown",
+        "model_owner_unmanaged",
         "model_owner_state_invalid",
         "model_owner_state_stale",
         "model_gateway_unavailable",
@@ -1803,6 +1847,88 @@ mod tests {
             ),
             Err(BridgeError::ActionNotAllowed)
         ));
+    }
+
+    #[test]
+    fn model_owner_status_is_code_only_and_read_only() {
+        assert_eq!(
+            settings_action_args("model-owner-status", None, None, None, None, None, None,)
+                .unwrap(),
+            vec!["--action", "model-owner-status"]
+        );
+        // The owner probe never accepts model, opt-in, or token overrides.
+        assert!(matches!(
+            settings_action_args(
+                "model-owner-status",
+                None,
+                None,
+                None,
+                Some(SWAP_MODEL_ID),
+                Some(true),
+                Some("123e4567-e89b-42d3-a456-426614174000"),
+            ),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+
+        let safe = sanitize_model_owner_status(&json!({
+            "ok": true,
+            "action": "model-owner-status",
+            "owner_state": "model_owner_unmanaged",
+            "owner_verified": false,
+            "drain_verified": false,
+            "current_model": RESIDENT_MODEL_ID,
+            "argv": ["--serve", "credential=private"],
+            "path": "/Users/private/models",
+        }));
+        assert_eq!(safe["owner_state"], "model_owner_unmanaged");
+        assert_eq!(safe["owner_verified"], false);
+        assert_eq!(safe["current_model"], RESIDENT_MODEL_ID);
+        assert!(safe.get("argv").is_none());
+        assert!(safe.get("path").is_none());
+
+        // A claim of verified ownership is only honoured for the app-owned code.
+        let coerced = sanitize_model_owner_status(&json!({
+            "ok": true,
+            "owner_state": "model_owner_unknown",
+            "owner_verified": true,
+            "current_model": "remote/arbitrary",
+        }));
+        assert_eq!(coerced["owner_state"], "model_owner_unknown");
+        assert_eq!(coerced["owner_verified"], false);
+        assert!(coerced["current_model"].is_null());
+
+        let unknown = sanitize_model_owner_status(&json!({
+            "owner_state": "../../etc/passwd",
+            "owner_verified": true,
+        }));
+        assert_eq!(unknown["owner_state"], "model_owner_unknown");
+        assert_eq!(unknown["ok"], false);
+    }
+
+    #[test]
+    fn model_swap_reason_allowlist_accepts_external_owner_code() {
+        let external = sanitize_model_swap_action(&json!({
+            "ok": false,
+            "action": "model-swap",
+            "model": SWAP_MODEL_ID,
+            "stage": "aborted",
+            "reason": "model_owner_unmanaged",
+            "stages": ["drain"],
+            "stored": false,
+            "prepared": false,
+        }));
+        assert_eq!(external["ok"], false);
+        assert_eq!(external["stage"], "aborted");
+        assert_eq!(external["reason"], "model_owner_unmanaged");
+
+        let unknown = sanitize_model_swap_action(&json!({
+            "ok": false,
+            "action": "model-swap",
+            "model": SWAP_MODEL_ID,
+            "stage": "aborted",
+            "reason": "not-an-allowlisted-code",
+        }));
+        assert_eq!(unknown["reason"], "model_owner_unknown");
     }
 
     #[test]

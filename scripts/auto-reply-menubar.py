@@ -47,6 +47,7 @@ from auto_reply_ondevice import (
     ModelResidencyManager,
     ModelSwapCommitError,
     detect_memory_budget,
+    managed_residency_status,
     read_managed_model_residency,
     write_managed_model_residency,
 )
@@ -2558,6 +2559,11 @@ def main():
                 request_token=_argv_flag_value("--request-token"),
             )
         )
+        return 0
+    if action == "model-owner-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(managed_residency_status(state_root))
         return 0
     args = type("Args", (), {"action": action})()
     if (

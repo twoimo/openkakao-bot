@@ -158,7 +158,20 @@ function renderModels(payload: Record<string, unknown> | null, snapshot: Runtime
     : "현재 모델 ID를 확인할 수 없습니다. 27B는 명시적 선택과 안전 게이트가 필요합니다.");
 }
 
-function modelSwapFailureText(reason: string): string {
+function renderModelOwnerState(payload: Record<string, unknown> | null): void {
+  const ownerState = typeof payload?.owner_state === "string" ? payload.owner_state : "";
+  if (ownerState === "app_owned") {
+    setText("model-owner-state", "앱 소유 확인됨");
+    return;
+  }
+  if (ownerState === "model_owner_unmanaged") {
+    setText("model-owner-state", "외부 소유 · 27B 전환 차단");
+    return;
+  }
+  setText("model-owner-state", "소유권 미확인 · 27B 전환 차단");
+}
+
+export function modelSwapFailureText(reason: string): string {
   if (reason === "model_residency_uncertain") {
     return "27B 전환 결과를 확인하지 못했습니다. 재시도 전에 상주 모델과 진행 중인 요청을 점검해 주세요.";
   }
@@ -166,6 +179,9 @@ function modelSwapFailureText(reason: string): string {
   if (reason === "cancelled") return "27B 전환을 취소했습니다. 기존 모델 상태를 유지합니다.";
   if (reason === "insufficient_free_memory" || reason === "memory_budget_unavailable") {
     return "27B 전환 중단 · 안전한 메모리 여유를 확인하지 못했습니다.";
+  }
+  if (reason === "model_owner_unmanaged") {
+    return "27B 전환 차단 · 외부 MLX Core가 게이트웨이를 소유 중이라 앱이 안전하게 27B로 전환할 수 없습니다. 외부 MLX Core를 종료한 뒤 다시 시도하세요.";
   }
   if (reason === "model_owner_unknown" || reason === "model_owner_state_invalid" || reason === "model_owner_state_stale") {
     return "27B 전환 중단 · 상주 모델의 소유권을 증명할 수 없습니다.";
@@ -257,6 +273,7 @@ function renderSettingsUnavailable(): void {
   const snapshot = unavailableSnapshot("desktop_boot_failed");
   renderRooms(snapshot);
   renderModels(null, snapshot);
+  renderModelOwnerState(null);
   renderVoice(snapshot);
   setText("model-status", "모델 상태를 확인할 수 없습니다. 기존 선택은 변경하지 않습니다.");
   setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
@@ -402,15 +419,17 @@ export async function bootSettings(
     const results = await Promise.allSettled([
       dependencies.loadSnapshot(token),
       dependencies.loadAction("models"),
+      dependencies.loadAction("model-owner-status"),
       dependencies.loadAction("dream-rsi-status"),
       dependencies.loadAction("knowledge-graph-status"),
       dependencies.loadAction("knowledge-graph"),
     ] as const);
-    const [snapshotResult, modelsResult, dreamResult, knowledgeResult, graphResult] = results;
+    const [snapshotResult, modelsResult, ownerResult, dreamResult, knowledgeResult, graphResult] = results;
     const snapshot = snapshotResult.status === "fulfilled"
       ? snapshotResult.value
       : unavailableSnapshot("settings_snapshot_unavailable");
     const models = modelsResult.status === "fulfilled" ? modelsResult.value : null;
+    const owner = ownerResult.status === "fulfilled" ? ownerResult.value : null;
     const dream = dreamResult.status === "fulfilled" ? dreamResult.value : null;
     const knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : null;
     const graphPayload = graphResult.status === "fulfilled" ? graphResult.value : null;
@@ -418,6 +437,7 @@ export async function bootSettings(
 
     renderRooms(snapshot);
     renderModels(models, snapshot);
+    renderModelOwnerState(owner);
     wireModelSelection();
     renderVoice(snapshot);
     dependencies.wireVoice(document, dependencies.invokeCommand);

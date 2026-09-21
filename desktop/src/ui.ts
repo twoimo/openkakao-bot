@@ -3,6 +3,7 @@ import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 export const MAIN_PANEL_CONTROLS = Object.freeze(["gear"] as const);
 export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
+  "model-owner-state",
   "settings-sync-source",
   "settings-sync-copy",
   "settings-sync-mode",
@@ -53,6 +54,7 @@ export function settingsMarkup(): string {
         <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
       </button>
       <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
+      <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">

@@ -36,6 +36,7 @@ from scripts.auto_reply_ondevice import (
     read_last_probe,
     read_managed_model_residency,
     recommend_ondevice_setup,
+    managed_residency_status,
     verify_ondevice_setup,
     write_managed_model_residency,
 )
@@ -844,6 +845,118 @@ class TestManagedResidencyAdmission(unittest.TestCase):
                 admitted = available == FLASH_NEXT_REQUIRED_BYTES
                 self.assertEqual(("load", FLASH_NEXT_MODEL_ID) in gateway.calls, admitted)
                 self.assertEqual(result.reason, "probe_failed" if admitted else "probe_failed_rollback_failed")
+
+
+class TestManagedResidencyOwnershipDiagnostics(unittest.TestCase):
+    def test_missing_private_state_reports_unmanaged_gateway_without_adopting_it(self):
+        with TemporaryDirectory() as temp_dir, patch(
+            "scripts.auto_reply_ondevice._has_listening_mlx_gateway",
+            return_value=True,
+        ) as gateway_present:
+            reader = MagicMock(side_effect=AssertionError("unmanaged gateway cannot be adopted"))
+            result = read_managed_model_residency(
+                Path(temp_dir), gateway_reader=reader, now=100.0
+            )
+        self.assertFalse(result.owner_verified)
+        self.assertEqual(result.reason, "model_owner_unmanaged")
+        gateway_present.assert_called_once_with()
+        reader.assert_not_called()
+
+    def test_missing_private_state_stays_unknown_when_no_gateway_is_observed(self):
+        with TemporaryDirectory() as temp_dir, patch(
+            "scripts.auto_reply_ondevice._has_listening_mlx_gateway",
+            return_value=False,
+        ) as gateway_present:
+            result = read_managed_model_residency(Path(temp_dir), now=100.0)
+        self.assertFalse(result.owner_verified)
+        self.assertEqual(result.reason, "model_owner_unknown")
+        gateway_present.assert_called_once_with()
+
+    def test_listening_gateway_probe_only_accepts_verified_mlx_pids(self):
+        from scripts.auto_reply_ondevice import _has_listening_mlx_gateway
+
+        self.assertTrue(
+            _has_listening_mlx_gateway(
+                pid_reader=lambda: (11, 12), pid_probe=lambda pid: pid == 12
+            )
+        )
+        self.assertFalse(
+            _has_listening_mlx_gateway(
+                pid_reader=lambda: (11, 12), pid_probe=lambda _pid: False
+            )
+        )
+
+    def test_status_payload_is_owner_code_only(self):
+        with TemporaryDirectory() as temp_dir, patch(
+            "scripts.auto_reply_ondevice._has_listening_mlx_gateway",
+            return_value=True,
+        ):
+            payload = managed_residency_status(Path(temp_dir))
+        self.assertEqual(
+            set(payload),
+            {"ok", "action", "owner_state", "owner_verified", "drain_verified", "current_model"},
+        )
+        self.assertEqual(payload["action"], "model-owner-status")
+        self.assertEqual(payload["owner_state"], "model_owner_unmanaged")
+        self.assertFalse(payload["owner_verified"])
+        self.assertIsNone(payload["current_model"])
+
+    def test_status_reports_app_owned_and_drain_split(self):
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_managed_model_residency(
+                root,
+                ManagedModelResidency(FLASH_NEXT_MODEL_ID, (FLASH_NEXT_MODEL_ID,), 4242, True, True, "ready"),
+                accepting_requests=False,
+                in_flight=0,
+                updated_at=100.0,
+            )
+            # The real probe reads the clock, so freeze it and supply the same
+            # fake process/gateway seams the admission tests use.
+            with patch(
+                "scripts.auto_reply_ondevice.read_managed_model_residency",
+                return_value=ManagedModelResidency(
+                    FLASH_NEXT_MODEL_ID, (FLASH_NEXT_MODEL_ID,), 4242, True, True, "ready"
+                ),
+            ):
+                owned = managed_residency_status(root)
+            with patch(
+                "scripts.auto_reply_ondevice.read_managed_model_residency",
+                return_value=ManagedModelResidency(
+                    FLASH_NEXT_MODEL_ID, (FLASH_NEXT_MODEL_ID,), 4242, True, False, "model_drain_unverified"
+                ),
+            ):
+                draining = managed_residency_status(root)
+        self.assertEqual(owned["owner_state"], "app_owned")
+        self.assertTrue(owned["owner_verified"])
+        self.assertEqual(owned["current_model"], FLASH_NEXT_MODEL_ID)
+        self.assertEqual(draining["owner_state"], "model_drain_unverified")
+        self.assertFalse(draining["drain_verified"])
+
+    def test_status_stays_bounded_when_the_probe_raises_or_lies(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch(
+                "scripts.auto_reply_ondevice.read_managed_model_residency",
+                side_effect=OSError("/Users/private/models leaked"),
+            ):
+                raised = managed_residency_status(root)
+            with patch(
+                "scripts.auto_reply_ondevice.read_managed_model_residency",
+                return_value="not-a-residency",
+            ):
+                bogus = managed_residency_status(root)
+            with patch(
+                "scripts.auto_reply_ondevice.read_managed_model_residency",
+                return_value=ManagedModelResidency(None, (), 0, False, False, "../../etc/passwd"),
+            ):
+                hostile = managed_residency_status(root)
+        for payload in (raised, bogus, hostile):
+            with self.subTest(payload=payload):
+                self.assertEqual(payload["owner_state"], "model_owner_unknown")
+                self.assertFalse(payload["owner_verified"])
+                self.assertNotIn("private", repr(payload))
+                self.assertNotIn("passwd", repr(payload))
 
 
 class TestVerification(unittest.TestCase):

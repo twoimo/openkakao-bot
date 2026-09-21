@@ -615,6 +615,56 @@ def _pid_owns_mlx_gateway(pid: int) -> bool:
         return False
 
 
+def _has_listening_mlx_gateway(
+    *,
+    pid_reader: Callable[[], Sequence[int]] | None = None,
+    pid_probe: Callable[[int], bool] | None = None,
+) -> bool:
+    """Detect an MLX gateway that exists without an OpenKakao owner record.
+
+    This is deliberately an observation-only probe.  A listening MLX process is
+    evidence that another runtime may own the model lifecycle; it is never
+    treated as permission to unload, load, or adopt that process.  The seams
+    keep the diagnostic deterministic in tests and avoid shell interpolation.
+    """
+
+    if sys.platform != "darwin":
+        return False
+    read_pids = pid_reader
+    if read_pids is None:
+        def read_pids() -> Sequence[int]:
+            result = subprocess.run(
+                [
+                    "/usr/sbin/lsof",
+                    "-nP",
+                    "-iTCP:11234",
+                    "-sTCP:LISTEN",
+                    "-t",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            if result.returncode != 0:
+                return ()
+            pids: list[int] = []
+            for token in result.stdout.split():
+                try:
+                    pid = int(token)
+                except (TypeError, ValueError):
+                    continue
+                if pid > 1:
+                    pids.append(pid)
+            return tuple(dict.fromkeys(pids))
+
+    probe = pid_probe or _pid_owns_mlx_gateway
+    try:
+        return any(bool(probe(pid)) for pid in read_pids())
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return False
+
+
 def _private_json(path: Path) -> dict[str, Any] | None:
     try:
         metadata = path.lstat()
@@ -701,6 +751,11 @@ def read_managed_model_residency(
     unknown = lambda reason: ManagedModelResidency(None, (), 0, False, False, reason)
     raw = _private_json(Path(state_root) / MODEL_RESIDENCY_STATE_NAME)
     if raw is None:
+        # A live server without this app's private, fresh ownership record is
+        # an unmanaged runtime.  Surface that distinction to the operator, but
+        # keep the swap gate closed: presence is not ownership.
+        if _has_listening_mlx_gateway():
+            return unknown("model_owner_unmanaged")
         return unknown("model_owner_unknown")
     if raw.get("schema_version") != 1 or raw.get("gateway") != MLX_GATEWAY_BASE_URL:
         return unknown("model_owner_state_invalid")
@@ -775,6 +830,52 @@ def read_managed_model_residency(
         "ready" if drained else "model_drain_unverified",
         reserves[0], reserves[1], max(reserves[2], other_resident_bytes),
     )
+
+
+MANAGED_MODEL_OWNER_STATES = frozenset(
+    {
+        "app_owned",
+        "model_owner_unknown",
+        "model_owner_unmanaged",
+        "model_owner_state_invalid",
+        "model_owner_state_stale",
+        "model_gateway_unavailable",
+        "model_residency_mismatch",
+        "model_drain_unverified",
+    }
+)
+
+
+def managed_residency_status(state_root: Path) -> dict[str, Any]:
+    """Bounded, secret-free MLX owner snapshot for the settings surface.
+
+    Only fixed reason codes, booleans, and the allowlisted model id leave this
+    function.  Process arguments, filesystem paths, and chat content never do.
+    A failing probe is reported as unverified rather than raised, because the
+    menu must keep rendering when the local gateway is down.
+    """
+
+    unknown = ManagedModelResidency(None, (), 0, False, False, "model_owner_unknown")
+    try:
+        residency = read_managed_model_residency(Path(state_root))
+    except Exception:
+        residency = unknown
+    if not isinstance(residency, ManagedModelResidency):
+        residency = unknown
+    if residency.owner_verified:
+        owner_state = "app_owned" if residency.drain_verified else "model_drain_unverified"
+    else:
+        reason = "" if type(residency.reason) is not str else residency.reason
+        owner_state = reason if reason in MANAGED_MODEL_OWNER_STATES else "model_owner_unknown"
+    current = residency.current_model
+    return {
+        "ok": True,
+        "action": "model-owner-status",
+        "owner_state": owner_state,
+        "owner_verified": bool(residency.owner_verified),
+        "drain_verified": bool(residency.drain_verified),
+        "current_model": current if type(current) is str and current else None,
+    }
 
 
 def detect_memory_budget() -> MemoryBudget:

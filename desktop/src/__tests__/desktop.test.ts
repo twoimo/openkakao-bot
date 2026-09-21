@@ -144,6 +144,8 @@ describe("layout and settings contract", () => {
     expect(markup).toContain('class="model-row" type="button"');
     expect(markup).toContain('aria-pressed="false"');
     expect(markup).toContain('id="model-status" class="muted" role="status" aria-live="polite"');
+    expect(markup).toContain('id="model-owner-state" class="muted"');
+    expect(markup).toContain("모델 소유권을 확인 중입니다.");
   });
 });
 
@@ -248,6 +250,7 @@ describe("local model settings bridge", () => {
 
   it.each([
     ["model_owner_unknown", "aborted"],
+    ["model_owner_unmanaged", "aborted"],
     ["insufficient_free_memory", "aborted"],
     ["probe_failed_rollback_failed", "failed"],
   ])("preserves safe swap failure %s", async (reason, stage) => {

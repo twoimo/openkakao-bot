@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from itertools import islice
+from pathlib import Path
 from typing import Any, Callable, Iterable, TextIO
 
 
@@ -37,6 +38,20 @@ MAX_CHOICES = 8
 MAX_CONTENT_CHARS = 1_024
 MAX_SELECTED_MODELS = len(FIXED_MODEL_IDS)
 MAX_ELAPSED_MS = int(MAX_TIMEOUT_SECS * 1_000) + 1_000
+
+OWNER_STATE_CODES = frozenset(
+    {
+        "app_owned",
+        "model_owner_unknown",
+        "model_owner_unmanaged",
+        "model_owner_state_invalid",
+        "model_owner_state_stale",
+        "model_gateway_unavailable",
+        "model_residency_mismatch",
+        "model_drain_unverified",
+    }
+)
+OWNER_PROBE_UNAVAILABLE = "model_owner_unknown"
 
 OpenRequest = Callable[..., Any]
 
@@ -375,6 +390,39 @@ def verify_local_models(
     ]
 
 
+def _default_state_root() -> Path:
+    parent = Path.home() / "Library" / "Application Support" / "openkakao"
+    modern = parent / "auto-reply"
+    legacy = parent / "bujamentor"
+    if (modern / "enrollment.json").is_file() or not (legacy / "enrollment.json").is_file():
+        return modern
+    return legacy
+
+
+def _owner_status(state_root: Path) -> str:
+    """Read-only MLX owner code. Never raises and never loads a model.
+
+    Only a fixed reason code leaves this function so the diagnostic can be
+    pasted into a report without leaking process arguments or filesystem paths.
+    """
+
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from auto_reply_ondevice import managed_residency_status
+
+        payload = managed_residency_status(Path(state_root))
+    except Exception:
+        return OWNER_PROBE_UNAVAILABLE
+    if not isinstance(payload, dict):
+        return OWNER_PROBE_UNAVAILABLE
+    state = payload.get("owner_state")
+    if isinstance(state, str) and state in OWNER_STATE_CODES:
+        return state
+    return OWNER_PROBE_UNAVAILABLE
+
+
 def _timeout_argument(value: str) -> float:
     timeout = _valid_timeout(value)
     if timeout is None:
@@ -401,6 +449,16 @@ def _parser() -> argparse.ArgumentParser:
         help=f"per-model GET+POST deadline in seconds (max {MAX_TIMEOUT_SECS:g})",
     )
     parser.add_argument("--json", action="store_true", help="emit structured JSON")
+    parser.add_argument(
+        "--owner",
+        action="store_true",
+        help="also report the bounded on-device MLX owner code (read-only)",
+    )
+    parser.add_argument(
+        "--state-root",
+        default=None,
+        help="state root holding the private MLX residency record (optional)",
+    )
     return parser
 
 
@@ -410,6 +468,7 @@ def main(
     opener: OpenRequest = _local_only_urlopen,
     stdout: TextIO | None = None,
     clock: Callable[[], float] = time.monotonic,
+    owner_probe: Callable[[Path], str] | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
     selected = args.models if args.models is not None else FIXED_MODEL_IDS
@@ -421,11 +480,34 @@ def main(
     )
     ok = all(result.ok for result in results)
     output = stdout if stdout is not None else sys.stdout
+    owner: str | None = None
+    if args.owner:
+        probe = owner_probe or _owner_status
+        try:
+            state_root = (
+                Path(args.state_root).expanduser()
+                if args.state_root
+                else _default_state_root()
+            )
+            candidate = probe(state_root)
+        except Exception:
+            candidate = OWNER_PROBE_UNAVAILABLE
+        owner = (
+            candidate
+            if isinstance(candidate, str) and candidate in OWNER_STATE_CODES
+            else OWNER_PROBE_UNAVAILABLE
+        )
 
     if args.json:
+        payload: dict[str, object] = {
+            "ok": ok,
+            "results": [result.as_dict() for result in results],
+        }
+        if owner is not None:
+            payload["owner"] = owner
         print(
             json.dumps(
-                {"ok": ok, "results": [result.as_dict() for result in results]},
+                payload,
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
@@ -446,6 +528,8 @@ def main(
                 ),
                 file=output,
             )
+        if owner is not None:
+            print(f"owner={owner}", file=output)
     return 0 if ok else 1
 
 
