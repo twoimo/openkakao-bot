@@ -17,6 +17,7 @@ use thiserror::Error;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(25);
+const MODEL_SWAP_TIMEOUT: Duration = Duration::from_secs(120);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
@@ -27,6 +28,8 @@ const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const BUNDLED_CUSTOM_WAKE_MODEL: &str = resource_layout::WAKE_MODEL;
 const RESIDENT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
 const SWAP_MODEL_ID: &str = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
+const MODEL_SWAP_OPT_IN: &str = "qwen38-27b-explicit-v1";
+const MODEL_SWAP_CANCEL_DIR: &str = "model-swap-cancel";
 const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
 
 #[derive(Debug, Error)]
@@ -68,7 +71,13 @@ pub enum BridgeError {
 #[derive(Clone)]
 pub struct PythonBridge {
     config: Arc<BridgeConfig>,
-    cancellations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    cancellations: Arc<Mutex<HashMap<String, CancellationHandle>>>,
+}
+
+#[derive(Clone)]
+struct CancellationHandle {
+    flag: Arc<AtomicBool>,
+    cooperative_marker: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -176,7 +185,7 @@ impl PythonBridge {
         &self,
         token_id: Option<&str>,
     ) -> Result<SafeRuntimeSnapshot, BridgeError> {
-        let bytes = self.run_python(&[], SNAPSHOT_TIMEOUT, token_id)?;
+        let bytes = self.run_python(&[], SNAPSHOT_TIMEOUT, token_id, false)?;
         let value = parse_json_output(&bytes)?;
         let mut snapshot = sanitize_snapshot(&value);
         snapshot.voice = read_voice_status(&self.config.state_root, &self.config.resources()?.root);
@@ -190,9 +199,29 @@ impl PythonBridge {
         node_id: Option<&str>,
         chat_id: Option<&str>,
         model: Option<&str>,
+        explicit_opt_in: Option<bool>,
+        token_id: Option<&str>,
     ) -> Result<Value, BridgeError> {
-        let args = settings_action_args(action, query, node_id, chat_id, model)?;
-        let bytes = self.run_python(&args, DEFAULT_TIMEOUT, None)?;
+        let args = settings_action_args(
+            action,
+            query,
+            node_id,
+            chat_id,
+            model,
+            explicit_opt_in,
+            token_id,
+        )?;
+        let is_swap = action == "model-swap";
+        let bytes = self.run_python(
+            &args,
+            if is_swap {
+                MODEL_SWAP_TIMEOUT
+            } else {
+                DEFAULT_TIMEOUT
+            },
+            if is_swap { token_id } else { None },
+            is_swap,
+        )?;
         let value = parse_json_output(&bytes)?;
         Ok(match action {
             "models" => sanitize_models(&value),
@@ -202,6 +231,7 @@ impl PythonBridge {
             "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
             "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
             "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
+            "model-swap" => sanitize_model_swap_action(&value),
             _ => return Err(BridgeError::ActionNotAllowed),
         })
     }
@@ -210,17 +240,37 @@ impl PythonBridge {
         let Ok(map) = self.cancellations.lock() else {
             return false;
         };
-        let Some(flag) = map.get(token_id) else {
+        let Some(handle) = map.get(token_id) else {
             return false;
         };
-        flag.store(true, Ordering::SeqCst);
+        if handle.cooperative_marker.is_some() {
+            return false;
+        }
+        handle.flag.store(true, Ordering::SeqCst);
         true
+    }
+
+    pub fn cancel_model_swap(&self, token_id: &str) -> bool {
+        let Ok(map) = self.cancellations.lock() else {
+            return false;
+        };
+        let Some(handle) = map.get(token_id) else {
+            return false;
+        };
+        let Some(marker) = handle.cooperative_marker.as_deref() else {
+            return false;
+        };
+        write_model_swap_cancel_marker(marker).is_ok()
     }
 
     pub fn global_abort(&self) -> Result<(), BridgeError> {
         if let Ok(map) = self.cancellations.lock() {
-            for flag in map.values() {
-                flag.store(true, Ordering::SeqCst);
+            for handle in map.values() {
+                if let Some(marker) = handle.cooperative_marker.as_deref() {
+                    let _ = write_model_swap_cancel_marker(marker);
+                } else {
+                    handle.flag.store(true, Ordering::SeqCst);
+                }
             }
         }
         write_global_abort(&self.config.state_root)
@@ -245,6 +295,7 @@ impl PythonBridge {
         extra: &[String],
         timeout: Duration,
         token_id: Option<&str>,
+        cooperative_cancel: bool,
     ) -> Result<Vec<u8>, BridgeError> {
         let resources = self.config.resources()?;
         resources.validate().map_err(BridgeError::from)?;
@@ -261,9 +312,31 @@ impl PythonBridge {
             .ok_or(BridgeError::ResourceUnsafe)?;
         let bin = resources.bin.to_str().ok_or(BridgeError::ResourceUnsafe)?;
         let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cooperative_marker = if cooperative_cancel {
+            let token = token_id.filter(|value| valid_model_swap_token(value));
+            let Some(token) = token else {
+                return Err(BridgeError::ActionNotAllowed);
+            };
+            let directory = self.config.state_root.join(MODEL_SWAP_CANCEL_DIR);
+            fs::create_dir_all(&directory).map_err(|_| BridgeError::StateIo)?;
+            let marker = directory.join(format!("{token}.json"));
+            if marker.is_symlink() {
+                return Err(BridgeError::StateIo);
+            }
+            let _ = fs::remove_file(&marker);
+            Some(marker)
+        } else {
+            None
+        };
         if let Some(token) = token_id {
             if let Ok(mut map) = self.cancellations.lock() {
-                map.insert(token.to_string(), cancel_flag.clone());
+                map.insert(
+                    token.to_string(),
+                    CancellationHandle {
+                        flag: cancel_flag.clone(),
+                        cooperative_marker: cooperative_marker.clone(),
+                    },
+                );
             }
         }
 
@@ -286,6 +359,9 @@ impl PythonBridge {
             if let Ok(mut map) = self.cancellations.lock() {
                 map.remove(token);
             }
+        }
+        if let Some(marker) = cooperative_marker {
+            let _ = fs::remove_file(marker);
         }
         result
     }
@@ -496,8 +572,13 @@ fn settings_action_args(
     node_id: Option<&str>,
     chat_id: Option<&str>,
     model: Option<&str>,
+    explicit_opt_in: Option<bool>,
+    token_id: Option<&str>,
 ) -> Result<Vec<String>, BridgeError> {
     let mut args = vec!["--action".to_string(), action.to_string()];
+    if action != "model-swap" && (explicit_opt_in.is_some() || token_id.is_some()) {
+        return Err(BridgeError::ActionNotAllowed);
+    }
     match action {
         "models" | "dream-rsi-status" | "knowledge-graph-status" | "knowledge-graph" => {}
         "knowledge-graph-focus" => {
@@ -524,9 +605,36 @@ fn settings_action_args(
         "model-prepare" if model == Some(SWAP_MODEL_ID) => {
             args.extend(["--model".to_string(), SWAP_MODEL_ID.to_string()]);
         }
+        "model-swap"
+            if model == Some(SWAP_MODEL_ID)
+                && explicit_opt_in == Some(true)
+                && token_id.is_some_and(valid_model_swap_token) =>
+        {
+            args.extend([
+                "--model".to_string(),
+                SWAP_MODEL_ID.to_string(),
+                "--explicit-opt-in".to_string(),
+                MODEL_SWAP_OPT_IN.to_string(),
+                "--request-token".to_string(),
+                token_id.unwrap().to_string(),
+            ]);
+        }
         _ => return Err(BridgeError::ActionNotAllowed),
     }
     Ok(args)
+}
+
+fn valid_model_swap_token(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    bytes.iter().enumerate().all(|(index, byte)| match index {
+        8 | 13 | 18 | 23 => *byte == b'-',
+        14 => matches!(*byte, b'1'..=b'5'),
+        19 => matches!(*byte, b'8' | b'9' | b'a' | b'b'),
+        _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
+    })
 }
 
 fn plan_voice_session(
@@ -700,6 +808,36 @@ fn write_global_abort(state_root: &Path) -> Result<(), BridgeError> {
     file.sync_all().map_err(|_| BridgeError::StateIo)?;
     fs::rename(&temp, &path).map_err(|_| BridgeError::StateIo)?;
     Ok(())
+}
+
+fn write_model_swap_cancel_marker(path: &Path) -> Result<(), BridgeError> {
+    let parent = path.parent().ok_or(BridgeError::StateIo)?;
+    fs::create_dir_all(parent).map_err(|_| BridgeError::StateIo)?;
+    if path.is_symlink() {
+        return Err(BridgeError::StateIo);
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or(BridgeError::StateIo)?;
+    let temp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)
+        .map_err(|_| BridgeError::StateIo)?;
+    let result = (|| {
+        serde_json::to_writer(&mut file, &json!({"schema_version": 1, "cancelled": true}))
+            .map_err(|_| BridgeError::StateIo)?;
+        file.flush().map_err(|_| BridgeError::StateIo)?;
+        file.sync_all().map_err(|_| BridgeError::StateIo)?;
+        fs::rename(&temp, path).map_err(|_| BridgeError::StateIo)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
@@ -903,6 +1041,93 @@ fn sanitize_model_action(value: &Value, action: &str, model: &str) -> Value {
     })
 }
 
+fn sanitize_model_swap_action(value: &Value) -> Value {
+    const STAGES: &[&str] = &[
+        "idle",
+        "drain",
+        "unload",
+        "memory_check",
+        "load",
+        "probe",
+        "rollback",
+        "ready",
+        "aborted",
+        "failed",
+    ];
+    const REASONS: &[&str] = &[
+        "ready",
+        "already_resident",
+        "cancelled",
+        "drain_timeout",
+        "explicit_opt_in_required",
+        "model_not_allowed",
+        "model_owner_unknown",
+        "model_owner_state_invalid",
+        "model_owner_state_stale",
+        "model_gateway_unavailable",
+        "model_residency_mismatch",
+        "model_drain_unverified",
+        "memory_budget_unavailable",
+        "insufficient_free_memory",
+        "unload_failed",
+        "load_failed",
+        "probe_failed",
+        "load_failed_rollback_failed",
+        "probe_failed_rollback_failed",
+        "cancelled_rollback_failed",
+        "model_state_write_failed",
+        "model_state_write_failed_rollback_failed",
+        "model_override_write_failed",
+        "model_override_write_failed_rollback_failed",
+    ];
+    let stage = value
+        .get("stage")
+        .and_then(Value::as_str)
+        .filter(|candidate| STAGES.contains(candidate))
+        .unwrap_or("failed");
+    let reason = value
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|candidate| REASONS.contains(candidate))
+        .unwrap_or("model_owner_unknown");
+    let stages = value
+        .get("stages")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|candidate| STAGES.contains(candidate))
+                .take(12)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let stored = value
+        .get("stored")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let prepared = value
+        .get("prepared")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let contract_matches = value.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && value.get("action").and_then(Value::as_str) == Some("model-swap")
+        && value.get("model").and_then(Value::as_str) == Some(SWAP_MODEL_ID)
+        && stage == "ready"
+        && stored
+        && prepared;
+    json!({
+        "ok": contract_matches,
+        "action": "model-swap",
+        "model": SWAP_MODEL_ID,
+        "stage": stage,
+        "reason": reason,
+        "stages": stages,
+        "stored": stored,
+        "prepared": prepared,
+    })
+}
+
 fn sanitize_dream_rsi(value: &Value) -> Value {
     json!({
         "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
@@ -1070,8 +1295,16 @@ mod tests {
 
     #[test]
     fn local_model_actions_are_exactly_allowlisted() {
-        let set_args =
-            settings_action_args("model-set", None, None, None, Some(RESIDENT_MODEL_ID)).unwrap();
+        let set_args = settings_action_args(
+            "model-set",
+            None,
+            None,
+            None,
+            Some(RESIDENT_MODEL_ID),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             set_args,
             vec![
@@ -1083,8 +1316,16 @@ mod tests {
             ]
         );
 
-        let prepare_args =
-            settings_action_args("model-prepare", None, None, None, Some(SWAP_MODEL_ID)).unwrap();
+        let prepare_args = settings_action_args(
+            "model-prepare",
+            None,
+            None,
+            None,
+            Some(SWAP_MODEL_ID),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             prepare_args,
             vec!["--action", "model-prepare", "--model", SWAP_MODEL_ID]
@@ -1097,14 +1338,121 @@ mod tests {
             ("model-prepare", "remote/arbitrary --flag"),
         ] {
             assert!(matches!(
-                settings_action_args(action, None, None, None, Some(model)),
+                settings_action_args(action, None, None, None, Some(model), None, None),
                 Err(BridgeError::ActionNotAllowed)
             ));
         }
         assert!(matches!(
-            settings_action_args("model-set", None, None, None, None),
+            settings_action_args("model-set", None, None, None, None, None, None),
             Err(BridgeError::ActionNotAllowed)
         ));
+
+        let token = "123e4567-e89b-42d3-a456-426614174000";
+        let swap_args = settings_action_args(
+            "model-swap",
+            None,
+            None,
+            None,
+            Some(SWAP_MODEL_ID),
+            Some(true),
+            Some(token),
+        )
+        .unwrap();
+        assert_eq!(
+            swap_args,
+            vec![
+                "--action",
+                "model-swap",
+                "--model",
+                SWAP_MODEL_ID,
+                "--explicit-opt-in",
+                MODEL_SWAP_OPT_IN,
+                "--request-token",
+                token,
+            ]
+        );
+        for (opt_in, token) in [
+            (None, Some(token)),
+            (Some(false), Some(token)),
+            (Some(true), None),
+            (Some(true), Some("../../bad")),
+        ] {
+            assert!(matches!(
+                settings_action_args(
+                    "model-swap",
+                    None,
+                    None,
+                    None,
+                    Some(SWAP_MODEL_ID),
+                    opt_in,
+                    token,
+                ),
+                Err(BridgeError::ActionNotAllowed)
+            ));
+        }
+        for token in [
+            "123e4567-e89b-02d3-a456-426614174000",
+            "123e4567-e89b-42d3-c456-426614174000",
+            "123E4567-e89b-42d3-a456-426614174000",
+        ] {
+            assert!(!valid_model_swap_token(token));
+        }
+        assert!(matches!(
+            settings_action_args(
+                "models",
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+                Some("123e4567-e89b-42d3-a456-426614174000"),
+            ),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+    }
+
+    #[test]
+    fn model_swap_cancel_uses_marker_without_hard_cancelling() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-model-swap-cancel-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        let marker = temp.join("123e4567-e89b-42d3-a456-426614174000.json");
+        let cooperative_flag = Arc::new(AtomicBool::new(false));
+        let normal_flag = Arc::new(AtomicBool::new(false));
+        let bridge = PythonBridge::new();
+        {
+            let mut map = bridge.cancellations.lock().unwrap();
+            map.insert(
+                "swap".to_string(),
+                CancellationHandle {
+                    flag: cooperative_flag.clone(),
+                    cooperative_marker: Some(marker.clone()),
+                },
+            );
+            map.insert(
+                "snapshot".to_string(),
+                CancellationHandle {
+                    flag: normal_flag.clone(),
+                    cooperative_marker: None,
+                },
+            );
+        }
+
+        assert!(!bridge.cancel("swap"));
+        assert!(!cooperative_flag.load(Ordering::SeqCst));
+        assert!(bridge.cancel_model_swap("swap"));
+        assert_eq!(
+            safe_small_json(&marker)
+                .and_then(|value| value.get("cancelled").and_then(Value::as_bool)),
+            Some(true)
+        );
+
+        assert!(bridge.cancel("snapshot"));
+        assert!(normal_flag.load(Ordering::SeqCst));
+        assert!(!bridge.cancel_model_swap("snapshot"));
+        let _ = fs::remove_dir_all(&temp);
     }
 
     #[test]
@@ -1143,6 +1491,33 @@ mod tests {
             SWAP_MODEL_ID,
         );
         assert_eq!(mismatched["ok"], false);
+
+        let cancelled = sanitize_model_swap_action(&json!({
+            "ok": false,
+            "action": "model-swap",
+            "model": SWAP_MODEL_ID,
+            "stage": "aborted",
+            "reason": "cancelled",
+            "stages": ["drain", "private-stage"],
+            "stored": false,
+            "prepared": false,
+            "secret": "drop-me"
+        }));
+        assert_eq!(cancelled["reason"], "cancelled");
+        assert_eq!(cancelled["stages"], json!(["drain"]));
+        assert!(cancelled.get("secret").is_none());
+
+        let rollback_failed = sanitize_model_swap_action(&json!({
+            "ok": false,
+            "action": "model-swap",
+            "model": SWAP_MODEL_ID,
+            "stage": "failed",
+            "reason": "probe_failed_rollback_failed",
+            "stages": ["drain", "unload", "load", "probe", "rollback"],
+            "stored": false,
+            "prepared": false
+        }));
+        assert_eq!(rollback_failed["reason"], "probe_failed_rollback_failed");
     }
 
     #[test]

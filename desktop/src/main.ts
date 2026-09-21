@@ -20,10 +20,11 @@ import {
 } from "./knowledge/graph-model";
 import {
   cancelRuntimeRequest,
+  cancelModelSwap,
   fetchRuntimeSnapshot,
   fetchSettingsAction,
-  prepareSwapModel,
   setResidentModel,
+  swapToLargeModel,
 } from "./runtime";
 import {
   RuntimeSnapshotPoller,
@@ -154,13 +155,36 @@ function renderModels(payload: Record<string, unknown> | null, snapshot: Runtime
   setModelSelection(selected);
   setText("model-status", normalized
     ? `현재 선택: ${normalized}`
-    : "현재 모델 ID를 확인할 수 없습니다. 27B는 이 화면에서 로드하지 않습니다.");
+    : "현재 모델 ID를 확인할 수 없습니다. 27B는 명시적 선택과 안전 게이트가 필요합니다.");
+}
+
+function modelSwapFailureText(reason: string): string {
+  if (reason === "cancelled") return "27B 전환을 취소했습니다. 기존 모델 상태를 유지합니다.";
+  if (reason === "insufficient_free_memory" || reason === "memory_budget_unavailable") {
+    return "27B 전환 중단 · 안전한 메모리 여유를 확인하지 못했습니다.";
+  }
+  if (reason === "model_owner_unknown" || reason === "model_owner_state_invalid" || reason === "model_owner_state_stale") {
+    return "27B 전환 중단 · 상주 모델의 소유권을 증명할 수 없습니다.";
+  }
+  if (reason.includes("rollback_failed")) {
+    return "27B 전환 실패 · 복구도 확인되지 않았습니다. 모델 상태를 점검해 주세요.";
+  }
+  if (reason === "load_failed" || reason === "probe_failed" || reason === "unload_failed") {
+    return "27B 전환 실패 · 기존 모델 복구 절차를 수행했습니다.";
+  }
+  return "27B 전환 실패 · 기존 선택을 유지합니다.";
 }
 
 function wireModelSelection(): void {
   const resident = modelButton(RESIDENT_MODEL_ID);
   const swap = modelButton(SWAP_MODEL_ID);
   if (!resident || !swap) return;
+  let activeSwap: CancellationToken | null = null;
+  window.addEventListener("pagehide", () => {
+    const token = activeSwap;
+    activeSwap = null;
+    if (token) void cancelModelSwap(token);
+  }, { once: true });
   setModelBusy(false);
 
   resident.addEventListener("click", () => {
@@ -187,16 +211,20 @@ function wireModelSelection(): void {
       clearModelFailures();
       setModelBusy(true);
       swap.setAttribute("aria-busy", "true");
-      setText("model-status", "Qwen3.8 27B readiness를 읽기 전용으로 확인 중입니다…");
-      const result = await prepareSwapModel();
+      setText("model-status", "사용자 요청으로 Qwen3.8 27B 안전 전환을 확인 중입니다…");
+      const token = createCancellationToken();
+      activeSwap = token;
+      const result = await swapToLargeModel(token);
+      if (activeSwap === token) activeSwap = null;
       swap.removeAttribute("aria-busy");
       setModelBusy(false);
       if (!result.ok) {
         swap.classList.add("model-failed");
-        setText("model-status", "27B readiness 확인 실패 · 실제 load/generation은 수행하지 않았고 현재 선택을 유지합니다.");
+        setText("model-status", modelSwapFailureText(result.reason));
         return;
       }
-      setText("model-status", "27B loaded/ready 확인됨 · 실제 load/generation은 수행하지 않았고 현재 선택을 유지합니다.");
+      setModelSelection(SWAP_MODEL_ID);
+      setText("model-status", "Qwen3.8 27B 전환 완료 · 로컬 probe와 저장을 확인했습니다.");
     })();
   });
 }

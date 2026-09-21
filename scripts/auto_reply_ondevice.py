@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -39,6 +41,10 @@ PROBE_PROMPT_MAX_CHARS = 160
 PROBE_PREVIEW_MAX_CHARS = 240
 LAST_PROBE_NAME = "ondevice-last-probe.json"
 MLX_GATEWAY_MAX_RESPONSE_BYTES = 256 * 1024
+MODEL_RESIDENCY_STATE_NAME = "mlx-model-residency.json"
+MODEL_RESIDENCY_STATE_MAX_BYTES = 4096
+MODEL_RESIDENCY_STATE_MAX_AGE_SECONDS = 30.0
+QWEN38_27B_REQUIRED_BYTES = 40 * 1024**3
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -128,6 +134,21 @@ class ModelSwapResult:
     stages: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ManagedModelResidency:
+    """Secret-free proof that this product owns the mutable MLX residency."""
+
+    current_model: str | None
+    owned_models: tuple[str, ...]
+    owner_pid: int
+    owner_verified: bool
+    drain_verified: bool
+    reason: str
+    kv_cache_bytes: int = 0
+    voice_models_bytes: int = 0
+    other_resident_bytes: int = 0
+
+
 class MlxModelGateway(Protocol):
     def unload(self, model_id: str) -> None: ...
 
@@ -200,23 +221,36 @@ class ModelResidencyManager:
         owned_models: Sequence[str] = (),
         memory_budget: Callable[[], MemoryBudget] | None = None,
         required_bytes: dict[str, int] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self.gateway = gateway
         self.current_model: str | None = current_model
         self.owned_models = set(owned_models)
         self.memory_budget = memory_budget or (lambda: MemoryBudget(0))
         self.required_bytes = dict(required_bytes or {})
+        self.cancel_check = cancel_check
         self._condition = threading.Condition()
         self._in_flight = 0
         self._cancelled = False
         self._swap_in_progress = False
 
+    def _is_cancelled(self) -> bool:
+        if self._cancelled:
+            return True
+        if self.cancel_check is None:
+            return False
+        try:
+            return bool(self.cancel_check())
+        except Exception:
+            # A broken cancellation channel cannot authorize a destructive step.
+            return True
+
     @contextmanager
     def request_lease(self) -> Iterator[None]:
         with self._condition:
-            while self._swap_in_progress and not self._cancelled:
+            while self._swap_in_progress and not self._is_cancelled():
                 self._condition.wait()
-            if self._cancelled:
+            if self._is_cancelled():
                 raise RuntimeError("model_swap_cancelled")
             self._in_flight += 1
         try:
@@ -238,22 +272,22 @@ class ModelResidencyManager:
     def _drain(self, timeout: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
         with self._condition:
-            while self._in_flight > 0 and not self._cancelled:
+            while self._in_flight > 0 and not self._is_cancelled():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
                 self._condition.wait(min(0.1, remaining))
-            return self._in_flight == 0 and not self._cancelled
+            return self._in_flight == 0 and not self._is_cancelled()
 
     def _begin_swap(self, timeout: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout)
         with self._condition:
-            while self._swap_in_progress and not self._cancelled:
+            while self._swap_in_progress and not self._is_cancelled():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
                 self._condition.wait(min(0.1, remaining))
-            if self._cancelled:
+            if self._is_cancelled():
                 return False
             self._swap_in_progress = True
             return True
@@ -276,7 +310,7 @@ class ModelResidencyManager:
         if target_model == QWEN38_27B_MODEL_ID and not allow_27b:
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, "27b_human_opt_in_required", tuple(stages))
         if not self._begin_swap(drain_timeout):
-            reason = "cancelled" if self._cancelled else "drain_timeout"
+            reason = "cancelled" if self._is_cancelled() else "drain_timeout"
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
         try:
             return self._swap_gated(
@@ -296,7 +330,7 @@ class ModelResidencyManager:
     ) -> ModelSwapResult:
         stages: list[str] = [SwapStage.DRAIN.value]
         if not self._drain(drain_timeout):
-            reason = "cancelled" if self._cancelled else "drain_timeout"
+            reason = "cancelled" if self._is_cancelled() else "drain_timeout"
             return ModelSwapResult(False, target_model, SwapStage.ABORTED, reason, tuple(stages))
         if target_model == self.current_model:
             stages.extend((SwapStage.PROBE.value, SwapStage.READY.value))
@@ -315,6 +349,15 @@ class ModelResidencyManager:
         previous = self.current_model
         previous_was_owned = previous is not None and previous in self.owned_models
         previous_was_unloaded = False
+
+        if previous is not None and not previous_was_owned:
+            return ModelSwapResult(
+                False,
+                target_model,
+                SwapStage.ABORTED,
+                "model_owner_unknown",
+                tuple(stages),
+            )
 
         def failure_after_unload(stage: SwapStage, reason: str) -> ModelSwapResult:
             if not previous_was_unloaded or previous is None:
@@ -358,6 +401,10 @@ class ModelResidencyManager:
             )
 
         if previous_was_owned:
+            if self._is_cancelled():
+                return ModelSwapResult(
+                    False, target_model, SwapStage.ABORTED, "cancelled", tuple(stages)
+                )
             stages.append(SwapStage.UNLOAD.value)
             try:
                 self.gateway.unload(previous)
@@ -376,7 +423,7 @@ class ModelResidencyManager:
             return failure_after_unload(SwapStage.FAILED, "memory_budget_unavailable")
         if required and usable_bytes < required:
             return failure_after_unload(SwapStage.ABORTED, "insufficient_free_memory")
-        if self._cancelled:
+        if self._is_cancelled():
             return failure_after_unload(SwapStage.ABORTED, "cancelled")
 
         stages.append(SwapStage.LOAD.value)
@@ -386,12 +433,29 @@ class ModelResidencyManager:
             return failure_after_unload(SwapStage.FAILED, "load_failed")
         self.owned_models.add(target_model)
 
+        if self._is_cancelled():
+            try:
+                self.gateway.unload(target_model)
+            except Exception:
+                self.current_model = None
+                return ModelSwapResult(
+                    False,
+                    target_model,
+                    SwapStage.FAILED,
+                    "cancelled_rollback_failed",
+                    tuple(stages),
+                )
+            self.owned_models.discard(target_model)
+            return failure_after_unload(SwapStage.ABORTED, "cancelled")
+
         stages.append(SwapStage.PROBE.value)
         try:
             probe_ok = bool(self.gateway.probe(target_model))
         except Exception:
             probe_ok = False
-        if not probe_ok:
+        probe_cancelled = self._is_cancelled()
+        if not probe_ok or probe_cancelled:
+            failure_reason = "cancelled" if probe_cancelled else "probe_failed"
             try:
                 self.gateway.unload(target_model)
             except Exception:
@@ -399,15 +463,243 @@ class ModelResidencyManager:
                     False,
                     target_model,
                     SwapStage.FAILED,
-                    "probe_failed",
+                    f"{failure_reason}_rollback_failed"
+                    if probe_cancelled
+                    else "probe_failed",
                     tuple(stages),
                 )
             else:
                 self.owned_models.discard(target_model)
-            return failure_after_unload(SwapStage.FAILED, "probe_failed")
+            return failure_after_unload(
+                SwapStage.ABORTED if probe_cancelled else SwapStage.FAILED,
+                failure_reason,
+            )
         self.current_model = target_model
         stages.append(SwapStage.READY.value)
         return ModelSwapResult(True, target_model, SwapStage.READY, "ready", tuple(stages))
+
+
+def _canonical_managed_model_id(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if candidate and not candidate.startswith("mlx/"):
+        candidate = f"mlx/{candidate}"
+    if candidate in {FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID}:
+        return candidate
+    return ""
+
+
+def _pid_owns_mlx_gateway(pid: int) -> bool:
+    """Verify the recorded process is an MLX server listening on port 11234."""
+
+    if pid <= 1 or sys.platform != "darwin":
+        return False
+    try:
+        ps = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        command = ps.stdout.strip().casefold()
+        if ps.returncode != 0 or "mlx" not in command or "serve" not in command:
+            return False
+        lsof = subprocess.run(
+            [
+                "/usr/sbin/lsof",
+                "-nP",
+                "-a",
+                "-p",
+                str(pid),
+                "-iTCP:11234",
+                "-sTCP:LISTEN",
+                "-t",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        return lsof.returncode == 0 and str(pid) in lsof.stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _private_json(path: Path) -> dict[str, Any] | None:
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_size > MODEL_RESIDENCY_STATE_MAX_BYTES
+            or metadata.st_mode & 0o077
+        ):
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def write_managed_model_residency(
+    state_root: Path,
+    residency: ManagedModelResidency,
+    *,
+    accepting_requests: bool,
+    in_flight: int,
+    updated_at: float | None = None,
+) -> None:
+    """Atomically persist only the bounded ownership facts used by the swap gate."""
+
+    root = Path(state_root)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+    path = root / MODEL_RESIDENCY_STATE_NAME
+    if path.is_symlink():
+        raise OSError("model_residency_state_unsafe")
+    payload = {
+        "schema_version": 1,
+        "gateway": MLX_GATEWAY_BASE_URL,
+        "owner_pid": int(residency.owner_pid),
+        "current_model": residency.current_model,
+        "owned_models": list(residency.owned_models),
+        "accepting_requests": bool(accepting_requests),
+        "in_flight": max(0, int(in_flight)),
+        "kv_cache_bytes": max(0, int(residency.kv_cache_bytes)),
+        "voice_models_bytes": max(0, int(residency.voice_models_bytes)),
+        "other_resident_bytes": max(0, int(residency.other_resident_bytes)),
+        "updated_at": float(time.time() if updated_at is None else updated_at),
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > MODEL_RESIDENCY_STATE_MAX_BYTES:
+        raise OSError("model_residency_state_too_large")
+    temp = root / f".{MODEL_RESIDENCY_STATE_NAME}.{os.getpid()}.{threading.get_ident()}.tmp"
+    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+        try:
+            directory = os.open(root, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            pass
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def read_managed_model_residency(
+    state_root: Path,
+    *,
+    gateway_reader: Callable[[], tuple[bool, list[dict[str, Any]]]] | None = None,
+    process_probe: Callable[[int], bool] | None = None,
+    now: float | None = None,
+) -> ManagedModelResidency:
+    """Read and independently attest the model owner; uncertainty stays closed."""
+
+    unknown = lambda reason: ManagedModelResidency(None, (), 0, False, False, reason)
+    raw = _private_json(Path(state_root) / MODEL_RESIDENCY_STATE_NAME)
+    if raw is None:
+        return unknown("model_owner_unknown")
+    if raw.get("schema_version") != 1 or raw.get("gateway") != MLX_GATEWAY_BASE_URL:
+        return unknown("model_owner_state_invalid")
+    try:
+        owner_pid = int(raw.get("owner_pid"))
+        updated_at = float(raw.get("updated_at"))
+        in_flight = int(raw.get("in_flight"))
+        reserves = tuple(
+            max(0, int(raw.get(key, 0)))
+            for key in ("kv_cache_bytes", "voice_models_bytes", "other_resident_bytes")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return unknown("model_owner_state_invalid")
+    current = _canonical_managed_model_id(raw.get("current_model"))
+    owned_raw = raw.get("owned_models")
+    if not current or not isinstance(owned_raw, list):
+        return unknown("model_owner_state_invalid")
+    owned = tuple(dict.fromkeys(_canonical_managed_model_id(item) for item in owned_raw))
+    if "" in owned or current not in owned:
+        return unknown("model_owner_state_invalid")
+    stamp = time.time() if now is None else float(now)
+    if updated_at > stamp + 5.0 or stamp - updated_at > MODEL_RESIDENCY_STATE_MAX_AGE_SECONDS:
+        return unknown("model_owner_state_stale")
+    probe = process_probe or _pid_owns_mlx_gateway
+    try:
+        process_owned = bool(probe(owner_pid))
+    except Exception:
+        process_owned = False
+    if not process_owned:
+        return unknown("model_owner_unknown")
+    reader = gateway_reader or (
+        lambda: _read_mlx_gateway_models(base_url=MLX_GATEWAY_BASE_URL, timeout=1.5)
+    )
+    try:
+        answered, models = reader()
+    except Exception:
+        answered, models = False, []
+    if not answered:
+        return unknown("model_gateway_unavailable")
+    loaded: list[str] = []
+    for item in models:
+        model_id = _canonical_managed_model_id(item.get("id"))
+        state = str(item.get("state") or "").strip().casefold()
+        if model_id and (item.get("loaded") is True or state in {"loaded", "ready"}):
+            loaded.append(model_id)
+    if list(dict.fromkeys(loaded)) != [current]:
+        return unknown("model_residency_mismatch")
+    drained = raw.get("accepting_requests") is False and in_flight == 0
+    return ManagedModelResidency(
+        current,
+        owned,
+        owner_pid,
+        True,
+        drained,
+        "ready" if drained else "model_drain_unverified",
+        *reserves,
+    )
+
+
+def detect_memory_budget() -> MemoryBudget:
+    """Return a conservative reclaimable-memory estimate without network access."""
+
+    if sys.platform != "darwin":
+        raise RuntimeError("memory_budget_unavailable")
+    try:
+        result = subprocess.run(
+            ["/usr/bin/vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("memory_budget_unavailable") from exc
+    if result.returncode != 0:
+        raise RuntimeError("memory_budget_unavailable")
+    page_match = re.search(r"page size of\s+(\d+) bytes", result.stdout)
+    if page_match is None:
+        raise RuntimeError("memory_budget_unavailable")
+    page_size = int(page_match.group(1))
+    pages = 0
+    for label in ("Pages free", "Pages inactive", "Pages speculative"):
+        match = re.search(rf"^{re.escape(label)}:\s+(\d+)\.", result.stdout, re.MULTILINE)
+        if match is not None:
+            pages += int(match.group(1))
+    free_bytes = pages * page_size
+    if free_bytes <= 0:
+        raise RuntimeError("memory_budget_unavailable")
+    return MemoryBudget(free_bytes=free_bytes)
 
 
 def _is_apple_silicon_chip(chip: str) -> bool:

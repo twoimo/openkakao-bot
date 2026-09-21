@@ -30,6 +30,8 @@ async fn fetch_settings_action(
     node_id: Option<String>,
     chat_id: Option<String>,
     model: Option<String>,
+    explicit_opt_in: Option<bool>,
+    token_id: Option<String>,
 ) -> Result<Value, String> {
     let bridge = bridge.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -39,6 +41,8 @@ async fn fetch_settings_action(
             node_id.as_deref(),
             chat_id.as_deref(),
             model.as_deref(),
+            explicit_opt_in,
+            token_id.as_deref(),
         )
     })
     .await
@@ -49,6 +53,11 @@ async fn fetch_settings_action(
 #[tauri::command]
 fn cancel_python(bridge: tauri::State<'_, PythonBridge>, token_id: String) -> bool {
     bridge.cancel(&token_id)
+}
+
+#[tauri::command]
+fn cancel_model_swap(bridge: tauri::State<'_, PythonBridge>, token_id: String) -> bool {
+    bridge.cancel_model_swap(&token_id)
 }
 
 #[tauri::command]
@@ -139,6 +148,7 @@ fn main() {
             fetch_runtime_snapshot,
             fetch_settings_action,
             cancel_python,
+            cancel_model_swap,
             open_settings,
             start_voice_session
         ])

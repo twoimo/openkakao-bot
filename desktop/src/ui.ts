@@ -52,7 +52,7 @@ export function settingsMarkup(): string {
       <button class="model-row" type="button" data-model-id="${SWAP_MODEL_ID}" aria-pressed="false" disabled>
         <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
       </button>
-      <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 이 화면은 27B를 준비하거나 로드하지 않습니다.</p>
+      <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">

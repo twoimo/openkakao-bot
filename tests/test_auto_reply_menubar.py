@@ -2213,6 +2213,139 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertFalse(denied["ok"])
             del helper
 
+    def test_model_swap_requires_opt_in_and_verified_owner_before_gateway(self):
+        module = load("auto_reply_menubar_model_swap_gates")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
+            no_opt_in = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in="",
+                request_token=token,
+                gateway_factory=gateway_factory,
+            )
+            self.assertEqual(no_opt_in["reason"], "explicit_opt_in_required")
+            gateway_factory.assert_not_called()
+
+            owner_unknown = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: module.ManagedModelResidency(
+                    None, (), 0, False, False, "model_owner_unknown"
+                ),
+                gateway_factory=gateway_factory,
+            )
+            self.assertEqual(owner_unknown["reason"], "model_owner_unknown")
+            gateway_factory.assert_not_called()
+
+    def test_model_swap_fake_failures_cancellation_and_safe_success(self):
+        module = load("auto_reply_menubar_model_swap_fakes")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        previous = f"mlx/{module.JARVIS_RESIDENT_MODEL_ID}"
+        target = module.QWEN38_27B_MODEL_ID
+        residency = module.ManagedModelResidency(
+            previous, (previous,), 4242, True, True, "ready"
+        )
+
+        class FakeGateway:
+            def __init__(self):
+                self.calls = []
+                self.load_failures = set()
+                self.probe_results = {}
+                self.cancel_on_load = None
+
+            def unload(self, model_id):
+                self.calls.append(("unload", model_id))
+
+            def load(self, model_id):
+                self.calls.append(("load", model_id))
+                if self.cancel_on_load is not None and model_id == target:
+                    self.cancel_on_load()
+                if model_id in self.load_failures:
+                    raise RuntimeError("load failed")
+
+            def probe(self, model_id):
+                self.calls.append(("probe", model_id))
+                return self.probe_results.get(model_id, True)
+
+        def run(root, gateway, memory_bytes=120 * 1024**3, cancel_check=None):
+            return module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: residency,
+                memory_probe=lambda: module.MemoryBudget(memory_bytes),
+                gateway_factory=lambda: gateway,
+                persist_residency=lambda *_args, **_kwargs: None,
+                cancel_check=cancel_check,
+                now=123.0,
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+
+            insufficient_gateway = FakeGateway()
+            insufficient = run(root, insufficient_gateway, memory_bytes=1)
+            self.assertEqual(insufficient["reason"], "insufficient_free_memory")
+            self.assertIn(("load", previous), insufficient_gateway.calls)
+
+            load_gateway = FakeGateway()
+            load_gateway.load_failures.update({target, previous})
+            load_failed = run(root, load_gateway)
+            self.assertEqual(load_failed["reason"], "load_failed_rollback_failed")
+
+            probe_gateway = FakeGateway()
+            probe_gateway.probe_results[target] = False
+            probe_gateway.load_failures.add(previous)
+            probe_failed = run(root, probe_gateway)
+            self.assertEqual(probe_failed["reason"], "probe_failed_rollback_failed")
+
+            pre_cancel_factory = mock.Mock(side_effect=AssertionError("cancelled before gateway"))
+            pre_cancelled = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: residency,
+                gateway_factory=pre_cancel_factory,
+                cancel_check=lambda: True,
+            )
+            self.assertEqual(pre_cancelled["reason"], "cancelled")
+            pre_cancel_factory.assert_not_called()
+
+            cancelled = {"value": False}
+            cancel_gateway = FakeGateway()
+            cancel_gateway.cancel_on_load = lambda: cancelled.__setitem__("value", True)
+            mid_cancelled = run(
+                root, cancel_gateway, cancel_check=lambda: cancelled["value"]
+            )
+            self.assertEqual(mid_cancelled["reason"], "cancelled")
+            self.assertIn(("unload", target), cancel_gateway.calls)
+            self.assertIn(("load", previous), cancel_gateway.calls)
+
+            success_gateway = FakeGateway()
+            success = run(root, success_gateway)
+            self.assertEqual(
+                set(success),
+                {"ok", "action", "model", "stage", "reason", "stages", "stored", "prepared"},
+            )
+            self.assertTrue(success["ok"])
+            self.assertTrue(success["stored"])
+            self.assertTrue(success["prepared"])
+            encoded = json.dumps(success, sort_keys=True)
+            self.assertNotIn("prompt", encoded)
+            self.assertNotIn("secret", encoded)
+
+            marker = root / module.MODEL_SWAP_CANCEL_DIR / f"{token}.json"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text('{"schema_version":1,"cancelled":true}', encoding="utf-8")
+            self.assertTrue(module._model_swap_cancelled(root, token))
+
     def test_worker_uses_reply_model_override(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:

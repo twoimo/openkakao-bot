@@ -417,15 +417,16 @@ class TestModelResidencySwap(unittest.TestCase):
             memory_budget=lambda: MemoryBudget(120 * 1024**3),
         )
         result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
-        self.assertTrue(result.ok)
-        self.assertNotIn(("unload", FLASH_NEXT_MODEL_ID), gateway.calls)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "model_owner_unknown")
+        self.assertEqual(gateway.calls, [])
 
     def test_memory_budget_reserves_kv_voice_and_other_residents(self):
         gateway = self.FakeGateway()
         manager = ModelResidencyManager(
             gateway,
             current_model=FLASH_NEXT_MODEL_ID,
-            owned_models=[],
+            owned_models=[FLASH_NEXT_MODEL_ID],
             memory_budget=lambda: MemoryBudget(
                 50 * 1024**3,
                 kv_cache_bytes=8 * 1024**3,
@@ -437,7 +438,107 @@ class TestModelResidencySwap(unittest.TestCase):
         result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "insufficient_free_memory")
-        self.assertEqual(gateway.calls, [])
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", FLASH_NEXT_MODEL_ID),
+                ("probe", FLASH_NEXT_MODEL_ID),
+            ],
+        )
+
+    def test_cancellation_after_target_load_unloads_target_and_rolls_back(self):
+        cancelled = threading.Event()
+
+        class CancellingGateway(self.FakeGateway):
+            def load(self, model_id: str) -> None:
+                super().load(model_id)
+                if model_id == QWEN38_27B_MODEL_ID:
+                    cancelled.set()
+
+        gateway = CancellingGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+            cancel_check=cancelled.is_set,
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "cancelled")
+        self.assertEqual(manager.current_model, FLASH_NEXT_MODEL_ID)
+        self.assertEqual(
+            gateway.calls,
+            [
+                ("unload", FLASH_NEXT_MODEL_ID),
+                ("load", QWEN38_27B_MODEL_ID),
+                ("unload", QWEN38_27B_MODEL_ID),
+                ("load", FLASH_NEXT_MODEL_ID),
+                ("probe", FLASH_NEXT_MODEL_ID),
+            ],
+        )
+
+    def test_cancellation_during_target_probe_rolls_back(self):
+        cancelled = threading.Event()
+
+        class CancellingProbeGateway(self.FakeGateway):
+            def probe(self, model_id: str) -> bool:
+                result = super().probe(model_id)
+                if model_id == QWEN38_27B_MODEL_ID:
+                    cancelled.set()
+                return result
+
+        gateway = CancellingProbeGateway()
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+            cancel_check=cancelled.is_set,
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "cancelled")
+        self.assertEqual(manager.current_model, FLASH_NEXT_MODEL_ID)
+        self.assertIn(("unload", QWEN38_27B_MODEL_ID), gateway.calls)
+
+    def test_load_failure_with_failed_restore_is_fail_closed(self):
+        gateway = self.FakeGateway()
+        gateway.load_failures.update({QWEN38_27B_MODEL_ID, FLASH_NEXT_MODEL_ID})
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "load_failed_rollback_failed")
+        self.assertIsNone(manager.current_model)
+
+    def test_probe_failure_with_failed_restore_is_fail_closed(self):
+        gateway = self.FakeGateway()
+        gateway.probe_results[QWEN38_27B_MODEL_ID] = False
+        gateway.load_failures.add(FLASH_NEXT_MODEL_ID)
+        manager = ModelResidencyManager(
+            gateway,
+            current_model=FLASH_NEXT_MODEL_ID,
+            owned_models=[FLASH_NEXT_MODEL_ID],
+            memory_budget=lambda: MemoryBudget(120 * 1024**3),
+        )
+
+        result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "probe_failed_rollback_failed")
+        self.assertIsNone(manager.current_model)
 
     def test_memory_check_failure_after_unload_restores_previous_model(self):
         gateway = self.FakeGateway()

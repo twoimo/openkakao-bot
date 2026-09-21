@@ -67,6 +67,17 @@ export interface ModelActionResult {
   needsPrepare: boolean;
 }
 
+export interface ModelSwapActionResult {
+  ok: boolean;
+  action: "model-swap";
+  model: typeof SWAP_MODEL_ID;
+  stage: string;
+  reason: string;
+  stages: string[];
+  stored: boolean;
+  prepared: boolean;
+}
+
 function failedModelAction(action: ModelAction, model: LocalModelId): ModelActionResult {
   return { ok: false, action, model, stored: false, prepared: false, needsPrepare: false };
 }
@@ -106,4 +117,90 @@ export async function setResidentModel(invokeFn: SettingsInvoke = invoke): Promi
 
 export async function prepareSwapModel(invokeFn: SettingsInvoke = invoke): Promise<ModelActionResult> {
   return invokeLocalModelAction("model-prepare", SWAP_MODEL_ID, invokeFn);
+}
+
+const MODEL_SWAP_STAGES = new Set([
+  "idle", "drain", "unload", "memory_check", "load", "probe", "rollback", "ready", "aborted", "failed",
+]);
+const MODEL_SWAP_REASONS = new Set([
+  "ready", "already_resident", "cancelled", "drain_timeout", "explicit_opt_in_required",
+  "model_not_allowed", "model_owner_unknown", "model_owner_state_invalid", "model_owner_state_stale",
+  "model_gateway_unavailable", "model_residency_mismatch", "model_drain_unverified",
+  "memory_budget_unavailable", "insufficient_free_memory", "unload_failed", "load_failed", "probe_failed",
+  "load_failed_rollback_failed", "probe_failed_rollback_failed", "cancelled_rollback_failed",
+  "model_state_write_failed", "model_state_write_failed_rollback_failed", "model_override_write_failed",
+  "model_override_write_failed_rollback_failed",
+]);
+
+function failedModelSwap(reason = "model_owner_unknown", stage = "failed"): ModelSwapActionResult {
+  return {
+    ok: false,
+    action: "model-swap",
+    model: SWAP_MODEL_ID,
+    stage,
+    reason,
+    stages: [],
+    stored: false,
+    prepared: false,
+  };
+}
+
+function parseModelSwapAction(value: unknown): ModelSwapActionResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return failedModelSwap();
+  const record = value as Record<string, unknown>;
+  if (record.action !== "model-swap" || record.model !== SWAP_MODEL_ID) return failedModelSwap();
+  const stage = typeof record.stage === "string" && MODEL_SWAP_STAGES.has(record.stage)
+    ? record.stage
+    : "failed";
+  const reason = typeof record.reason === "string" && MODEL_SWAP_REASONS.has(record.reason)
+    ? record.reason
+    : "model_owner_unknown";
+  const stages = Array.isArray(record.stages)
+    ? record.stages.filter((item): item is string => typeof item === "string" && MODEL_SWAP_STAGES.has(item)).slice(0, 12)
+    : [];
+  const stored = record.stored === true;
+  const prepared = record.prepared === true;
+  return {
+    ok: record.ok === true && stage === "ready" && stored && prepared,
+    action: "model-swap",
+    model: SWAP_MODEL_ID,
+    stage,
+    reason,
+    stages,
+    stored,
+    prepared,
+  };
+}
+
+export async function swapToLargeModel(
+  token: CancellationToken,
+  invokeFn: SettingsInvoke = invoke,
+): Promise<ModelSwapActionResult> {
+  if (token.cancelled) return failedModelSwap("cancelled", "aborted");
+  try {
+    const value = await invokeFn<unknown>("fetch_settings_action", {
+      action: "model-swap",
+      model: SWAP_MODEL_ID,
+      explicitOptIn: true,
+      tokenId: token.id,
+    });
+    if (token.cancelled) return failedModelSwap("cancelled", "aborted");
+    return parseModelSwapAction(value);
+  } catch (error) {
+    const reason = error instanceof Error && error.message.includes("cancel") ? "cancelled" : "model_gateway_unavailable";
+    return failedModelSwap(reason, reason === "cancelled" ? "aborted" : "failed");
+  }
+}
+
+export async function cancelModelSwap(
+  token: CancellationToken,
+  invokeFn: SettingsInvoke = invoke,
+): Promise<void> {
+  if (token.cancelled) return;
+  token.cancelled = true;
+  try {
+    await invokeFn("cancel_model_swap", { tokenId: token.id });
+  } catch {
+    // The cooperative marker is best-effort; Rust's bounded timeout is final.
+  }
 }

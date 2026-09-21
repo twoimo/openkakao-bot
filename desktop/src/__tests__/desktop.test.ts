@@ -7,7 +7,13 @@ import {
   ON_SCREEN_NODE_CAP,
   type KnowledgeGraph,
 } from "../knowledge/graph-model";
-import { prepareSwapModel, setResidentModel, type SettingsInvoke } from "../runtime";
+import {
+  cancelModelSwap,
+  prepareSwapModel,
+  setResidentModel,
+  swapToLargeModel,
+  type SettingsInvoke,
+} from "../runtime";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
 import { MAIN_PANEL_CONTROLS, mainPanelMarkup, settingsMarkup } from "../ui";
 
@@ -197,6 +203,98 @@ describe("local model settings bridge", () => {
     expect(calls).toEqual([
       { command: "fetch_settings_action", args: { action: "model-prepare", model: SWAP_MODEL_ID } },
     ]);
+  });
+
+  it("sends the fixed explicit swap token contract and sanitizes success", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const invokeSwap: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        ok: true,
+        action: "model-swap",
+        model: SWAP_MODEL_ID,
+        stage: "ready",
+        reason: "ready",
+        stages: ["drain", "unload", "memory_check", "load", "probe", "ready"],
+        stored: true,
+        prepared: true,
+        body: "drop-me",
+        secret: "drop-me",
+      } as T;
+    };
+
+    expect(await swapToLargeModel(token, invokeSwap)).toEqual({
+      ok: true,
+      action: "model-swap",
+      model: SWAP_MODEL_ID,
+      stage: "ready",
+      reason: "ready",
+      stages: ["drain", "unload", "memory_check", "load", "probe", "ready"],
+      stored: true,
+      prepared: true,
+    });
+    expect(calls).toEqual([{
+      command: "fetch_settings_action",
+      args: {
+        action: "model-swap",
+        model: SWAP_MODEL_ID,
+        explicitOptIn: true,
+        tokenId: token.id,
+      },
+    }]);
+  });
+
+  it.each([
+    ["model_owner_unknown", "aborted"],
+    ["insufficient_free_memory", "aborted"],
+    ["probe_failed_rollback_failed", "failed"],
+  ])("preserves safe swap failure %s", async (reason, stage) => {
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const failed: SettingsInvoke = async <T>() => ({
+      ok: false,
+      action: "model-swap",
+      model: SWAP_MODEL_ID,
+      stage,
+      reason,
+      stages: ["drain", "rollback"],
+      stored: false,
+      prepared: false,
+    } as T);
+    const result = await swapToLargeModel(token, failed);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe(reason);
+    expect(result.stage).toBe(stage);
+  });
+
+  it("does not invoke swap for an already-cancelled token", async () => {
+    let invoked = false;
+    const invokeSwap: SettingsInvoke = async <T>() => {
+      invoked = true;
+      return {} as T;
+    };
+    const result = await swapToLargeModel(
+      { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: true },
+      invokeSwap,
+    );
+    expect(invoked).toBe(false);
+    expect(result.reason).toBe("cancelled");
+  });
+
+  it("uses the dedicated cooperative model-swap cancellation command", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const token = { id: "123e4567-e89b-42d3-a456-426614174000", cancelled: false };
+    const cancelInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return true as T;
+    };
+    await cancelModelSwap(token, cancelInvoke);
+    await cancelModelSwap(token, cancelInvoke);
+    expect(token.cancelled).toBe(true);
+    expect(calls).toEqual([{
+      command: "cancel_model_swap",
+      args: { tokenId: token.id },
+    }]);
   });
 });
 

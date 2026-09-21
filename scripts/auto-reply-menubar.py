@@ -35,6 +35,18 @@ from local_mlx_model_readiness import (
     read_fixed_local_mlx_readiness,
     resolve_fixed_local_mlx_catalog_model,
 )
+from auto_reply_ondevice import (
+    MLX_GATEWAY_BASE_URL,
+    QWEN38_27B_MODEL_ID,
+    QWEN38_27B_REQUIRED_BYTES,
+    HttpMlxModelGateway,
+    ManagedModelResidency,
+    MemoryBudget,
+    ModelResidencyManager,
+    detect_memory_budget,
+    read_managed_model_residency,
+    write_managed_model_residency,
+)
 
 _FROZEN = Path(__file__).resolve().with_name(
     "_auto_reply_menubar_wrapper.cpython-311.pyc"
@@ -124,6 +136,11 @@ _DEFAULT_STATE_ROOT = _default_state_root()
 _DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
 _DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
 _DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
+MODEL_SWAP_OPT_IN = "qwen38-27b-explicit-v1"
+MODEL_SWAP_CANCEL_DIR = "model-swap-cancel"
+MODEL_SWAP_REQUEST_TOKEN_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 OAUTH_KNOWN_RE = re.compile(
     r"Known:\s*([A-Za-z0-9][A-Za-z0-9._,\s-]*)",
@@ -1946,6 +1963,226 @@ def prepare_reply_model(state_root: Path, model: str):
     }
 
 
+def _model_swap_result(
+    *,
+    ok: bool,
+    stage: str,
+    reason: str,
+    stages: list[str] | tuple[str, ...] = (),
+    stored: bool = False,
+    prepared: bool = False,
+) -> dict[str, Any]:
+    """Return the intentionally tiny model-swap IPC envelope."""
+
+    return {
+        "ok": bool(ok),
+        "action": "model-swap",
+        "model": JARVIS_SWAP_MODEL_ID,
+        "stage": str(stage or "failed")[:32],
+        "reason": str(reason or "model_swap_failed")[:96],
+        "stages": [str(item)[:32] for item in list(stages)[:12]],
+        "stored": bool(stored),
+        "prepared": bool(prepared),
+    }
+
+
+def _model_swap_cancelled(state_root: Path, request_token: str) -> bool:
+    path = Path(state_root) / MODEL_SWAP_CANCEL_DIR / f"{request_token}.json"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024:
+            return path.exists()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return not isinstance(payload, dict) or payload.get("cancelled") is True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return True
+
+
+def swap_reply_model(
+    state_root: Path,
+    model: str,
+    *,
+    explicit_opt_in: str,
+    request_token: str,
+    residency_probe=None,
+    memory_probe=None,
+    gateway_factory=None,
+    persist_residency=None,
+    cancel_check=None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Run the one fixed, user-initiated 27B swap or fail closed before mutation."""
+
+    root = Path(state_root)
+    requested = canonical_fixed_local_mlx_model_id(model)
+    if requested != JARVIS_SWAP_MODEL_ID:
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_not_allowed"
+        )
+    token = str(request_token or "").strip().lower()
+    if (
+        str(explicit_opt_in or "").strip() != MODEL_SWAP_OPT_IN
+        or MODEL_SWAP_REQUEST_TOKEN_RE.fullmatch(token) is None
+    ):
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="explicit_opt_in_required"
+        )
+
+    probe = residency_probe or read_managed_model_residency
+    try:
+        residency = probe(root)
+    except Exception:
+        residency = ManagedModelResidency(
+            None, (), 0, False, False, "model_owner_unknown"
+        )
+    if not isinstance(residency, ManagedModelResidency) or not residency.owner_verified:
+        reason = (
+            residency.reason
+            if isinstance(residency, ManagedModelResidency)
+            and residency.reason.startswith("model_")
+            else "model_owner_unknown"
+        )
+        return _model_swap_result(ok=False, stage="aborted", reason=reason)
+    if (
+        residency.current_model is None
+        or residency.current_model not in residency.owned_models
+    ):
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_owner_unknown"
+        )
+    if not residency.drain_verified:
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_drain_unverified"
+        )
+
+    cancelled = cancel_check or (lambda: _model_swap_cancelled(root, token))
+    try:
+        if cancelled():
+            return _model_swap_result(
+                ok=False, stage="aborted", reason="cancelled"
+            )
+    except Exception:
+        return _model_swap_result(ok=False, stage="aborted", reason="cancelled")
+
+    make_gateway = gateway_factory or (
+        lambda: HttpMlxModelGateway(base_url=MLX_GATEWAY_BASE_URL, timeout=15.0)
+    )
+    try:
+        gateway = make_gateway()
+    except Exception:
+        return _model_swap_result(
+            ok=False, stage="failed", reason="model_gateway_unavailable"
+        )
+
+    read_memory = memory_probe or detect_memory_budget
+
+    def budget() -> MemoryBudget:
+        measured = read_memory()
+        if not isinstance(measured, MemoryBudget):
+            raise RuntimeError("memory_budget_unavailable")
+        return MemoryBudget(
+            free_bytes=measured.free_bytes,
+            kv_cache_bytes=measured.kv_cache_bytes + residency.kv_cache_bytes,
+            voice_models_bytes=(
+                measured.voice_models_bytes + residency.voice_models_bytes
+            ),
+            other_resident_bytes=(
+                measured.other_resident_bytes + residency.other_resident_bytes
+            ),
+        )
+
+    manager = ModelResidencyManager(
+        gateway,
+        current_model=residency.current_model,
+        owned_models=residency.owned_models,
+        memory_budget=budget,
+        required_bytes={QWEN38_27B_MODEL_ID: QWEN38_27B_REQUIRED_BYTES},
+        cancel_check=cancelled,
+    )
+    result = manager.swap(QWEN38_27B_MODEL_ID, allow_27b=True, drain_timeout=30.0)
+
+    persist = persist_residency or write_managed_model_residency
+
+    def persist_manager_state() -> bool:
+        snapshot = ManagedModelResidency(
+            manager.current_model,
+            tuple(sorted(manager.owned_models)),
+            residency.owner_pid,
+            True,
+            True,
+            "ready",
+            residency.kv_cache_bytes,
+            residency.voice_models_bytes,
+            residency.other_resident_bytes,
+        )
+        try:
+            persist(
+                root,
+                snapshot,
+                accepting_requests=False,
+                in_flight=0,
+                updated_at=time.time() if now is None else float(now),
+            )
+            return True
+        except Exception:
+            return False
+
+    if not result.ok:
+        persist_manager_state()
+        return _model_swap_result(
+            ok=False,
+            stage=result.stage.value,
+            reason=result.reason,
+            stages=result.stages,
+        )
+
+    if not persist_manager_state():
+        rollback = manager.swap(
+            residency.current_model, allow_27b=True, drain_timeout=30.0
+        )
+        persist_manager_state()
+        reason = "model_state_write_failed"
+        if not rollback.ok:
+            reason += "_rollback_failed"
+        return _model_swap_result(
+            ok=False,
+            stage="failed",
+            reason=reason,
+            stages=tuple(result.stages) + tuple(rollback.stages),
+        )
+
+    try:
+        _atomic_write_json(
+            _reply_model_override_path(root),
+            {
+                "schema_version": 1,
+                "model": JARVIS_SWAP_MODEL_ID,
+                "updated_at": int(time.time() if now is None else float(now)),
+            },
+        )
+    except OSError:
+        rollback = manager.swap(
+            residency.current_model, allow_27b=True, drain_timeout=30.0
+        )
+        persist_manager_state()
+        reason = "model_override_write_failed"
+        if not rollback.ok:
+            reason += "_rollback_failed"
+        return _model_swap_result(
+            ok=False,
+            stage="failed",
+            reason=reason,
+            stages=tuple(result.stages) + tuple(rollback.stages),
+        )
+    return _model_swap_result(
+        ok=True,
+        stage=result.stage.value,
+        reason=result.reason,
+        stages=result.stages,
+        stored=True,
+        prepared=True,
+    )
+
+
 def add_api_provider(
     state_root: Path,
     *,
@@ -2144,6 +2381,18 @@ def main():
                 "reason": str(exc) or "knowledge_graph_unavailable",
             }
         _print_json(payload)
+        return 0
+    if action == "model-swap":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(
+            swap_reply_model(
+                state_root,
+                _argv_flag_value("--model"),
+                explicit_opt_in=_argv_flag_value("--explicit-opt-in"),
+                request_token=_argv_flag_value("--request-token"),
+            )
+        )
         return 0
     args = type("Args", (), {"action": action})()
     if (
