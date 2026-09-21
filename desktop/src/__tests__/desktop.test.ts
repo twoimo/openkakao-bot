@@ -482,6 +482,21 @@ describe("background settings activity", () => {
     renderBackground(inactive);
     expect(document.getElementById("settings-activity-source")?.textContent).not.toContain("파이프라인");
   });
+
+  it("shows the count of in-flight bridge jobs", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [
+        { jobId: "browser-1", kind: "browser", stage: "running", load: 0.7, time: 1, errorCode: null },
+        { jobId: "swap-1", kind: "model_swap", stage: "swap", load: 0.9, time: 2, errorCode: null },
+      ],
+      context_sync: { mode: "async", waited: false },
+    });
+    renderBackground(snapshot);
+    expect(document.getElementById("settings-activity-source")?.textContent).toContain("진행 중 작업 2");
+  });
 });
 
 describe("on-device hardware settings", () => {
@@ -592,6 +607,38 @@ describe("background signal polling", () => {
       geeknews: 0.6,
       dbSync: 0.3,
       total: 0.8,
+    });
+    poller.stop();
+  });
+
+  it("forwards total load when bridge jobs are the only active status", async () => {
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [
+        { jobId: "browser-1", kind: "browser", stage: "running", load: 0.7, time: 1, errorCode: null },
+      ],
+      job_load: 0,
+      context_sync: { mode: "async", waited: false },
+      voice: { available: false, rms: 0 },
+    });
+    const sink = { setSignals: vi.fn() };
+    const scheduler = { setTimeout: vi.fn(() => 1), clearTimeout: vi.fn() };
+    const poller = new RuntimeSnapshotPoller(
+      sink,
+      async () => snapshot,
+      async () => undefined,
+      () => ({ id: "jobs-only-test", cancelled: false }),
+      scheduler,
+    );
+    poller.start();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sink.setSignals).toHaveBeenCalledWith(0, 0, {
+      reply: 0,
+      geeknews: 0,
+      dbSync: 0,
+      total: 0.7,
     });
     poller.stop();
   });

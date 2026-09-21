@@ -1,4 +1,6 @@
-import type { BackgroundStatus, PipelineStatus } from "../contracts";
+import type { BackgroundStatus, JobEvent, PipelineStatus } from "../contracts";
+
+const TOTAL_BOOST = 0.35;
 
 export const PIPELINE_STAGE_IDS = [
   "detect",
@@ -49,18 +51,25 @@ export function sourceLoads(background: BackgroundStatus, pipeline: PipelineStat
   };
 }
 
+export function totalFor(background: BackgroundStatus, jobs: readonly JobEvent[]): number {
+  const jobLoad = jobs.reduce((maximum, job) => Math.max(maximum, clamp01(job.load)), 0);
+  return clamp01(Math.max(background.activity, jobLoad));
+}
+
 export function ringTargetVelocities(
   base: readonly number[],
   loads: SourceLoads,
   gain: readonly number[],
 ): number[] {
   const perSource = [loads.reply, loads.geeknews, loads.dbSync] as const;
-  // Ring i follows v_i = base_i * (1 + gain_i * clamp01(source_i)).
+  // Ring i follows v_i = base_i * (1 + gain_i * clamp01(source_i))
+  // * (1 + 0.35 * clamp01(total)). The last factor is exactly 1 at zero total.
+  const globalBoost = 1 + TOTAL_BOOST * clamp01(loads.total);
   return base.map((velocity, index) => {
     const safeBase = Number.isFinite(velocity) ? velocity : 0;
     const safeGain = Number.isFinite(gain[index]) ? gain[index] : 0;
     const load = clamp01(perSource[index] ?? 0);
-    return safeBase * (1 + safeGain * load);
+    return safeBase * (1 + safeGain * load) * globalBoost;
   });
 }
 

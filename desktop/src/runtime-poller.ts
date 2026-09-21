@@ -1,5 +1,5 @@
 import { createCancellationToken, type CancellationToken, type RuntimeSnapshot } from "./contracts";
-import { sourceLoads, type SourceLoads } from "./core/load-mapping";
+import { sourceLoads, totalFor, type SourceLoads } from "./core/load-mapping";
 import { cancelRuntimeRequest, fetchRuntimeSnapshot } from "./runtime";
 
 export interface RuntimeSignalSink {
@@ -31,8 +31,13 @@ function snapshotSources(snapshot: RuntimeSnapshot | null): SourceLoads | undefi
     || background.dbSync.caption.length > 0
     || background.geeknews.state !== "unknown"
     || background.dbSync.state !== "unknown"
-    || snapshot.pipeline.active;
-  return hasStatus ? sourceLoads(background, snapshot.pipeline) : undefined;
+    || snapshot.pipeline.active
+    || snapshot.jobs.length > 0;
+  if (!hasStatus) return undefined;
+  return {
+    ...sourceLoads(background, snapshot.pipeline),
+    total: totalFor(background, snapshot.jobs),
+  };
 }
 
 export class RuntimeSnapshotPoller {

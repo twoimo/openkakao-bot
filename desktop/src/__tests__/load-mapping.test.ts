@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BackgroundStatus, PipelineStatus } from "../contracts";
-import { latticePulse, pipelineLoad, ringTargetVelocities, sourceLoads } from "../core/load-mapping";
+import { latticePulse, pipelineLoad, ringTargetVelocities, sourceLoads, totalFor } from "../core/load-mapping";
 
 function background(overrides: Partial<BackgroundStatus> = {}): BackgroundStatus {
   return {
@@ -75,9 +75,30 @@ describe("source load mapping", () => {
       { reply: 1, geeknews: 0.5, dbSync: 0.25, total: 0.8 },
       gain,
     );
-    expect(differentiated[0]).toBeCloseTo(0.17 * 2.4);
-    expect(differentiated[1]).toBeCloseTo(-0.12 * 1.825);
-    expect(differentiated[2]).toBeCloseTo(0.09 * 1.475);
+    const globalBoost = 1 + 0.35 * 0.8;
+    expect(differentiated[0]).toBeCloseTo(0.17 * 2.4 * globalBoost);
+    expect(differentiated[1]).toBeCloseTo(-0.12 * 1.825 * globalBoost);
+    expect(differentiated[2]).toBeCloseTo(0.09 * 1.475 * globalBoost);
+  });
+
+  it("takes total load from background or the largest in-flight job", () => {
+    const jobs = [
+      { jobId: "a", kind: "browser", stage: "running", load: 0.7, time: 1, errorCode: null },
+      { jobId: "b", kind: "model_swap", stage: "swap", load: 0.9, time: 2, errorCode: null },
+    ];
+    expect(totalFor(background(), [])).toBe(0);
+    expect(totalFor(background({ activity: 0.6 }), [])).toBe(0.6);
+    expect(totalFor(background(), jobs)).toBe(0.9);
+    expect(totalFor(background({ activity: 0.95 }), jobs)).toBe(0.95);
+    expect(totalFor(background(), [{ ...jobs[0], load: 7 }])).toBe(1);
+  });
+
+  it("applies the bounded global boost and leaves zero-total velocities unchanged", () => {
+    const base = [0.17, -0.12, 0.09] as const;
+    const gain = [1.4, 1.65, 1.9] as const;
+    expect(ringTargetVelocities(base, { reply: 0, geeknews: 0, dbSync: 0, total: 0 }, gain)).toEqual([...base]);
+    const boosted = ringTargetVelocities(base, { reply: 0, geeknews: 0, dbSync: 0, total: 1 }, gain);
+    expect(boosted).toEqual(base.map((value) => value * 1.35));
   });
 
   it("keeps lattice pulse parameters bounded and deterministic", () => {

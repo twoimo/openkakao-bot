@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -27,6 +27,8 @@ const BROWSER_TOOL_OUTPUT_LIMIT_BYTES: usize = 96 * 1024;
 const BROWSER_TOOL_RESULT_LIMIT_BYTES: usize = 64 * 1024;
 const BROWSER_TOOL_TASK_LIMIT_BYTES: usize = 16 * 1024;
 const BROWSER_TOOL_JOB_ID_LIMIT: usize = 64;
+const JOB_EVENT_CAP: usize = 8;
+const JOB_EVENT_MAX_AGE_SECS: f64 = 300.0;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
 const STATE_FILE_LIMIT_BYTES: u64 = 4096;
@@ -86,6 +88,7 @@ pub enum BridgeError {
 pub struct PythonBridge {
     config: Arc<BridgeConfig>,
     cancellations: Arc<Mutex<HashMap<String, CancellationHandle>>>,
+    jobs: Arc<Mutex<HashMap<String, SafeJobEvent>>>,
 }
 
 #[derive(Clone)]
@@ -128,7 +131,7 @@ pub struct SafeRoom {
     open_jobs: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SafeJobEvent {
     #[serde(rename = "jobId")]
     job_id: String,
@@ -336,6 +339,7 @@ impl PythonBridge {
         Self {
             config: Arc::new(BridgeConfig::discover()),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -347,6 +351,7 @@ impl PythonBridge {
         let value = parse_json_output(&bytes)?;
         let mut snapshot = sanitize_snapshot(&value);
         snapshot.voice = read_voice_status(&self.config.state_root, &self.config.resources()?.root);
+        self.merge_jobs(&mut snapshot);
         Ok(snapshot)
     }
 
@@ -371,34 +376,44 @@ impl PythonBridge {
         )?;
         let is_swap = action == "model-swap";
         let is_mlx_launch = action == MLX_SERVER_LAUNCH_ACTION;
-        let bytes = self.run_python(
-            &args,
-            if is_swap {
-                MODEL_SWAP_TIMEOUT
-            } else if is_mlx_launch {
-                MLX_LAUNCH_TIMEOUT
-            } else {
-                DEFAULT_TIMEOUT
-            },
-            if is_swap { token_id } else { None },
-            is_swap,
-        )?;
-        let value = parse_json_output(&bytes)?;
-        Ok(match action {
-            "models" => sanitize_models(&value),
-            "dream-rsi-status" => sanitize_dream_rsi(&value),
-            "knowledge-graph-status" => sanitize_knowledge_status(&value),
-            "knowledge-graph" => sanitize_knowledge_graph(&value),
-            "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
-            "model-owner-status" => sanitize_model_owner_status(&value),
-            MLX_SERVER_STATUS_ACTION => sanitize_mlx_server_status(&value),
-            MLX_SERVER_LAUNCH_ACTION => sanitize_mlx_lifecycle(&value, true),
-            MLX_SERVER_STOP_ACTION => sanitize_mlx_lifecycle(&value, false),
-            "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
-            "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
-            "model-swap" => sanitize_model_swap_action(&value),
-            _ => return Err(BridgeError::ActionNotAllowed),
-        })
+        let swap_job_id = token_id.unwrap_or("model-swap");
+        if is_swap {
+            self.begin_job(swap_job_id, "model_swap", "swap", 0.9);
+        }
+        let result: Result<Value, BridgeError> = (|| {
+            let bytes = self.run_python(
+                &args,
+                if is_swap {
+                    MODEL_SWAP_TIMEOUT
+                } else if is_mlx_launch {
+                    MLX_LAUNCH_TIMEOUT
+                } else {
+                    DEFAULT_TIMEOUT
+                },
+                if is_swap { token_id } else { None },
+                is_swap,
+            )?;
+            let value = parse_json_output(&bytes)?;
+            Ok(match action {
+                "models" => sanitize_models(&value),
+                "dream-rsi-status" => sanitize_dream_rsi(&value),
+                "knowledge-graph-status" => sanitize_knowledge_status(&value),
+                "knowledge-graph" => sanitize_knowledge_graph(&value),
+                "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
+                "model-owner-status" => sanitize_model_owner_status(&value),
+                MLX_SERVER_STATUS_ACTION => sanitize_mlx_server_status(&value),
+                MLX_SERVER_LAUNCH_ACTION => sanitize_mlx_lifecycle(&value, true),
+                MLX_SERVER_STOP_ACTION => sanitize_mlx_lifecycle(&value, false),
+                "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
+                "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
+                "model-swap" => sanitize_model_swap_action(&value),
+                _ => return Err(BridgeError::ActionNotAllowed),
+            })
+        })();
+        if is_swap {
+            self.finish_job(swap_job_id);
+        }
+        result
     }
 
     pub fn run_browser_tool(
@@ -413,17 +428,117 @@ impl PythonBridge {
         let args = browser_tool_args(job_id, task)?;
         let internal_token = format!("browser-tool-{job_id}");
         let cancellation_token = token_id.unwrap_or(&internal_token);
-        let bytes = self.run_python_with_output_limit(
-            &args,
-            BROWSER_TOOL_TIMEOUT,
-            Some(cancellation_token),
-            false,
-            BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
-            Some(task.as_bytes()),
-            Some(BROWSER_TOOL_ABORT_GRACE),
-        )?;
-        let value = parse_json_output(&bytes)?;
-        Ok(sanitize_browser_tool_result(&value))
+        self.begin_job(job_id, "browser", "running", 0.7);
+        let result: Result<SafeBrowserToolResult, BridgeError> = (|| {
+            let bytes = self.run_python_with_output_limit(
+                &args,
+                BROWSER_TOOL_TIMEOUT,
+                Some(cancellation_token),
+                false,
+                BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
+                Some(task.as_bytes()),
+                Some(BROWSER_TOOL_ABORT_GRACE),
+            )?;
+            let value = parse_json_output(&bytes)?;
+            Ok(sanitize_browser_tool_result(&value))
+        })();
+        match &result {
+            Ok(value) if !value.error_code.is_empty() => {
+                self.set_job_error(job_id, Some(&value.error_code));
+            }
+            Err(error) => {
+                let error_code = error.to_string();
+                self.set_job_error(job_id, Some(&error_code));
+            }
+            _ => self.set_job_error(job_id, None),
+        }
+        self.finish_job(job_id);
+        result
+    }
+
+    fn begin_job(&self, job_id: &str, kind: &str, stage: &str, load: f64) {
+        let key = bounded_job_id(job_id);
+        if key.is_empty() {
+            return;
+        }
+        let event = SafeJobEvent {
+            job_id: key.clone(),
+            kind: kind.chars().take(32).collect(),
+            stage: stage.chars().take(32).collect(),
+            load: clamp01(load),
+            time: epoch_seconds(),
+            error_code: None,
+        };
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        jobs.insert(key, event);
+        if jobs.len() > JOB_EVENT_CAP {
+            let mut newest = jobs
+                .iter()
+                .map(|(job_id, event)| (job_id.clone(), event.time))
+                .collect::<Vec<_>>();
+            newest.sort_by(|left, right| {
+                right
+                    .1
+                    .total_cmp(&left.1)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            for (job_id, _) in newest.into_iter().skip(JOB_EVENT_CAP) {
+                jobs.remove(&job_id);
+            }
+        }
+    }
+
+    fn set_job_error(&self, job_id: &str, error_code: Option<&str>) {
+        let key = bounded_job_id(job_id);
+        if key.is_empty() {
+            return;
+        }
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(event) = jobs.get_mut(&key) {
+            event.error_code = error_code.map(|value| value.chars().take(64).collect());
+        }
+    }
+
+    fn finish_job(&self, job_id: &str) {
+        let key = bounded_job_id(job_id);
+        if key.is_empty() {
+            return;
+        }
+        self.jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&key);
+    }
+
+    fn jobs_snapshot(&self) -> Vec<SafeJobEvent> {
+        let now = epoch_seconds();
+        let mut jobs = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        jobs.retain(|_, event| {
+            event.time.is_finite()
+                && (now == 0.0 || event.time > now || now - event.time <= JOB_EVENT_MAX_AGE_SECS)
+        });
+        let mut snapshot = jobs.values().cloned().collect::<Vec<_>>();
+        snapshot.sort_by(|left, right| {
+            right
+                .time
+                .total_cmp(&left.time)
+                .then_with(|| left.job_id.cmp(&right.job_id))
+        });
+        snapshot.truncate(JOB_EVENT_CAP);
+        snapshot
+    }
+
+    fn merge_jobs(&self, snapshot: &mut SafeRuntimeSnapshot) {
+        snapshot.jobs = self.jobs_snapshot();
     }
 
     pub fn cancel(&self, token_id: &str) -> bool {
@@ -913,6 +1028,17 @@ fn as_u64(value: Option<&Value>) -> u64 {
 
 fn clamp01(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn bounded_job_id(value: &str) -> String {
+    value.chars().take(BROWSER_TOOL_JOB_ID_LIMIT).collect()
+}
+
+fn epoch_seconds() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn round_activity(value: f64) -> f64 {
@@ -2306,6 +2432,106 @@ mod tests {
         assert!(!valid_browser_tool_job_id(
             &"a".repeat(BROWSER_TOOL_JOB_ID_LIMIT + 1)
         ));
+    }
+
+    #[test]
+    fn bridge_job_registry_tracks_and_finishes_jobs() {
+        let bridge = PythonBridge::new();
+        bridge.begin_job(&"j".repeat(80), "browser", "running", 1.4);
+        let jobs = bridge.jobs_snapshot();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_id.chars().count(), BROWSER_TOOL_JOB_ID_LIMIT);
+        assert_eq!(jobs[0].kind, "browser");
+        assert_eq!(jobs[0].stage, "running");
+        assert_eq!(jobs[0].load, 1.0);
+        assert!(jobs[0].error_code.is_none());
+
+        let bounded_id = "j".repeat(BROWSER_TOOL_JOB_ID_LIMIT);
+        bridge.set_job_error(&bounded_id, Some("browser_job_failed"));
+        assert_eq!(
+            bridge.jobs_snapshot()[0].error_code.as_deref(),
+            Some("browser_job_failed")
+        );
+        bridge.finish_job(&bounded_id);
+        assert!(bridge.jobs_snapshot().is_empty());
+    }
+
+    #[test]
+    fn bridge_job_registry_is_newest_first_capped_and_drops_stale_entries() {
+        let bridge = PythonBridge::new();
+        let now = epoch_seconds();
+        {
+            let mut jobs = bridge.jobs.lock().unwrap();
+            for index in 0..10 {
+                let job_id = format!("job-{index}");
+                jobs.insert(
+                    job_id.clone(),
+                    SafeJobEvent {
+                        job_id,
+                        kind: "browser".to_string(),
+                        stage: "running".to_string(),
+                        load: 0.7,
+                        time: now - index as f64,
+                        error_code: None,
+                    },
+                );
+            }
+            jobs.insert(
+                "stale".to_string(),
+                SafeJobEvent {
+                    job_id: "stale".to_string(),
+                    kind: "browser".to_string(),
+                    stage: "running".to_string(),
+                    load: 0.7,
+                    time: now - JOB_EVENT_MAX_AGE_SECS - 1.0,
+                    error_code: None,
+                },
+            );
+        }
+
+        let snapshot = bridge.jobs_snapshot();
+        assert_eq!(snapshot.len(), JOB_EVENT_CAP);
+        assert_eq!(snapshot[0].job_id, "job-0");
+        assert_eq!(snapshot[JOB_EVENT_CAP - 1].job_id, "job-7");
+        assert!(!snapshot.iter().any(|event| event.job_id == "stale"));
+        assert!(!bridge.jobs.lock().unwrap().contains_key("stale"));
+    }
+
+    #[test]
+    fn bridge_job_registry_merges_into_safe_snapshot_and_serializes_only_safe_keys() {
+        let bridge = PythonBridge::new();
+        bridge.begin_job("browser-1", "browser", "running", 0.7);
+        let mut snapshot = sanitize_snapshot(&json!({"open_jobs": 0}));
+        bridge.merge_jobs(&mut snapshot);
+        assert_eq!(snapshot.jobs.len(), 1);
+
+        let serialized = serde_json::to_value(&snapshot.jobs[0]).unwrap();
+        let event = serialized.as_object().unwrap();
+        assert_eq!(
+            event.keys().map(String::as_str).collect::<HashSet<_>>(),
+            HashSet::from(["jobId", "kind", "stage", "load", "time", "errorCode"])
+        );
+        let text = serde_json::to_string(event).unwrap();
+        for forbidden in ["task", "prompt", "token", "message", "conversation"] {
+            assert!(!text.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn bridge_job_registry_recovers_from_poisoned_lock_without_panicking() {
+        let bridge = PythonBridge::new();
+        let jobs = bridge.jobs.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = jobs.lock().unwrap();
+            panic!("poison job registry for recovery test");
+        });
+
+        bridge.begin_job("after-poison", "browser", "running", 0.7);
+        let snapshot = bridge.jobs_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].job_id, "after-poison");
+        bridge.finish_job("after-poison");
+        assert!(bridge.jobs_snapshot().is_empty());
     }
 
     #[test]

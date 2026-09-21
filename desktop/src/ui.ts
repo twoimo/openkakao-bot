@@ -167,7 +167,8 @@ export function renderBackground(snapshot: RuntimeSnapshot, root: Document = doc
     && background.geeknews.state === "unknown"
     && background.dbSync.state === "unknown"
     && background.caption.length === 0
-    && !snapshot.pipeline.active;
+    && !snapshot.pipeline.active
+    && snapshot.jobs.length === 0;
   if (empty) {
     target.textContent = "백그라운드 활동이 없습니다.";
     return;
@@ -176,7 +177,8 @@ export function renderBackground(snapshot: RuntimeSnapshot, root: Document = doc
   const pendingReplies = Math.round(Math.min(1, Math.max(0, background.replyLoad)) * 4);
   const caption = background.caption ? ` · ${background.caption.slice(0, 120)}` : "";
   const pipeline = snapshot.pipeline.active ? ` · 파이프라인 ${snapshot.pipeline.stage}` : "";
-  target.textContent = `백그라운드 · 답변 대기 ${pendingReplies} · 긱뉴스 ${background.geeknews.state} · DB 동기화 ${background.dbSync.state}${pipeline}${caption}`;
+  const jobs = snapshot.jobs.length > 0 ? ` · 진행 중 작업 ${snapshot.jobs.length}` : "";
+  target.textContent = `백그라운드 · 답변 대기 ${pendingReplies} · 긱뉴스 ${background.geeknews.state} · DB 동기화 ${background.dbSync.state}${pipeline}${jobs}${caption}`;
 }
 
 export function renderHardware(snapshot: RuntimeSnapshot, root: Document = document): void {
