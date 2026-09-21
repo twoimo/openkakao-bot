@@ -1224,3 +1224,21 @@ OK
 - 직전 설치(2026-09-22 00:51:21)의 백업 receipt install-backups/jarvis-desktop/20260922T005121-98225/com.openkakao.jarvis.desktop.installed.txt는 그 시각 launchd가 state = xpcproxy, pid = 98353이었다고 기록한다. 즉 00:51에 활성화한 인스턴스는 이후 종료됐고(exit code 0), 84125는 그 뒤 별도로 시작된 인스턴스다.
 - 함의: 재설치를 실행하면 kickstart -kp가 새 launchd pid를 만들고 84125가 살아 있는 stray로 판정되어, 가드가 이전 번들을 지우지 않고 exit 3으로 닫는다. 계획 5단계의 전환 전제(중복 작업자 없음, launchd가 소유한 단일 인스턴스)는 이 호스트에서 아직 미충족이다. 이 세션은 프로세스를 종료하지 않았고 84125도 그대로 두었다.
 - 이번 UI 크로스체크는 이 untracked 인스턴스(같은 설치 번들 경로, 번들 mtime 00:51)를 본 것이므로 위 UI 증거는 그 번들에 대한 것이지만, launchd 감독 상태나 자동 재시작을 입증하지는 않는다.
+
+### 독립 리뷰 차단과 동기화 stall 진단 — 2026-09-22 KST
+
+독립 서브에이전트 리뷰(Codex Web, 모델 chatgpt-web/extra-high, reasoning xhigh, 동시성 1)는 이 호스트에서 완료되지 못했다. 새 스레드로 만든 재시도(agent 01a0c551-7e40-7983-af09-290e9fc58102)도 5.9초 만에 같은 오류로 끝났다:
+
+    stream disconnected before completion: page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true
+
+직전 스레드(01a0c547-6cde-74b3-947c-07330b645a37)의 종료 상태도 같은 문자열이었고, 같은 시각 이 호스트에서 https://chatgpt.com/ 는 curl로 http=403(일반 UA와 브라우저 UA 모두)이었으며 DNS 해석은 정상이었다. 규칙(동일 오류 3회 연속이면 blocked로 기록하고 다른 작업을 진행하며 웹 동시성은 1 유지)에 따라 이 항목을 blocked로 기록하고 웹 요청을 중단했다. 따라서 이번 세션은 독립 리뷰의 AHP 점수를 얻지 못했고, 98점 달성을 주장하지 않는다. 두 스레드는 close_agent로 닫아 슬롯을 비웠다.
+
+같은 시각 앱 state root /Users/twoimo/Library/Application Support/openkakao/bujamentor 를 읽기 전용으로만 확인해 동기화 stall의 내용을 특정했다. 재색인 실행·프로세스 시작·파일 삭제는 하지 않았다.
+
+- 앱은 살아 있고 jarvis-voice-status.json을 03:54 KST에 갱신했다(updated_at 1790016882, state wake_listen, 호출어 헤이 자비스, threshold 0.65).
+- knowledge-graph.sqlite3(mtime 01:45, 401,408 bytes)의 kg_meta는 last_indexed_at 1790009077(01:44:37 KST), last_dense_indexed_at 1790005911(00:51:51 KST), last_dense_status unavailable:RuntimeError:local dense embedding unavailable, last_index_error 빈 값, last_snapshot_status copy_ok이다. 같은 DB의 kg_entities 50행 · kg_relations 341행은 00:51·03:44 기록과 같은 값이다.
+- knowledge-graph-reindex.lock(0 bytes, mtime 2026-09-17 19:29)이 남아 있지만 이 가드는 flock 기반이다(_reindex_process_running, _spawn_reindex_process). 파일 존재 자체는 차단 요인이 아니고, 소유 프로세스가 없으면 다음 재색인은 정상적으로 잠금을 얻는다. 즉 이 stale 파일은 stall의 원인이 아니다.
+- 데스크톱 코드에는 재색인 트리거가 없다. desktop/src-tauri/src/python_bridge.rs는 knowledge-graph-status 읽기 action만 쓰고 reindex 계열 문자열이 없다. 재색인 주기를 판정하는 곳은 scripts/auto_reply_knowledge_graph.py의 now - last_updated >= reindex_interval_seconds(모듈 기본 300초)이고, 이를 호출하는 쪽은 scripts/auto-reply-menubar.py의 collect_knowledge_graph 경로다.
+- 따라서 01:44:37 이후 색인 사이클을 실제로 구동한 호출자가 없다는 것이 이 시각 상태의 내용이다. 설정 카드의 stale·DB 동기화 stalled·dense indexed:50/00:51은 이 상태를 그대로 표시한 것이며 가짜 정상 표시가 아니다.
+- 확인 방법: kg_meta는 앱 디렉터리가 아니라 /tmp에 만든 사본에서 읽었다. 이번 읽기로 앱 디렉터리에 새 -wal·-shm이 생기지 않았고, 직전 03:44 절이 만든 0바이트 knowledge-dense-ann.sqlite3-wal(32,768 bytes -shm)과 knowledge-graph.sqlite3-wal(0 bytes)은 그대로 두었다.
+- 이번 세션은 재색인 호출자를 새로 시작하지 않았고 0바이트 lock 파일도 삭제하지 않았다. 자동 색인 소유권을 앱으로 옮기는 변경도 하지 않았다: 앱이 외부 소유 모델·프로세스를 임의로 시작·중지하지 않는다는 기존 계약과 충돌하고, 동시 재색인에서 ANN 저장소 잠금(unavailable:OperationalError:database is locked)이 관측된 전례가 있기 때문이다. 이 항목은 미해결로 남긴다.
