@@ -1274,3 +1274,16 @@ OK
 - 적용 1, Design Engineering Latest Request Wins(수명주기 experimental): 핵심 계약은 'identity decides acceptance', 'Both success and failure must match the current request', 'Do not use this policy to discard the outcomes of independent writes that all matter'이다. 우리 구현 대조: conversation_advanced_past_event (scripts/auto-reply-worker.py:4226)는 안정적 워터마크가 아니면 None으로 닫는 fail-closed 판정이고, _superseded_by(같은 파일 4207)는 영속 테이블 reply_job_supersessions에서 대체 관계를 읽는다. finish_burst_superseded(같은 파일 14533)는 대체된 이벤트 자신의 행만 status, due_at, reply=None으로 갱신하고 현재 턴의 결과를 건드리지 않는다. 전송은 write이므로 이 정책으로 버리지 않으며, 전송 직전 워터마크 재검사 뒤 AX local-send만 쓰고 delivery_unknown은 자동 재전송하지 않는다. 즉 stale 실패가 현재 상태를 지우는 경로가 없다.
 - 적용 2, Platform Guides Input And Focus: 설치본은 글로벌 탈출 단축키를 tauri_plugin_global_shortcut으로 등록하고 desktop/src-tauri/src/main.rs:148에서 Modifiers::SUPER | Modifiers::ALT 와 Code::Escape(즉 ⌘⌥Esc)로 고정한다. AX 백그라운드 제어는 전면 활성화가 필요한 동작을 거부하므로 포커스 계약을 넘지 않는다.
 - 한계: 위 두 항목은 style.gallery가 experimental로 표기한 지침과의 대조이며, 사이트가 우리 제품을 검증한 것이 아니다. 라이브 카카오톡 전송과 독립 리뷰 점수는 여전히 미확인이다.
+
+### DPO 로그확률 수집과 위임 경로 재측정 — 2026-09-22 KST (세션 01a0b7f6)
+
+이 절은 commit 36bc56b 작업의 실측이다. 재설치·재색인·카카오톡 전송·프로세스 종료는 하지 않았다.
+
+- 위임 경로는 다시 차단으로 확인됐다. chatgpt-web/extra-high 서브에이전트 3회 연속 실패(동일 문자열 `stream disconnected before completion: page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`), gpt-5.6-sol은 사용량 한도로 `You've hit your usage limit ... try again at Sep 26th, 2026 5:37 PM`. 같은 시각 curl로 https://chatgpt.com/ 와 /codex/settings/usage 는 모두 http=403이었다. 규칙(동일 오류 3회 연속이면 blocked로 기록하고 다른 작업 진행, 웹 동시성 1)에 따라 이 항목을 blocked로 기록하고 웹 요청을 중단했으며, 구현은 부모가 로컬에서 수행했다.
+- 로컬 게이트웨이 127.0.0.1:11234/v1는 요청 본문에 `logprobs=true`를 주면 `choices[0].logprobs.content`에 생성 토큰별 logprob을 담아 돌려준다. 예: `1+1=?` → `1 + 1 = **2**` 8토큰. 같은 엔드포인트에서 echo는 동작하지 않는다. /v1/completions에 `echo=true`로 `OPENKAKAO_ECHO_PROBE alpha beta gamma delta`를 보내면 프롬프트가 아니라 생성 토큰 `" epsilon"`만 돌아왔다. assistant prefill도 이어쓰기로 처리되지 않는다(마지막 assistant 메시지가 프롬프트에 포함될 뿐 새 턴을 생성한다). 따라서 이미 저장된 임의의 응답 문자열은 이 엔드포인트로 채점할 수 없다. `probe_response_scoring`이 이 사실을 `reason=echo_unsupported`, `supports_response_scoring=false`로 실측한다.
+- 실제 수집(고정 Python 3.11, scripts/auto_reply_finetune.py): 프롬프트 `한 문장으로 답하세요: 오늘 서울 날씨 어때?`에 `max_tokens=1` → `저` 1토큰 합계 `-0.351563`, `max_tokens=6` → `저는 실시간 데이터에 접근` 6토큰 합계 `-1.313843`.
+- 이 두 값을 `--dpo-pairs`·`--dpo-ref-pairs`(동일 기준값)로 넣은 CLI 실행은 exit 0, `report['dpo'].evaluation` = status `ok`, evaluated 1, objective `dpo`, loss `0.6931471805599453`(마진 0일 때의 정확한 값 ln 2), `string_similarity_used=false`였다. 기준 파일을 빼면 같은 실행이 `missing_reference_logprobs`로 평가 불가가 된다.
+- 기준 값 없이 계산하는 경로는 `objective=reference_free_preference`, `reference_free=true`로 표시되며 표준 DPO 수치로 보고하지 않는다. 문자열 유사도로 대체하는 경로는 어디에도 없다.
+- 테스트: `tests.test_auto_reply_finetune` **60 tests, OK**(기존 30 + 신규 30), CI focused 11개 모듈 **389 tests, OK**.
+- 크로스체크: 이번 단위는 desktop/ 소스를 바꾸지 않았으므로 설치 앱 UI 캡처를 다시 만들지 않았다(같은 날 03:47 KST 캡처가 유효). 같은 시각 앱 pid 84125는 살아 있고, launchctl job gui/501/com.openkakao.jarvis.desktop은 여전히 `state not running`·`job state exited`·`runs 2`이고, 11234는 외부 mlx-serve pid 38868이 점유 중이다. 따라서 이전에 기록한 전환 전제 미충족과 `외부 소유 · 27B 전환 차단` 상태는 그대로다.
+- 미해결: 어댑터 학습·승격과 독립 리뷰 AHP 점수는 여전히 미확인이다. 이번 단위는 로그확률 수집과 표준 DPO 산술의 실측이며 어댑터 품질을 입증하지 않는다.

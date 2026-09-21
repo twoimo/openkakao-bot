@@ -185,6 +185,8 @@ The diagrams are architectural references, not a live generation trace. On-devic
 
 The production default on Apple Silicon is **MLX Qwen3.8 Flash-Next**.
 
+이 선택은 초기 계획의 Gemma 계열·llama.cpp·Ollama 우선 권장을 뒤집은 운영 지시(Flash-Next 상주 + Qwen3.8 27B 명시 교체)를 따른 결과다. `mlx-community/gemma-4-31b-it-8bit`는 이 호스트에 내려받혀 있지만 권장 엔진이 아니며 자동으로 선택되지 않는다.
+
 - Recommended: `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`
 - Local image-reply and explicit replacement target (allowlisted and readiness-probed; actual generation unverified): `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
 - DREAM-RSI: receipt / checkpoint provenance only (`settings-dream-rsi-card` after the sync card)

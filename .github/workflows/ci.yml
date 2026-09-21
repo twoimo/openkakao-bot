@@ -137,6 +137,7 @@ jobs:
           tests.test_auto_reply_ondevice
           tests.test_auto_reply_reference_search
           tests.test_auto_reply_knowledge_graph
+          tests.test_auto_reply_finetune
           tests.test_jarvis_unit4
           tests.test_jarvis_desktop_launchers
           tests.test_local_mlx_model_readiness
