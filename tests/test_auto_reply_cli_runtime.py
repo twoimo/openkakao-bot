@@ -4940,6 +4940,84 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                 module.run_context_reply_bundle("결과 나왔어요", malformed_event)
             run_json.assert_not_called()
 
+    def test_context_bundle_timeout_uses_short_budget_and_recent_only_fallback(self):
+        module = self._load_auto_reply_module("auto_reply_context_timeout_test")
+        module.BIN = Path(__file__)
+        event = {
+            "chat_id": 42,
+            "log_id": 99,
+            "author_nickname": "현준",
+        }
+        timeout = subprocess.TimeoutExpired(
+            [str(module.BIN), "context-reply-bundle"],
+            module.CONTEXT_BUNDLE_TIMEOUT_SECONDS,
+        )
+        with (
+            mock.patch.object(
+                module, "conversation_advanced_past_event", return_value=False
+            ),
+            mock.patch.object(module, "privacy_attestation_current", return_value=True),
+            mock.patch.object(module, "_active_journal_checkpoint"),
+            mock.patch.object(
+                module, "_run_bounded_process", side_effect=timeout
+            ) as run_process,
+        ):
+            bundle = module.run_context_reply_bundle("결과 나왔어요", event)
+
+        self.assertEqual(module.CONTEXT_BUNDLE_TIMEOUT_SECONDS, 2.0)
+        self.assertEqual(
+            run_process.call_args.kwargs["timeout"],
+            module.CONTEXT_BUNDLE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(bundle["context"], [])
+        self.assertEqual(bundle["styles"], [])
+        self.assertEqual(bundle["prior_decisions"], [])
+        self.assertIsNone(bundle["style_profile"])
+        self.assertIsNone(bundle["recipient_style_profile"])
+        self.assertEqual(bundle["response_time"]["sample_count"], 0)
+        self.assertTrue(
+            bundle["response_time"]["source"].startswith("non_authoritative:")
+        )
+        self.assertEqual(
+            module.response_delay_distribution(bundle["response_time"])[
+                "global_upper_seconds"
+            ],
+            8.0,
+        )
+        self.assertEqual(
+            event["provenance"]["context_sync"],
+            {
+                "mode": "recent_only",
+                "degraded": True,
+                "reason": "context_bundle_timeout",
+                "waited": True,
+                "current_inbound_log_id": 99,
+            },
+        )
+
+    def test_context_bundle_non_timeout_retrieval_error_still_raises(self):
+        module = self._load_auto_reply_module("auto_reply_context_error_test")
+        module.BIN = Path(__file__)
+        event = {
+            "chat_id": 42,
+            "log_id": 99,
+            "author_nickname": "현준",
+        }
+        with (
+            mock.patch.object(
+                module, "conversation_advanced_past_event", return_value=False
+            ),
+            mock.patch.object(module, "privacy_attestation_current", return_value=True),
+            mock.patch.object(module, "_active_journal_checkpoint"),
+            mock.patch.object(
+                module,
+                "_run_bounded_process",
+                return_value=(1, b"", b"database unavailable"),
+            ),
+            self.assertRaisesRegex(module.RetrievalError, "retrieval_command_failed"),
+        ):
+            module.run_context_reply_bundle("결과 나왔어요", event)
+
     def test_persist_reply_evidence_ledger_writes_grounding_receipt(self):
         module = self._load_auto_reply_module("auto_reply_evidence_ledger_test")
         with tempfile.TemporaryDirectory() as temporary:
@@ -10912,6 +10990,78 @@ print(json.dumps({
         self.assertEqual(analysis["category"], "policy")
         model.assert_not_called()
 
+
+    def test_analyze_event_reaches_model_with_recent_messages_after_context_timeout(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_recent_only_context_timeout_test"
+        )
+        module.BIN = Path(__file__)
+        now = int(time.time())
+        prior = self._burst_event(
+            module,
+            700,
+            "앞에서 나눈 얘기",
+            now - 1,
+            author="MOM",
+        )
+        event = self._burst_event(
+            module,
+            701,
+            "그럼 지금은?",
+            now,
+            author="MOM",
+            recent=[self._recent_row(prior)],
+        )
+        event["recent_messages"].append(self._recent_row(event))
+        timeout = subprocess.TimeoutExpired(
+            [str(module.BIN), "context-reply-bundle"],
+            module.CONTEXT_BUNDLE_TIMEOUT_SECONDS,
+        )
+        with (
+            mock.patch.object(module, "_reply_turn_hold_reason", return_value=None),
+            mock.patch.object(
+                module, "conversation_advanced_past_event", return_value=False
+            ),
+            mock.patch.object(module, "privacy_attestation_current", return_value=True),
+            mock.patch.object(module, "runner_is_trusted", return_value=True),
+            mock.patch.object(module, "record_learned_style_tells"),
+            mock.patch.object(module, "fetch_link_previews", return_value=[]),
+            mock.patch.object(module, "_partner_streak_hold_reason", return_value=None),
+            mock.patch.object(module, "_active_journal_checkpoint"),
+            mock.patch.object(module, "_run_bounded_process", side_effect=timeout),
+            mock.patch.object(
+                module,
+                "generate_reply",
+                return_value={
+                    "should_reply": False,
+                    "reply": "",
+                    "reason": "model_no_reply",
+                    "category": "uncertain",
+                },
+            ) as generate,
+        ):
+            analysis = module.analyze_event(event)
+
+        generate.assert_called_once()
+        self.assertEqual(generate.call_args.args[1:4], ([], [], []))
+        self.assertEqual(
+            [
+                row["message"]
+                for row in generate.call_args.kwargs["recent_conversation"]
+            ],
+            [prior["message"]],
+        )
+        self.assertEqual(
+            generate.call_args.kwargs["response_time"]["source"],
+            "non_authoritative:recent_only_timeout",
+        )
+        self.assertEqual(analysis["context"], [])
+        self.assertEqual(analysis["styles"], [])
+        self.assertEqual(analysis["prior_decisions"], [])
+        self.assertEqual(
+            analysis["provenance"]["context_sync"]["mode"], "recent_only"
+        )
+        self.assertTrue(analysis["provenance"]["context_sync"]["degraded"])
 
     def test_analyze_event_fails_closed_when_retrieval_fails(self):
         module = self._load_auto_reply_module("auto_reply_retrieval_fallback_test")

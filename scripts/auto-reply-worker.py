@@ -474,7 +474,7 @@ STYLE_TELL_SOURCES = ("operator", "self_observed")
 STYLE_TELL_TARGET_MAX = 80
 _LEARNED_TELLS_CACHE: tuple[float, tuple[str, ...]] = (0.0, ())
 CONTEXT_SYNC_TIMEOUT_SECONDS = 90.0
-CONTEXT_BUNDLE_TIMEOUT_SECONDS = 30.0
+CONTEXT_BUNDLE_TIMEOUT_SECONDS = 2.0
 RERANK_HELPER = Path(__file__).with_name("auto-reply-rerank.py")
 RERANK_TIMEOUT_SECONDS = 0.4
 RERANK_SPAWN_GREETING_SECONDS = 90.0
@@ -7806,7 +7806,40 @@ def run_context_reply_bundle(message: str, event: dict) -> dict:
         to_state="processing",
         code="context_lookup",
     )
-    value = _run_json_command(command, timeout=CONTEXT_BUNDLE_TIMEOUT_SECONDS)
+    try:
+        value = _run_json_command(command, timeout=CONTEXT_BUNDLE_TIMEOUT_SECONDS)
+    except RetrievalError as exc:
+        if not isinstance(exc.__cause__, subprocess.TimeoutExpired):
+            raise
+        if isinstance(event.get("provenance"), dict):
+            event["provenance"]["context_sync"] = {
+                "mode": "recent_only",
+                "degraded": True,
+                "reason": "context_bundle_timeout",
+                "waited": True,
+                "current_inbound_log_id": current_log_id,
+            }
+        return {
+            "context": [],
+            "styles": [],
+            "prior_decisions": [],
+            "style_profile": None,
+            "recipient_style_profile": None,
+            "response_time": {
+                "chat": CHAT,
+                "source": "non_authoritative:recent_only_timeout",
+                "user": "최연우",
+                "sample_count": 0,
+                "average_seconds": 4.0,
+                "median_seconds": 4.0,
+                "p90_seconds": 8.0,
+                "min_seconds": MIN_REPLY_DELAY_SECONDS,
+                "max_seconds": 8.0,
+                "max_window_seconds": 8,
+                "stddev_seconds": 1.0,
+                "distribution": None,
+            },
+        }
     if not isinstance(value, dict):
         raise RetrievalError("retrieval_malformed_bundle")
     required_keys = {
