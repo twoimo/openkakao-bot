@@ -6,6 +6,10 @@ use std::path::{Component, Path, PathBuf};
 pub const MENUBAR_SCRIPT: &str = "scripts/auto-reply-menubar.py";
 pub const LOCAL_MLX_READINESS_SCRIPT: &str = "scripts/local_mlx_model_readiness.py";
 pub const VOICE_SCRIPT: &str = "scripts/jarvis_voice.py";
+pub const TOOL_RUNTIME_SCRIPT: &str = "scripts/jarvis_tool_runtime.py";
+pub const AX_UI_SCRIPT: &str = "scripts/auto_reply_ax_ui.py";
+pub const BROWSER_USE_SCRIPT: &str = "scripts/jarvis_browser_use.py";
+pub const METRICS_SCRIPT: &str = "scripts/auto_reply_metrics.py";
 pub const CLI: &str = "bin/openkakao-cli";
 pub const WAKE_MODEL: &str = "voice/models/hey_jarvis_ko_ridge.onnx";
 pub const DATA_FILES: &[&str] = &[
@@ -24,6 +28,10 @@ pub const DATA_FILES: &[&str] = &[
     "scripts/auto_reply_reference_search.py",
     "scripts/auto_reply_knowledge_graph.py",
     "scripts/auto_reply_ondevice.py",
+    METRICS_SCRIPT,
+    AX_UI_SCRIPT,
+    BROWSER_USE_SCRIPT,
+    TOOL_RUNTIME_SCRIPT,
     VOICE_SCRIPT,
     "scripts/jarvis_abort.py",
     WAKE_MODEL,
@@ -358,6 +366,22 @@ mod tests {
         let resources = config["bundle"]["resources"].as_object().unwrap();
         assert_eq!(resources.len(), DATA_FILES.len() + 1);
         for relative in DATA_FILES.iter().copied().chain(std::iter::once(CLI)) {
+            assert_eq!(resources[&format!("bundle-resources/{relative}")], relative);
+        }
+    }
+
+    #[test]
+    fn tool_runtime_and_import_dependencies_are_exact_resources() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let resources = config["bundle"]["resources"].as_object().unwrap();
+        for relative in [
+            TOOL_RUNTIME_SCRIPT,
+            AX_UI_SCRIPT,
+            BROWSER_USE_SCRIPT,
+            METRICS_SCRIPT,
+        ] {
+            assert!(DATA_FILES.contains(&relative));
             assert_eq!(resources[&format!("bundle-resources/{relative}")], relative);
         }
     }

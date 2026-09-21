@@ -80,6 +80,12 @@ this proves local execution and resource staging, not notarization.
 
 The table records the historical Units 1–4 landing commits; it is not a current HEAD marker. Verification recorded at the Unit 4 landing point (`b53bfb2`): **215 tests OK on UV Python 3.11**.
 
+### Jarvis local tool-runtime boundary
+
+`JarvisToolRuntime` is a local, non-UI boundary for bounded browser and background AX jobs. Browser jobs use a fresh owned `DedicatedPlaywrightContext` and the fixed loopback MLX endpoint only; they do not attach to a live browser profile. AX jobs return a virtual cursor coordinate and status without moving the real pointer or activating/focusing a window, and requests that require either fail closed as `ax_focus_steal_required`. Every job observes the latched global abort and the runtime never resumes it automatically. Task, rectangle, and result sizes are bounded, failures expose fixed error codes, and status events contain only `jobId`, `kind`, `stage`, `load`, `time`, and `errorCode`.
+
+Current `JarvisToolRuntime` verification is centered on fake owned-browser, agent, and AX adapters plus local bundle-staging/import checks. It does not verify an authenticated website flow, perform an AX focus transition, send a real KakaoTalk message, or add a new UI or bridge action.
+
 ### Retrieval and model-residency contracts
 
 - Reference-pack retrieval identifies the previous 128-dimensional hash vectors as `legacy_lexical_hash`, separate from local Dense embeddings. BM25 and Dense produce candidates independently and RRF fuses their rankings; the result contract carries room, participant, and time filters together with evidence IDs, index version, and watermark.
