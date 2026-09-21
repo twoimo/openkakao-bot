@@ -18,6 +18,7 @@ use thiserror::Error;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(25);
 const BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(90);
+const BROWSER_TOOL_ABORT_GRACE: Duration = Duration::from_secs(2);
 const MODEL_SWAP_TIMEOUT: Duration = Duration::from_secs(120);
 const MODEL_SWAP_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
@@ -84,6 +85,15 @@ pub struct PythonBridge {
 struct CancellationHandle {
     flag: Arc<AtomicBool>,
     cooperative_marker: Option<PathBuf>,
+    global_abort_flag: Option<Arc<AtomicBool>>,
+}
+
+struct ProcessControl<'a> {
+    stdin_payload: Option<&'a [u8]>,
+    hard_cancel_flag: Arc<AtomicBool>,
+    global_abort: Option<(Arc<AtomicBool>, Duration)>,
+    cooperative_marker: Option<&'a Path>,
+    recovery_timeout: Duration,
 }
 
 #[derive(Debug)]
@@ -272,12 +282,16 @@ impl PythonBridge {
             return Err(BridgeError::ActionNotAllowed);
         }
         let args = browser_tool_args(job_id, task)?;
+        let internal_token = format!("browser-tool-{job_id}");
+        let cancellation_token = token_id.unwrap_or(&internal_token);
         let bytes = self.run_python_with_output_limit(
             &args,
             BROWSER_TOOL_TIMEOUT,
-            token_id,
+            Some(cancellation_token),
             false,
             BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
+            Some(task.as_bytes()),
+            Some(BROWSER_TOOL_ABORT_GRACE),
         )?;
         let value = parse_json_output(&bytes)?;
         Ok(sanitize_browser_tool_result(&value))
@@ -323,16 +337,38 @@ impl PythonBridge {
     }
 
     pub fn global_abort(&self) -> Result<(), BridgeError> {
-        if let Ok(map) = self.cancellations.lock() {
-            for handle in map.values() {
-                if let Some(marker) = handle.cooperative_marker.as_deref() {
-                    let _ = write_model_swap_cancel_marker(marker);
+        let map = self
+            .cancellations
+            .lock()
+            .map_err(|_| BridgeError::StateIo)?;
+        // Publish the latch before starting a browser grace deadline so the
+        // Python token can observe it and run Playwright cleanup. Holding the
+        // registry lock also prevents a child from registering in between.
+        let latch_result = write_global_abort(&self.config.state_root);
+        let mut marker_failed = false;
+        for handle in map.values() {
+            if let Some(marker) = handle.cooperative_marker.as_deref() {
+                if write_model_swap_cancel_marker(marker).is_err() {
+                    marker_failed = true;
+                }
+            } else if latch_result.is_ok() {
+                if let Some(global_abort_flag) = handle.global_abort_flag.as_ref() {
+                    global_abort_flag.store(true, Ordering::SeqCst);
                 } else {
                     handle.flag.store(true, Ordering::SeqCst);
                 }
+            } else {
+                // Without a durable latch the Python token cannot safely
+                // observe the abort, so terminate owned children immediately.
+                handle.flag.store(true, Ordering::SeqCst);
             }
         }
-        write_global_abort(&self.config.state_root)
+        drop(map);
+        latch_result?;
+        if marker_failed {
+            return Err(BridgeError::StateIo);
+        }
+        Ok(())
     }
 
     pub fn start_voice_session(&self) -> Result<(), BridgeError> {
@@ -362,6 +398,8 @@ impl PythonBridge {
             token_id,
             cooperative_cancel,
             OUTPUT_LIMIT_BYTES,
+            None,
+            None,
         )
     }
 
@@ -372,6 +410,8 @@ impl PythonBridge {
         token_id: Option<&str>,
         cooperative_cancel: bool,
         output_limit: usize,
+        stdin_payload: Option<&[u8]>,
+        global_abort_grace: Option<Duration>,
     ) -> Result<Vec<u8>, BridgeError> {
         let resources = self.config.resources()?;
         resources.validate().map_err(BridgeError::from)?;
@@ -388,6 +428,7 @@ impl PythonBridge {
             .ok_or(BridgeError::ResourceUnsafe)?;
         let bin = resources.bin.to_str().ok_or(BridgeError::ResourceUnsafe)?;
         let cancel_flag = Arc::new(AtomicBool::new(false));
+        let global_abort_flag = global_abort_grace.map(|_| Arc::new(AtomicBool::new(false)));
         let cooperative_marker = if cooperative_cancel {
             let token = token_id.filter(|value| valid_model_swap_token(value));
             let Some(token) = token else {
@@ -412,11 +453,19 @@ impl PythonBridge {
                 if map.contains_key(token) {
                     return Err(BridgeError::ActionNotAllowed);
                 }
+                if let Some(flag) = global_abort_flag.as_ref() {
+                    if global_abort_is_latched(&self.config.state_root) {
+                        // The child still starts so Python can return its fixed
+                        // aborted envelope; Rust enforces the hard deadline.
+                        flag.store(true, Ordering::SeqCst);
+                    }
+                }
                 map.insert(
                     token.to_string(),
                     CancellationHandle {
                         flag: cancel_flag.clone(),
                         cooperative_marker: cooperative_marker.clone(),
+                        global_abort_flag: global_abort_flag.clone(),
                     },
                 );
             }
@@ -441,9 +490,13 @@ impl PythonBridge {
             &args,
             timeout,
             output_limit,
-            cancel_flag,
-            cooperative_marker.as_deref(),
-            MODEL_SWAP_RECOVERY_TIMEOUT,
+            ProcessControl {
+                stdin_payload,
+                hard_cancel_flag: cancel_flag,
+                global_abort: global_abort_flag.zip(global_abort_grace),
+                cooperative_marker: cooperative_marker.as_deref(),
+                recovery_timeout: MODEL_SWAP_RECOVERY_TIMEOUT,
+            },
         );
         if let Some(token) = token_id {
             if let Ok(mut map) = self.cancellations.lock() {
@@ -579,9 +632,13 @@ fn run_process(
         args,
         timeout,
         output_limit,
-        cancel_flag,
-        None,
-        Duration::ZERO,
+        ProcessControl {
+            stdin_payload: None,
+            hard_cancel_flag: cancel_flag,
+            global_abort: None,
+            cooperative_marker: None,
+            recovery_timeout: Duration::ZERO,
+        },
     )
 }
 
@@ -590,17 +647,36 @@ fn run_process_with_recovery(
     args: &[String],
     timeout: Duration,
     output_limit: usize,
-    cancel_flag: Arc<AtomicBool>,
-    cooperative_marker: Option<&Path>,
-    recovery_timeout: Duration,
+    control: ProcessControl<'_>,
 ) -> Result<Vec<u8>, BridgeError> {
-    let mut child = Command::new(executable)
+    let ProcessControl {
+        stdin_payload,
+        hard_cancel_flag,
+        global_abort,
+        cooperative_marker,
+        recovery_timeout,
+    } = control;
+    let mut command = Command::new(executable);
+    command
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if stdin_payload.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| BridgeError::Spawn)?;
+        .stderr(Stdio::null());
+    let mut child = command.spawn().map_err(|_| BridgeError::Spawn)?;
+    let mut stdin_writer = if let Some(payload) = stdin_payload {
+        let mut stdin = child.stdin.take().ok_or(BridgeError::Spawn)?;
+        let payload = payload.to_vec();
+        Some(thread::spawn(move || {
+            stdin.write_all(&payload).map_err(|_| BridgeError::Wait)?;
+            stdin.flush().map_err(|_| BridgeError::Wait)
+        }))
+    } else {
+        None
+    };
     let mut stdout = child.stdout.take().ok_or(BridgeError::Spawn)?;
 
     // Drain while the process runs. Waiting first can deadlock when JSON exceeds
@@ -626,12 +702,23 @@ fn run_process_with_recovery(
 
     let started = Instant::now();
     let mut recovery_started = None;
+    let mut global_abort_started = None;
     let status = loop {
-        if cancel_flag.load(Ordering::SeqCst) {
+        if hard_cancel_flag.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
+            if let Some(writer) = stdin_writer.take() {
+                let _ = writer.join();
+            }
             let _ = reader.join();
             return Err(BridgeError::Cancelled);
+        }
+        if global_abort
+            .as_ref()
+            .is_some_and(|(flag, _)| flag.load(Ordering::SeqCst))
+            && global_abort_started.is_none()
+        {
+            global_abort_started = Some(Instant::now());
         }
         if started.elapsed() >= timeout {
             if let Some(marker) = cooperative_marker {
@@ -643,16 +730,37 @@ fn run_process_with_recovery(
             if recovery_started.is_none_or(|since| since.elapsed() >= recovery_timeout) {
                 let _ = child.kill();
                 let _ = child.wait();
+                if let Some(writer) = stdin_writer.take() {
+                    let _ = writer.join();
+                }
                 let _ = reader.join();
                 return Err(BridgeError::Timeout);
             }
         }
         match child.try_wait().map_err(|_| BridgeError::Wait)? {
             Some(status) => break status,
-            None => thread::sleep(Duration::from_millis(10)),
+            None => {
+                if global_abort_started.is_some_and(|since| {
+                    global_abort
+                        .as_ref()
+                        .is_some_and(|(_, grace)| since.elapsed() >= *grace)
+                }) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(writer) = stdin_writer.take() {
+                        let _ = writer.join();
+                    }
+                    let _ = reader.join();
+                    return Err(BridgeError::Cancelled);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
         }
     };
 
+    if let Some(writer) = stdin_writer.take() {
+        writer.join().map_err(|_| BridgeError::Wait)??;
+    }
     let (output, oversized) = reader.join().map_err(|_| BridgeError::Wait)??;
     if oversized {
         return Err(BridgeError::OutputTooLarge);
@@ -712,8 +820,6 @@ fn browser_tool_args(job_id: &str, task: &str) -> Result<Vec<String>, BridgeErro
         "tool-browser".to_string(),
         "--job-id".to_string(),
         job_id.to_string(),
-        "--task".to_string(),
-        task.to_string(),
     ])
 }
 
@@ -887,6 +993,12 @@ fn safe_small_json(path: &Path) -> Option<Value> {
     }
     let bytes = fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+fn global_abort_is_latched(state_root: &Path) -> bool {
+    safe_small_json(&state_root.join(ABORT_STATE_NAME))
+        .and_then(|value| value.get("latched").and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 fn bundled_custom_wake_model_selected(repo_root: &Path) -> bool {
@@ -1494,18 +1606,13 @@ mod tests {
 
     #[test]
     fn browser_tool_action_is_exactly_allowlisted_and_bounded() {
-        let args = browser_tool_args("browser-1", "inspect the owned page").unwrap();
+        let task = "inspect the owned page";
+        let args = browser_tool_args("browser-1", task).unwrap();
         assert_eq!(
             args,
-            vec![
-                "--action",
-                "tool-browser",
-                "--job-id",
-                "browser-1",
-                "--task",
-                "inspect the owned page",
-            ]
+            vec!["--action", "tool-browser", "--job-id", "browser-1",]
         );
+        assert!(!args.iter().any(|value| value.contains(task)));
         assert!(!args.iter().any(|value| {
             value == "--model" || value == "--profile" || value == "--browser-profile"
         }));
@@ -1716,6 +1823,7 @@ mod tests {
                 CancellationHandle {
                     flag: cooperative_flag.clone(),
                     cooperative_marker: Some(marker.clone()),
+                    global_abort_flag: None,
                 },
             );
             map.insert(
@@ -1723,6 +1831,7 @@ mod tests {
                 CancellationHandle {
                     flag: normal_flag.clone(),
                     cooperative_marker: None,
+                    global_abort_flag: None,
                 },
             );
         }
@@ -1740,6 +1849,89 @@ mod tests {
         assert!(normal_flag.load(Ordering::SeqCst));
         assert!(!bridge.cancel_model_swap("snapshot"));
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn global_abort_graces_browser_but_keeps_existing_cancel_semantics() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-global-abort-semantics-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        let mut bridge = PythonBridge::new();
+        Arc::get_mut(&mut bridge.config).unwrap().state_root = temp.clone();
+        let browser_hard = Arc::new(AtomicBool::new(false));
+        let browser_global = Arc::new(AtomicBool::new(false));
+        let snapshot_hard = Arc::new(AtomicBool::new(false));
+        let model_hard = Arc::new(AtomicBool::new(false));
+        let model_marker = temp.join("model-cancel.json");
+        {
+            let mut map = bridge.cancellations.lock().unwrap();
+            map.insert(
+                "browser".to_string(),
+                CancellationHandle {
+                    flag: browser_hard.clone(),
+                    cooperative_marker: None,
+                    global_abort_flag: Some(browser_global.clone()),
+                },
+            );
+            map.insert(
+                "snapshot".to_string(),
+                CancellationHandle {
+                    flag: snapshot_hard.clone(),
+                    cooperative_marker: None,
+                    global_abort_flag: None,
+                },
+            );
+            map.insert(
+                "model".to_string(),
+                CancellationHandle {
+                    flag: model_hard.clone(),
+                    cooperative_marker: Some(model_marker.clone()),
+                    global_abort_flag: None,
+                },
+            );
+        }
+
+        bridge.global_abort().unwrap();
+        assert!(browser_global.load(Ordering::SeqCst));
+        assert!(!browser_hard.load(Ordering::SeqCst));
+        assert!(snapshot_hard.load(Ordering::SeqCst));
+        assert!(!model_hard.load(Ordering::SeqCst));
+        assert_eq!(safe_small_json(&model_marker).unwrap()["cancelled"], true);
+        assert_eq!(
+            safe_small_json(&temp.join(ABORT_STATE_NAME)).unwrap()["latched"],
+            true
+        );
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn global_abort_state_failure_hard_cancels_browser() {
+        let temp = std::env::temp_dir().join(format!(
+            "openkakao-global-abort-fail-closed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        std::os::unix::fs::symlink("missing-target", temp.join(ABORT_STATE_NAME)).unwrap();
+        let mut bridge = PythonBridge::new();
+        Arc::get_mut(&mut bridge.config).unwrap().state_root = temp.clone();
+        let browser_hard = Arc::new(AtomicBool::new(false));
+        let browser_global = Arc::new(AtomicBool::new(false));
+        bridge.cancellations.lock().unwrap().insert(
+            "browser".to_string(),
+            CancellationHandle {
+                flag: browser_hard.clone(),
+                cooperative_marker: None,
+                global_abort_flag: Some(browser_global.clone()),
+            },
+        );
+
+        assert!(matches!(bridge.global_abort(), Err(BridgeError::StateIo)));
+        assert!(browser_hard.load(Ordering::SeqCst));
+        assert!(!browser_global.load(Ordering::SeqCst));
+        fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]
@@ -1772,9 +1964,13 @@ mod tests {
             &args,
             Duration::from_millis(30),
             1024,
-            Arc::new(AtomicBool::new(false)),
-            Some(&marker),
-            Duration::from_secs(2),
+            ProcessControl {
+                stdin_payload: None,
+                hard_cancel_flag: Arc::new(AtomicBool::new(false)),
+                global_abort: None,
+                cooperative_marker: Some(&marker),
+                recovery_timeout: Duration::from_secs(2),
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1796,9 +1992,13 @@ mod tests {
             &["-c".into(), "import time; time.sleep(5)".into()],
             Duration::from_millis(20),
             1024,
-            Arc::new(AtomicBool::new(false)),
-            Some(&marker),
-            Duration::from_millis(30),
+            ProcessControl {
+                stdin_payload: None,
+                hard_cancel_flag: Arc::new(AtomicBool::new(false)),
+                global_abort: None,
+                cooperative_marker: Some(&marker),
+                recovery_timeout: Duration::from_millis(30),
+            },
         );
         assert!(matches!(result, Err(BridgeError::Timeout)));
         assert!(marker.exists());
@@ -1918,7 +2118,84 @@ mod tests {
     }
 
     #[test]
+    fn browser_task_uses_stdin_and_never_argv() {
+        let task = "private browser task 가";
+        let browser_args = browser_tool_args("browser-stdin", task).unwrap();
+        assert!(!browser_args.iter().any(|value| value.contains(task)));
+        let result = run_process_with_recovery(
+            "python3",
+            &[
+                "-c".to_string(),
+                "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())".to_string(),
+            ],
+            Duration::from_secs(2),
+            1024,
+            ProcessControl {
+                stdin_payload: Some(task.as_bytes()),
+                hard_cancel_flag: Arc::new(AtomicBool::new(false)),
+                global_abort: None,
+                cooperative_marker: None,
+                recovery_timeout: Duration::ZERO,
+            },
+        )
+        .unwrap();
+        assert_eq!(result, task.as_bytes());
+    }
+
+    #[test]
+    fn global_abort_preserves_graceful_child_envelope() {
+        let global_abort = Arc::new(AtomicBool::new(false));
+        let trigger = global_abort.clone();
+        let signal = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            trigger.store(true, Ordering::SeqCst);
+        });
+        let result = run_process_with_recovery(
+            "python3",
+            &[
+                "-c".to_string(),
+                "import time; time.sleep(.06); print('{\"ok\":false,\"status\":\"aborted\",\"errorCode\":\"global_abort\",\"result\":\"\"}')".to_string(),
+            ],
+            Duration::from_secs(2),
+            1024,
+            ProcessControl {
+                stdin_payload: None,
+                hard_cancel_flag: Arc::new(AtomicBool::new(false)),
+                global_abort: Some((global_abort, Duration::from_millis(500))),
+                cooperative_marker: None,
+                recovery_timeout: Duration::ZERO,
+            },
+        )
+        .unwrap();
+        signal.join().unwrap();
+        let value = parse_json_output(&result).unwrap();
+        assert_eq!(value["status"], "aborted");
+        assert_eq!(value["errorCode"], "global_abort");
+    }
+
+    #[test]
+    fn global_abort_grace_has_a_hard_deadline() {
+        let started = Instant::now();
+        let result = run_process_with_recovery(
+            "python3",
+            &["-c".to_string(), "import time; time.sleep(5)".to_string()],
+            Duration::from_secs(2),
+            1024,
+            ProcessControl {
+                stdin_payload: None,
+                hard_cancel_flag: Arc::new(AtomicBool::new(false)),
+                global_abort: Some((Arc::new(AtomicBool::new(true)), Duration::from_millis(40))),
+                cooperative_marker: None,
+                recovery_timeout: Duration::ZERO,
+            },
+        );
+        assert!(matches!(result, Err(BridgeError::Cancelled)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn cancellation_kills_owned_child() {
+        let started = Instant::now();
         let result = run_process(
             "python3",
             &["-c".to_string(), "import time; time.sleep(1)".to_string()],
@@ -1927,6 +2204,7 @@ mod tests {
             Arc::new(AtomicBool::new(true)),
         );
         assert!(matches!(result, Err(BridgeError::Cancelled)));
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 
     #[test]

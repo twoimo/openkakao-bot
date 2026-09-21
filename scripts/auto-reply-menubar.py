@@ -2306,6 +2306,7 @@ def _dream_rsi_status_payload(state_root: Path) -> dict[str, Any]:
 
 
 _TOOL_STATE_ROOT_MAX_BYTES = 4096
+_TOOL_BROWSER_TASK_LIMIT_BYTES = 16 * 1024
 _TOOL_BROWSER_FALLBACK = {
     "ok": False,
     "status": "failed",
@@ -2325,6 +2326,38 @@ _TOOL_BROWSER_ERROR_CODES = frozenset(
         "browser_result_too_large",
     }
 )
+
+
+def _tool_browser_error(error_code: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "rejected",
+        "errorCode": error_code,
+        "result": "",
+    }
+
+
+def _read_tool_browser_task(stream: Any = None) -> tuple[str | None, dict[str, Any] | None]:
+    """Read one browser task from bounded binary stdin, never from argv."""
+
+    source = stream if stream is not None else getattr(sys.stdin, "buffer", None)
+    if source is None:
+        return None, _tool_browser_error("browser_task_invalid")
+    try:
+        raw = source.read(_TOOL_BROWSER_TASK_LIMIT_BYTES + 1)
+    except (AttributeError, OSError, ValueError):
+        return None, _tool_browser_error("browser_task_invalid")
+    if not isinstance(raw, (bytes, bytearray)):
+        return None, _tool_browser_error("browser_task_invalid")
+    if len(raw) > _TOOL_BROWSER_TASK_LIMIT_BYTES:
+        return None, _tool_browser_error("browser_task_too_large")
+    try:
+        task = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return None, _tool_browser_error("browser_task_invalid")
+    if not task.strip() or "\x00" in task:
+        return None, _tool_browser_error("browser_task_invalid")
+    return task, None
 
 
 def _tool_state_root(value: str) -> Path | None:
@@ -2432,11 +2465,18 @@ def main():
         return 0
     action = _argv_flag_value("--action")
     if action == "tool-browser":
+        task, task_error = _read_tool_browser_task()
+        if task_error is not None:
+            _print_json(task_error)
+            return 0
+        if task is None:
+            _print_json(_tool_browser_error("browser_task_invalid"))
+            return 0
         payload = asyncio.run(
             _tool_browser_payload(
                 state_root_raw=_argv_flag_value("--state-root"),
                 job_id=_argv_flag_value("--job-id"),
-                task=_argv_flag_value("--task"),
+                task=task,
             )
         )
         _print_json(payload)

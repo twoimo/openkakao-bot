@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import importlib.util
+import io
 import json
 import os
 import sqlite3
@@ -4817,6 +4818,41 @@ class LayoutGateTests(unittest.TestCase):
 
 
 class JarvisBrowserBridgeActionTests(unittest.TestCase):
+    def test_browser_task_stdin_is_bounded_and_strict_utf8(self):
+        module = load(f"auto_reply_menubar_tool_stdin_{id(self)}")
+
+        class RecordingStream(io.BytesIO):
+            requested = None
+
+            def read(self, size=-1):
+                self.requested = size
+                return super().read(size)
+
+        valid_stream = RecordingStream("브라우저 작업".encode("utf-8"))
+        task, error = module._read_tool_browser_task(valid_stream)
+        self.assertEqual(task, "브라우저 작업")
+        self.assertIsNone(error)
+        self.assertEqual(valid_stream.requested, 16 * 1024 + 1)
+
+        for raw, error_code in (
+            (b"", "browser_task_invalid"),
+            (b"   ", "browser_task_invalid"),
+            (b"bad\x00task", "browser_task_invalid"),
+            (b"\xff", "browser_task_invalid"),
+            (b"x" * (16 * 1024 + 1), "browser_task_too_large"),
+        ):
+            task, error = module._read_tool_browser_task(io.BytesIO(raw))
+            self.assertIsNone(task)
+            self.assertEqual(
+                error,
+                {
+                    "ok": False,
+                    "status": "rejected",
+                    "errorCode": error_code,
+                    "result": "",
+                },
+            )
+
     def test_invalid_input_and_global_abort_return_redacted_fixed_envelopes(self):
         from jarvis_abort import AbortController
 
@@ -4913,6 +4949,11 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
             "errorCode": "browser_job_failed",
             "result": "",
         }
+
+        class BinaryInput:
+            def __init__(self, payload):
+                self.buffer = io.BytesIO(payload)
+
         argv = sys.argv
         try:
             sys.argv = [
@@ -4923,10 +4964,10 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
                 "/tmp/jarvis-state",
                 "--job-id",
                 "browser-4",
-                "--task",
-                "bounded task",
             ]
-            with mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"), mock.patch.object(
+            with mock.patch.object(
+                module.sys, "stdin", BinaryInput(b"bounded task")
+            ), mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"), mock.patch.object(
                 module, "_apply_catalog_mutates"
             ), mock.patch.object(
                 module, "_tool_browser_payload", new=mock.AsyncMock(return_value=expected)
