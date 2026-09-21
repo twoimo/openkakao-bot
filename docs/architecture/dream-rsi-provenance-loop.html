@@ -5478,7 +5478,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <ul>
           <li>&bull; V = mean(similarity) - beta1*coverage_cost + beta2*spread*0.1</li>
           <li>&bull; candidate reads only {prompt, room, window}; never gold or source</li>
-          <li>&bull; incumbent is a candidate, so selection is no worse on the fixed replay set only</li>
+          <li>&bull; default candidates include incumbent; without it replay guarantee is not_applicable</li>
         </ul>
       </div>
 

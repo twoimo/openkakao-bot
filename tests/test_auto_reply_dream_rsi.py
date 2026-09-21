@@ -529,6 +529,8 @@ class TestDreamLoop(unittest.TestCase):
         self.assertEqual(result["selected_policy"], "perfect")
         self.assertEqual(result["active_features"], {"perfect": True, "blank": True})
         self.assertEqual(result["replay_guarantee"]["scope"], "fixed_replay_set_only")
+        self.assertEqual(result["replay_guarantee"]["status"], "not_applicable")
+        self.assertFalse(result["replay_guarantee"]["incumbent_included"])
         stored = json.loads(
             (self.root / "dream-rsi-policy.json").read_text(encoding="utf-8")
         )
@@ -554,6 +556,7 @@ class TestDreamLoop(unittest.TestCase):
         self.assertEqual(result["selected_policy"], INCUMBENT_POLICY)
         self.assertTrue(result["replay_guarantee"]["non_degradation_on_replay"])
         self.assertEqual(result["replay_guarantee"]["status"], "verified")
+        self.assertTrue(result["replay_guarantee"]["incumbent_included"])
 
     def test_checkpoint_write_errors_are_surfaced(self):
         blocked_root = self.root / "not-a-directory"

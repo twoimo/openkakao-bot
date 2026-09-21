@@ -129,6 +129,13 @@ class AlphaXivProvenanceTests(unittest.TestCase):
         self.assertEqual(report["reason"], "paper_identity_mismatch")
         self.assertFalse(report["analysis_available"])
         self.assertIsNone(report["evidence"])
+        self.assertTrue(report["cli"]["isolated_context"])
+
+    def test_alphaxiv_extreme_timeout_is_invalid_without_raise(self):
+        report = collect_paper_report(timeout=10**10000)
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "invalid_timeout")
+        self.assertTrue(report["cli"]["isolated_context"])
 
     @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
     @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/alphaxiv")
@@ -209,7 +216,7 @@ class OpenResearchProviderTests(unittest.TestCase):
         self.assertEqual(report["evidence"]["kind"], "orx_alphaxiv_paper_report")
         self.assertEqual(report["evidence"]["source_operation"], "orx_paper")
         self.assertFalse(report["string_similarity_used"])
-        self.assertEqual(len(report["cli"]["commands"][0]["stderr"]), 2000)
+        self.assertEqual(report["cli"]["commands"][0]["stderr"], "<redacted>")
         call = run.call_args
         self.assertEqual(
             call.args[0],
@@ -225,6 +232,25 @@ class OpenResearchProviderTests(unittest.TestCase):
         self.assertFalse(call.kwargs["shell"])
         self.assertEqual(call.kwargs["stdin"], subprocess.DEVNULL)
 
+    def test_orx_extreme_timeout_is_invalid_without_raise(self):
+        report = collect_orx_paper_report(timeout=10**10000)
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "invalid_timeout")
+        self.assertFalse(report["cli"]["isolated_context"])
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_stderr_secret_is_redacted_and_bounded(self, _which, run):
+        run.return_value = _completed(
+            returncode=4,
+            stderr=b"token=" + b"A" * 64 + b" " + (b"word " * 80),
+        )
+        report = collect_orx_paper_report("DREAM-RSI")
+        stderr = report["cli"]["commands"][0]["stderr"]
+        self.assertIn("<redacted>", stderr)
+        self.assertNotIn("A" * 64, stderr)
+        self.assertEqual(len(stderr), 200)
+
     @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
     @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
     def test_orx_identity_mismatch_fails_closed(self, _which, run):
@@ -233,6 +259,7 @@ class OpenResearchProviderTests(unittest.TestCase):
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["reason"], "identity_mismatch")
         self.assertEqual(report["provider"], "orx_cli")
+        self.assertFalse(report["cli"]["isolated_context"])
 
     @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value=None)
     def test_orx_missing_cli_fails_closed(self, _which):
@@ -248,6 +275,7 @@ class OpenResearchProviderTests(unittest.TestCase):
         report = collect_orx_paper_report("DREAM-RSI")
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["reason"], "cli_nonzero")
+        self.assertFalse(report["cli"]["isolated_context"])
 
     @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
     @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")

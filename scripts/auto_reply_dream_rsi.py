@@ -315,12 +315,16 @@ def replay_guarantee(
     *,
     incumbent: str = INCUMBENT_POLICY,
 ) -> dict[str, Any]:
-    """Report the paper's non-degradation check on the fixed replay set only."""
+    """Report the paper's non-degradation check on the fixed replay set only.
+
+    The guarantee applies when the evaluated candidate set includes the incumbent; caller-supplied sets may yield not_applicable.
+    """
     incumbent_name = incumbent if isinstance(incumbent, str) and incumbent else INCUMBENT_POLICY
     selected_name = selected if isinstance(selected, str) else ""
     report: dict[str, Any] = {
         "incumbent_policy": incumbent_name,
         "incumbent_score": None,
+        "incumbent_included": False,
         "selected_policy": selected_name,
         "selected_score": None,
         "non_degradation_on_replay": None,
@@ -340,7 +344,8 @@ def replay_guarantee(
         return report
 
     incumbent_eval = evaluations.get(incumbent_name)
-    if not isinstance(incumbent_eval, dict):
+    report["incumbent_included"] = isinstance(incumbent_eval, dict)
+    if not report["incumbent_included"]:
         return report
     selected_eval = evaluations.get(selected_name)
     if not isinstance(selected_eval, dict):
@@ -464,7 +469,10 @@ def dream_policy_evaluation(
     policies: dict[str, Callable[[dict[str, Any]], Any]] | None = None,
     allow_model_gold: bool = False,
 ) -> dict[str, Any]:
-    """Run the offline dreaming loop and write the winning checkpoint."""
+    """Run the offline dreaming loop and write the winning checkpoint.
+
+    A replay guarantee is verified only when the evaluated policies include the incumbent candidate.
+    """
     root = state_root or _default_state_root()
     simulator = DreamRsiSimulator(root, limit=limit, allow_model_gold=allow_model_gold)
     candidates = _candidate_policies() if policies is None else policies

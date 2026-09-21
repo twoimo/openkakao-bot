@@ -27,7 +27,7 @@
 | Replay-simulator construction | golden replay row에서 구성되는 `scripts/auto_reply_dream_rsi.py`의 `DreamRsiSimulator` |
 | Dreaming-based policy improvement | `_candidate_policies()` + `DreamRsiSimulator.replay_policy()` + `dream_policy_evaluation()` |
 | Prefix observability | 후보 policy 입력을 `{prompt, room, window}`로 제한하고 `gold`/`source`를 전달하지 않는 allowlist |
-| Fixed-history non-degradation | `INCUMBENT_POLICY`를 후보에 포함하고 checkpoint의 `replay_guarantee`가 `fixed_replay_set_only` 범위에서 incumbent와 selected objective score를 비교 |
+| Fixed-history non-degradation | `_candidate_policies()` 기본 후보 집합에 `INCUMBENT_POLICY`를 포함하며, 해당 후보가 평가된 경우 `replay_guarantee`가 `fixed_replay_set_only` 범위에서 incumbent와 selected objective score를 비교. 사용자 후보 집합에 incumbent가 없으면 not_applicable |
 | Traversed-space limitation | replay는 기록된 golden history 밖을 평가하지 못한다. 저장소의 retrieval도 dense path가 불가하면 BM25-only로 명시적 degradation하며, DREAM-RSI 결과는 live promote로 사용하지 않는다. |
 
 저장소의 replay objective는 논문의 식을 그대로 복제하지 않는다. 기존 식 `V = mean(similarity) - beta1*coverage_cost + beta2*spread*0.1`과 기존 candidate set/winner rule을 유지하며, 이번 변경은 그 결과에 고정 replay 집합 한정 non-degradation 증거를 명시적으로 붙인다.

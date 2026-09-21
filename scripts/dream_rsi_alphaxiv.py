@@ -137,6 +137,25 @@ def _decode_small(value: Any, *, limit: int) -> tuple[str | None, str | None]:
         return None, "invalid_utf8"
 
 
+def _sanitize_stderr(value: Any) -> str:
+    """Return a bounded stderr preview safe for provenance serialization."""
+    try:
+        if isinstance(value, bytes):
+            text = value.decode("utf-8", errors="replace")
+        elif isinstance(value, str):
+            text = value
+        elif value is None:
+            text = ""
+        else:
+            text = str(value)
+        text = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"[A-Za-z0-9_-]{32,}", "<redacted>", text)
+        return text[:200]
+    except Exception:
+        return ""
+
+
 def _run_alphaxiv(
     executable: str,
     args: Sequence[str],
@@ -174,7 +193,7 @@ def _run_alphaxiv(
     record["returncode"] = int(completed.returncode)
     stderr_text, _ = _decode_small(completed.stderr, limit=4096)
     if stderr_text:
-        record["stderr"] = stderr_text.strip()[:2000]
+        record["stderr"] = _sanitize_stderr(stderr_text)
     if completed.returncode != 0:
         record["reason"] = "cli_nonzero"
         return None, record
@@ -323,6 +342,7 @@ def _paper_unavailable(
     provider: str = "alphaxiv_cli",
     commands: list[dict[str, Any]] | None = None,
     selected_paper: dict[str, str] | None = None,
+    isolated_context: bool = True,
 ) -> dict[str, Any]:
     return {
         "status": "unavailable",
@@ -337,7 +357,7 @@ def _paper_unavailable(
         "cli": {
             "requested": requested_cli,
             "resolved": resolved_cli,
-            "isolated_context": True,
+            "isolated_context": isolated_context,
             "commands": commands or [],
         },
     }
@@ -361,6 +381,7 @@ def collect_orx_paper_report(
             query=str(query)[:MAX_QUERY_CHARS],
             reason=f"invalid_query:{exc}",
             provider="orx_cli",
+            isolated_context=False,
         )
     try:
         selected_id = _validate_paper_id(paper_id)
@@ -371,10 +392,11 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="invalid_paper_id",
             provider="orx_cli",
+            isolated_context=False,
         )
     try:
         timeout_value = float(timeout)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         timeout_value = float("nan")
     if not math.isfinite(timeout_value):
         return _paper_unavailable(
@@ -383,6 +405,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="invalid_timeout",
             provider="orx_cli",
+            isolated_context=False,
         )
     timeout_value = min(MAX_TIMEOUT_SECONDS, max(0.1, timeout_value))
 
@@ -394,6 +417,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason=resolve_error or "cli_missing",
             provider="orx_cli",
+            isolated_context=False,
         )
 
     report_text, command = _run_alphaxiv(
@@ -417,6 +441,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason=str(command.get("reason") or "paper_unavailable"),
             provider="orx_cli",
+            isolated_context=False,
             commands=commands,
             selected_paper=selected,
         )
@@ -433,6 +458,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="incomplete_summary_response",
             provider="orx_cli",
+            isolated_context=False,
             commands=commands,
             selected_paper=selected,
         )
@@ -446,6 +472,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="identity_mismatch",
             provider="orx_cli",
+            isolated_context=False,
             commands=commands,
             selected_paper=selected,
         )
@@ -458,6 +485,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="incomplete_summary_response",
             provider="orx_cli",
+            isolated_context=False,
             commands=commands,
             selected_paper=selected,
         )
@@ -468,6 +496,7 @@ def collect_orx_paper_report(
             query=safe_query,
             reason="text_too_long",
             provider="orx_cli",
+            isolated_context=False,
             commands=commands,
             selected_paper=selected,
         )
@@ -537,6 +566,7 @@ def collect_paper_report(
             query=str(query)[:MAX_QUERY_CHARS],
             reason="cli_missing",
             provider="orx_cli",
+            isolated_context=False,
         )
     if paper_source != "alphaxiv":
         return _paper_unavailable(
@@ -558,7 +588,7 @@ def collect_paper_report(
         )
     try:
         timeout_value = float(timeout)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         timeout_value = -1.0
     if not (0.1 <= timeout_value <= MAX_TIMEOUT_SECONDS):
         return _paper_unavailable(
