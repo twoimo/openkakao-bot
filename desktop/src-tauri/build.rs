@@ -9,12 +9,22 @@ use std::{env, fs, path::Path};
 
 const SOURCE_CHECK_ENV: &str = "OPENKAKAO_TAURI_SOURCE_CHECK";
 
+// tauri-build validates every entry in bundle.resources from tauri.conf.json,
+// but those entries are gitignored staged files, so a fresh checkout cannot
+// satisfy them. Source-check builds clear the list instead; packaged builds
+// keep it and still fail closed on a missing artifact.
+const SOURCE_CHECK_TAURI_CONFIG: &str = r#"{"bundle":{"resources":[]}}"#;
+
 fn main() {
     println!("cargo:rerun-if-env-changed={SOURCE_CHECK_ENV}");
     if env::var(SOURCE_CHECK_ENV).as_deref() == Ok("1") {
         // Fresh-checkout CI can compile and test the Rust bridge without the
-        // ignored runtime artifacts. Packaged app builds leave this unset and
-        // retain the fail-closed staging and validation below.
+        // ignored runtime artifacts. A caller-provided TAURI_CONFIG wins.
+        // Packaged app builds leave this unset and retain the fail-closed
+        // staging and validation below.
+        if env::var_os("TAURI_CONFIG").is_none() {
+            env::set_var("TAURI_CONFIG", SOURCE_CHECK_TAURI_CONFIG);
+        }
         tauri_build::build();
         return;
     }
