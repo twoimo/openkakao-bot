@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "DREAM-RSI offline provenance and replay loop",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1068,
+      548
+    ]
+  },
+  "stages": [
+    {
+      "label": "Runtime"
+    },
+    {
+      "label": "Replay rows"
+    },
+    {
+      "label": "Replay set"
+    },
+    {
+      "label": "Replay scoring"
+    },
+    {
+      "label": "Guarantee"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "autoReplyPipeline",
+      "type": "frontend",
+      "label": "autoReply pipeline",
+      "stage": 0,
+      "row": 1,
+      "tag": "snapshot"
+    },
+    {
+      "id": "goldenReplayRows",
+      "type": "database",
+      "label": "golden rows",
+      "stage": 1,
+      "row": 1,
+      "tag": "human gold only",
+      "width": 140
+    },
+    {
+      "id": "replaySet",
+      "type": "backend",
+      "label": "DreamRsiSimulator",
+      "stage": 2,
+      "row": 1,
+      "tag": "prefix-observable",
+      "width": 150
+    },
+    {
+      "id": "replayPolicy",
+      "type": "backend",
+      "label": "replay_policy",
+      "stage": 3,
+      "row": 1,
+      "tag": "objective",
+      "width": 132
+    },
+    {
+      "id": "replayGuarantee",
+      "type": "security",
+      "label": "replay_guarantee",
+      "stage": 4,
+      "row": 1,
+      "tag": "fixed replay only",
+      "width": 156
+    }
+  ],
+  "flows": [
+    {
+      "id": "pipeline-rows",
+      "from": "autoReplyPipeline",
+      "to": "goldenReplayRows",
+      "label": "reply history",
+      "classification": "replay rows",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rows-set",
+      "from": "goldenReplayRows",
+      "to": "replaySet",
+      "label": "human gold",
+      "classification": "replay set",
+      "variant": "emphasis"
+    },
+    {
+      "id": "set-policy",
+      "from": "replaySet",
+      "to": "replayPolicy",
+      "label": "candidate policy",
+      "classification": "prefix only",
+      "variant": "emphasis",
+      "labelAt": [
+        642,
+        314
+      ]
+    },
+    {
+      "id": "policy-guarantee",
+      "from": "replayPolicy",
+      "to": "replayGuarantee",
+      "label": "argmax score",
+      "classification": "selected",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Paper provenance",
+      "items": [
+        "--paper-source auto | alphaxiv | orx; auto prefers alphaxiv",
+        "orx runs orx paper <id> --source alphaxiv (fixed argv)",
+        "identity gate: header must name alphaxiv.org/abs/<same id>; failure stays unavailable(provider)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Replay objective and guarantee",
+      "items": [
+        "V = mean(similarity) - beta1*coverage_cost + beta2*spread*0.1",
+        "candidate reads only {prompt, room, window}; never gold or source",
+        "incumbent is a candidate, so selection is no worse on the fixed replay set only"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Preference DPO and boundary",
+      "items": [
+        "pairs -> response-token log probabilities -> DPO loss",
+        "missing log probabilities -> eval_unavailable; no string similarity",
+        "never trains, promotes, replaces, or starts a model"
+      ]
+    }
+  ]
+}
