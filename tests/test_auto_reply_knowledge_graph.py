@@ -949,6 +949,217 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(result, {"nodes": 0, "relations": 0})
 
 
+class DenseRefreshBatchingTests(unittest.TestCase):
+    def _make_graph(self, root: Path, count: int) -> sqlite3.Connection:
+        conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+        for index in range(count):
+            conn.execute(
+                "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                " description, key_facts_json, importance, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    f"ent:test:{index:02d}",
+                    f"entity {index}",
+                    "entity",
+                    "[]",
+                    f"description {index}",
+                    "[]",
+                    1,
+                    index + 1,
+                ),
+            )
+        conn.commit()
+        return conn
+
+    def _dense_counts(self, root: Path) -> tuple[int, int]:
+        dense = sqlite3.connect(root / KG.DENSE_INDEX_DB_NAME)
+        try:
+            return (
+                dense.execute("SELECT COUNT(*) FROM dense_vectors").fetchone()[0],
+                dense.execute("SELECT COUNT(*) FROM ann_buckets").fetchone()[0],
+            )
+        finally:
+            dense.close()
+
+    def test_dense_refresh_default_batch_size_is_eight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 17)
+            calls: list[int] = []
+
+            def fake_embeddings(texts):
+                calls.append(len(texts))
+                return [(1.0, 0.0)] * len(texts)
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(calls, [8, 8, 1])
+            self.assertEqual(result["status"], "indexed")
+            self.assertEqual(result["indexed"], 17)
+
+    def test_dense_refresh_splits_timeout_batch_and_indexes_all_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls: list[int] = []
+
+            def fake_embeddings(texts):
+                calls.append(len(texts))
+                if len(texts) == 8:
+                    raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
+                return [(1.0, 0.0)] * len(texts)
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(calls, [8, 4, 4])
+            self.assertEqual(result["status"], "indexed")
+            self.assertEqual(result["indexed"], 8)
+            self.assertEqual(self._dense_counts(root)[0], 8)
+
+    def test_dense_refresh_single_item_timeout_preserves_previous_dense_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_vectors"
+                " (entity_id, vector_json, dim, model, index_version, watermark)"
+                " VALUES ('stale', '[1.0,0.0]', 2, 'stale', 'stale', 'stale')"
+            )
+            dense.execute(
+                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (0, '00', 'stale')"
+            )
+            dense.commit()
+            dense.close()
+            prior_counts = self._dense_counts(root)
+            calls: list[int] = []
+
+            def fake_embeddings(texts):
+                calls.append(len(texts))
+                raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            self.assertEqual(calls, [8, 4, 2, 1])
+            self.assertEqual(result["status"], "unavailable")
+            self.assertTrue(dense_status.startswith("unavailable:"))
+            self.assertEqual(prior_counts, (1, 1))
+            self.assertEqual(self._dense_counts(root), prior_counts)
+            dense = sqlite3.connect(root / KG.DENSE_INDEX_DB_NAME)
+            try:
+                self.assertEqual(
+                    dense.execute(
+                        "SELECT entity_id FROM dense_vectors WHERE entity_id='stale'"
+                    ).fetchone(),
+                    ("stale",),
+                )
+                self.assertEqual(
+                    dense.execute(
+                        "SELECT band, bucket, entity_id FROM ann_buckets"
+                        " WHERE band=0 AND bucket='00' AND entity_id='stale'"
+                    ).fetchone(),
+                    (0, "00", "stale"),
+                )
+            finally:
+                dense.close()
+
+    def test_dense_refresh_permanent_failure_does_not_split_or_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls = 0
+
+            def fake_embeddings(_texts):
+                nonlocal calls
+                calls += 1
+                raise KG._DenseEmbeddingPermanentError(
+                    "local dense embedding dimension mismatch"
+                )
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            self.assertEqual(calls, 1)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(
+                dense_status,
+                "unavailable:RuntimeError:local dense embedding dimension mismatch",
+            )
+
+    def test_dense_refresh_empty_graph_creates_no_dense_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings") as embeddings:
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            embeddings.assert_not_called()
+            self.assertEqual(result["status"], "empty")
+            self.assertEqual(result["indexed"], 0)
+            self.assertEqual(dense_status, "empty")
+            self.assertFalse((root / KG.DENSE_INDEX_DB_NAME).exists())
+
+    def test_non_loopback_local_embedding_url_is_rejected_before_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            try:
+                with mock.patch.object(
+                    KG,
+                    "DENSE_EMBEDDING_URL",
+                    "https://example.com/v1/embeddings",
+                ), mock.patch.object(KG.urllib.request, "urlopen") as urlopen:
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            urlopen.assert_not_called()
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("loopback-local", dense_status)
+
+    def test_dense_refresh_persists_one_vector_per_entity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 10)
+
+            def fake_embeddings(texts):
+                return [(1.0, 0.0)] * len(texts)
+
+            try:
+                entity_count = conn.execute("SELECT COUNT(*) FROM kg_entities").fetchone()[0]
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            vector_count, bucket_count = self._dense_counts(root)
+            self.assertEqual(result["indexed"], entity_count)
+            self.assertEqual(vector_count, entity_count)
+            self.assertEqual(bucket_count, entity_count * KG.ANN_BANDS)
+
+
 class NormalizeTests(unittest.TestCase):
     def test_normalize_rejects_a_non_dict(self):
         self.assertEqual(KG._normalize_evidence(None)["kind"], "seed")

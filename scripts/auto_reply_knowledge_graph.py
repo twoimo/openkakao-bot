@@ -65,6 +65,14 @@ PROVENANCE_LEDGER = "ledger"
 MAX_EVIDENCE_PER_NODE = 8
 
 
+class _DenseEmbeddingTimeoutError(RuntimeError):
+    """A local embedding timeout that may succeed after reducing batch size."""
+
+
+class _DenseEmbeddingPermanentError(RuntimeError):
+    """A local embedding failure that must not be retried by batch splitting."""
+
+
 def _trace_graph(event: str, **fields: Any) -> None:
     safe = {
         str(key): value
@@ -2725,32 +2733,65 @@ def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
     try:
         with urllib.request.urlopen(request, timeout=DENSE_EMBEDDING_TIMEOUT_SECONDS) as response:
             body = json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
-        raise RuntimeError("local dense embedding unavailable") from error
+    except TimeoutError as error:
+        raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
+        raise _DenseEmbeddingPermanentError("local dense embedding unavailable") from error
+    except (OSError, ValueError) as error:
+        raise _DenseEmbeddingPermanentError("local dense embedding unavailable") from error
     rows = body.get("data") if isinstance(body, dict) else None
     if not isinstance(rows, list) or len(rows) != len(texts):
-        raise RuntimeError("local dense embedding response mismatch")
+        raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
     ordered: list[tuple[float, ...] | None] = [None] * len(rows)
     expected_dim = 0
     for row in rows:
         if not isinstance(row, dict):
-            raise RuntimeError("local dense embedding row invalid")
+            raise _DenseEmbeddingPermanentError("local dense embedding row invalid")
         index = row.get("index")
         if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(rows):
-            raise RuntimeError("local dense embedding row index invalid")
+            raise _DenseEmbeddingPermanentError("local dense embedding row index invalid")
         if ordered[index] is not None:
-            raise RuntimeError("local dense embedding row index duplicate")
+            raise _DenseEmbeddingPermanentError("local dense embedding row index duplicate")
         try:
             vector = _normalize_dense_vector(row.get("embedding"))
         except (TypeError, ValueError, OverflowError) as error:
-            raise RuntimeError("local dense embedding vector invalid") from error
+            raise _DenseEmbeddingPermanentError("local dense embedding vector invalid") from error
         if expected_dim and len(vector) != expected_dim:
-            raise RuntimeError("local dense embedding dimension mismatch")
+            raise _DenseEmbeddingPermanentError("local dense embedding dimension mismatch")
         expected_dim = expected_dim or len(vector)
         ordered[index] = vector
     if any(vector is None for vector in ordered):
-        raise RuntimeError("local dense embedding response mismatch")
+        raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
     return [vector for vector in ordered if vector is not None]
+
+
+def _local_dense_embeddings_adaptive(texts: list[str]) -> list[tuple[float, ...]]:
+    """Retry timeout-only failures by splitting batches while preserving row order."""
+    if not texts:
+        return []
+    pending = [texts]
+    vectors: list[tuple[float, ...]] = []
+    attempts_remaining = 2 * len(texts) - 1
+    while pending:
+        if attempts_remaining <= 0:
+            raise _DenseEmbeddingTimeoutError("local dense embedding unavailable")
+        batch = pending.pop()
+        attempts_remaining -= 1
+        try:
+            batch_vectors = _local_dense_embeddings(batch)
+        except _DenseEmbeddingTimeoutError:
+            if len(batch) == 1:
+                raise
+            split_at = len(batch) // 2
+            pending.append(batch[split_at:])
+            pending.append(batch[:split_at])
+            continue
+        if len(batch_vectors) != len(batch):
+            raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
+        vectors.extend(batch_vectors)
+    return vectors
 
 
 def _ann_band_keys(vector: tuple[float, ...]) -> list[tuple[int, str]]:
@@ -2825,7 +2866,7 @@ def refresh_dense_index(
     kg_conn: sqlite3.Connection,
     state_root: Path,
     *,
-    batch_size: int = 32,
+    batch_size: int = 8,
 ) -> dict[str, Any]:
     """Persist local embeddings and ANN buckets without leaking dense failures."""
     dense: sqlite3.Connection | None = None
@@ -2859,7 +2900,9 @@ def refresh_dense_index(
         bounded_batch_size = max(1, int(batch_size))
         for start in range(0, len(rows), bounded_batch_size):
             batch = rows[start : start + bounded_batch_size]
-            vectors = _local_dense_embeddings([_entity_dense_text(row) for row in batch])
+            vectors = _local_dense_embeddings_adaptive(
+                [_entity_dense_text(row) for row in batch]
+            )
             if len(vectors) != len(batch):
                 raise RuntimeError("local dense embedding response mismatch")
             for row, vector in zip(batch, vectors):
@@ -2882,6 +2925,8 @@ def refresh_dense_index(
                     [(band, bucket, entity_id) for band, bucket in _ann_band_keys(vector)],
                 )
                 indexed += 1
+        if indexed != len(rows):
+            raise RuntimeError("local dense embedding response mismatch")
         dense.execute(
             "INSERT INTO dense_meta(key,value) VALUES('index_version',?)"
             " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -2903,7 +2948,12 @@ def refresh_dense_index(
                 dense.rollback()
             except sqlite3.Error:
                 pass
-        status = _bounded_dense_status(f"unavailable:{type(error).__name__}:{error}")
+        error_type = (
+            "RuntimeError"
+            if isinstance(error, (_DenseEmbeddingTimeoutError, _DenseEmbeddingPermanentError))
+            else type(error).__name__
+        )
+        status = _bounded_dense_status(f"unavailable:{error_type}:{error}")
         write_meta(kg_conn, "last_dense_status", status)
         return {
             "status": "unavailable",
