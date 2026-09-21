@@ -88,15 +88,6 @@ STOP_REASONS = frozenset(
     }
 )
 
-ATTEST_REASONS = frozenset(
-    {
-        "attest_not_alive",
-        "attest_command_mismatch",
-        "attest_not_listening",
-        "attest_unknown",
-    }
-)
-
 MLX_SERVE_OWNER_STATES = frozenset(
     {
         "app_owned",
@@ -680,7 +671,12 @@ def attest_app_owned_server(
     hooks: LaunchHooks | None = None,
     spec: MlxLaunchSpec | None = None,
 ) -> str:
-    """Return an empty string when the recorded pid is provably app-owned."""
+    """Return an empty string when the recorded pid is provably app-owned.
+
+    Any other value is one of four bounded codes rather than a free-form
+    reason: attest_not_alive, attest_command_mismatch, attest_not_listening,
+    or attest_unknown.
+    """
 
     runtime = hooks or LaunchHooks()
     if not runtime.alive(record.pid):
