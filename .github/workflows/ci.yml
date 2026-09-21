@@ -102,6 +102,19 @@ jobs:
           python3 scripts/audit-menubar-layout.py /tmp/layout-audit > /tmp/layout-audit/report.txt
           python3 scripts/check-menubar-layout.py /tmp/layout-audit
 
+      # The windows cannot be seen from the runner, so a failure here lives only
+      # inside the PNGs. Keep the audit output from failing runs as well: the
+      # 24pt band that failed on the Sonoma runner could not be reproduced
+      # locally, and reading the artifact is what settled it (2026-09-22).
+      - name: Upload menu layout audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: menu-layout-audit
+          path: /tmp/layout-audit
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Validate Tauri launcher contracts
         run: |
           sh -n scripts/build-jarvis-desktop.sh
@@ -145,6 +158,7 @@ jobs:
           tests.test_mlx_serve_lifecycle
           tests.test_auto_reply_dream_rsi
           tests.test_dream_rsi_alphaxiv
+          tests.test_menubar_layout_check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

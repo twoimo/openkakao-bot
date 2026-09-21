@@ -456,6 +456,37 @@ def tables_past_their_clip(rows: list[dict]) -> list[dict]:
     return found
 
 
+def padding_limit_px(image: dict) -> float:
+    """The window's own edge padding allowance, in pixels.
+
+    여백은 픽셀이다. 40을 그대로 쓰면 Retina(2x)에서 20pt 기준이 되어 같은
+    그림이 1x에서는 통과하고 2x에서는 실패한다. 포인트로 환산해서 판단한다
+    (2026-09-16).
+    """
+    return 40 * max(float(image.get("scale") or 1.0), 0.1)
+
+
+def empty_row_band_problems(name: str, image: dict) -> list[str]:
+    """Empty row bands that are wasted layout, not the window's own padding.
+
+    창의 첫 줄과 마지막 줄에 붙은 빈 띠는 그 창이 스스로 두는 여백이다. 아래
+    여백 규칙이 같은 값을 이미 판단하므로, 내용 사이의 빈 띠와 같은 24pt
+    기준을 겹쳐 적용하면 같은 여백을 두 규칙이 다른 값으로 재게 된다. 설정
+    창의 아래 여백은 글꼴 계측에 따라 macOS 26에서 17pt, Sonoma 러너에서
+    25pt로 나왔고 24pt 기준이 그 사이에 걸려 같은 코드가 한쪽에서만
+    실패했다. 그래서 가장자리 띠는 여백 규칙과 같은 허용값으로 판단한다
+    (2026-09-22).
+    """
+    limit = padding_limit_px(image)
+    height = int(image["size"][1])
+    problems: list[str] = []
+    for start, end, length in image["empty_row_bands"]:
+        if (start == 0 or end == height - 1) and length <= limit:
+            continue
+        problems.append(f"{name}: {start}~{end}행이 비어 있습니다 ({length}pt)")
+    return problems
+
+
 def main(argv: list[str]) -> int:
     directory = Path(argv[1] if len(argv) > 1 else "/tmp/layout-audit")
     audit = load_audit()
@@ -479,18 +510,13 @@ def main(argv: list[str]) -> int:
         if image["content_box"] is None:
             problems.append(f"{name}: 아무것도 그려지지 않았습니다")
             continue
-        for start, end, length in image["empty_row_bands"]:
-            problems.append(f"{name}: {start}~{end}행이 비어 있습니다 ({length}pt)")
+        problems.extend(empty_row_band_problems(name, image))
         for start, end, length in image["empty_col_bands"]:
             problems.append(f"{name}: {start}~{end}열이 비어 있습니다 ({length}pt)")
         # 창 가장자리에 붙은 여백은 정상이지만, 위아래 어느 한쪽만 두꺼우면
         # 내용이 한쪽으로 쏠려 보인다.
         top, bottom = image["top_margin"], image["bottom_margin"]
-        # 여백은 픽셀이다. 40을 그대로 쓰면 Retina(2x)에서 20pt 기준이 되어
-        # 같은 그림이 1x에서는 통과하고 2x에서는 실패한다. 포인트로 환산해서
-        # 판단한다 (2026-09-16).
-        scale = float(image.get("scale") or 1.0)
-        limit = 40 * max(scale, 0.1)
+        limit = padding_limit_px(image)
         if top is not None and bottom is not None and abs(top - bottom) > limit:
             problems.append(f"{name}: 위아래 여백이 {top}/{bottom}으로 어긋납니다")
 
