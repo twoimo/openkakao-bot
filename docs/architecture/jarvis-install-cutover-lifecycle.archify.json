@@ -35,11 +35,12 @@
         "id": "recovery-arm",
         "label": "복구 경로",
         "focus": [
+          "signal",
           "rollback",
           "restored",
           "uncertain"
         ],
-        "note": "가드나 pid 확보가 실패하면 bootout과 번들·plist 복원을 시도하고 exit 3으로 닫습니다."
+        "note": "가드와 pid 확보 실패뿐 아니라 런타임을 건드린 뒤 들어온 신호(HUP·INT·TERM)에서도 같은 rollback을 돌려 이전 job과 legacy plist를 되돌리고 exit 3으로 닫습니다."
       }
     ]
   },
@@ -106,7 +107,7 @@
       "id": "guard",
       "type": "decision",
       "label": "중복 인스턴스 가드",
-      "sublabel": "2회 · 열거 불명은 rollback",
+      "sublabel": "2회 · pid 동일성 확인",
       "lane": "main",
       "col": 4,
       "width": 150,
@@ -117,28 +118,38 @@
       "id": "delete",
       "type": "active",
       "label": "이전 번들 삭제",
-      "sublabel": "가드 통과 뒤에만",
+      "sublabel": "가드 + lstart 통과",
       "lane": "mutation",
       "col": 2,
       "step": "06",
       "tag": "irreversible"
     },
     {
+      "id": "signal",
+      "type": "failure",
+      "label": "시그널 도착",
+      "sublabel": "runtime 변경 뒤 신호",
+      "lane": "rollback",
+      "col": 0,
+      "step": "R0",
+      "tag": "signal_exit"
+    },
+    {
       "id": "rollback",
       "type": "active",
       "label": "Rollback",
-      "sublabel": "bootout → 번들 · plist 복원",
+      "sublabel": "bootout → 번들·plist 복원",
       "lane": "rollback",
       "col": 1,
       "yOffset": 78,
       "step": "R1",
-      "tag": "post_activation_failure"
+      "tag": "perform_rollback"
     },
     {
       "id": "restored",
       "type": "success",
       "label": "이전 상태 복원",
-      "sublabel": "exit 3 · rollback.txt",
+      "sublabel": "exit 3 · 이전 job 복원",
       "lane": "terminal",
       "col": 0,
       "tag": "recovered"
@@ -179,6 +190,17 @@
       "fromSide": "top",
       "toSide": "top",
       "channelY": 96
+    },
+    {
+      "from": "backup",
+      "to": "signal",
+      "label": "RUNTIME_TOUCHED 이후 신호",
+      "variant": "security"
+    },
+    {
+      "from": "signal",
+      "to": "rollback",
+      "variant": "security"
     },
     {
       "from": "stage",
@@ -237,21 +259,21 @@
       "dot": "amber",
       "title": "가드 계약",
       "items": [
-        "pid는 kickstart -kp, 후보는 lsof/ps 확인 · 실패는 rollback"
+        "pid는 kickstart -kp · 후보는 경로 무관 pid 동일성 · lstart 재확인"
       ]
     },
     {
       "dot": "cyan",
       "title": "복구 artifact",
       "items": [
-        "installed.txt(성공) · rollback.txt(실패) · wait.txt 분리"
+        "이전 job·legacy plist 재기동 · installed.txt와 rollback.txt 분리"
       ]
     },
     {
       "dot": "rose",
       "title": "현재 증거",
       "items": [
-        "컷오버 18 tests · CI 321 tests · 미추적 단일 인스턴스"
+        "컷오버 24 tests · CI 327 tests · 미추적 단일 인스턴스"
       ]
     }
   ]
