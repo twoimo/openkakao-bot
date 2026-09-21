@@ -1,4 +1,5 @@
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
+import type { RuntimeSnapshot } from "./contracts";
 
 export const MAIN_PANEL_CONTROLS = Object.freeze(["gear"] as const);
 export const SETTINGS_IDS = Object.freeze([
@@ -107,8 +108,41 @@ export function settingsMarkup(): string {
     </section>
 
     <section class="settings-card" aria-labelledby="history-title">
-      <div class="section-heading"><h2 id="history-title">History</h2><span class="tag muted-tag">안전 요약 shell</span></div>
-      <p>채팅 본문·프롬프트·토큰을 공유 이벤트에 싣지 않습니다. 기록 UI 연결은 후속 단위에서 안전 필드만 사용합니다.</p>
+      <div class="section-heading"><h2 id="history-title">History</h2><span class="tag muted-tag">안전 요약</span></div>
+      <p id="history-summary" class="muted" role="status" aria-live="polite">최근 기록을 확인 중입니다.</p>
+      <div id="history-list" class="knowledge-relations" role="list" aria-label="최근 답변 기록"></div>
     </section>
   </main>`;
+}
+
+export function renderHistory(snapshot: RuntimeSnapshot, root: Document = document): void {
+  const summary = root.getElementById("history-summary");
+  const list = root.getElementById("history-list");
+  if (!summary || !list) return;
+  list.replaceChildren();
+
+  if (!snapshot.available) {
+    summary.textContent = "기록을 확인할 수 없습니다.";
+    return;
+  }
+  if (snapshot.recentReceipts.length === 0) {
+    summary.textContent = "최근 기록이 없습니다.";
+    return;
+  }
+
+  summary.textContent = `최근 ${snapshot.recentReceipts.length}건 · 본문·프롬프트 제외`;
+  snapshot.recentReceipts.forEach((receipt) => {
+    const row = root.createElement("div");
+    row.className = "knowledge-relation-row";
+    row.setAttribute("role", "listitem");
+
+    const heading = root.createElement("strong");
+    heading.textContent = `${receipt.displayTime || receipt.clock || "시간 미기록"} · ${receipt.title}`;
+
+    const detail = root.createElement("span");
+    detail.textContent = `${receipt.outcomeText || receipt.outcome} · ${receipt.reasonText || receipt.reasonCode} · 검색 ${receipt.retrievalState}`;
+
+    row.append(heading, detail);
+    list.append(row);
+  });
 }

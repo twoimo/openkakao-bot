@@ -24,6 +24,7 @@ export interface RuntimeSnapshot {
   available: boolean;
   rooms: RoomSummary[];
   jobs: JobEvent[];
+  recentReceipts: RecentReceipt[];
   jobLoad: number;
   terminal: {
     sent: number;
@@ -40,6 +41,18 @@ export interface RuntimeSnapshot {
   errorCode: string | null;
 }
 
+export interface RecentReceipt {
+  chatId: number;
+  title: string;
+  displayTime: string;
+  clock: string;
+  outcome: "sent" | "deferred" | "scheduled" | "skipped";
+  outcomeText: string;
+  reasonCode: string;
+  reasonText: string;
+  retrievalState: "ok" | "empty" | "skipped" | "error" | "index_not_ready" | "unrecorded";
+}
+
 export interface VoiceStatus {
   available: boolean;
   state: string;
@@ -54,6 +67,9 @@ export interface VoiceStatus {
 
 type JsonRecord = Record<string, unknown>;
 const JOB_EVENT_KEYS = new Set(["jobId", "kind", "stage", "load", "time", "errorCode"]);
+const RECEIPT_OUTCOMES = new Set(["sent", "deferred", "scheduled", "skipped"]);
+const RECEIPT_REASON_SLUG = /^[a-z][a-z0-9_]{0,63}$/;
+const RETRIEVAL_STATES = new Set(["ok", "empty", "skipped", "error", "index_not_ready", "unrecorded"]);
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -109,12 +125,44 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     available: false,
     rooms: [],
     jobs: [],
+    recentReceipts: [],
     jobLoad: 0,
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
     voice: { available: false, state: "unavailable", rms: 0, errorCode: null, wakeSource: "none", updatedAt: 0, wakePhrase: "", threshold: 0.65, customModelSelected: false },
     errorCode,
+  };
+}
+
+function parseRecentReceipt(value: unknown): RecentReceipt | null {
+  const input = record(value);
+  if (!input) return null;
+  const chatId = finiteNumber(input.chatId, -1);
+  const outcome = typeof input.outcome === "string" ? input.outcome : "";
+  const rawReasonCode = typeof input.reasonCode === "string" ? input.reasonCode : "";
+  const reasonCode = RECEIPT_REASON_SLUG.test(rawReasonCode) ? rawReasonCode : "unspecified";
+  const rawRetrievalState = typeof input.retrievalState === "string" ? input.retrievalState : "";
+  const retrievalState = RETRIEVAL_STATES.has(rawRetrievalState) ? rawRetrievalState : "unrecorded";
+  if (!Number.isInteger(chatId) || chatId <= 0) return null;
+  if (typeof input.title !== "string" || typeof input.displayTime !== "string" || typeof input.clock !== "string") return null;
+  if (typeof input.reasonText !== "string") return null;
+  if (!RECEIPT_OUTCOMES.has(outcome)) return null;
+  const rawOutcomeText = typeof input.outcomeText === "string"
+    ? input.outcomeText
+    : typeof input.outcome_text === "string"
+      ? input.outcome_text
+      : "";
+  return {
+    chatId,
+    title: input.title.slice(0, 120),
+    displayTime: input.displayTime.slice(0, 32),
+    clock: input.clock.slice(0, 8),
+    outcome: outcome as RecentReceipt["outcome"],
+    outcomeText: rawOutcomeText.slice(0, 32),
+    reasonCode,
+    reasonText: input.reasonText.slice(0, 64),
+    retrievalState: retrievalState as RecentReceipt["retrievalState"],
   };
 }
 
@@ -139,6 +187,15 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
 
   const jobsRaw = Array.isArray(input.jobs) ? input.jobs : [];
   const jobs = jobsRaw.map(parseJobEvent).filter((item): item is JobEvent => item !== null);
+  const receiptsRaw = Array.isArray(input.recent_receipts)
+    ? input.recent_receipts
+    : Array.isArray(input.recentReceipts)
+      ? input.recentReceipts
+      : [];
+  const recentReceipts = receiptsRaw
+    .map(parseRecentReceipt)
+    .filter((item): item is RecentReceipt => item !== null)
+    .slice(0, 12);
   const terminal = record(input.terminal_counts ?? input.terminal) ?? {};
   const contextSync = record(input.context_sync ?? input.contextSync);
   const voice = record(input.voice);
@@ -148,6 +205,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
     available: input.available !== false && contextValid,
     rooms,
     jobs,
+    recentReceipts,
     jobLoad: Math.min(1, Math.max(0, finiteNumber(input.job_load ?? input.jobLoad, 0))),
     terminal: {
       sent: nonNegativeInt(terminal.sent),

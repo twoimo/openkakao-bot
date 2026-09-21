@@ -188,12 +188,27 @@ pub struct SafeRuntimeSnapshot {
     available: bool,
     rooms: Vec<SafeRoom>,
     jobs: Vec<SafeJobEvent>,
+    recent_receipts: Vec<SafeRecentReceipt>,
     job_load: f64,
     terminal_counts: TerminalCounts,
     context_sync: ContextSync,
     reply_model_id: Option<String>,
     voice: SafeVoiceStatus,
     error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SafeRecentReceipt {
+    chat_id: i64,
+    title: String,
+    display_time: String,
+    clock: String,
+    outcome: String,
+    outcome_text: String,
+    reason_code: String,
+    reason_text: String,
+    retrieval_state: String,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -1197,12 +1212,138 @@ fn write_model_swap_cancel_marker(path: &Path) -> Result<(), BridgeError> {
     result
 }
 
+fn receipt_chat_id(value: Option<&Value>) -> Option<i64> {
+    match value? {
+        Value::Number(number) => number.as_i64().filter(|id| *id > 0),
+        Value::String(text) => text.parse::<i64>().ok().filter(|id| *id > 0),
+        _ => None,
+    }
+}
+
+fn allowed_receipt_outcome(value: &str) -> bool {
+    matches!(value, "sent" | "deferred" | "scheduled" | "skipped")
+}
+
+fn receipt_reason_slug(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (1..=64).contains(&bytes.len())
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+}
+
+fn safe_receipt_reason(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_str)
+        .filter(|reason| receipt_reason_slug(reason))
+        .unwrap_or("unspecified")
+        .to_string()
+}
+
+fn safe_retrieval_state(value: Option<&Value>) -> String {
+    match value.and_then(Value::as_str) {
+        Some(state @ ("ok" | "empty" | "skipped" | "error" | "index_not_ready" | "unrecorded")) => {
+            state.to_string()
+        }
+        _ => "unrecorded".to_string(),
+    }
+}
+
+fn sanitize_recent_receipts(
+    root: &serde_json::Map<String, Value>,
+    titles: &HashMap<i64, String>,
+) -> Vec<SafeRecentReceipt> {
+    let Some(rooms) = root
+        .get("reply_receipts")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("rooms"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::<(String, String, SafeRecentReceipt)>::new();
+    for room in rooms {
+        let Some(room_obj) = room.as_object() else {
+            continue;
+        };
+        let Some(chat_id) = receipt_chat_id(room_obj.get("chat_id")) else {
+            continue;
+        };
+        let Some(receipts) = room_obj.get("receipts").and_then(Value::as_array) else {
+            continue;
+        };
+        let title = titles
+            .get(&chat_id)
+            .cloned()
+            .unwrap_or_else(|| format!("id:{chat_id}"));
+        for receipt in receipts {
+            let Some(obj) = receipt.as_object() else {
+                continue;
+            };
+            let (
+                Some(event_id),
+                Some(recorded_at),
+                Some(display_time),
+                Some(clock),
+                Some(outcome),
+                Some(reason_text),
+                retrieval_state,
+            ) = (
+                obj.get("event_id").and_then(Value::as_str),
+                obj.get("recorded_at").and_then(Value::as_str),
+                obj.get("display_time").and_then(Value::as_str),
+                obj.get("clock").and_then(Value::as_str),
+                obj.get("outcome").and_then(Value::as_str),
+                obj.get("reason_text").and_then(Value::as_str),
+                safe_retrieval_state(obj.get("retrieval_state")),
+            )
+            else {
+                continue;
+            };
+            if event_id.is_empty() || recorded_at.is_empty() || !allowed_receipt_outcome(outcome) {
+                continue;
+            }
+            let reason_code = safe_receipt_reason(obj.get("reason_code"));
+            let outcome_text = obj
+                .get("outcome_text")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            candidates.push((
+                recorded_at.to_string(),
+                event_id.to_string(),
+                SafeRecentReceipt {
+                    chat_id,
+                    title: title.chars().take(120).collect(),
+                    display_time: display_time.chars().take(32).collect(),
+                    clock: clock.chars().take(8).collect(),
+                    outcome: outcome.to_string(),
+                    outcome_text: outcome_text.chars().take(32).collect(),
+                    reason_code,
+                    reason_text: reason_text.chars().take(64).collect(),
+                    retrieval_state,
+                },
+            ));
+        }
+    }
+
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut seen = HashSet::<String>::new();
+    candidates
+        .into_iter()
+        .filter_map(|(_, event_id, receipt)| seen.insert(event_id).then_some(receipt))
+        .take(12)
+        .collect()
+}
+
 fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     let Some(root) = value.as_object() else {
         return SafeRuntimeSnapshot {
             available: false,
             rooms: Vec::new(),
             jobs: Vec::new(),
+            recent_receipts: Vec::new(),
             job_load: 0.0,
             terminal_counts: TerminalCounts::default(),
             context_sync: ContextSync {
@@ -1265,6 +1406,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let recent_receipts = sanitize_recent_receipts(root, &titles);
 
     let open_jobs = as_u64(root.get("open_jobs"));
     let background = root
@@ -1314,6 +1456,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         available: true,
         rooms,
         jobs: Vec::new(),
+        recent_receipts,
         job_load,
         terminal_counts: TerminalCounts {
             sent: as_u64(root.get("sent")),
@@ -1812,6 +1955,43 @@ fn sanitize_knowledge_focus(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn receipt(event_id: &str, recorded_at: &str, outcome: &str, reason_code: &str) -> Value {
+        let outcome_text = match outcome {
+            "sent" => "전송 완료",
+            "deferred" => "보류",
+            "scheduled" => "대기",
+            "skipped" => "건너뜀",
+            _ => "상태 기록 없음",
+        };
+        json!({
+            "event_id": event_id,
+            "recorded_at": recorded_at,
+            "display_time": "09-21 16:00",
+            "clock": "16:00",
+            "outcome": outcome,
+            "outcome_text": outcome_text,
+            "reason_code": reason_code,
+            "reason_text": "안전한 사유",
+            "retrieval_state": "ok",
+            "message": "drop body",
+            "prompt": "drop prompt",
+            "token": "drop token",
+            "preview": "drop preview",
+            "preview_text": "drop preview text",
+            "summary": "drop summary",
+            "detail": "drop detail",
+            "chat": "drop chat",
+            "model": "drop model",
+            "model_attempts": [{"model": "drop detail"}],
+            "log_id": 123,
+            "candidates": 9,
+            "retrieved": 8,
+            "included": 7,
+            "evidence_ids": ["drop evidence"],
+            "ledger": "drop ledger"
+        })
+    }
 
     #[test]
     fn rejects_bad_json() {
@@ -2598,10 +2778,168 @@ mod tests {
         assert!(safe.available);
         assert!(safe.rooms.is_empty());
         assert!(safe.jobs.is_empty());
+        assert!(safe.recent_receipts.is_empty());
         assert!(safe.reply_model_id.is_none());
         assert_eq!(safe.terminal_counts.delivery_unknown, 1);
         assert_eq!(safe.context_sync.mode, "async");
         assert!(!safe.context_sync.waited);
+    }
+
+    #[test]
+    fn snapshot_receipts_drop_unknown_outcome_and_preserve_slug_reasons() {
+        let safe = sanitize_snapshot(&json!({
+            "available_chats": [{"chat_id": 7, "title": "방"}],
+            "reply_receipts": {"rooms": [{
+                "chat_id": "7",
+                "receipts": [
+                    receipt("bad-outcome", "2026-09-21T07:03:00Z", "unknown", "self_author"),
+                    receipt("already", "2026-09-21T07:02:00Z", "skipped", "already_commented"),
+                    receipt("low", "2026-09-21T07:01:00Z", "skipped", "low_information"),
+                    receipt("uncertain", "2026-09-21T07:00:00Z", "skipped", "uncertain")
+                ]
+            }]}
+        }));
+        assert_eq!(safe.recent_receipts.len(), 3);
+        assert_eq!(safe.recent_receipts[0].chat_id, 7);
+        assert_eq!(safe.recent_receipts[0].reason_code, "already_commented");
+        assert_eq!(safe.recent_receipts[1].reason_code, "low_information");
+        assert_eq!(safe.recent_receipts[2].reason_code, "uncertain");
+    }
+
+    #[test]
+    fn snapshot_receipts_normalize_freeform_reason_codes_without_leaking_them() {
+        let korean = "수신된 이미지는 MoruLiveExam 프로젝트의 터미널 작업 화면 캡처이며, 구체적인 질문이나 답변을 요구하는 요청 사항이 포함되어 있지 않아";
+        let spaced = "direct_question about prior conversation topic";
+        let too_long = format!("a{}", "b".repeat(64));
+        let safe = sanitize_snapshot(&json!({
+            "reply_receipts": {"rooms": [{
+                "chat_id": 11,
+                "receipts": [
+                    receipt("korean", "2026-09-21T07:04:00Z", "skipped", korean),
+                    receipt("spaced", "2026-09-21T07:03:00Z", "skipped", spaced),
+                    receipt("long", "2026-09-21T07:02:00Z", "skipped", &too_long),
+                    receipt("non-ascii", "2026-09-21T07:01:00Z", "skipped", "social_reply_한글")
+                ]
+            }]}
+        }));
+
+        assert_eq!(safe.recent_receipts.len(), 4);
+        assert!(safe
+            .recent_receipts
+            .iter()
+            .all(|item| item.reason_code == "unspecified"));
+        let serialized = serde_json::to_string(&safe).unwrap();
+        for forbidden in [
+            korean,
+            spaced,
+            too_long.as_str(),
+            "social_reply_한글",
+            "수신된 이미지는",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn snapshot_receipts_sort_dedupe_limit_and_truncate() {
+        let mut receipts = Vec::new();
+        for index in 0..14 {
+            let mut item = receipt(
+                &format!("evt-{index}"),
+                &format!("2026-09-21T07:{index:02}:00Z"),
+                "sent",
+                "direct_question",
+            );
+            item["display_time"] = json!("x".repeat(40));
+            item["clock"] = json!("y".repeat(12));
+            item["outcome_text"] = json!("결".repeat(40));
+            item["reason_text"] = json!("가".repeat(80));
+            receipts.push(item);
+        }
+        receipts.push(receipt(
+            "evt-13",
+            "2026-09-21T06:59:00Z",
+            "sent",
+            "direct_question",
+        ));
+        let safe = sanitize_snapshot(&json!({
+            "available_chats": [{"chat_id": 9, "title": "방".repeat(130)}],
+            "reply_receipts": {"rooms": [{"chat_id": 9, "receipts": receipts}]}
+        }));
+
+        assert_eq!(safe.recent_receipts.len(), 12);
+        assert_eq!(safe.recent_receipts[0].display_time.chars().count(), 32);
+        assert_eq!(safe.recent_receipts[0].clock.chars().count(), 8);
+        assert_eq!(safe.recent_receipts[0].outcome_text.chars().count(), 32);
+        assert_eq!(safe.recent_receipts[0].reason_text.chars().count(), 64);
+        assert_eq!(safe.recent_receipts[0].title.chars().count(), 120);
+        assert_eq!(safe.recent_receipts[0].chat_id, 9);
+        let ids = safe
+            .recent_receipts
+            .iter()
+            .map(|item| (&item.display_time, item.chat_id))
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 12);
+    }
+
+    #[test]
+    fn snapshot_receipts_sort_and_dedupe_keep_newest_event() {
+        let mut newer = receipt("same", "2026-09-21T07:09:00Z", "sent", "direct_question");
+        newer["reason_text"] = json!("newest");
+        let mut older = receipt("same", "2026-09-21T07:01:00Z", "sent", "direct_question");
+        older["reason_text"] = json!("older");
+        let safe = sanitize_snapshot(&json!({
+            "reply_receipts": {"rooms": [{
+                "chat_id": "22",
+                "receipts": [older, receipt("other", "2026-09-21T07:05:00Z", "skipped", "stale_backlog"), newer]
+            }]}
+        }));
+        assert_eq!(safe.recent_receipts.len(), 2);
+        assert_eq!(safe.recent_receipts[0].reason_text, "newest");
+        assert_eq!(safe.recent_receipts[0].title, "id:22");
+        assert_eq!(safe.recent_receipts[1].reason_code, "stale_backlog");
+    }
+
+    #[test]
+    fn snapshot_receipts_serialize_only_allowlisted_fields() {
+        let safe = sanitize_snapshot(&json!({
+            "reply_receipts": {"rooms": [{"chat_id": "31", "receipts": [
+                receipt("evt", "2026-09-21T07:00:00Z", "sent", "direct_question")
+            ]}]}
+        }));
+        let serialized = serde_json::to_value(&safe).unwrap();
+        let item = serialized["recent_receipts"][0].as_object().unwrap();
+        let keys = item.keys().map(String::as_str).collect::<HashSet<_>>();
+        assert_eq!(
+            keys,
+            HashSet::from([
+                "chatId",
+                "title",
+                "displayTime",
+                "clock",
+                "outcome",
+                "outcomeText",
+                "reasonCode",
+                "reasonText",
+                "retrievalState",
+            ])
+        );
+        let text = serde_json::to_string(item).unwrap();
+        for forbidden in [
+            "drop body",
+            "drop prompt",
+            "drop token",
+            "drop preview",
+            "drop preview text",
+            "drop summary",
+            "drop detail",
+            "drop chat",
+            "drop model",
+            "drop evidence",
+            "drop ledger",
+        ] {
+            assert!(!text.contains(forbidden));
+        }
     }
 
     #[test]

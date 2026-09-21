@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
 import { RenderLifecycle } from "../core/lifecycle";
@@ -16,7 +17,7 @@ import {
   type SettingsInvoke,
 } from "../runtime";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderHistory, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -102,7 +103,148 @@ describe("safe shared contracts", () => {
     const empty = parseRuntimeSnapshot({ available: true, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } });
     expect(empty.rooms).toEqual([]);
     expect(empty.jobs).toEqual([]);
+    expect(empty.recentReceipts).toEqual([]);
     expect(empty.replyModelId).toBeNull();
+  });
+
+  it("parses only safe recent receipt fields and drops malformed entries", () => {
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      recent_receipts: [
+        {
+          chatId: 7,
+          title: "방",
+          displayTime: "09-21 16:00",
+          clock: "16:00",
+          outcome: "sent",
+          outcomeText: "전".repeat(40),
+          reasonCode: "direct_question",
+          reasonText: "질문 응답",
+          retrievalState: "ok",
+          message: "private body",
+          prompt: "private prompt",
+        },
+        { chatId: "bad", title: "drop", outcome: "sent" },
+        { chatId: 8, title: "drop", displayTime: "", clock: "", outcome: "unknown", reasonCode: "direct_question", reasonText: "x", retrievalState: "ok" },
+      ],
+    });
+    expect(snapshot.recentReceipts).toEqual([{
+      chatId: 7,
+      title: "방",
+      displayTime: "09-21 16:00",
+      clock: "16:00",
+      outcome: "sent",
+      outcomeText: "전".repeat(32),
+      reasonCode: "direct_question",
+      reasonText: "질문 응답",
+      retrievalState: "ok",
+    }]);
+  });
+
+  it("preserves safe slug reasons and normalizes free-form reason codes", () => {
+    const freeForm = "수신된 이미지는 구체적인 질문 없이 공유된 화면입니다";
+    const tooLong = `a${"b".repeat(64)}`;
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      recent_receipts: [
+        { chatId: 1, title: "a", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: "already_commented", reasonText: "이미 답변함", retrievalState: "ok" },
+        { chatId: 2, title: "b", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: "low_information", reasonText: "알맹이 없음", retrievalState: "ok" },
+        { chatId: 3, title: "c", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: "uncertain", reasonText: "판단 보류", retrievalState: "ok" },
+        { chatId: 4, title: "d", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: freeForm, reasonText: "기록된 사유", retrievalState: "ok" },
+        { chatId: 5, title: "e", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: tooLong, reasonText: "기록된 사유", retrievalState: "ok" },
+        { chatId: 6, title: "f", displayTime: "t", clock: "c", outcome: "skipped", outcomeText: "건너뜀", reasonCode: "social reply", reasonText: "기록된 사유", retrievalState: "bad-state" },
+      ],
+    });
+    expect(snapshot.recentReceipts.map((item) => item.reasonCode)).toEqual([
+      "already_commented",
+      "low_information",
+      "uncertain",
+      "unspecified",
+      "unspecified",
+      "unspecified",
+    ]);
+    expect(snapshot.recentReceipts[5]?.retrievalState).toBe("unrecorded");
+    expect(JSON.stringify(snapshot.recentReceipts)).not.toContain(freeForm);
+    expect(JSON.stringify(snapshot.recentReceipts)).not.toContain(tooLong);
+  });
+});
+
+describe("history settings card", () => {
+  it("renders present receipts without forbidden content", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      recent_receipts: [{
+        chatId: 7,
+        title: "부자멘토멘티",
+        displayTime: "09-21 16:00",
+        clock: "16:00",
+        outcome: "sent",
+        outcomeText: "전송 완료",
+        reasonCode: "direct_question about prior conversation topic",
+        reasonText: "기록된 사유",
+        retrievalState: "ok",
+        message: "SHOULD_NOT_RENDER",
+        prompt: "SECRET_PROMPT",
+        token: "SECRET_TOKEN",
+        model_attempts: [{ model: "SECRET_MODEL" }],
+      }],
+    });
+    renderHistory(snapshot);
+    expect(document.getElementById("history-summary")?.textContent).toContain("최근 1건");
+    expect(document.getElementById("history-list")?.textContent).toContain("부자멘토멘티");
+    expect(document.getElementById("history-list")?.textContent).toContain("전송 완료");
+    expect(document.getElementById("history-list")?.textContent).toContain("기록된 사유");
+    expect(document.body.textContent).not.toContain("direct_question about prior conversation topic");
+    expect(document.body.textContent).not.toContain("SHOULD_NOT_RENDER");
+    expect(document.body.textContent).not.toContain("SECRET_PROMPT");
+    expect(document.body.textContent).not.toContain("SECRET_TOKEN");
+    expect(document.body.textContent).not.toContain("SECRET_MODEL");
+  });
+
+  it("renders the empty state", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({ available: true, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } });
+    renderHistory(snapshot);
+    expect(document.getElementById("history-summary")?.textContent).toBe("최근 기록이 없습니다.");
+    expect(document.querySelectorAll("#history-list [role='listitem']")).toHaveLength(0);
+  });
+
+  it("falls back to the outcome code when outcomeText is absent", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      recent_receipts: [{
+        chatId: 9,
+        title: "방",
+        displayTime: "09-21 16:00",
+        clock: "16:00",
+        outcome: "scheduled",
+        reasonCode: "social_reply",
+        reasonText: "대화 참여",
+        retrievalState: "skipped",
+      }],
+    });
+    renderHistory(snapshot);
+    expect(document.getElementById("history-list")?.textContent).toContain("scheduled");
+  });
+
+  it("renders the unavailable state", () => {
+    document.body.innerHTML = settingsMarkup();
+    renderHistory(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
+    expect(document.getElementById("history-summary")?.textContent).toBe("기록을 확인할 수 없습니다.");
   });
 });
 

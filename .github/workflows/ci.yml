@@ -141,6 +141,9 @@ jobs:
           tests.test_jarvis_desktop_launchers
           tests.test_local_mlx_model_readiness
           tests.test_verify_local_models
+          tests.test_mlx_serve_lifecycle
+          tests.test_auto_reply_dream_rsi
+          tests.test_dream_rsi_alphaxiv
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
