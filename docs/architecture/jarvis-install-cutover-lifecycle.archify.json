@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Jarvis 설치·전환 수명주기",
+    "output": "docs/architecture/jarvis-install-cutover-lifecycle.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1085,
+      700
+    ],
+    "views": [
+      {
+        "id": "prep-rail",
+        "label": "준비 단계",
+        "focus": [
+          "start",
+          "backup",
+          "stage"
+        ],
+        "note": "번들·도구·쓰기 권한을 확인하고 readback과 plist를 백업한 뒤 서비스를 내립니다."
+      },
+      {
+        "id": "guard-rail",
+        "label": "가드와 활성화",
+        "focus": [
+          "pid",
+          "guard",
+          "delete",
+          "done"
+        ],
+        "note": "kickstart가 준 pid로 중복 인스턴스를 두 번 확인하고 artifact를 남긴 뒤에만 이전 번들을 지웁니다."
+      },
+      {
+        "id": "recovery-arm",
+        "label": "복구 경로",
+        "focus": [
+          "rollback",
+          "restored",
+          "uncertain"
+        ],
+        "note": "가드나 pid 확보가 실패하면 bootout과 번들·plist 복원을 시도하고 exit 3으로 닫습니다."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "설치 rail"
+    },
+    {
+      "id": "mutation",
+      "label": "번들 교체"
+    },
+    {
+      "id": "rollback",
+      "label": "rollback controller"
+    },
+    {
+      "id": "terminal",
+      "label": "결과"
+    }
+  ],
+  "states": [
+    {
+      "id": "start",
+      "type": "start",
+      "label": "설치 시작",
+      "sublabel": "bundle · 도구 · 권한",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "preflight"
+    },
+    {
+      "id": "backup",
+      "type": "waiting",
+      "label": "백업 · 정지",
+      "sublabel": "readback · plist · bootout",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "backup"
+    },
+    {
+      "id": "stage",
+      "type": "active",
+      "label": "스테이징 활성화",
+      "sublabel": "완성 번들만 노출",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "atomic"
+    },
+    {
+      "id": "pid",
+      "type": "waiting",
+      "label": "launchd pid 확보",
+      "sublabel": "kickstart -kp 우선",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "authoritative"
+    },
+    {
+      "id": "guard",
+      "type": "decision",
+      "label": "중복 인스턴스 가드",
+      "sublabel": "2회 · 열거 불명은 rollback",
+      "lane": "main",
+      "col": 4,
+      "width": 150,
+      "step": "05",
+      "tag": "fail-closed"
+    },
+    {
+      "id": "delete",
+      "type": "active",
+      "label": "이전 번들 삭제",
+      "sublabel": "가드 통과 뒤에만",
+      "lane": "mutation",
+      "col": 2,
+      "step": "06",
+      "tag": "irreversible"
+    },
+    {
+      "id": "rollback",
+      "type": "active",
+      "label": "Rollback",
+      "sublabel": "bootout → 번들 · plist 복원",
+      "lane": "rollback",
+      "col": 1,
+      "yOffset": 78,
+      "step": "R1",
+      "tag": "post_activation_failure"
+    },
+    {
+      "id": "restored",
+      "type": "success",
+      "label": "이전 상태 복원",
+      "sublabel": "exit 3 · rollback.txt",
+      "lane": "terminal",
+      "col": 0,
+      "tag": "recovered"
+    },
+    {
+      "id": "uncertain",
+      "type": "failure",
+      "label": "복구 불확실",
+      "sublabel": "restore 실패 기록",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "terminal"
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "label": "전환 완료",
+      "sublabel": "서비스 실행 · exit 0",
+      "lane": "terminal",
+      "col": 2,
+      "step": "07",
+      "tag": "success"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "start",
+      "to": "backup",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96
+    },
+    {
+      "from": "backup",
+      "to": "stage",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96
+    },
+    {
+      "from": "stage",
+      "to": "pid",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96
+    },
+    {
+      "from": "pid",
+      "to": "guard",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96
+    },
+    {
+      "from": "guard",
+      "to": "delete",
+      "label": "artifact",
+      "variant": "emphasis",
+      "labelAt": [
+        762,
+        350
+      ]
+    },
+    {
+      "from": "delete",
+      "to": "done",
+      "variant": "emphasis"
+    },
+    {
+      "from": "guard",
+      "to": "rollback",
+      "variant": "security"
+    },
+    {
+      "from": "pid",
+      "to": "rollback",
+      "variant": "security"
+    },
+    {
+      "from": "rollback",
+      "to": "restored",
+      "variant": "emphasis"
+    },
+    {
+      "from": "rollback",
+      "to": "uncertain",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "가드 계약",
+      "items": [
+        "pid는 kickstart -kp, 후보는 lsof/ps 확인 · 실패는 rollback"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "복구 artifact",
+      "items": [
+        "installed.txt(성공) · rollback.txt(실패) · wait.txt 분리"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "현재 증거",
+      "items": [
+        "컷오버 18 tests · CI 321 tests · 미추적 단일 인스턴스"
+      ]
+    }
+  ]
+}

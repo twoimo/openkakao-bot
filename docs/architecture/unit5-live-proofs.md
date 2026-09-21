@@ -1117,3 +1117,10 @@ $ launchctl print gui/501/application.com.openkakao.jarvis.desktop.286915917.286
 - 현재 살아 있는 앱 인스턴스는 pid 84125 하나이고 그것은 LaunchServices(RunningBoard)가 제출한 job이다. 우리 LaunchAgent `com.openkakao.jarvis.desktop`은 `state = not running`·`runs = 2`·`last exit code = 0`이며 `launchctl list`에서 `-`로 표시된다. 중복 작업자는 없지만 그 단일 인스턴스는 launchd가 추적하지 않는다.
 - 이 호스트에 지금 재설치하면 `check_duplicate_guard`는 84125를 stray로 판정하고 exit 3으로 rollback한다. 이는 의도한 fail-closed 동작이고, 운영자가 그 인스턴스를 종료해야 전환이 진행된다. 이 세션은 프로세스를 종료하지 않았다.
 - `ps`의 argv와 경로는 exec 시점 값이며 executable identity의 authoritative 증거가 아니다. 앞선 절들이 lsof·ps 경로로 삭제된 번들 실행을 추적한 것은 호스트 관측이고, 가드 자체는 pid 동일성만 쓴다. 복사한 `/bin/sleep`으로 삭제 경로 argv를 재현하려던 시도는 코드서명 때문에 커널이 프로세스를 종료해 재현하지 못했으므로 그것도 재현 불가 호스트 관측으로만 기록한다.
+
+### 설치·전환 수명주기 다이어그램 — 2026-09-22 KST
+
+- `docs/architecture/jarvis-install-cutover-lifecycle.archify.json`(lane: main rail·번들 교체·rollback controller·결과)과 렌더 HTML을 추가했다. `validate lifecycle --quality showcase`는 9/9 artifact checks, 0 errors / 0 warnings이고 `deliver`는 artifact SHA-256 `f8066ddbe502215ff628035bdbad720826bef04cf466bfa7404f70d04e7e48f8`(811,997 bytes)로 성공했다.
+- `visual-check`는 status `pass`다. 1440x900·1600x1000·1920x1080·2048x1320 light viewport에서 scrollWidth/scrollHeight가 viewport를 넘지 않고 projected node text 최소값이 6px 이상이며 legend·navigation dock 교차 면적이 0이다. sidecar는 `jarvis-install-cutover-lifecycle.visual-check.html`(contact sheet)과 `.visual-check.json`(receipt)이고 1440x900·2048x1320 light/dark PNG 캡처가 함께 남았다.
+- 이 절의 수치는 자동 브라우저 증거이며 perceptual review는 별도다. receipt의 `visualReview`는 `pending`이고, 캡처를 직접 본 결과 겹침·잘림·빈 하단 밴드는 관측되지 않았다(사람 판단).
+- 다이어그램은 코드 계약을 그린 것이며 이 절의 rollback 경로가 실제로 실행됐다는 증거가 아니다. 이 호스트에서 rollback은 실행하지 않았다(미추적 인스턴스가 있어 재설치가 rollback으로 닫히는 조건이지만 실행하지 않았다).
