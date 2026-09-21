@@ -494,3 +494,43 @@ When the runtime snapshot is unavailable, Voice no longer overwrites the custom-
 `Qwen3TtsAdapter.speak()` now writes a WAV when `OPENKAKAO_VOICE_TTS_OUT` is a writable non-symlink `.wav` path, and returns without `sd.play`. Invalid env values fail closed with `voice_tts_output_invalid` instead of falling back to speakers. `PythonBridge::start_voice_session` sets that env to `state_root/jarvis-voice-out.wav` together with `OPENKAKAO_VOICE_ENV=1`.
 
 UV Python 3.11 `tests.test_jarvis_unit3` with numpy: **13 OK**, including `test_speak_writes_env_wav_without_playback` (RIFF WAV, `play` not called). Rust `plan_voice_session_requires_isolated_interpreter` **OK** (command env includes `OPENKAKAO_VOICE_TTS_OUT`). Extra pid **20042** stayed alive. Live microphone was not opened. 27B stayed unloaded.
+
+## Tauri primary menu-bar cutover — 2026-09-21 KST
+
+The parent release path completed `sh scripts/build-jarvis-desktop.sh`. The
+release bundle was created at:
+
+```text
+/Users/twoimo/Documents/projects/openkakao-bot/desktop/src-tauri/target/release/bundle/macos/OpenKakao Jarvis.app
+```
+
+Bundle readback passed:
+
+- `CFBundleIdentifier=com.openkakao.jarvis.desktop`
+- `LSUIElement=true`
+- `openkakao-jarvis-desktop`, the release `openkakao-cli`, GraphRAG/reference
+  scripts, `jarvis_voice.py`, and `voice/models/hey_jarvis_ko_ridge.onnx` are
+  present and executable/readable as required
+- local signature is ad hoc (`TeamIdentifier=not set`); notarization was not
+  attempted
+
+`sh scripts/install-jarvis-desktop.sh` then installed the bundle at
+`/Applications/OpenKakao Jarvis.app`. LaunchAgent readback shows:
+
+```text
+gui/501/com.openkakao.jarvis.desktop = running
+program = /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop
+pid = 11863
+```
+
+The compatibility start wrapper was then run against the installed app. It
+performed a LaunchAgent kickstart without rebuilding or reinstalling; the
+follow-up readback showed the same program and one installed Tauri process at
+pid **40266**.
+
+`gui/501/com.openkakao.auto-reply.menu` is absent, the old plist was moved to
+`~/Library/Application Support/openkakao/install-backups/jarvis-desktop/`, and
+no `AutoReplyMenu` process remains. A temporary Applications/LaunchAgents
+harness also passed the legacy backup, atomic staging, plist path readback,
+and bootstrap/kickstart sequence. No KakaoTalk send, live AX send, microphone
+session, model swap, or speaker playback was performed by this cutover proof.

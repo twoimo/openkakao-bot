@@ -4,7 +4,7 @@
 
 | Constraint | Decision | Review check |
 | --- | --- | --- |
-| Live Extra geometry | 276×260 panel, 12 inset, 236 core, 28 gear | Main panel constants are tested. |
+| Live panel geometry | 276×260 panel, 12 inset, 236 core, 28 gear | Main panel constants are tested. |
 | Main-panel hierarchy | Spherical Jarvis core plus one top-right gear control | No health/jobs/bulk/permission chrome. |
 | Settings | One unified, single-column window, max 720px | Rooms → AI model → voice → knowledge → history. |
 | Motion | Physical damping and capped rendering | Idle ≤15fps, busy ≤30fps, dt clamp, hidden/close/lock stop. |
@@ -31,7 +31,13 @@ Spacing uses 4/8/12/16/24px steps. Settings cards use an 11px radius, a 1px warm
 
 ## Bundle contract
 
-The bundle identifier remains `com.openkakao.auto-reply.menu` and `LSUIElement=true` keeps the app menu-bar-only. Signing identity is intentionally not hardcoded in source; packaging must reuse the existing OpenKakao signing identity supplied by the parent release environment. This unit does not cut over from the Swift Extra.
+The primary bundle is `OpenKakao Jarvis.app` with identifier
+`com.openkakao.jarvis.desktop`; `LSUIElement=true` keeps it menu-bar-only.
+Signing identity is intentionally not hardcoded in source. The packaging
+script accepts an explicitly supplied `OPENKAKAO_SIGN_IDENTITY`; local builds
+remain unsigned when it is absent. The former `com.openkakao.auto-reply.menu`
+Swift Extra is a separately named legacy path and is stopped before the Tauri
+LaunchAgent is bootstrapped.
 
 ## Render review
 

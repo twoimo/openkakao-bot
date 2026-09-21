@@ -72,14 +72,15 @@ jobs:
       - name: Smoke CLI
         run: cargo build --manifest-path $MANIFEST && ./target/debug/openkakao-cli --version
 
-      # The menu extra is a separate program from the CLI and used to have no
-      # check at all: a broken card layout shipped because nothing compiled it
-      # (2026-09-16).
-      - name: Build menu extra
+      # Keep the retired Swift Extra build covered while the primary menu-bar
+      # bundle is built by the separate Tauri job below. The explicit backend
+      # prevents this compatibility audit from invoking the Tauri installer.
+      - name: Build legacy Swift menu extra
         env:
           # The runner has no developer certificate; ad-hoc signing is enough
           # to run the audit below (2026-09-16).
           OPENKAKAO_SIGN_IDENTITY: "-"
+          OPENKAKAO_MENUBAR_BACKEND: swift
         run: sh scripts/build-auto-reply-menubar.sh
 
       # tests.test_auto_reply_menubar cannot run here: the menu extra's Python
@@ -100,6 +101,15 @@ jobs:
             --bin "$PWD/target/debug/openkakao-cli"
           python3 scripts/audit-menubar-layout.py /tmp/layout-audit > /tmp/layout-audit/report.txt
           python3 scripts/check-menubar-layout.py /tmp/layout-audit
+
+      - name: Validate Tauri launcher contracts
+        run: |
+          sh -n scripts/build-jarvis-desktop.sh
+          sh -n scripts/install-jarvis-desktop.sh
+          sh -n scripts/build-auto-reply-menubar.sh
+          sh -n scripts/install-auto-reply-menubar.sh
+          sh -n scripts/start-auto-reply-menubar.command
+          /usr/bin/plutil -lint desktop/launchd/com.openkakao.jarvis.desktop.plist.example
 
   desktop:
     name: Tauri desktop and focused Python tests
@@ -128,6 +138,7 @@ jobs:
           tests.test_auto_reply_reference_search
           tests.test_auto_reply_knowledge_graph
           tests.test_jarvis_unit4
+          tests.test_jarvis_desktop_launchers
           tests.test_local_mlx_model_readiness
           tests.test_verify_local_models
 

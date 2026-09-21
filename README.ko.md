@@ -19,7 +19,7 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 2. 새 메시지가 오면 답장 후보인지 판단합니다.
 3. 예전 대화와 내 말투를 참고해 답 초안을 만듭니다.
 4. 카카오톡 입력창에 대신 입력해 보냅니다. (접근성 API)
-5. 메뉴바 Extra는 골드 코어와 우측 상단 gear만 두고, 제어는 그 gear로 여는 통합 설정에서 다룹니다.
+5. Tauri 메뉴바 앱은 골드 코어와 우측 상단 gear만 두고, 제어는 그 gear로 여는 통합 설정에서 다룹니다.
 
 카카오 서버에 별도로 로그인해서 메시지를 빼 오는 봇이 **아닙니다.**
 **맥에 설치된 카카오톡 앱**이 있어야 하고, 그 앱이 만든 로컬 DB를 읽습니다.
@@ -176,7 +176,7 @@ cargo build --release
 
 macOS **시스템 설정 → 개인정보 보호 및 보안**에서:
 
-1. **전체 디스크 접근 권한** — 터미널(또는 메뉴바 앱 `AutoReplyMenu`) 허용
+1. **전체 디스크 접근 권한** — 터미널(또는 메뉴바 앱 `OpenKakao Jarvis`) 허용
 2. **손쉬운 사용** — 답을 카카오톡에 입력하려면 허용
 
 카카오톡은 **실행 중**이어야 합니다.
@@ -224,10 +224,12 @@ reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ### 5. 메뉴바로 켜기 (초보자에게 추천)
 
 ```bash
-sh scripts/build-auto-reply-menubar.sh
+sh scripts/build-jarvis-desktop.sh
+sh scripts/install-jarvis-desktop.sh
+sh scripts/start-auto-reply-menubar.command
 ```
 
-만들어진 `AutoReplyMenu.app`을 실행하면 Extra에 골드 코어와 우측 상단 gear만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 모두 그 gear의 통합 설정에서 다룹니다.
+`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 골드 코어와 우측 상단 gear만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 모두 그 gear의 통합 설정에서 다룹니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
 
 온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
@@ -235,9 +237,9 @@ sh scripts/build-auto-reply-menubar.sh
 
 ---
 
-## Jarvis Extra와 지식 그래프
+## Jarvis Tauri와 지식 그래프
 
-Extra는 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 대량 검증, 기능 점검, 권한 설정 UI는 없습니다. 제어는 gear를 눌러 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
+Tauri 메뉴바 창은 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 대량 검증, 기능 점검, 권한 설정 UI는 없습니다. 제어는 gear를 눌러 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
 
 카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
 
@@ -245,7 +247,8 @@ Extra는 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 
 
 다이어그램 본문(노드·카드·레이블)은 한국어로 작성했습니다. Archify Viewer UI와 `<html lang>`은 영어 폴백입니다. 이 HTML은 로컬 showcase validate / deliver / visual-check를 통과한 산출물이며, 지각적 AHP나 설치된 앱 재빌드를 증명하지 않습니다.
 
-- [Jarvis Extra 렌더와 운영 파이프라인](docs/architecture/openkakao-auto-reply.html)
+- [Tauri cutover 아키텍처](docs/architecture/jarvis-openkakao-units1-4.html)
+- [Jarvis Three.js 렌더 생명주기](docs/architecture/jarvis-three-render-lifecycle.html)
 - [GraphRAG 드릴다운 시퀀스](docs/architecture/openkakao-graphrag.html)
 
 ---
@@ -255,7 +258,8 @@ Extra는 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 
 |------|------|
 | `src/` | Rust 코어. 로컬 DB 읽기, 전송, 자동 답장 호스트 |
 | `scripts/` | 파이썬 워커, DB 감시, 메뉴바, 설치 스크립트 |
-| `macos/AutoReplyMenu/` | 메뉴바 앱 (Swift) |
+| `desktop/` | Tauri v2 + Three.js 메뉴바 앱과 Rust bridge |
+| `macos/AutoReplyMenu/` | legacy Swift Extra (명시적 opt-in 경로) |
 | `tests/` | 동작이 깨지지 않는지 확인하는 테스트 |
 | `docs/` | 운영 메모와 Archify 다이어그램 (`docs/architecture/`) |
 | `config.example.toml` | 설정 예시. 이걸 복사해 씁니다 |

@@ -77,9 +77,16 @@ def _find_cli_bin() -> Path:
     bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
     if bundle_bin.is_file():
         return bundle_bin
-    app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
-    if app_bin.is_file():
-        return app_bin
+    tauri_app_bin = Path(
+        "/Applications/OpenKakao Jarvis.app/Contents/Resources/bin/openkakao-cli"
+    )
+    if tauri_app_bin.is_file():
+        return tauri_app_bin
+    legacy_app_bin = Path(
+        "/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli"
+    )
+    if legacy_app_bin.is_file():
+        return legacy_app_bin
     repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
     if repo_bin.is_file():
         return repo_bin

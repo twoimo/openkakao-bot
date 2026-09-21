@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Jarvis / openkakao architecture after Units 1–4",
+    "title": "Jarvis / openkakao architecture after Tauri cutover",
     "quality_profile": "showcase",
     "viewBox": [
       1380,
@@ -125,8 +125,8 @@
     {
       "id": "swift",
       "type": "frontend",
-      "label": "Swift AutoReplyMenu",
-      "sublabel": "live Extra · pid 20042",
+      "label": "Swift AutoReplyMenu (legacy)",
+      "sublabel": "opt-in compatibility path",
       "pos": [
         250,
         560
@@ -140,7 +140,7 @@
       "id": "tauri",
       "type": "frontend",
       "label": "Jarvis Tauri desktop",
-      "sublabel": "source landed; no cutover",
+      "sublabel": "primary app · LaunchAgent",
       "pos": [
         710,
         560
@@ -228,8 +228,8 @@
       "dot": "amber",
       "title": "Live boundary",
       "items": [
-        "Swift AutoReplyMenu pid 20042 remains live Extra.",
-        "Tauri signed-app cutover is still an open Unit 5 proof."
+        "OpenKakao Jarvis.app is the primary menu-bar app.",
+        "The legacy Swift Extra is backed up and disabled."
       ]
     },
     {

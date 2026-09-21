@@ -1,48 +1,63 @@
 #!/bin/sh
-# Launch the AutoReply menu extra. Does not send, focus KakaoTalk,
-# bake a runtime, or restart LaunchAgents. Instant actions only nudge the
-# existing worker via scheduled due_at + operator-request.json.
+# Start the installed Tauri app. Swift remains an explicit legacy backend.
 set -eu
-umask 077
+
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-APP=$("$ROOT/scripts/build-auto-reply-menubar.sh")
-BIN="$APP/Contents/MacOS/AutoReplyMenu"
-PYTHON=${AUTO_REPLY_PYTHON:-/opt/homebrew/opt/python@3.11/bin/python3.11}
-if [ ! -x "$PYTHON" ]; then
-  PYTHON=/usr/bin/python3
-fi
-if [ -n "${AUTO_REPLY_STATE_ROOT:-}" ]; then
-  STATE_ROOT="$AUTO_REPLY_STATE_ROOT"
-elif [ -n "${BUJAMENTOR_STATE_ROOT:-}" ]; then
-  STATE_ROOT="$BUJAMENTOR_STATE_ROOT"
-elif [ -f "$HOME/Library/Application Support/openkakao/auto-reply/enrollment.json" ]; then
-  STATE_ROOT="$HOME/Library/Application Support/openkakao/auto-reply"
-elif [ -f "$HOME/Library/Application Support/openkakao/bujamentor/enrollment.json" ]; then
-  STATE_ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
-else
-  STATE_ROOT="$HOME/Library/Application Support/openkakao/auto-reply"
-fi
-LOGS_DIR=${AUTO_REPLY_MENUBAR_LOGS:-"$HOME/Library/Logs/AutoReplyMenu"}
+BACKEND=${OPENKAKAO_MENUBAR_BACKEND:-tauri}
 
-/usr/bin/pkill -f "AutoReplyMenu.app/Contents/MacOS/AutoReplyMenu" >/dev/null 2>&1 || true
+case "$BACKEND" in
+  swift)
+    exec "$ROOT/scripts/start-swift-auto-reply-menubar.command" "$@"
+    ;;
+  tauri)
+    ;;
+  *)
+    echo "start-auto-reply-menubar: OPENKAKAO_MENUBAR_BACKEND must be tauri or swift" >&2
+    exit 2
+    ;;
+esac
 
-set -- \
-  --python "$PYTHON" \
-  --script "$ROOT/scripts/auto-reply-menubar.py" \
-  --state-root "$STATE_ROOT" \
-  --logs-dir "$LOGS_DIR"
-if [ -n "${AUTO_REPLY_EXPECTED_COMMAND_SHA256:-}" ]; then
-  set -- "$@" --expected-command-sha256 "$AUTO_REPLY_EXPECTED_COMMAND_SHA256"
+APPLICATIONS_DIR=${OPENKAKAO_APPLICATIONS_DIR:-/Applications}
+LAUNCH_AGENTS_DIR=${OPENKAKAO_LAUNCH_AGENTS_DIR:-"$HOME/Library/LaunchAgents"}
+LAUNCHCTL=${OPENKAKAO_LAUNCHCTL:-/bin/launchctl}
+PLISTBUDDY=${OPENKAKAO_PLISTBUDDY:-/usr/libexec/PlistBuddy}
+LABEL="com.openkakao.jarvis.desktop"
+UID_NOW=$(id -u)
+DOMAIN="gui/$UID_NOW"
+SERVICE="$DOMAIN/$LABEL"
+APP="$APPLICATIONS_DIR/OpenKakao Jarvis.app"
+BIN="$APP/Contents/MacOS/openkakao-jarvis-desktop"
+PLIST="$LAUNCH_AGENTS_DIR/$LABEL.plist"
+
+if [ ! -x "$BIN" ]; then
+  echo "OpenKakao Jarvis is not installed at $APP" >&2
+  echo "build and install it with scripts/build-auto-reply-menubar.sh and scripts/install-auto-reply-menubar.sh" >&2
+  exit 1
 fi
-if [ -n "${AUTO_REPLY_ROOM:-}" ]; then
-  set -- "$@" --room "$AUTO_REPLY_ROOM"
+if [ ! -f "$PLIST" ]; then
+  echo "OpenKakao Jarvis LaunchAgent is not installed: $PLIST" >&2
+  echo "run scripts/install-auto-reply-menubar.sh first" >&2
+  exit 1
 fi
-CLI=${AUTO_REPLY_BIN:-"$ROOT/target/release/openkakao-cli"}
-if [ -x "$CLI" ]; then
-  set -- "$@" --bin "$CLI"
+if [ ! -x "$LAUNCHCTL" ] || [ ! -x "$PLISTBUDDY" ]; then
+  echo "start-auto-reply-menubar: required macOS launch tools are unavailable" >&2
+  exit 2
 fi
 
-# Launch the extra directly so argv reaches main. `open --args` is unreliable
-# for this LSUIElement helper.
-nohup "$BIN" "$@" >/dev/null 2>&1 &
-printf '메뉴바를 시작했습니다. pid %s\n' "$!"
+CONFIGURED_BIN=$("$PLISTBUDDY" -c 'Print :ProgramArguments:0' "$PLIST" 2>/dev/null || true)
+if [ "$CONFIGURED_BIN" != "$BIN" ]; then
+  echo "OpenKakao Jarvis LaunchAgent does not point at the installed app" >&2
+  echo "run scripts/install-auto-reply-menubar.sh to refresh it" >&2
+  exit 1
+fi
+
+if ! "$LAUNCHCTL" print "$SERVICE" >/dev/null 2>&1; then
+  "$LAUNCHCTL" bootstrap "$DOMAIN" "$PLIST"
+fi
+"$LAUNCHCTL" kickstart -k "$SERVICE"
+if ! "$LAUNCHCTL" print "$SERVICE" >/dev/null 2>&1; then
+  echo "OpenKakao Jarvis did not register in $DOMAIN" >&2
+  exit 3
+fi
+
+printf 'started: %s\n' "$SERVICE"

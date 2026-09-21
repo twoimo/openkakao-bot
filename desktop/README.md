@@ -63,17 +63,24 @@ timeouts (25/8 seconds), cancellation, and the 4 MiB stdout limit are unchanged.
 Voice remains explicitly started, with its existing abort protocol; it does not
 inherit the short snapshot timeout.
 
-From the repository root, prepare the matching CLI, then build an unsigned app:
+From the repository root, build the primary menu-bar bundle with the repository
+script. The script stages the matching release CLI first and uses an unsigned
+bundle unless `OPENKAKAO_SIGN_IDENTITY` is explicitly supplied:
 
 ```sh
-cargo build --bin openkakao-cli
-cd desktop
-npm run tauri -- build --debug --bundles app --no-sign
+sh scripts/build-jarvis-desktop.sh
 ```
 
-For release, first use `cargo build --release --bin openkakao-cli`, then omit
-`--debug`. Native macOS builds are supported here; cross/universal CLI staging
-and signed/notarized distribution need separate packaging work.
+Install the resulting app and its LaunchAgent only after reviewing the bundle:
+
+```sh
+sh scripts/install-jarvis-desktop.sh
+```
+
+For a debug bundle, use `cd desktop && npm run tauri -- build --debug --bundles
+app --no-sign` after preparing the debug CLI. Native macOS builds are supported
+here; cross/universal CLI staging and signed/notarized distribution need
+separate packaging work.
 
 Focused verification: `cargo test --manifest-path desktop/src-tauri/Cargo.toml`,
 and `npm test` / `npm run build` in `desktop`. Fixtures exercise moved installed

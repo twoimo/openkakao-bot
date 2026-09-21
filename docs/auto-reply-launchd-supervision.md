@@ -366,7 +366,21 @@ history was pruned at the retention boundary or a sequence gap exists, never
 that retained entries are hidden. The generated
 `open-auto-reply-tui.command` intentionally uses the default redacted mode.
 
-The companion menu extra is also read-only for Kakao/AX. `scripts/start-auto-reply-menubar.command` builds `macos/AutoReplyMenu` into an `LSUIElement` app that sits among the clock-adjacent extras, polls `scripts/auto-reply-menubar.py`, draws the detect→confirm pipeline as graphics (status, tiles, lamps, capsules) instead of a text dump, and keeps an id-only Rooms catalog. Instant auto-reply / GeekNews panel buttons expire already-scheduled jobs and write `operator-request.json` for the existing worker; the extra never AX-sends, focuses KakaoTalk, retries leftovers, bakes a runtime, or restarts this LaunchAgent. The catalog file is operator UI only and is not a live worker activation path. Do not add the extra to the session-monitor bake. Optional login-item launch is an operator action, separate from `com.openkakao.auto-reply.session-monitor`.
+The primary menu-bar app is the Tauri bundle installed by
+`scripts/install-jarvis-desktop.sh`; its `com.openkakao.jarvis.desktop`
+LaunchAgent owns the panel and its Rust/Python bridge. The former Swift
+companion is read-only for Kakao/AX and remains available only through the
+explicit `OPENKAKAO_MENUBAR_BACKEND=swift`
+`scripts/start-swift-auto-reply-menubar.command` path. It builds
+`macos/AutoReplyMenu` into an `LSUIElement` app, polls
+`scripts/auto-reply-menubar.py`, and keeps an id-only Rooms catalog. Instant
+auto-reply / GeekNews panel buttons expire already-scheduled jobs and write
+`operator-request.json` for the existing worker; the legacy extra never
+AX-sends, focuses KakaoTalk, retries leftovers, bakes a runtime, or restarts
+this LaunchAgent. The catalog file is operator UI only and is not a live worker
+activation path. Do not add the legacy extra to the session-monitor bake.
+Optional login-item launch is an operator action, separate from
+`com.openkakao.auto-reply.session-monitor`.
 
 
 The status helper accepts repeated rooms, or discovers private numeric room

@@ -6,12 +6,14 @@
   <string>com.openkakao.jarvis.desktop</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/twoimo/Documents/projects/openkakao-bot/desktop/src-tauri/target/debug/bundle/macos/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop</string>
+    <string>/Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop</string>
   </array>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
   <key>KeepAlive</key>
   <false/>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
   <key>ProcessType</key>
   <string>Interactive</string>
 </dict>
