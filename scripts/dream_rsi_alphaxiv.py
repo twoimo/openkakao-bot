@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -111,6 +112,11 @@ def _resolve_alphaxiv_cli(requested: Any) -> tuple[str | None, str | None]:
     if not found:
         return None, "cli_missing"
     return found, None
+
+
+def _resolve_orx_cli(requested: Any) -> tuple[str | None, str | None]:
+    """Resolve the OpenResearch CLI with the same executable-path guard."""
+    return _resolve_alphaxiv_cli(requested)
 
 
 def _bytes(value: Any) -> bytes:
@@ -314,6 +320,7 @@ def _paper_unavailable(
     resolved_cli: str | None,
     query: str,
     reason: str,
+    provider: str = "alphaxiv_cli",
     commands: list[dict[str, Any]] | None = None,
     selected_paper: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -321,7 +328,7 @@ def _paper_unavailable(
         "status": "unavailable",
         "reason": reason,
         "analysis_available": False,
-        "provider": "alphaxiv_cli",
+        "provider": provider,
         "query": query,
         "selection_method": "none",
         "selected_paper": selected_paper,
@@ -336,14 +343,209 @@ def _paper_unavailable(
     }
 
 
+def collect_orx_paper_report(
+    query: str = DEFAULT_QUERY,
+    *,
+    orx_cli: str = "orx",
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    paper_id: str = DREAM_RSI_PAPER_ID,
+) -> dict[str, Any]:
+    """Collect one identity-verified alphaXiv report through OpenResearch."""
+    requested_cli = str(orx_cli)
+    try:
+        safe_query = _validate_query(query)
+    except ValueError as exc:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=None,
+            query=str(query)[:MAX_QUERY_CHARS],
+            reason=f"invalid_query:{exc}",
+            provider="orx_cli",
+        )
+    try:
+        selected_id = _validate_paper_id(paper_id)
+    except ValueError:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=None,
+            query=safe_query,
+            reason="invalid_paper_id",
+            provider="orx_cli",
+        )
+    try:
+        timeout_value = float(timeout)
+    except (TypeError, ValueError):
+        timeout_value = float("nan")
+    if not math.isfinite(timeout_value):
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=None,
+            query=safe_query,
+            reason="invalid_timeout",
+            provider="orx_cli",
+        )
+    timeout_value = min(MAX_TIMEOUT_SECONDS, max(0.1, timeout_value))
+
+    executable, resolve_error = _resolve_orx_cli(orx_cli)
+    if resolve_error or not executable:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=None,
+            query=safe_query,
+            reason=resolve_error or "cli_missing",
+            provider="orx_cli",
+        )
+
+    report_text, command = _run_alphaxiv(
+        executable,
+        ("paper", selected_id, "--source", "alphaxiv", "--no-telemetry"),
+        timeout=timeout_value,
+        env=dict(os.environ),
+        expect_json=False,
+        operation="orx_paper",
+    )
+    commands = [command]
+    selected = {
+        "paper_id": selected_id,
+        "title": "",
+        "url": f"https://www.alphaxiv.org/abs/{selected_id}",
+    }
+    if report_text is None:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=executable,
+            query=safe_query,
+            reason=str(command.get("reason") or "paper_unavailable"),
+            provider="orx_cli",
+            commands=commands,
+            selected_paper=selected,
+        )
+
+    lines = report_text.splitlines()
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.strip()),
+        None,
+    )
+    if header_index is None:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=executable,
+            query=safe_query,
+            reason="incomplete_summary_response",
+            provider="orx_cli",
+            commands=commands,
+            selected_paper=selected,
+        )
+    identity = re.compile(
+        rf"^alphaXiv:\s*https?://(?:www\.)?alphaxiv\.org/abs/{re.escape(selected_id)}(?:v\d+)?\s*$"
+    )
+    if not identity.fullmatch(lines[header_index].strip()):
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=executable,
+            query=safe_query,
+            reason="identity_mismatch",
+            provider="orx_cli",
+            commands=commands,
+            selected_paper=selected,
+        )
+
+    summary = "\n".join(lines[header_index + 1 :]).strip()
+    if not summary:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=executable,
+            query=safe_query,
+            reason="incomplete_summary_response",
+            provider="orx_cli",
+            commands=commands,
+            selected_paper=selected,
+        )
+    if len(summary) > MAX_SUMMARY_CHARS:
+        return _paper_unavailable(
+            requested_cli=requested_cli,
+            resolved_cli=executable,
+            query=safe_query,
+            reason="text_too_long",
+            provider="orx_cli",
+            commands=commands,
+            selected_paper=selected,
+        )
+
+    return {
+        "status": "ok",
+        "reason": "orx_report_verified",
+        "analysis_available": True,
+        "provider": "orx_cli",
+        "query": safe_query,
+        "selection_method": "direct_paper_id",
+        "selected_paper": selected,
+        "evidence": {
+            "kind": "orx_alphaxiv_paper_report",
+            "summary": summary,
+            "source_operation": "orx_paper",
+        },
+        "string_similarity_used": False,
+        "cli": {
+            "requested": requested_cli,
+            "resolved": executable,
+            "isolated_context": False,
+            "commands": commands,
+        },
+    }
+
+
 def collect_paper_report(
     query: str = DEFAULT_QUERY,
     *,
     alphaxiv_cli: str = "alphaxiv",
+    orx_cli: str = "orx",
+    paper_source: str = "alphaxiv",
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     paper_id: str | None = None,
 ) -> dict[str, Any]:
-    """Collect deterministic paper evidence through the alphaXiv CLI only."""
+    """Collect deterministic paper evidence through one selected provider."""
+    if paper_source == "orx":
+        return collect_orx_paper_report(
+            query,
+            orx_cli=orx_cli,
+            timeout=timeout,
+            paper_id=paper_id or DREAM_RSI_PAPER_ID,
+        )
+    if paper_source == "auto":
+        executable, _ = _resolve_alphaxiv_cli(alphaxiv_cli)
+        if executable:
+            return collect_paper_report(
+                query,
+                alphaxiv_cli=alphaxiv_cli,
+                orx_cli=orx_cli,
+                paper_source="alphaxiv",
+                timeout=timeout,
+                paper_id=paper_id,
+            )
+        orx_executable, _ = _resolve_orx_cli(orx_cli)
+        if orx_executable:
+            return collect_orx_paper_report(
+                query,
+                orx_cli=orx_cli,
+                timeout=timeout,
+                paper_id=paper_id or DREAM_RSI_PAPER_ID,
+            )
+        return _paper_unavailable(
+            requested_cli=str(orx_cli),
+            resolved_cli=None,
+            query=str(query)[:MAX_QUERY_CHARS],
+            reason="cli_missing",
+            provider="orx_cli",
+        )
+    if paper_source != "alphaxiv":
+        return _paper_unavailable(
+            requested_cli=str(alphaxiv_cli),
+            resolved_cli=None,
+            query=str(query)[:MAX_QUERY_CHARS],
+            reason="invalid_paper_source",
+        )
+
     requested_cli = str(alphaxiv_cli)
     try:
         safe_query = _validate_query(query)
@@ -859,6 +1061,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="alphaxiv",
         help="bare alphaxiv executable name or absolute executable path",
     )
+    parser.add_argument(
+        "--paper-source",
+        choices=("auto", "alphaxiv", "orx"),
+        default="auto",
+        help="paper provider: prefer alphaxiv then orx, or force one provider",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument(
         "--provenance-stdin",
@@ -890,6 +1098,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     paper = collect_paper_report(
         args.query,
         alphaxiv_cli=args.alphaxiv_cli,
+        paper_source=args.paper_source,
         timeout=args.timeout,
         paper_id=args.paper_id,
     )

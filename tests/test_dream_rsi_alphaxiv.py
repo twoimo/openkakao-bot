@@ -15,11 +15,13 @@ from scripts.auto_reply_dream_rsi import load_replay_rows
 from scripts.dream_rsi_alphaxiv import (
     DPO_EVAL_UNAVAILABLE,
     DREAM_RSI_PAPER_ID,
+    MAX_CLI_JSON_BYTES,
     build_dpo_provenance,
     build_exploration_provenance,
     build_provenance_report,
     build_runtime_model_probe_provenance,
     build_parser,
+    collect_orx_paper_report,
     collect_paper_report,
     main,
 )
@@ -188,6 +190,148 @@ class AlphaXivProvenanceTests(unittest.TestCase):
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["reason"], "incomplete_summary_response")
         self.assertIsNone(report["evidence"])
+
+
+class OpenResearchProviderTests(unittest.TestCase):
+    @staticmethod
+    def _report(paper_id: str = DREAM_RSI_PAPER_ID, body: str = "# Report\nverified") -> bytes:
+        return f"alphaXiv: https://www.alphaxiv.org/abs/{paper_id}\n{body}\n".encode()
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_success_requires_matching_identity_and_exact_argv(self, _which, run):
+        run.return_value = _completed(self._report(), stderr=b"e" * 3000)
+
+        report = collect_orx_paper_report("DREAM-RSI")
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["provider"], "orx_cli")
+        self.assertEqual(report["evidence"]["kind"], "orx_alphaxiv_paper_report")
+        self.assertEqual(report["evidence"]["source_operation"], "orx_paper")
+        self.assertFalse(report["string_similarity_used"])
+        self.assertEqual(len(report["cli"]["commands"][0]["stderr"]), 2000)
+        call = run.call_args
+        self.assertEqual(
+            call.args[0],
+            [
+                "/mock/orx",
+                "paper",
+                DREAM_RSI_PAPER_ID,
+                "--source",
+                "alphaxiv",
+                "--no-telemetry",
+            ],
+        )
+        self.assertFalse(call.kwargs["shell"])
+        self.assertEqual(call.kwargs["stdin"], subprocess.DEVNULL)
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_identity_mismatch_fails_closed(self, _which, run):
+        run.return_value = _completed(self._report("2609.99999"))
+        report = collect_orx_paper_report("DREAM-RSI")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "identity_mismatch")
+        self.assertEqual(report["provider"], "orx_cli")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value=None)
+    def test_orx_missing_cli_fails_closed(self, _which):
+        report = collect_orx_paper_report("DREAM-RSI")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "cli_missing")
+        self.assertEqual(report["provider"], "orx_cli")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_nonzero_fails_closed(self, _which, run):
+        run.return_value = _completed(returncode=4, stderr=b"failed")
+        report = collect_orx_paper_report("DREAM-RSI")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "cli_nonzero")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_timeout_fails_closed(self, _which, run):
+        run.side_effect = subprocess.TimeoutExpired(["orx"], 1)
+        report = collect_orx_paper_report("DREAM-RSI", timeout=1)
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "cli_timeout")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_oversized_stdout_fails_closed(self, _which, run):
+        run.return_value = _completed(b"x" * (MAX_CLI_JSON_BYTES + 1))
+        report = collect_orx_paper_report("DREAM-RSI")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "output_too_large")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_orx_empty_body_fails_closed(self, _which, run):
+        run.return_value = _completed(
+            f"alphaXiv: https://www.alphaxiv.org/abs/{DREAM_RSI_PAPER_ID}\n\n".encode()
+        )
+        report = collect_orx_paper_report("DREAM-RSI")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "incomplete_summary_response")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    def test_orx_invalid_paper_id_fails_before_subprocess(self, run):
+        report = collect_orx_paper_report("DREAM-RSI", paper_id="../2609.14858")
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["reason"], "invalid_paper_id")
+        run.assert_not_called()
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which")
+    def test_auto_prefers_alphaxiv_when_both_resolve(self, which, run):
+        which.side_effect = lambda name: f"/mock/{name}" if name in {"alphaxiv", "orx"} else None
+        run.side_effect = [
+            _completed(b"context selected"),
+            _completed(
+                json.dumps(
+                    {"paper_id": DREAM_RSI_PAPER_ID, "title": "DREAM-RSI Research"}
+                ).encode()
+            ),
+            _completed(json.dumps({"summary": "alphaXiv verified summary"}).encode()),
+        ]
+
+        report = collect_paper_report(
+            "DREAM-RSI",
+            paper_source="auto",
+            paper_id=DREAM_RSI_PAPER_ID,
+        )
+
+        self.assertEqual(report["provider"], "alphaxiv_cli")
+        self.assertTrue(all(call.args[0][0] != "/mock/orx" for call in run.call_args_list))
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which")
+    def test_auto_falls_back_to_orx_when_alphaxiv_is_absent(self, which, run):
+        which.side_effect = lambda name: "/mock/orx" if name == "orx" else None
+        run.return_value = _completed(self._report())
+
+        report = collect_paper_report(
+            "DREAM-RSI",
+            paper_source="auto",
+            paper_id=DREAM_RSI_PAPER_ID,
+        )
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["provider"], "orx_cli")
+        self.assertEqual(run.call_args.args[0][0], "/mock/orx")
+
+    @mock.patch("scripts.dream_rsi_alphaxiv.subprocess.run")
+    @mock.patch("scripts.dream_rsi_alphaxiv.shutil.which", return_value="/mock/orx")
+    def test_main_forced_orx_returns_ok(self, _which, run):
+        run.return_value = _completed(self._report())
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = main(["--paper-source", "orx"])
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["paper_analysis"]["provider"], "orx_cli")
 
 
 class ExplorationAndDpoTests(unittest.TestCase):

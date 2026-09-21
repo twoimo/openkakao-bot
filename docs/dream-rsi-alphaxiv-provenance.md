@@ -36,14 +36,29 @@ timeout, non-zero exit, oversized/invalid JSON, identity mismatch, or an
 incomplete summary returns `paper_analysis.status="unavailable"` with
 `evidence=null`.
 
-As verified on 2026-09-21 in this repository environment, the persistent
-`PATH` has no alphaXiv CLI that implements the paper-analysis commands above.
-PyPI `alphaxiv==0.0.13` is instead a TTY-based W&B experiment synchronization
-CLI and provides none of the required `search`, `context`, or `paper summary`
-commands. `orx` is installed, but it is a different openresearch CLI and is not
-used as a substitute. Therefore `scripts/dream_rsi_alphaxiv.py` continues to
-fail closed with `paper_analysis.status="unavailable"` and `evidence=null`; no
-successful alphaXiv paper analysis is claimed for the current machine state.
+### OpenResearch `orx` provider
+
+The module supports two explicitly labelled paper providers. `--paper-source
+auto` prefers the `alphaxiv` CLI when it resolves and otherwise falls back to
+the installed OpenResearch `orx` CLI; `--paper-source alphaxiv` and
+`--paper-source orx` force only the named provider. A provider execution
+failure never triggers a second-provider success path.
+
+The `orx` path invokes `orx paper <paper-id> --source alphaxiv --no-telemetry`
+as a fixed argv list with `shell=False`, a finite bounded timeout, and bounded
+stdout/stderr handling. It accepts the report only when the first non-empty
+stdout line identifies the same requested paper id at
+`alphaxiv.org/abs/<paper-id>`; the remaining non-empty body becomes the report
+summary. It never uses string similarity and never substitutes a bundled or
+static local copy of the paper. Failures remain
+`paper_analysis.status="unavailable"`, with the attempted provider labelled as
+`alphaxiv_cli` or `orx_cli`.
+
+On 2026-09-21, the installed OpenResearch CLI was measured with `orx paper
+2609.14858`: it exited 0 and returned the real alphaXiv report headed by
+`alphaXiv: https://www.alphaxiv.org/abs/2609.14858`, followed by the report
+body. This is a paper-retrieval provenance path only. It does not train,
+promote, or replace any model.
 
 ## Provenance report schema
 
