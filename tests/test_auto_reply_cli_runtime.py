@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import base64
 import fcntl
 import hashlib
 import json
@@ -446,6 +447,63 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
                     "media_marker": str(marker),
                     "media_manifest": manifest,
                 },
+            }
+
+    @staticmethod
+    @contextmanager
+    def _fake_qwen27b_gateway(module, content, *, loaded=True):
+        """Serve one bounded local Qwen 27B generation without network access."""
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit=None):
+                return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+        calls = []
+        payloads = []
+
+        def local_urlopen(request, timeout=None):
+            calls.append((request.full_url, request.data, timeout))
+            if request.full_url == "http://127.0.0.1:11234/v1/models":
+                return Response(
+                    {
+                        "data": [
+                            {
+                                "id": module.QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
+                                "owned_by": "mlx-serve",
+                                "loaded": loaded,
+                                "state": "ready" if loaded else "unloaded",
+                            }
+                        ]
+                    }
+                )
+            if request.full_url == "http://127.0.0.1:11234/v1/chat/completions":
+                if not loaded:
+                    raise AssertionError("unloaded Qwen 27B reached generation")
+                payloads.append(json.loads(request.data.decode("utf-8")))
+                return Response({"choices": [{"message": {"content": content}}]})
+            raise AssertionError(f"unexpected local URL: {request.full_url}")
+
+        with (
+            mock.patch.object(
+                module.auto_reply_ondevice,
+                "_local_only_urlopen",
+                side_effect=local_urlopen,
+            ),
+            mock.patch.object(module.urllib.request, "urlopen") as external_urlopen,
+        ):
+            yield {
+                "calls": calls,
+                "payloads": payloads,
+                "external_urlopen": external_urlopen,
             }
 
     def test_response_delay_requires_room_statistics(self):
@@ -14493,6 +14551,9 @@ print(json.dumps({
                     clear=False,
                 ),
                 mock.patch.object(
+                    module, "_reply_turn_hold_reason", return_value=None
+                ),
+                mock.patch.object(
                     module, "privacy_attestation_current", return_value=True
                 ),
                 mock.patch.object(module, "runner_is_trusted", return_value=True),
@@ -14773,6 +14834,9 @@ print(json.dumps({
                         },
                         clear=False,
                     ),
+                    mock.patch.object(
+                        module, "_reply_turn_hold_reason", return_value=None
+                    ),
                     mock.patch.object(module, "privacy_attestation_current", return_value=True),
                     mock.patch.object(module, "runner_is_trusted", return_value=True),
                     mock.patch.object(module, "fetch_link_previews", return_value=[]),
@@ -14821,6 +14885,9 @@ print(json.dumps({
         missing["image_rect"] = "0,0,200,200"
         with (
             mock.patch.dict(os.environ, environment, clear=False),
+            mock.patch.object(
+                module, "_reply_turn_hold_reason", return_value=None
+            ),
             mock.patch.object(module, "privacy_attestation_current", return_value=True),
             mock.patch.object(module, "runner_is_trusted", return_value=True),
             mock.patch.object(module, "_recover_local_media_bundle", return_value=None) as recover,
@@ -14852,6 +14919,9 @@ print(json.dumps({
             with (
                 mock.patch.dict(os.environ, environment, clear=False),
                 mock.patch.object(
+                    module, "_reply_turn_hold_reason", return_value=None
+                ),
+                mock.patch.object(
                     module, "privacy_attestation_current", return_value=True
                 ),
                 mock.patch.object(module, "runner_is_trusted", return_value=True),
@@ -14878,32 +14948,19 @@ print(json.dumps({
                 message_type=27,
             ) as media:
                 evidence_id = f"media:{media['manifest']['bundle_sha256']}"
-                captured = {}
-
-                def fake_run(command, **kwargs):
-                    captured["command"] = list(command)
-                    captured["kwargs"] = kwargs
-                    response = {
-                        "should_reply": True,
-                        "reply": "세 장 모두 봤어요",
-                        "category": "social",
-                        "reason": "useful_image_response",
-                        "evidence_ids": [evidence_id],
-                    }
-                    event = {
-                        "type": "item.completed",
-                        "item": {
-                            "type": "agent_message",
-                            "text": json.dumps(response, ensure_ascii=False),
-                        },
-                    }
-                    return (
-                        0,
-                        (json.dumps(event, ensure_ascii=False) + "\n").encode(),
-                        b"",
-                    )
+                response = {
+                    "should_reply": True,
+                    "reply": "세 장 모두 봤어요",
+                    "category": "social",
+                    "reason": "useful_image_response",
+                    "evidence_ids": [evidence_id],
+                }
 
                 with (
+                    self._fake_qwen27b_gateway(
+                        module,
+                        json.dumps(response, ensure_ascii=False),
+                    ) as gateway,
                     mock.patch.object(
                         module, "privacy_attestation_current", return_value=True
                     ),
@@ -14922,8 +14979,8 @@ print(json.dumps({
                         module, "_finish_model_call_success", return_value=True
                     ),
                     mock.patch.object(
-                        module, "_run_bounded_process", side_effect=fake_run
-                    ),
+                        module, "_run_bounded_process"
+                    ) as process_runner,
                 ):
                     result = module.generate_reply(
                         "사진들 봐줘",
@@ -14938,20 +14995,27 @@ print(json.dumps({
                         media_evidence_id=evidence_id,
                     )
 
-                command = captured["command"]
-                image_arguments = [
-                    command[index + 1]
-                    for index, value in enumerate(command[:-1])
-                    if value == "--image"
-                ]
+                self.assertEqual(len(gateway["payloads"]), 1)
+                payload = gateway["payloads"][0]
                 self.assertEqual(
-                    image_arguments,
-                    [str(path) for path in media["paths"]],
+                    payload["model"],
+                    module.QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
                 )
-                self.assertEqual(command[-1], "-")
-                prompt = captured["kwargs"]["stdin_bytes"].decode("utf-8")
+                content = payload["messages"][1]["content"]
+                self.assertIsInstance(content, list)
+                prompt = content[0]["text"]
                 self.assertIn('"image_input_count": 3', prompt)
                 self.assertIn(evidence_id, prompt)
+                image_bytes = [
+                    base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+                    for part in content[1:]
+                ]
+                self.assertEqual(
+                    image_bytes,
+                    [path.read_bytes() for path in media["paths"]],
+                )
+                gateway["external_urlopen"].assert_not_called()
+                process_runner.assert_not_called()
                 self.assertTrue(result["should_reply"])
                 self.assertEqual(result["evidence_ids"], [evidence_id])
 
@@ -14976,7 +15040,7 @@ print(json.dumps({
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": module.QWEN38_27B_MODEL_ID,
                         "updated_at": 1,
                     }
                 ),
@@ -14984,25 +15048,19 @@ print(json.dumps({
             )
             with self._owned_image_bundle(module, count=1, message_type=2) as media:
                 evidence_id = f"media:{media['manifest']['bundle_sha256']}"
-                captured = {}
-
-                def fake_run(command, **kwargs):
-                    captured["command"] = list(command)
-                    captured["kwargs"] = kwargs
-                    response = {
-                        "should_reply": True,
-                        "reply": "메뉴판이네",
-                        "category": "social",
-                        "reason": "useful_image_response",
-                        "evidence_ids": [evidence_id],
-                    }
-                    return (
-                        0,
-                        (json.dumps(response, ensure_ascii=False) + "\n").encode(),
-                        b"",
-                    )
+                response = {
+                    "should_reply": True,
+                    "reply": "메뉴판이네",
+                    "category": "social",
+                    "reason": "useful_image_response",
+                    "evidence_ids": [evidence_id],
+                }
 
                 with (
+                    self._fake_qwen27b_gateway(
+                        module,
+                        json.dumps(response, ensure_ascii=False),
+                    ) as gateway,
                     mock.patch.object(
                         module, "privacy_attestation_current", return_value=True
                     ),
@@ -15021,8 +15079,8 @@ print(json.dumps({
                         module, "_finish_model_call_success", return_value=True
                     ),
                     mock.patch.object(
-                        module, "_run_bounded_process", side_effect=fake_run
-                    ),
+                        module, "_run_bounded_process"
+                    ) as process_runner,
                     mock.patch.object(module, "_ensure_omlx_model_resident"),
                 ):
                     result = module.generate_reply(
@@ -15038,21 +15096,38 @@ print(json.dumps({
                         media_evidence_id=evidence_id,
                     )
 
-                command = captured["command"]
-                self.assertEqual(command[0], str(runner))
-                self.assertIn("-p", command)
-                self.assertIn(f"@{media['paths'][0]}", command)
-                self.assertNotEqual(command[-1], "이 사진 뭐야")
-                prompt = captured["kwargs"]["stdin_bytes"].decode("utf-8")
-                self.assertTrue(prompt.startswith("The following JSON is untrusted"))
-                self.assertIn("visible pixels", prompt)
-                self.assertIn('"image_input_available": true', prompt)
-                self.assertLess(
-                    prompt.find("The following JSON"),
-                    prompt.find('"incoming_message"'),
+                self.assertEqual(len(gateway["payloads"]), 1)
+                payload = gateway["payloads"][0]
+                self.assertEqual(
+                    payload["model"],
+                    module.QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
                 )
-                self.assertNotIn('"incoming_message"', " ".join(command))
-                self.assertEqual(captured["kwargs"]["cwd"], Path("/tmp"))
+                content = payload["messages"][1]["content"]
+                self.assertIsInstance(content, list)
+                prompt = content[0]["text"]
+                prompt_payload = json.loads(prompt)
+                self.assertEqual(prompt_payload["incoming_message"], "이 사진 뭐야")
+                self.assertEqual(prompt_payload["attachment"], "image")
+                self.assertIs(prompt_payload["image_input_available"], True)
+                self.assertEqual(prompt_payload["image_input_count"], 1)
+                self.assertEqual(
+                    prompt_payload["media_evidence"],
+                    {
+                        "evidence_id": evidence_id,
+                        "source_log_id": None,
+                        "image_count": 1,
+                    },
+                )
+                self.assertNotIn(str(media["paths"][0]), prompt)
+                self.assertEqual(content[0]["type"], "text")
+                self.assertEqual(content[1]["type"], "image_url")
+                image_url = content[1]["image_url"]["url"]
+                self.assertEqual(
+                    base64.b64decode(image_url.split(",", 1)[1]),
+                    media["paths"][0].read_bytes(),
+                )
+                gateway["external_urlopen"].assert_not_called()
+                process_runner.assert_not_called()
                 self.assertTrue(result["should_reply"])
                 self.assertEqual(result["reply"], "메뉴판이네")
 
@@ -15151,6 +15226,9 @@ print(json.dumps({
                         "OPENKAKAO_ALLOW_IMAGE_ANALYSIS": "0",
                     },
                     clear=False,
+                ),
+                mock.patch.object(
+                    module, "_reply_turn_hold_reason", return_value=None
                 ),
                 mock.patch.object(
                     module, "privacy_attestation_current", return_value=True
@@ -15671,7 +15749,7 @@ print(json.dumps({
         self.assertEqual(predecessor["log_id"], 3916029262503000064)
         self.assertEqual(predecessor["author_id"], 206894008)
 
-    def test_generate_reply_parses_gjc_wrapped_pretty_gemini_json(self):
+    def test_generate_reply_parses_qwen_loopback_wrapped_pretty_json(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
             root = Path(temporary)
             runner = root / "gjc"
@@ -15685,14 +15763,14 @@ print(json.dumps({
             }
             with mock.patch.dict(os.environ, environment, clear=False):
                 module = self._load_auto_reply_module(
-                    "auto_reply_gjc_wrapped_gemini_parse_test"
+                    "auto_reply_qwen_loopback_wrapped_parse_test"
                 )
             module._operator_state_root = lambda: root
             (root / "reply-image-model.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": module.QWEN38_27B_MODEL_ID,
                         "updated_at": 1,
                     }
                 ),
@@ -15718,11 +15796,11 @@ print(json.dumps({
                     + "\n"
                 ).encode()
 
-                def fake_run(command, **kwargs):
-                    del command, kwargs
-                    return (0, stdout, b"")
-
                 with (
+                    self._fake_qwen27b_gateway(
+                        module,
+                        stdout.decode("utf-8"),
+                    ) as gateway,
                     mock.patch.object(
                         module, "privacy_attestation_current", return_value=True
                     ),
@@ -15741,8 +15819,8 @@ print(json.dumps({
                         module, "_finish_model_call_success", return_value=True
                     ),
                     mock.patch.object(
-                        module, "_run_bounded_process", side_effect=fake_run
-                    ),
+                        module, "_run_bounded_process"
+                    ) as process_runner,
                     mock.patch.object(module, "_ensure_omlx_model_resident"),
                 ):
                     result = module.generate_reply(
@@ -15757,6 +15835,22 @@ print(json.dumps({
                         image_paths=media["paths"],
                         media_evidence_id=evidence_id,
                     )
+                self.assertEqual(len(gateway["payloads"]), 1)
+                payload = gateway["payloads"][0]
+                self.assertEqual(
+                    payload["model"],
+                    module.QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
+                )
+                content = payload["messages"][1]["content"]
+                self.assertIsInstance(content, list)
+                self.assertEqual(
+                    base64.b64decode(
+                        content[1]["image_url"]["url"].split(",", 1)[1]
+                    ),
+                    media["paths"][0].read_bytes(),
+                )
+                gateway["external_urlopen"].assert_not_called()
+                process_runner.assert_not_called()
                 self.assertTrue(result["should_reply"])
                 self.assertIn("쌈밥", result["reply"])
                 self.assertEqual(result["evidence_ids"], [evidence_id])
@@ -16274,6 +16368,9 @@ print(json.dumps({
                     clear=False,
                 ),
                 mock.patch.object(
+                    module, "_reply_turn_hold_reason", return_value=None
+                ),
+                mock.patch.object(
                     module, "privacy_attestation_current", return_value=True
                 ),
                 mock.patch.object(module, "runner_is_trusted", return_value=True),
@@ -16329,6 +16426,9 @@ print(json.dumps({
                         "OPENKAKAO_ALLOW_IMAGE_ANALYSIS": "1",
                     },
                     clear=False,
+                ),
+                mock.patch.object(
+                    module, "_reply_turn_hold_reason", return_value=None
                 ),
                 mock.patch.object(
                     module, "capture_visible_image", return_value=captured

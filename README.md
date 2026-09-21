@@ -136,12 +136,15 @@ Interactive Unit 5 diagrams:
 
 <h2 id="model-support">Model Support</h2>
 
-The Apple Silicon on-device recommendation is **MLX Qwen3.8 Flash-Next**. Gemma, llama.cpp, and Ollama are not the primary engine.
+The production default on Apple Silicon is **MLX Qwen3.8 Flash-Next**.
 
 - Recommended: `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`
-- Host-capable larger local model (allowlisted and readiness-probed; actual generation unverified): `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
+- Local image-reply and explicit replacement target (allowlisted and readiness-probed; actual generation unverified): `mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit`
 - DREAM-RSI: receipt / checkpoint provenance only (`settings-dream-rsi-card` after the sync card)
-- Cloud runners remain optional and explicit in `config.toml`; they are not the on-device default
+
+The production AutoReply worker and menubar permit only local MLX for text and image generation. Flash-Next is the default; Qwen3.8 27B is the image path and explicit operator-requested replacement target. Gemini and other cloud models are rejected as primary or fallback models and are never selected automatically.
+
+Explicit network features such as fetching a posted URL are separate source-collection operations. Enabling them does not authorize cloud LLM execution or model/image egress.
 
 A recommended model ID is not a completed live-generation run. Probes that time out fail closed and leave `last_probe` instead of sending.
 

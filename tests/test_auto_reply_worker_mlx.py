@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
@@ -214,6 +215,63 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
             ["http://127.0.0.1:11234/v1/models"],
         )
 
+    def test_qwen27b_image_generation_fails_closed_when_unloaded(self):
+        module = self.module
+        calls = []
+
+        def fake_urlopen(request, timeout=None):
+            calls.append((request.full_url, request.data, timeout))
+            if request.full_url == "http://127.0.0.1:11234/v1/models":
+                return _Response(self._advertised_models())
+            raise AssertionError(f"unexpected URL: {request.full_url}")
+
+        with tempfile.TemporaryDirectory() as raw:
+            image = Path(raw) / "photo.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n")
+            with (
+                mock.patch(
+                    "auto_reply_ondevice._local_only_urlopen",
+                    side_effect=fake_urlopen,
+                ),
+                mock.patch("urllib.request.urlopen") as direct_urlopen,
+            ):
+                result = module._run_opencodex_generation(
+                    module.QWEN38_27B_MODEL_ID,
+                    "system",
+                    b' {"inbound":"photo"}',
+                    image_paths=[image],
+                    timeout=90.0,
+                )
+
+        self.assertEqual(result, (1, b"", b"mlx_serve_vision_model_not_resident"))
+        self.assertTrue(calls)
+        self.assertTrue(
+            all(url == "http://127.0.0.1:11234/v1/models" for url, _data, _timeout in calls)
+        )
+        self.assertTrue(all(data is None for _url, data, _timeout in calls))
+        direct_urlopen.assert_not_called()
+
+    def test_image_candidate_never_falls_back_to_flash_next(self):
+        module = self.module
+        with (
+            mock.patch.object(module, "_run_opencodex_generation") as http_runner,
+            mock.patch.object(module, "_run_bounded_process") as process_runner,
+        ):
+            result = module._run_generation_candidate(
+                module.FLASH_NEXT_MODEL_ID,
+                "system",
+                b"{}",
+                command=["gjc", "--model", module.FLASH_NEXT_MODEL_ID],
+                env={},
+                model_stdin_bytes=b"{}",
+                image_paths=[Path("photo.png")],
+                timeout=90.0,
+            )
+
+        self.assertEqual(result, (1, b"", b"local_vision_model_required"))
+        http_runner.assert_not_called()
+        process_runner.assert_not_called()
+
     def test_generation_candidate_blocks_product_cloud_fallback(self):
         module = self.module
         command = ["gjc", "--model", "primary/model"]
@@ -240,6 +298,22 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 env={},
                 model_stdin_bytes=b"{}",
                 image_paths=None,
+                timeout=90.0,
+            )
+            self.assertEqual(result, (0, b"mlx", b""))
+            http_runner.assert_called_once()
+            process_runner.assert_not_called()
+
+            http_runner.reset_mock()
+            process_runner.reset_mock()
+            result = module._run_generation_candidate(
+                module.QWEN38_27B_MODEL_ID,
+                "system",
+                b"{}",
+                command=command,
+                env={},
+                model_stdin_bytes=b"{}",
+                image_paths=[Path("photo.png")],
                 timeout=90.0,
             )
             self.assertEqual(result, (0, b"mlx", b""))

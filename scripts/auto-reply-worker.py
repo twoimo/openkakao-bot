@@ -68,6 +68,7 @@ import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
 from auto_reply_ondevice import (
     FLASH_NEXT_MODEL_ID,
+    QWEN38_27B_MODEL_ID,
     _model_id as _ondevice_model_id,
     detect_mlx_gateway_models,
     discover_mlx_gateway,
@@ -308,7 +309,7 @@ REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
 DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
 DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
-DEFAULT_IMAGE_REPLY_MODEL = FLASH_NEXT_MODEL_ID
+DEFAULT_IMAGE_REPLY_MODEL = QWEN38_27B_MODEL_ID
 _REPLY_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}$")
 # 사용자가 모델 설정 창에서 고른 폴백 사슬. 저장된 목록이 없으면 아래 내장
 # 기본값을 쓴다 (2026-09-15).
@@ -11136,8 +11137,8 @@ def _active_image_reply_model() -> str:
                 and payload.get("schema_version") == 1
                 and _REPLY_MODEL_ID_RE.fullmatch(model)
             ):
-                if _product_local_model_allowed(model):
-                    return model
+                if _is_mlx_serve_27b_model(model):
+                    return DEFAULT_IMAGE_REPLY_MODEL
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         pass
     return DEFAULT_IMAGE_REPLY_MODEL
@@ -11357,6 +11358,8 @@ def _model_swap_in_command(command: list[str], model: str) -> list[str]:
 
 
 def _reply_model_sees_images(model: str) -> bool:
+    if _is_mlx_serve_27b_model(model):
+        return True
     folded = str(model or "").casefold()
     if not folded:
         return False
@@ -11379,10 +11382,9 @@ def _reply_model_sees_images(model: str) -> bool:
 
 
 def _generation_reply_model(has_images: bool) -> str:
-    text_model = _active_reply_model()
-    if has_images and not _reply_model_sees_images(text_model):
+    if has_images:
         return _active_image_reply_model()
-    return text_model
+    return _active_reply_model()
 
 
 def _run_opencodex_generation(
@@ -11412,7 +11414,12 @@ def _run_opencodex_generation(
         marker = "Qwen3.8-27B" if _is_mlx_serve_27b_model(target_model) else "Qwen3.8-Flash-Next"
         advertised_model = _ondevice_model_id(advertised, marker)
         if not advertised_model:
-            return 1, b"", b"mlx_serve_text_model_not_advertised"
+            reason = (
+                b"mlx_serve_vision_model_not_resident"
+                if image_paths and _is_mlx_serve_27b_model(target_model)
+                else b"mlx_serve_text_model_not_advertised"
+            )
+            return 1, b"", reason
         target_base_url = gateway_base_url
         target_model = advertised_model
     elif target_model in (
@@ -11527,6 +11534,8 @@ def _run_generation_candidate(
 ) -> tuple[int, bytes, bytes]:
     if not _product_local_model_allowed(model):
         return 1, b"", b"product_cloud_fallback_disabled"
+    if image_paths and not _is_mlx_serve_27b_model(model):
+        return 1, b"", b"local_vision_model_required"
     if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_text_model(model):
         return _run_opencodex_generation(
             model,
@@ -12046,12 +12055,17 @@ def generate_reply(
             if REPLY_RUNNER_KIND == "opencodex":
                 winner = _model_fallback_chain(
                     active_model,
-                    lambda candidate: _run_opencodex_generation(
+                    lambda candidate: _run_generation_candidate(
                         candidate,
                         system_prompt,
                         prompt_bytes,
+                        command=command,
+                        env=env,
+                        model_stdin_bytes=model_stdin_bytes,
                         image_paths=normalized_image_paths,
-                        timeout=_model_generation_timeout(candidate, deadline=generation_deadline),
+                        timeout=_model_generation_timeout(
+                            candidate, deadline=generation_deadline
+                        ),
                     ),
                     deadline=generation_deadline,
                     turn_guard=turn_hold,
@@ -12151,7 +12165,7 @@ def generate_reply(
     try:
         if not cooldown_fallback_answered and generation_deadline <= time.monotonic():
             return fail_model_call("runner_timeout")
-        if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_flash_next_model(active_model):
+        if REPLY_RUNNER_KIND == "opencodex" or _is_mlx_serve_text_model(active_model):
             if not cooldown_fallback_answered:
                 returncode, stdout_bytes, stderr_bytes = _run_generation_candidate(
                     active_model,

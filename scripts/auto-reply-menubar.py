@@ -36,6 +36,7 @@ from local_mlx_model_readiness import (
     resolve_fixed_local_mlx_catalog_model,
 )
 from auto_reply_ondevice import (
+    FLASH_NEXT_MODEL_ID,
     MLX_GATEWAY_BASE_URL,
     QWEN38_27B_MODEL_ID,
     QWEN38_27B_REQUIRED_BYTES,
@@ -168,7 +169,7 @@ PROVIDER_ACTIONS = frozenset(
         "provider-oauth-login",
     }
 )
-DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
+DEFAULT_IMAGE_REPLY_MODEL = QWEN38_27B_MODEL_ID
 IMAGE_MODEL_ACTIONS = frozenset({"image-model-set"})
 FALLBACK_MODEL_ACTIONS = frozenset({"fallback-models-set"})
 MAX_REPLY_FALLBACK_MODELS = 6
@@ -176,9 +177,7 @@ REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 # 사용자가 아무것도 고르지 않았을 때 쓰는 내장 폴백 사슬. 워커도 같은 순서를
 # 쓴다(scripts/auto-reply-worker.py: DEFAULT_REPLY_FALLBACK_MODELS).
 DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
-    "google-antigravity/gemini-3.8-flash",
-    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
-    "google-antigravity/gemini-3.7-flash-tiered",
+    FLASH_NEXT_MODEL_ID,
 )
 _WRAPPER_ONLY_FLAGS.update(_CATALOG_MUTATE_FLAGS)
 
@@ -299,6 +298,22 @@ def _image_model_override_path(state_root: Path) -> Path:
     return Path(state_root) / "reply-image-model.json"
 
 
+def _local_reply_model_allowed(model: Any) -> bool:
+    """Return whether product generation may use *model* without cloud access."""
+
+    value = str(model or "").strip()
+    folded = value.casefold()
+    if not value or "gemma" in folded:
+        return False
+    return canonical_fixed_local_mlx_model_id(value) is not None or folded.startswith(
+        ("omlx/", "mlx/")
+    )
+
+
+def _qwen38_27b_image_model(model: Any) -> bool:
+    return canonical_fixed_local_mlx_model_id(model) == JARVIS_SWAP_MODEL_ID
+
+
 def _read_image_reply_model(state_root: Path) -> tuple[str, str]:
     path = _image_model_override_path(state_root)
     try:
@@ -307,8 +322,8 @@ def _read_image_reply_model(state_root: Path) -> tuple[str, str]:
         raw = None
     if isinstance(raw, dict):
         model = str(raw.get("model") or "").strip()
-        if model:
-            return model, "override"
+        if _qwen38_27b_image_model(model):
+            return DEFAULT_IMAGE_REPLY_MODEL, "override"
     return DEFAULT_IMAGE_REPLY_MODEL, "default"
 
 def _current_reply_model_id(state_root: Path) -> str:
@@ -322,25 +337,14 @@ def _current_reply_model_id(state_root: Path) -> str:
 
 
 def _reply_model_sees_images(model: str) -> bool:
-    folded = str(model or "").casefold()
-    if not folded:
+    if _qwen38_27b_image_model(model):
+        return True
+    if not _local_reply_model_allowed(model):
         return False
+    folded = str(model or "").casefold()
     if any(token in folded for token in ("-vl", "/vl", "vision", "omni", "pixtral")):
         return True
-    if folded.startswith("omlx/"):
-        return False
-    return any(
-        token in folded
-        for token in (
-            "gemini",
-            "gpt-4o",
-            "gpt-4.1",
-            "gpt-5",
-            "claude",
-            "sonnet",
-            "opus",
-        )
-    )
+    return False
 
 
 def _image_model_enabled(state_root: Path) -> bool:
@@ -1429,11 +1433,11 @@ def _normalize_fallback_model(value: Any) -> str:
 
 
 def _fallback_allowed_model_ids(state_root: Path) -> set[str]:
-    """Every model id the model-settings popups can show, plus the built-ins.
+    """Local model ids the model-settings popups can show, plus the built-ins.
 
-    The fallback chain saves model ids, so its save gate reads the same
-    display/save single source as set_reply_model and set_image_reply_model
-    (2026-09-15).
+    Catalogs can still contain legacy cloud providers. They remain available to
+    older read-only surfaces, but the product fallback chain must never persist
+    or automatically select them.
     """
 
     allowed: set[str] = set(DEFAULT_REPLY_FALLBACK_MODELS)
@@ -1446,21 +1450,24 @@ def _fallback_allowed_model_ids(state_root: Path) -> set[str]:
         custom_providers = []
     for provider in custom_providers or []:
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for provider in _global_catalog_providers(state_root=state_root):
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for provider in _displayed_reply_providers(state_root):
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for model in (
         _current_reply_model_id(state_root),
         _read_image_reply_model(state_root)[0],
     ):
-        if model:
+        if _local_reply_model_allowed(model):
             allowed.add(model)
     return allowed
 
@@ -1470,8 +1477,9 @@ def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
 
     An empty saved list is not the same as "nothing saved": it means the
     operator wants no fallback at all, so the primary model's limit ends the
-    turn instead of silently switching models (2026-09-15). A file whose
-    entries are all invalid is treated as missing rather than as "no fallback".
+    turn instead of silently switching models (2026-09-15). Legacy cloud-only
+    files also become an explicit empty chain instead of restoring a default
+    that could mask the rejected setting.
     """
 
     path = _reply_model_fallbacks_path(state_root)
@@ -1487,12 +1495,15 @@ def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
             cleaned: list[str] = []
             for item in models:
                 model = _normalize_fallback_model(item)
-                if model and model not in cleaned:
+                if (
+                    model
+                    and _local_reply_model_allowed(model)
+                    and model not in cleaned
+                ):
                     cleaned.append(model)
                 if len(cleaned) >= MAX_REPLY_FALLBACK_MODELS:
                     break
-            if cleaned or not models:
-                return cleaned, "override"
+            return cleaned, "override"
     return list(DEFAULT_REPLY_FALLBACK_MODELS), "default"
 
 
@@ -1578,7 +1589,10 @@ def set_reply_model_fallbacks(
     # 미등록 ID만 막는다 — 목록이 바뀌었다고 기존 사슬을 고칠 수 없으면
     # 사용자가 빠져나갈 수 없다(2026-09-15).
     blocked = [
-        model for model in wanted if model not in allowed and model not in saved_now
+        model
+        for model in wanted
+        if not _local_reply_model_allowed(model)
+        or (model not in allowed and model not in saved_now)
     ]
     if blocked:
         return {
@@ -1587,7 +1601,7 @@ def set_reply_model_fallbacks(
             "privacy": "content_redacted",
             "reason": "model_not_in_catalog",
             "warnings": [
-                "등록되지 않은 모델은 폴백으로 쓸 수 없습니다: " + ", ".join(blocked)
+                "등록된 로컬 모델만 폴백으로 쓸 수 있습니다: " + ", ".join(blocked)
             ],
         }
     # 답변 모델과 같은 모델을 폴백에 넣으면 그 칸은 아무 일도 하지 않는다.
@@ -1743,33 +1757,16 @@ def set_image_reply_model(
             "reason": "image_model_unused",
             "warnings": ["현재 답변 모델이 이미지를 직접 처리합니다."],
         }
-    wanted = str(model or "").strip() or DEFAULT_IMAGE_REPLY_MODEL
-    allowed_model_ids = {DEFAULT_IMAGE_REPLY_MODEL}
-    agent_models_path = _gjc_agent_dir(state_root) / "models.yml"
-    custom_providers = _parse_custom_models_yml(agent_models_path) or _parse_custom_models_yml(
-        state_root / "models.yml"
-    )
-    for provider in custom_providers:
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    for provider in _global_catalog_providers(state_root=state_root):
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    # Same display/save single-source as set_reply_model above.
-    for provider in _displayed_reply_providers(state_root):
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    if wanted not in allowed_model_ids:
+    requested = str(model or "").strip() or DEFAULT_IMAGE_REPLY_MODEL
+    if not _qwen38_27b_image_model(requested):
         return {
             "ok": False,
             "action": "image-model-set",
             "privacy": "content_redacted",
-            "reason": "model_not_in_catalog",
-            "warnings": ["등록된 프로바이더 모델만 이미지 처리에 쓸 수 있습니다."],
+            "reason": "image_model_local_only",
+            "warnings": ["이미지 처리는 로컬 Qwen3.8 27B 모델만 사용할 수 있습니다."],
         }
+    wanted = DEFAULT_IMAGE_REPLY_MODEL
     stamp = time.time() if now is None else float(now)
     try:
         _atomic_write_json(

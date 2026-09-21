@@ -200,19 +200,26 @@ cp config.example.toml ~/.config/openkakao/config.toml
 `config.toml`에서 최소한 아래를 채웁니다.
 
 ```toml
+[model]
+privacy_mode = "local"
+allow_egress = false
+provider = "mlx-serve"
+
 [auto_reply]
 # 예시: 채팅방 ID와 화면에 보이는 정확한 방 이름
 # chats = ["bind:123456789012345:채팅방이름"]
 self_nickname = "카카오톡에 보이는 내 닉네임"
 python_interpreter = "/opt/homebrew/opt/python@3.13/bin/python3.13"
-# reply_runner = "/Users/나/.local/lib/openkakao/gjc.js"
-# reply_runner_kind = "gjc"
-# reply_model = "사용할 모델 이름"
+reply_runner = "/opt/homebrew/bin/opencodex"
+reply_runner_kind = "opencodex"
+reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ```
 
 - `chats`에 없는 방에는 답을 보내지 않습니다.
 - `self_nickname`은 **내가 보낸 메시지**를 구분하는 데 씁니다. 카카오톡에 보이는 이름과 같아야 합니다.
-- 링크를 열어보거나 사진을 모델에 보내는 옵션은 기본이 꺼져 있습니다. 필요할 때만 켜세요.
+- 운영 자동 답장 워커와 메뉴바의 텍스트·이미지 생성은 로컬 MLX만 허용합니다. Flash-Next가 기본이고, Qwen3.8 27B는 이미지 경로와 운영자가 명시적으로 요청한 모델 교체 대상입니다. Gemini와 기타 클라우드 모델은 주 모델이나 대체 모델로 거부되며 자동 선택되지 않습니다.
+- 게시된 URL 원문 수집은 별도의 명시적 네트워크 작업입니다. 이를 허용해도 클라우드 LLM 실행이나 모델·이미지 외부 전송이 허용되지는 않습니다.
+- 링크 원문 수집과 로컬 이미지 분석 옵션은 기본이 꺼져 있습니다. 필요할 때만 켜세요.
 
 ### 5. 메뉴바로 켜기 (초보자에게 추천)
 
@@ -222,7 +229,7 @@ sh scripts/build-auto-reply-menubar.sh
 
 만들어진 `AutoReplyMenu.app`을 실행하면 Extra에 골드 코어와 우측 상단 gear만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 모두 그 gear의 통합 설정에서 다룹니다.
 
-온디바이스 권장은 MLX Qwen3.8 Flash-Next입니다. Gemma, llama.cpp, Ollama를 기본 엔진으로 두지 않습니다. 호스트가 감당하면 Qwen3.8 27B ID를 쓸 수 있습니다. 권장 ID는 완료된 실생성을 뜻하지 않으며, 프로브가 시간 초과하면 fail-closed입니다.
+온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
 무인 실행(launchd)은 `docs/auto-reply-launchd-supervision.md`와 `scripts/install-auto-reply-launchd.sh`를 보세요. 처음이면 메뉴바부터 시작하는 편이 안전합니다.
 

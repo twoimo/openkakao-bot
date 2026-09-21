@@ -46,7 +46,9 @@ class ModelRetryPolicyTests(unittest.TestCase):
     def isolated_generation(self, runner_kind, runner):
         """Use the real generation and circuit paths with fake external adapters."""
         m = self.module
-        primary = "opencode-test/primary"
+        # Product generation is local-only. Keep the synthetic primary local
+        # while retaining "opencode" in its id for the quota-reset branch.
+        primary = "mlx/opencode-test-primary"
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, {
                 "OPENKAKAO_MODEL_CIRCUIT_DB": str(self.root / f"{runner_kind}.sqlite3"),

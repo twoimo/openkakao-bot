@@ -2346,7 +2346,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             marker.write_text('{"schema_version":1,"cancelled":true}', encoding="utf-8")
             self.assertTrue(module._model_swap_cancelled(root, token))
 
-    def test_worker_uses_reply_model_override(self):
+    def test_worker_ignores_cloud_reply_model_override(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2376,7 +2376,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             spec.loader.exec_module(worker)
             self.assertEqual(
                 worker._active_reply_model(),
-                "google-antigravity/gemini-3.6-flash-tiered",
+                worker.FLASH_NEXT_MODEL_ID,
             )
 
 
@@ -2570,42 +2570,41 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("statusItem.menu = buildMenu(model)", source)
         self.assertIn("guard menu === statusItem.menu", source)
 
-    def test_image_reply_model_defaults_to_gemini_flash_and_persists(self):
+    def test_image_reply_model_defaults_to_qwen27b_and_rejects_cloud(self):
         module = load("auto_reply_menubar_image_model")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             now = 1_000.0
-            agent_dir = state / "gjc-agent"
-            agent_dir.mkdir(mode=0o700, exist_ok=True)
-            (agent_dir / "models.yml").write_text(
-                "providers:\n"
-                "  google-antigravity:\n"
-                "    models:\n"
-                "      - id: gemini-3.7-flash-tiered\n"
-                "      - id: gemini-3.6-flash-tiered\n",
+            (state / "reply-image-model.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "updated_at": 1,
+                    }
+                ),
                 encoding="utf-8",
             )
             image_id, source = module._read_image_reply_model(state)
-            self.assertEqual(image_id, "google-antigravity/gemini-3.7-flash-tiered")
+            self.assertEqual(image_id, module.QWEN38_27B_MODEL_ID)
             self.assertEqual(source, "default")
-            result = module.set_image_reply_model(
+            denied = module.set_image_reply_model(
                 state.resolve(),
                 "google-antigravity/gemini-3.6-flash-tiered",
                 now=now,
             )
+            self.assertFalse(denied["ok"])
+            self.assertEqual(denied["reason"], "image_model_local_only")
+            result = module.set_image_reply_model(
+                state.resolve(), module.JARVIS_SWAP_MODEL_ID, now=now
+            )
             self.assertTrue(result["ok"])
             self.assertEqual(result["action"], "image-model-set")
-            self.assertEqual(
-                result["model"], "google-antigravity/gemini-3.6-flash-tiered"
-            )
+            self.assertEqual(result["model"], module.QWEN38_27B_MODEL_ID)
             saved = json.loads((state / "reply-image-model.json").read_text())
-            self.assertEqual(saved["model"], "google-antigravity/gemini-3.6-flash-tiered")
-            denied = module.set_image_reply_model(
-                state.resolve(), "not-a-real/model", now=now
-            )
-            self.assertFalse(denied["ok"])
+            self.assertEqual(saved["model"], module.QWEN38_27B_MODEL_ID)
 
-    def test_worker_uses_image_model_override_only_for_images(self):
+    def test_worker_ignores_cloud_image_override_and_routes_images_to_qwen27b(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2647,7 +2646,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(
                 worker._generation_reply_model(True),
-                "google-antigravity/gemini-3.7-flash-tiered",
+                worker.QWEN38_27B_MODEL_ID,
             )
             source = worker_path.read_text(encoding="utf-8")
             isolated = source.split("if REPLY_RUNNER_KIND == \"codex\":", 1)[1].split(
@@ -2657,7 +2656,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertIn('env.pop("PI_CODING_AGENT_DIR", None)', isolated)
             self.assertNotIn("GJC_CODING_AGENT_DIR\"] = str(gjc_agent_dir)", isolated)
 
-    def test_worker_skips_image_model_when_reply_model_sees_images(self):
+    def test_worker_keeps_qwen27b_for_images_when_already_primary(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2668,7 +2667,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
                         "updated_at": 1,
                     }
                 ),
@@ -2693,15 +2692,14 @@ class AutoReplyMenubarTests(unittest.TestCase):
             spec.loader.exec_module(worker)
             self.assertEqual(
                 worker._generation_reply_model(True),
-                "google-antigravity/gemini-3.7-flash-tiered",
+                worker.QWEN38_27B_MODEL_ID,
             )
 
     def test_omlx_reply_model_keeps_image_model_enabled(self):
         module = load("auto_reply_menubar_image_gate")
         self.assertFalse(module._reply_model_sees_images("omlx/Qwen3.6-35B-A3B-8bit"))
-        self.assertTrue(
-            module._reply_model_sees_images("google-antigravity/gemini-3.7-flash-tiered")
-        )
+        self.assertFalse(module._reply_model_sees_images("google-antigravity/gemini-3.7-flash-tiered"))
+        self.assertTrue(module._reply_model_sees_images(module.QWEN38_27B_MODEL_ID))
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             (state / "reply-model.json").write_text(
@@ -2719,7 +2717,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": module.QWEN38_27B_MODEL_ID,
                         "updated_at": 1,
                     }
                 ),
@@ -2727,7 +2725,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertFalse(module._image_model_enabled(state))
             denied = module.set_image_reply_model(
-                state, "google-antigravity/gemini-3.6-flash-tiered", now=1.0
+                state, module.QWEN38_27B_MODEL_ID, now=1.0
             )
             self.assertFalse(denied["ok"])
             self.assertEqual(denied["reason"], "image_model_unused")
@@ -2746,24 +2744,47 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(source, "default")
             self.assertEqual(models, list(module.DEFAULT_REPLY_FALLBACK_MODELS))
 
+    def test_reply_model_fallbacks_ignore_legacy_cloud_entries(self):
+        module = load("auto_reply_menubar_fallbacks_cloud_legacy")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            state.joinpath(module.REPLY_MODEL_FALLBACKS_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": [
+                            "google-antigravity/gemini-3.8-flash",
+                            "mlx/local-backup",
+                            "google-antigravity/gemini-3.7-flash-tiered",
+                        ],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                module.read_reply_model_fallbacks(state),
+                (["mlx/local-backup"], "override"),
+            )
+
     def test_reply_model_fallbacks_save_reads_back_ordered_chain(self):
         module = load("auto_reply_menubar_fallbacks_save")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             module._fallback_allowed_model_ids = lambda _root: {
-                "kiro/claude-opus-5",
-                "kiro/claude-sonnet-5",
-                "kiro/claude-opus-4.8",
+                "mlx/local-a",
+                "mlx/local-b",
+                "omlx/local-c",
             }
             saved = module.set_reply_model_fallbacks(
                 state,
-                "kiro/claude-opus-5,kiro/claude-sonnet-5,kiro/claude-opus-4.8",
+                "mlx/local-a,mlx/local-b,omlx/local-c",
                 now=1.0,
             )
             self.assertTrue(saved["ok"])
             self.assertEqual(
                 saved["fallback_models"],
-                ["kiro/claude-opus-5", "kiro/claude-sonnet-5", "kiro/claude-opus-4.8"],
+                ["mlx/local-a", "mlx/local-b", "omlx/local-c"],
             )
             self.assertEqual(saved["fallback_source"], "override")
             # The window and the worker read this file, so check the on-disk shape.
@@ -2793,8 +2814,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         module = load("auto_reply_menubar_fallbacks_clear")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
-            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
-            module.set_reply_model_fallbacks(state, "kiro/claude-opus-5", now=1.0)
+            module._fallback_allowed_model_ids = lambda _root: {"mlx/local-a"}
+            module.set_reply_model_fallbacks(state, "mlx/local-a", now=1.0)
             self.assertTrue((state / module.REPLY_MODEL_FALLBACKS_NAME).is_file())
             cleared = module.set_reply_model_fallbacks(state, None, now=2.0, clear=True)
             self.assertTrue(cleared["ok"])
@@ -2808,13 +2829,17 @@ class AutoReplyMenubarTests(unittest.TestCase):
         module = load("auto_reply_menubar_fallbacks_reject")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
-            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
+            module._fallback_allowed_model_ids = lambda _root: {
+                "google-antigravity/gemini-3.8-flash"
+            }
             too_many = module.set_reply_model_fallbacks(
                 state, ",".join(f"kiro/m{index}" for index in range(7)), now=1.0
             )
             self.assertFalse(too_many["ok"])
             self.assertEqual(too_many["reason"], "too_many_fallbacks")
-            unknown = module.set_reply_model_fallbacks(state, "nope/nope", now=1.0)
+            unknown = module.set_reply_model_fallbacks(
+                state, "google-antigravity/gemini-3.8-flash", now=1.0
+            )
             self.assertFalse(unknown["ok"])
             self.assertEqual(unknown["reason"], "model_not_in_catalog")
             self.assertFalse((state / module.REPLY_MODEL_FALLBACKS_NAME).exists())
@@ -2830,7 +2855,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "models": ["kiro/claude-opus-5"],
+                        "models": ["mlx/local-a"],
                         "updated_at": 1,
                     }
                 ),
@@ -2838,7 +2863,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             snapshot = module.collect_menubar_model(root)
             self.assertEqual(
-                snapshot["reply_model_fallbacks"]["models"], ["kiro/claude-opus-5"]
+                snapshot["reply_model_fallbacks"]["models"], ["mlx/local-a"]
             )
             self.assertEqual(
                 snapshot["reply_model_fallbacks"]["source"], "override"
@@ -2888,7 +2913,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "models": ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+                        "models": [
+                            "google-antigravity/gemini-3.8-flash",
+                            "mlx/local-a",
+                            "omlx/local-b",
+                        ],
                         "updated_at": 1,
                     }
                 ),
@@ -2896,8 +2925,19 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(
                 worker._reply_fallback_candidates(),
-                ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+                ["mlx/local-a", "omlx/local-b"],
             )
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": ["google-antigravity/gemini-3.8-flash"],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(worker._reply_fallback_candidates(), [])
             # "No fallback" must survive as an empty chain, not become defaults.
             path.write_text(
                 json.dumps({"schema_version": 1, "models": [], "updated_at": 1}),
