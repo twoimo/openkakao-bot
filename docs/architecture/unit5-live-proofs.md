@@ -721,7 +721,7 @@ parent 재측정 결과는 다음과 같다.
 /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/dream_rsi_alphaxiv.py --paper-source orx --paper-id 2609.14858
 ```
 
-결과는 `Ran 75 tests ... OK`, `Ran 287 tests ... OK`였고 paper 명령은 exit 0, `status="ok"`, `provider="orx_cli"`, `reason="orx_report_verified"`, summary 14,515 chars였다. U+0000-U+00FF 전체와 U+200B-U+200F, U+202A-U+202E, U+2066-U+2069, U+FEFF, U+061C, U+00AD, U+E000, U+0378, lone surrogate에 대한 직접 프로브에서 `C*` category 잔존은 0건이었고, JSON 직렬화 결과에도 control escape가 없었다.
+결과는 `Ran 75 tests ... OK`, 당시 CI focused Python 목록은 `Ran 287 tests ... OK`였고(`deca45a`가 launcher 회귀 테스트 1개를 추가해 현재 HEAD에서는 `Ran 288 tests ... OK`) paper 명령은 exit 0, `status="ok"`, `provider="orx_cli"`, `reason="orx_report_verified"`, summary 14,515 chars였다. U+0000-U+00FF 전체와 U+200B-U+200F, U+202A-U+202E, U+2066-U+2069, U+FEFF, U+061C, U+00AD, U+E000, U+0378, lone surrogate에 대한 직접 프로브에서 `C*` category 잔존은 0건이었고, JSON 직렬화 결과에도 control escape가 없었다.
 
 ### Computer Use attach 프로브 (negative)
 
@@ -737,7 +737,7 @@ menubar CPython runtime도 문서화된 `~/Library/Application Support/openkakao
 
 이 runtime과 repository copy의 스크립트를 함께 사용한 menubar command는 exit 0으로 끝났고, 39,553-byte JSON snapshot을 출력했다. top-level key에는 `available_chats`, `background`, `pipeline`, `open_jobs`, `ondevice_hardware`, `reply_model`, `watermark`가 포함됐으며 temporary state root에는 `gjc-agent/`와 `gjc-global-model-cache.json`이 생겼다.
 
-이 누락은 기능 공백이지만 fail closed로 동작해 조용히 전송하거나 누출하지 않는다. 수정은 `desktop/src-tauri/src/resource_layout.rs`와 `desktop/src-tauri/tauri.conf.json`의 staging 목록에 `scripts/mlx_serve_lifecycle.py`를 추가하고, staged entry script의 로컬 Python module closure와 두 staging 목록의 일치를 검증하는 회귀 테스트를 추가하는 것이다. 수정 후 설치 앱의 end-to-end 검증은 이 기록에 포함하지 않으며 다음 HEAD에서 parent가 측정한다.
+이 누락은 기능 공백이지만 fail closed로 동작해 조용히 전송하거나 누출하지 않는다. 수정은 `desktop/src-tauri/src/resource_layout.rs`와 `desktop/src-tauri/tauri.conf.json`의 staging 목록에 `scripts/mlx_serve_lifecycle.py`를 추가하고, staged entry script의 로컬 Python module closure와 두 staging 목록의 일치를 검증하는 회귀 테스트를 추가하는 것이다. 수정 후 설치 앱 검증은 아래 parent 측정 절에 기록한다.
 
 ### 수정 후 설치 번들 재검증 (parent 측정) — 2026-09-21 KST
 
