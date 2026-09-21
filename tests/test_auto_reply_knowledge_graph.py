@@ -25,10 +25,13 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import auto_reply_ondevice as ONDEVICE
+import local_mlx_gateway as LOCAL_MLX
 
-def load_graph():
+
+def load_graph(module_name: str = "kg_under_test"):
     path = SCRIPTS / "auto_reply_knowledge_graph.py"
-    spec = importlib.util.spec_from_file_location("kg_under_test", path)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[spec.name] = module
@@ -950,6 +953,73 @@ class PruneTests(unittest.TestCase):
 
 
 class DenseRefreshBatchingTests(unittest.TestCase):
+    def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENKAKAO_LOCAL_EMBEDDING_URL", None)
+            default_kg = load_graph("kg_default_dense_endpoint_test")
+        try:
+            self.assertIs(
+                default_kg.DEFAULT_DENSE_EMBEDDING_URL,
+                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+            )
+            self.assertEqual(
+                default_kg.DENSE_EMBEDDING_URL,
+                "http://127.0.0.1:11234/v1/embeddings",
+            )
+
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps(
+                        {"data": [{"index": 0, "embedding": [3.0, 4.0]}]}
+                    ).encode("utf-8")
+
+            with mock.patch.object(
+                default_kg.urllib.request,
+                "urlopen",
+                return_value=Response(),
+            ) as urlopen:
+                vectors = default_kg._local_dense_embeddings(["로컬 임베딩"])
+
+            request = urlopen.call_args.args[0]
+            self.assertEqual(request.full_url, LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL)
+            self.assertEqual(
+                urlopen.call_args.kwargs["timeout"],
+                default_kg.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(vectors, [(0.6, 0.8)])
+        finally:
+            sys.modules.pop("kg_default_dense_endpoint_test", None)
+
+    def test_dense_endpoint_environment_override_still_wins(self):
+        override = "http://localhost:19123/v1/embeddings"
+        with mock.patch.dict(
+            os.environ,
+            {"OPENKAKAO_LOCAL_EMBEDDING_URL": override},
+            clear=False,
+        ):
+            override_kg = load_graph("kg_dense_endpoint_override_test")
+        try:
+            self.assertEqual(override_kg.DENSE_EMBEDDING_URL, override)
+            self.assertEqual(
+                override_kg.DEFAULT_DENSE_EMBEDDING_URL,
+                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+            )
+        finally:
+            sys.modules.pop("kg_dense_endpoint_override_test", None)
+
+    def test_mlx_gateway_endpoint_constants_have_one_shared_source(self):
+        self.assertIs(ONDEVICE.MLX_GATEWAY_BASE_URL, LOCAL_MLX.MLX_GATEWAY_BASE_URL)
+        self.assertIs(
+            KG.DEFAULT_DENSE_EMBEDDING_URL,
+            LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+        )
+
     def _make_graph(self, root: Path, count: int) -> sqlite3.Connection:
         conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
         for index in range(count):

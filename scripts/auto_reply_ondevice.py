@@ -29,8 +29,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
+from local_mlx_gateway import MLX_GATEWAY_BASE_URL
 
-MLX_GATEWAY_BASE_URL = "http://127.0.0.1:11234/v1"
+
 MLX_GATEWAY_CANDIDATES = (MLX_GATEWAY_BASE_URL,)
 FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 QWEN38_27B_MODEL_ID = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"

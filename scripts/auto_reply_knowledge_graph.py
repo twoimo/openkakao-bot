@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from local_mlx_gateway import MLX_GATEWAY_EMBEDDINGS_URL
+
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
 DEFAULT_K_HOP = 2
@@ -44,8 +46,9 @@ DENSE_INDEX_VERSION = "bge-m3-lsh-v1"
 DENSE_EMBEDDING_MODEL = os.environ.get(
     "OPENKAKAO_DENSE_EMBEDDING_MODEL", "BAAI/bge-m3"
 )
+DEFAULT_DENSE_EMBEDDING_URL = MLX_GATEWAY_EMBEDDINGS_URL
 DENSE_EMBEDDING_URL = os.environ.get(
-    "OPENKAKAO_LOCAL_EMBEDDING_URL", "http://127.0.0.1:8000/v1/embeddings"
+    "OPENKAKAO_LOCAL_EMBEDDING_URL", DEFAULT_DENSE_EMBEDDING_URL
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
 DENSE_STATUS_MAX_LENGTH = 400
