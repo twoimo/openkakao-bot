@@ -28,6 +28,7 @@ pub const DATA_FILES: &[&str] = &[
     "scripts/auto_reply_reference_search.py",
     "scripts/auto_reply_knowledge_graph.py",
     "scripts/auto_reply_ondevice.py",
+    "scripts/mlx_serve_lifecycle.py",
     METRICS_SCRIPT,
     AX_UI_SCRIPT,
     BROWSER_USE_SCRIPT,

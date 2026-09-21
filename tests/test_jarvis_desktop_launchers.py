@@ -1,4 +1,6 @@
+import ast
 import plistlib
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -12,6 +14,98 @@ def read_repo_file(relative_path: str) -> str:
 
 
 class JarvisDesktopLauncherTests(unittest.TestCase):
+    def test_staged_python_entrypoint_dependencies_are_complete_and_staging_lists_match(
+        self,
+    ) -> None:
+        resource_layout = read_repo_file("desktop/src-tauri/src/resource_layout.rs")
+        tauri_config = read_repo_file("desktop/src-tauri/tauri.conf.json")
+
+        data_files_match = re.search(
+            r"pub const DATA_FILES: &\[&str\] = &\[(.*?)\n\];",
+            resource_layout,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(data_files_match)
+        data_files = data_files_match.group(1)
+        rust_constants = dict(
+            re.findall(
+                r'pub const ([A-Z][A-Z0-9_]*): &str = "([^"]+)";',
+                resource_layout,
+            )
+        )
+        rust_staged = set(re.findall(r'"(scripts/[^"]+\.py)"', data_files))
+        for constant_name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", data_files):
+            relative_path = rust_constants.get(constant_name)
+            if (
+                relative_path is not None
+                and relative_path.startswith("scripts/")
+                and relative_path.endswith(".py")
+            ):
+                rust_staged.add(relative_path)
+
+        tauri_pairs = re.findall(
+            r'"bundle-resources/(scripts/[^"]+\.py)"\s*:\s*"(scripts/[^"]+\.py)"',
+            tauri_config,
+        )
+        for source_path, destination_path in tauri_pairs:
+            self.assertEqual(source_path, destination_path)
+        tauri_staged = {destination_path for _, destination_path in tauri_pairs}
+
+        self.assertEqual(
+            rust_staged,
+            tauri_staged,
+            msg=(
+                "Rust DATA_FILES and Tauri bundle.resources disagree for Python "
+                f"scripts: rust_only={sorted(rust_staged - tauri_staged)}, "
+                f"tauri_only={sorted(tauri_staged - rust_staged)}"
+            ),
+        )
+
+        seeds = (
+            "scripts/auto-reply-menubar.py",
+            "scripts/local_mlx_model_readiness.py",
+            "scripts/jarvis_voice.py",
+            "scripts/jarvis_tool_runtime.py",
+            "scripts/auto_reply_ax_ui.py",
+            "scripts/jarvis_browser_use.py",
+            "scripts/auto_reply_metrics.py",
+        )
+        pending = [seed for seed in seeds if (ROOT / seed).is_file()]
+        resolved: set[str] = set()
+
+        while pending:
+            relative_path = pending.pop()
+            if relative_path in resolved:
+                continue
+            resolved.add(relative_path)
+            tree = ast.parse(
+                read_repo_file(relative_path),
+                filename=relative_path,
+            )
+            imported_modules: list[str] = []
+            for node in tree.body:
+                if isinstance(node, ast.Import):
+                    imported_modules.extend(alias.name for alias in node.names)
+                elif (
+                    isinstance(node, ast.ImportFrom)
+                    and node.level == 0
+                    and node.module is not None
+                ):
+                    imported_modules.append(node.module)
+
+            for module_name in imported_modules:
+                local_path = (
+                    "scripts/" + module_name.replace(".", "/") + ".py"
+                )
+                if (ROOT / local_path).is_file() and local_path not in resolved:
+                    pending.append(local_path)
+
+        missing = sorted(resolved - rust_staged)
+        self.assertFalse(
+            missing,
+            msg=f"staged entry scripts require unstaged local modules: {missing}",
+        )
+
     def test_primary_and_compat_shell_scripts_pass_sh_syntax_check(self) -> None:
         scripts = (
             "scripts/build-jarvis-desktop.sh",

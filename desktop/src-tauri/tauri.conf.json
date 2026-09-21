@@ -77,6 +77,7 @@
       "bundle-resources/scripts/auto_reply_reference_search.py": "scripts/auto_reply_reference_search.py",
       "bundle-resources/scripts/auto_reply_knowledge_graph.py": "scripts/auto_reply_knowledge_graph.py",
       "bundle-resources/scripts/auto_reply_ondevice.py": "scripts/auto_reply_ondevice.py",
+      "bundle-resources/scripts/mlx_serve_lifecycle.py": "scripts/mlx_serve_lifecycle.py",
       "bundle-resources/scripts/auto_reply_metrics.py": "scripts/auto_reply_metrics.py",
       "bundle-resources/scripts/auto_reply_ax_ui.py": "scripts/auto_reply_ax_ui.py",
       "bundle-resources/scripts/jarvis_browser_use.py": "scripts/jarvis_browser_use.py",
