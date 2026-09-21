@@ -1124,3 +1124,43 @@ $ launchctl print gui/501/application.com.openkakao.jarvis.desktop.286915917.286
 - `visual-check`는 status `pass`다. 1440x900·1600x1000·1920x1080·2048x1320 light viewport에서 scrollWidth/scrollHeight가 viewport를 넘지 않고 projected node text 최소값이 6px 이상이며 legend·navigation dock 교차 면적이 0이다. sidecar는 `jarvis-install-cutover-lifecycle.visual-check.html`(contact sheet)과 `.visual-check.json`(receipt)이고 1440x900·2048x1320 light/dark PNG 캡처가 함께 남았다.
 - 이 절의 수치는 자동 브라우저 증거이며 perceptual review는 별도다. receipt의 `visualReview`는 `pending`이고, 캡처를 직접 본 결과 겹침·잘림·빈 하단 밴드는 관측되지 않았다(사람 판단).
 - 다이어그램은 코드 계약을 그린 것이며 이 절의 rollback 경로가 실제로 실행됐다는 증거가 아니다. 이 호스트에서 rollback은 실행하지 않았다(미추적 인스턴스가 있어 재설치가 rollback으로 닫히는 조건이지만 실행하지 않았다).
+### 시그널 rollback·이전 런타임 복원·pid 신원 재확인 — 2026-09-22 KST
+
+- 독립 리뷰(commit `df514f8` 기준)가 남긴 설치·전환 경로 결함을 수정했다. 대상 파일은 `scripts/install-jarvis-desktop.sh`와 `tests/test_jarvis_desktop_launchers.py`이고 커밋은 `577a7ad`다.
+- rollback 멱등화: 실패 경로가 `perform_rollback <reason>` 하나로 모였다. `ROLLBACK_ATTEMPTED`로 두 번 실행되지 않고, 시작 직후 `trap '' HUP INT TERM`으로 rollback 도중의 신호를 무시한다. `post_activation_failure`와 신호 트랩이 같은 함수를 호출하므로 종전의 중복 rollback 경로가 사라졌다.
+- 신호 rollback 확대: 종전 `signal_exit`는 `cleanup`만 하고 끝나, `launchctl bootout` 뒤 활성화 이전 구간에서 `HUP`·`INT`·`TERM`이 오면 우리 LaunchAgent와 legacy LaunchAgent가 내려간 채 남을 수 있었다. 이제 런타임을 건드리기 직전에 `RUNTIME_TOUCHED=1`을 두고, `signal_exit`는 `RUNTIME_TOUCHED`·`APP_ACTIVATED`·`JARVIS_PLIST_INSTALLED`·`JARVIS_BOOTSTRAPPED` 중 하나라도 참이면 rollback을 돌린다.
+- 이전 런타임 복원: rollback은 종전에 활성 Jarvis bootout·번들 복원·plist 복원만 했다. 이제 이전에 로드돼 있던 `JARVIS_LOADED`·`LEGACY_LOADED` job을 각각 `launchctl bootstrap`으로 되돌리고, 옮겨 둔 `$LEGACY_LABEL.disabled.plist`를 `$LEGACY_PLIST`로 되돌린 뒤 `launchctl print "$DOMAIN"` 출력에서 두 label을 grep해 로드 여부를 `yes`/`no`/`unknown`으로 stderr에 남긴다. `print` 자체가 실패하면 `unknown`이고, 이는 로드되지 않았다는 뜻이 아니다.
+- installed artifact: rollback은 성공 전환의 복구 artifact `<JARVIS_LABEL>.installed.txt`도 지운다. 그래서 rollback 뒤 backup 디렉터리에 잘못된 설치 성공 기록이 남지 않는다.
+- 중복 가드 강화: `$APPLICATIONS_DIR` 경로 필터(`case "$candidate_path" in`)를 제거했다. 다른 경로를 보고하는 살아 있는 인스턴스가 배포 경로 밖에 있으면 필터가 그 pid를 제외해 진짜 중복을 놓칠 수 있었다. 이제 실행 파일 이름을 argv에 가진 프로세스는 경로와 무관하게 stray 후보이고, 경로는 `reported_app_path` 진단 문구로만 쓴다. 이 호스트에서 `/usr/bin/pgrep -f openkakao-jarvis-desktop`은 앱 pid만 반환하므로 false positive 위험은 이름 충돌 프로세스가 있을 때로 한정된다.
+- pid 신원 재확인: `wait_for_pid` 이후 `LAUNCHD_START_MARKER=$("$PS" -p "$LAUNCHD_PID" -o lstart=)`를 저장하고, 이전 번들 삭제 직전에 같은 값을 다시 읽어 비었거나 달라지면 `launchd pid identity changed before deletion`으로 fail-closed하고 rollback한다.
+- 신규 테스트 6건: (1) pid 대기 중 `SIGTERM`이면 exit 143·이전 번들 복원·rollback readback 기록, (2) 런타임 변경 구간에서 `SIGTERM`이면 이전에 로드돼 있던 Jarvis·legacy LaunchAgent가 다시 로드되고 legacy plist가 복원됨, (3) 2차 가드에서 stray가 나타나면 `installed.txt`가 제거됨, (4) 배포 경로 밖(`/tmp/...`) 경로를 보고하는 후보도 stray로 판정됨, (5) `lstart`가 바뀌면 rollback, (6) 정적 계약 검사(`perform_rollback() {`, `ROLLBACK_ATTEMPTED=1`, `RUNTIME_TOUCHED=1`, `[ "$RUNTIME_TOUCHED" -eq 1 ]`, `printf '%s\n' "$candidate_pids"`, `-o lstart=`, 경로 필터 부재).
+- 하네스는 `OPENKAKAO_FAKE_BLOCK_BOOTOUT`으로 fake `bootout`에서 블록해 신호 시점을 결정적으로 만들고, 살아 있는 프로세스를 죽이지 않는다. `send_signal`은 설치 스크립트 프로세스에만 보내며 그 자식(가짜 `launchctl`)에는 보내지 않는다.
+
+검증 명령과 출력:
+
+```
+$ /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 \
+    -m unittest tests.test_jarvis_desktop_launchers
+......................
+----------------------------------------------------------------------
+Ran 24 tests in 33.515s
+
+OK
+```
+
+```
+$ /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 \
+    -m unittest tests.test_auto_reply_ondevice tests.test_auto_reply_reference_search \
+    tests.test_auto_reply_knowledge_graph tests.test_jarvis_unit4 \
+    tests.test_jarvis_desktop_launchers tests.test_local_mlx_model_readiness \
+    tests.test_verify_local_models tests.test_mlx_serve_lifecycle \
+    tests.test_auto_reply_dream_rsi tests.test_dream_rsi_alphaxiv
+----------------------------------------------------------------------
+Ran 327 tests in 64.440s
+
+OK
+```
+
+- `sh scripts/test-auto-reply-launchd-artifacts.sh`는 `launchd artifact harness passed`로 통과했고, `/bin/sh -n scripts/install-jarvis-desktop.sh`와 `git diff --check`도 clean이다.
+- 회귀 검출력 대조: 신규 (2) 테스트는 `RUNTIME_TOUCHED=1`을 `0`으로 되돌린 대조 실행에서 `AssertionError: 'signal exit 143' not found in ''`로 실패했다. 즉 이 테스트는 수정 없이는 통과하지 않는다.
+- 이 절의 한계: 이 호스트에서 실제 재설치·rollback은 실행하지 않았다. 신호는 가짜 `launchctl`·`ps` 어댑터에 보낸 것이고 실제 LaunchAgent 상태 변화를 관측한 것은 아니다. `wait_for_pid`의 fallback은 여전히 `launchctl print` 텍스트에서 pid를 파싱하며 이는 외부 출력 형식 계약이다(`kickstart -kp`가 pid를 주면 쓰지 않는다). 앞 절의 미해결 stray 인스턴스(pid 84125, RunningBoard job)는 그대로 살아 있으므로 이 호스트의 전환 조건은 여전히 미충족이고, 재설치하면 가드가 그 인스턴스를 stray로 보아 exit 3으로 rollback한다.
