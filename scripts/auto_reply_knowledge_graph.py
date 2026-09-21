@@ -48,6 +48,7 @@ DENSE_EMBEDDING_URL = os.environ.get(
     "OPENKAKAO_LOCAL_EMBEDDING_URL", "http://127.0.0.1:8000/v1/embeddings"
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
+DENSE_STATUS_MAX_LENGTH = 400
 RRF_K = 60
 ANN_BANDS = 8
 ANN_BITS_PER_BAND = 8
@@ -375,6 +376,21 @@ def write_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         pass
 
 
+def _bounded_dense_status(value: Any, default: str = "unknown") -> str:
+    """Return a one-line dense-index status safe for settings/status payloads."""
+    status = str(value or default).replace("\r", " ").replace("\n", " ").strip()
+    return (status or default)[:DENSE_STATUS_MAX_LENGTH]
+
+
+def _dense_status_payload(conn: sqlite3.Connection) -> dict[str, Any]:
+    status = _bounded_dense_status(read_meta(conn, "last_dense_status"))
+    try:
+        indexed_at = int(read_meta(conn, "last_dense_indexed_at") or 0)
+    except (TypeError, ValueError):
+        indexed_at = 0
+    return {"dense_status": status, "dense_indexed_at": max(indexed_at, 0)}
+
+
 def collect_knowledge_graph_status(
     db_path: Path,
     *,
@@ -402,6 +418,8 @@ def collect_knowledge_graph_status(
         "stale": True,
         "snapshot_status": "unknown",
         "indexing_mode": "wal+isolated-copy+mode=ro+query_only",
+        "dense_status": "unknown",
+        "dense_indexed_at": 0,
     }
     if not kg_path.exists():
         return empty
@@ -444,6 +462,7 @@ def collect_knowledge_graph_status(
             "indexed_count": indexed_count,
             "stale": stale,
             "snapshot_status": snapshot_status,
+            **_dense_status_payload(conn),
         }
     finally:
         conn.close()
@@ -2029,12 +2048,26 @@ def _reindex_all(
             # 카카오 원본 DB로 폴백하지 않았음을 상태 화면에서도 확인할 수
             # 있게 남긴다. 이 값은 다음 정상 색인이 성공할 때만 해제된다.
             write_meta(conn, "last_snapshot_status", "fail_closed")
-        return
-    write_meta(conn, "last_index_error", "")
-    write_meta(conn, "last_snapshot_status", "copy_ok")
-    # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
-    # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
-    write_meta(conn, "last_indexed_at", str(int(time.time())))
+    else:
+        write_meta(conn, "last_index_error", "")
+        write_meta(conn, "last_snapshot_status", "copy_ok")
+        # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
+        # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
+        # Dense는 optional이므로 이 도장은 dense endpoint 상태와 독립적이다.
+        write_meta(conn, "last_indexed_at", str(int(time.time())))
+
+    # Dense ANN은 그래프 재색인의 독립 단계다. 로컬 임베딩 서비스가 없거나
+    # 깨져도 그래프 색인 성공/실패 판정(last_index_error)을 오염시키지 않는다.
+    # refresh 자체도 fail-closed지만 이 경계에서도 막아 detached child와
+    # background thread 밖으로 예외가 새지 않게 한다.
+    try:
+        refresh_dense_index(conn, state_root)
+    except Exception as error:  # noqa: BLE001 - optional dense stage must never escape
+        write_meta(
+            conn,
+            "last_dense_status",
+            _bounded_dense_status(f"unavailable:{type(error).__name__}:{error}"),
+        )
 
 
 
@@ -2081,6 +2114,8 @@ def collect_knowledge_graph(
             "node_count": 0,
             "edge_count": 0,
             "grounded_nodes": 0,
+            "dense_status": "unknown",
+            "dense_indexed_at": 0,
             "reason": str(error) or "knowledge_graph_unavailable",
         }
     try:
@@ -2242,6 +2277,7 @@ def collect_knowledge_graph(
             "grounded_nodes": sum(
                 1 for node in nodes if node["evidence"]["kind"] == PROVENANCE_LEDGER
             ),
+            **_dense_status_payload(conn),
         }
     finally:
         conn.close()
@@ -2669,12 +2705,15 @@ def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
     """
     if not texts:
         return []
+    normalized_texts = [str(text).strip() for text in texts]
+    if any(not text for text in normalized_texts):
+        raise ValueError("dense embedding input must be non-empty")
     parsed = urllib.parse.urlparse(DENSE_EMBEDDING_URL)
     host = (parsed.hostname or "").casefold()
-    if host not in {"127.0.0.1", "localhost", "::1"}:
+    if parsed.scheme not in {"http", "https"} or host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("dense embedding endpoint must be loopback-local")
     payload = json.dumps(
-        {"model": DENSE_EMBEDDING_MODEL, "input": [str(text) for text in texts]},
+        {"model": DENSE_EMBEDDING_MODEL, "input": normalized_texts},
         ensure_ascii=False,
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -2691,16 +2730,27 @@ def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
     rows = body.get("data") if isinstance(body, dict) else None
     if not isinstance(rows, list) or len(rows) != len(texts):
         raise RuntimeError("local dense embedding response mismatch")
-    ordered = sorted(
-        rows,
-        key=lambda row: int(row.get("index", 0)) if isinstance(row, dict) else 0,
-    )
-    vectors: list[tuple[float, ...]] = []
-    for row in ordered:
+    ordered: list[tuple[float, ...] | None] = [None] * len(rows)
+    expected_dim = 0
+    for row in rows:
         if not isinstance(row, dict):
             raise RuntimeError("local dense embedding row invalid")
-        vectors.append(_normalize_dense_vector(row.get("embedding")))
-    return vectors
+        index = row.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(rows):
+            raise RuntimeError("local dense embedding row index invalid")
+        if ordered[index] is not None:
+            raise RuntimeError("local dense embedding row index duplicate")
+        try:
+            vector = _normalize_dense_vector(row.get("embedding"))
+        except (TypeError, ValueError, OverflowError) as error:
+            raise RuntimeError("local dense embedding vector invalid") from error
+        if expected_dim and len(vector) != expected_dim:
+            raise RuntimeError("local dense embedding dimension mismatch")
+        expected_dim = expected_dim or len(vector)
+        ordered[index] = vector
+    if any(vector is None for vector in ordered):
+        raise RuntimeError("local dense embedding response mismatch")
+    return [vector for vector in ordered if vector is not None]
 
 
 def _ann_band_keys(vector: tuple[float, ...]) -> list[tuple[int, str]]:
@@ -2777,27 +2827,41 @@ def refresh_dense_index(
     *,
     batch_size: int = 32,
 ) -> dict[str, Any]:
-    """Persist local multilingual embeddings and an LSH ANN index."""
-    rows = list(
-        kg_conn.execute(
-            "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
-            " FROM kg_entities ORDER BY entity_id"
-        )
-    )
-    watermark = read_meta(kg_conn, "last_indexed_at") or str(
-        max((int(row[0] or 0) for row in kg_conn.execute("SELECT MAX(updated_at) FROM kg_entities")), default=0)
-    )
-    if not rows:
-        return {"status": "empty", "indexed": 0, "watermark": watermark}
-    dense = _connect_dense_index(state_root)
+    """Persist local embeddings and ANN buckets without leaking dense failures."""
+    dense: sqlite3.Connection | None = None
+    watermark = ""
     indexed = 0
     try:
+        rows = list(
+            kg_conn.execute(
+                "SELECT entity_id, name, category, aliases_json, description, key_facts_json"
+                " FROM kg_entities ORDER BY entity_id"
+            )
+        )
+        watermark = read_meta(kg_conn, "last_indexed_at") or str(
+            max(
+                (
+                    int(row[0] or 0)
+                    for row in kg_conn.execute("SELECT MAX(updated_at) FROM kg_entities")
+                ),
+                default=0,
+            )
+        )
+        if not rows:
+            write_meta(kg_conn, "last_dense_status", "empty")
+            write_meta(kg_conn, "last_dense_indexed_at", "0")
+            return {"status": "empty", "indexed": 0, "watermark": watermark}
+
+        dense = _connect_dense_index(state_root)
         dense.execute("BEGIN")
         dense.execute("DELETE FROM ann_buckets")
         dense.execute("DELETE FROM dense_vectors")
-        for start in range(0, len(rows), max(1, int(batch_size))):
-            batch = rows[start : start + max(1, int(batch_size))]
+        bounded_batch_size = max(1, int(batch_size))
+        for start in range(0, len(rows), bounded_batch_size):
+            batch = rows[start : start + bounded_batch_size]
             vectors = _local_dense_embeddings([_entity_dense_text(row) for row in batch])
+            if len(vectors) != len(batch):
+                raise RuntimeError("local dense embedding response mismatch")
             for row, vector in zip(batch, vectors):
                 entity_id = str(row[0])
                 dense.execute(
@@ -2829,12 +2893,30 @@ def refresh_dense_index(
             (watermark,),
         )
         dense.commit()
-    except Exception:
-        dense.rollback()
-        raise
+        indexed_at = int(time.time())
+        write_meta(kg_conn, "last_dense_status", f"indexed:{indexed}")
+        write_meta(kg_conn, "last_dense_indexed_at", str(indexed_at))
+        return {"status": "indexed", "indexed": indexed, "watermark": watermark}
+    except Exception as error:  # noqa: BLE001 - dense is optional and fail-closed
+        if dense is not None:
+            try:
+                dense.rollback()
+            except sqlite3.Error:
+                pass
+        status = _bounded_dense_status(f"unavailable:{type(error).__name__}:{error}")
+        write_meta(kg_conn, "last_dense_status", status)
+        return {
+            "status": "unavailable",
+            "indexed": 0,
+            "watermark": watermark,
+            "reason": status,
+        }
     finally:
-        dense.close()
-    return {"status": "indexed", "indexed": indexed, "watermark": watermark}
+        if dense is not None:
+            try:
+                dense.close()
+            except sqlite3.Error:
+                pass
 
 
 def _dense_ann_query(
@@ -2847,7 +2929,22 @@ def _dense_ann_query(
     path = state_root / DENSE_INDEX_DB_NAME
     if not path.is_file():
         raise RuntimeError("dense index unavailable")
-    query_vector = _local_dense_embeddings([query_text])[0]
+
+    kg_path = state_root / KNOWLEDGE_GRAPH_DB_NAME
+    if not kg_path.is_file():
+        raise RuntimeError("dense graph metadata unavailable")
+    kg_conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
+    kg_conn.execute("PRAGMA query_only = ON")
+    try:
+        dense_status = _bounded_dense_status(
+            read_meta(kg_conn, "last_dense_status"),
+            default="",
+        )
+    finally:
+        kg_conn.close()
+    if not dense_status.startswith("indexed:"):
+        raise RuntimeError("dense index not active")
+
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.execute("PRAGMA query_only = ON")
     try:
@@ -2860,6 +2957,9 @@ def _dense_ann_query(
             "SELECT value FROM dense_meta WHERE key='watermark'"
         ).fetchone()
         watermark = str(watermark_row[0]) if watermark_row else ""
+        if not watermark:
+            raise RuntimeError("dense index watermark missing")
+        query_vector = _local_dense_embeddings([query_text])[0]
         clauses: list[str] = []
         params: list[Any] = []
         for band, bucket in _ann_band_keys(query_vector):
@@ -2882,6 +2982,8 @@ def _dense_ann_query(
                 candidate_ids,
             )
         }
+        if any(len(vector) != len(query_vector) for vector in vectors.values()):
+            raise RuntimeError("dense index dimension mismatch")
         ranked = [
             (entity_id, _vector_similarity(query_vector, vector))
             for entity_id, vector in vectors.items()

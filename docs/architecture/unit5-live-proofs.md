@@ -747,16 +747,17 @@ staging 수정을 포함한 pre-commit working tree(그 변경은 이후 commit 
 
 이 검증은 설치 번들의 Python bridge 경로에 대한 read-only 증거이며 live UI 스크린샷(Computer Use attach 불가), live KakaoTalk 전송, live model generation, Developer ID signing을 입증하지 않는다.
 
-## 실제 카카오톡 DB read-only 동기화·색인 (parent 측정) — 2026-09-21 KST
+## 실제 카카오톡 DB read-only 동기화·색인 — 2026-09-21 KST
 
-저장소에서 2026-09-21 11:21 KST에 빌드된 `target/release/openkakao-cli`(마지막 `src/` 변경은 `bc46908` 2026-09-21 08:29 KST이고 그 뒤 `src/` 커밋은 0건)와 HEAD `2661862`의 `scripts/auto_reply_knowledge_graph.py`, 고정 Python 3.11로 실제 카카오톡 DB에 대해 처음 실행했다. state/logs root는 전부 임시 디렉터리였고 원본 DB 파일은 어느 명령에서도 직접 열지 않았다.
+저장소에서 2026-09-21 11:21 KST에 빌드된 `target/release/openkakao-cli`(마지막 `src/` 변경 `bc46908` 2026-09-21 08:29 KST, 그 뒤 `src/` 커밋 0건)와 같은 날 커밋된 `scripts/auto_reply_knowledge_graph.py`, 고정 Python 3.11로 실제 카카오톡 DB에 대해 처음 실행했다. state/logs root는 전부 임시 디렉터리였고 원본 DB 파일은 어느 명령에서도 직접 열지 않았으며 KakaoTalk 전송은 없었다.
 
-- `openkakao-cli local-chats --json`: exit 0, stderr 0 bytes, 채팅방 50개.
-- `openkakao-cli context-sync-local --chat-id <id> --chat <room> --db <temp>/context.sqlite3`: 이름 없는 그룹방은 exit 0, stdout `Synchronized 6 local pages ... (authoritative=false)`, temp 색인 696,320 bytes. 이름 있는 방 하나는 exit 0, `Synchronized 1 local pages ... (authoritative=true)`, 430,080 bytes, `context_messages` 76행.
-- 그 temp 색인을 `_reindex_all(state_root=<temp>/menubar, chat=<room>)`로 색인: `kg_meta.last_snapshot_status = "copy_ok"`, `last_index_error = ""`, `last_indexed_at = 1789989600`, `kg_entities` 4행, `kg_relations` 5행(`대화 주제` 3 + `대화방` 1). `k_hop_neighborhood(<node>, 2, 10)`은 노드 4개·엣지 5개·depth 4를 반환했다.
-- 이 측정이 입증하는 것은 원본 DB 잠금 없이 복제본에서만 읽는 동기화·색인·k-hop 경로가 실제 데이터에서 동작한다는 점이다. 설치된 앱 UI 경로, KakaoTalk 전송, live 모델 생성은 여전히 미입증이다.
+- `openkakao-cli local-chats --json`: exit 0, stderr 0 bytes, 채팅방 50개(그중 이름 있는 방 12개).
+- `context-sync-local --chat-id <id> --chat <room> --db <temp>/context.sqlite3`: 이름 있는 방 12개 중 1개만 exit 0이었고 그 방은 430,080 bytes, `context_messages` 76행이었다. 나머지 11개는 exit 1과 `live context source lacks required style or timing samples`로 끝났다. 이름 없는 그룹방은 별도 측정에서 exit 0, stdout `Synchronized 6 local pages ... (authoritative=false)`, temp 색인 696,320 bytes였다.
+- 그 색인을 `_reindex_all(state_root=<temp>/menubar, chat=<room>)`로 색인: 0.01초, `kg_entities` 2행, `kg_relations` 1행, `kg_meta.last_snapshot_status = "copy_ok"`, `last_index_error = ""`, `last_indexed_at` 기록됨. `k_hop_neighborhood(<root>, 2, 10)`은 노드 1개를 반환했다.
+- dense endpoint가 없는 이 호스트에서 `last_dense_status = "unavailable:RuntimeError:local dense embedding unavailable"`였고 `retrieve_knowledge_bundle`은 `search_mode = "bm25_only"`였다. 같은 그래프에 in-process loopback `/v1/embeddings` stub을 물리자 `refresh_dense_index`가 `status = "indexed"`, `indexed = 2`를 반환하고 ANN 저장소에 `dense_vectors` 2행·`ann_buckets` 16행(엔티티 수 × 8 band)이 생겼으며 `search_mode`가 `"rrf"`로 바뀌었다. 프로덕션 호출자가 없어 도달 불가였던 RRF 경로가 재색인만으로 활성화된다는 뜻이다.
+- 이 측정이 입증하는 것은 원본 DB 잠금 없이 복제본에서만 읽는 동기화·색인·k-hop·dense RRF 경로가 실제 데이터에서 동작한다는 점이다. 설치된 앱 UI 경로, KakaoTalk 전송, live 모델 생성, 실제 bge-m3 서버 가동은 여전히 미입증이다.
 
 ### 같은 측정에서 남은 두 제한 — 2026-09-21 KST
 
-- 방 6개 중 4개는 `context-sync-local`이 exit 1과 `live context source lacks required style or timing samples`로 끝났고 temp 색인에는 `context_messages = 0`, `context_sources = 0`만 남았다. 한 방은 메시지 199행이 커밋된 뒤 exit 1이었다. 이 게이트는 `src/context/mod.rs`의 `live_source_has_required_summaries`이며 auto-reply의 authoritative 승격 요구인데, Jarvis의 read-only 색인에도 그대로 적용되어 스타일·타이밍 샘플이 없는 방은 그래프와 검색에 아무것도 남기지 않는다.
-- dense ANN 색인(`knowledge-dense-ann.sqlite3`)은 이 호스트에 loopback 임베딩 endpoint가 없어(`127.0.0.1:8000` closed) 채워지지 않았고 `retrieve_knowledge_bundle`은 `search_mode = "bm25_only"`를 반환했다. 유일한 writer인 `refresh_dense_index`에 프로덕션 호출자가 없어 `SEARCH_MODE_RRF`가 제품에서 도달 불가라는 결함을 이 측정에서 확인했다.
+- Jarvis의 read-only 색인은 auto-reply의 authoritative 승격 게이트를 그대로 지난다. `src/context/mod.rs`의 `live_source_has_required_summaries`는 방마다 owner 스타일 샘플 1개 이상과 응답 타이밍 샘플 2개 이상을 요구하고, 못 채우면 exit 1로 끝나며 그 페이지의 색인 행이 롤백된다. 위 측정에서 이름 있는 방 12개 중 11개가 이 경로였고(temp 색인 `context_messages = 0`, `context_sources = 0`), 한 방은 메시지 199행이 먼저 커밋된 뒤 exit 1이었다. 스타일·타이밍 샘플이 없는 방은 그래프와 검색에 아무것도 남기지 않는다. 이 게이트는 발신 승인 경로를 지키는 장치이므로 Jarvis 색인만을 위해 완화하지 않았고, 완화 여부는 운영자 판단으로 남긴다.
+- dense RRF는 유효한 loopback 임베딩 endpoint를 전제로 한다. 이 호스트에는 그 endpoint가 없었으므로(`127.0.0.1:8000` closed) live 하이브리드는 in-process stub으로만 검증했고, 해시 벡터 stub을 쓴 측정에서는 dense 후보가 ANN 버킷에 충돌하지 않아 `search_mode = "rrf"`이면서 후보가 0개였다. `search_mode`는 dense 조회가 성공했음을 뜻하지 dense 후보가 존재함을 뜻하지 않는다.
