@@ -59,6 +59,36 @@ export interface OnDeviceStatus {
   statusDetail: string;
 }
 
+export type PipelineStage =
+  | "detect"
+  | "authorize"
+  | "queue"
+  | "context"
+  | "model"
+  | "delay"
+  | "send"
+  | "confirm"
+  | "none"
+  | "unknown";
+
+export type PipelineOutcome =
+  | "none"
+  | "sent"
+  | "skipped"
+  | "deferred"
+  | "scheduled"
+  | "failed"
+  | "aborted"
+  | "unknown";
+
+export interface PipelineStatus {
+  active: boolean;
+  stage: PipelineStage;
+  stageIndex: number;
+  stageTotal: number;
+  outcome: PipelineOutcome;
+}
+
 export interface RuntimeSnapshot {
   available: boolean;
   rooms: RoomSummary[];
@@ -67,6 +97,7 @@ export interface RuntimeSnapshot {
   jobLoad: number;
   background: BackgroundStatus;
   onDevice: OnDeviceStatus;
+  pipeline: PipelineStatus;
   terminal: {
     sent: number;
     skipped: number;
@@ -113,6 +144,12 @@ const RECEIPT_REASON_SLUG = /^[a-z][a-z0-9_]{0,63}$/;
 const RETRIEVAL_STATES = new Set(["ok", "empty", "skipped", "error", "index_not_ready", "unrecorded"]);
 const GEEKNEWS_BACKGROUND_STATES = new Set<BackgroundSourceState>(["sending", "confirmed", "idle", "unknown"]);
 const DB_SYNC_BACKGROUND_STATES = new Set<BackgroundSourceState>(["retrying", "stalled", "syncing", "behind", "ready", "unknown"]);
+const PIPELINE_STAGES = new Set<PipelineStage>([
+  "detect", "authorize", "queue", "context", "model", "delay", "send", "confirm",
+]);
+const PIPELINE_OUTCOMES = new Set<PipelineOutcome>([
+  "none", "sent", "skipped", "deferred", "scheduled", "failed", "aborted",
+]);
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -223,6 +260,82 @@ export function parseOnDevice(value: unknown): OnDeviceStatus {
   };
 }
 
+function unavailablePipeline(): PipelineStatus {
+  return {
+    active: false,
+    stage: "none",
+    stageIndex: 0,
+    stageTotal: 0,
+    outcome: "unknown",
+  };
+}
+
+function pipelineOutcome(value: unknown): PipelineOutcome {
+  return typeof value === "string" && PIPELINE_OUTCOMES.has(value as PipelineOutcome)
+    ? value as PipelineOutcome
+    : "unknown";
+}
+
+function pipelineStage(value: unknown): PipelineStage {
+  return typeof value === "string" && PIPELINE_STAGES.has(value as PipelineStage)
+    ? value as PipelineStage
+    : "unknown";
+}
+
+function pipelineIndex(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+export function parsePipeline(value: unknown): PipelineStatus {
+  const input = record(value);
+  if (!input) return unavailablePipeline();
+
+  if (Array.isArray(input.stages)) {
+    const stages = input.stages;
+    const requestedIndex = pipelineIndex(input.active_index ?? input.activeIndex);
+    let selectedIndex = requestedIndex !== null && requestedIndex < stages.length ? requestedIndex : null;
+    if (selectedIndex === null) {
+      const fallbackIndex = stages.findIndex((item) => record(item)?.state === "active");
+      selectedIndex = fallbackIndex >= 0 ? fallbackIndex : null;
+    }
+    if (selectedIndex === null) {
+      return {
+        active: false,
+        stage: "none",
+        stageIndex: 0,
+        stageTotal: Math.min(16, stages.length),
+        outcome: pipelineOutcome(input.outcome),
+      };
+    }
+    const selected = record(stages[selectedIndex]);
+    return {
+      active: true,
+      stage: pipelineStage(selected?.id),
+      stageIndex: Math.min(16, selectedIndex),
+      stageTotal: Math.min(16, stages.length),
+      outcome: pipelineOutcome(input.outcome),
+    };
+  }
+
+  const hasSafeShape = typeof input.active === "boolean"
+    && typeof input.stage === "string"
+    && ("stageIndex" in input || "stage_index" in input)
+    && ("stageTotal" in input || "stage_total" in input)
+    && typeof input.outcome === "string";
+  if (!hasSafeShape) return unavailablePipeline();
+
+  const active = input.active === true;
+  return {
+    active,
+    stage: active ? pipelineStage(input.stage) : "none",
+    stageIndex: active ? Math.min(16, pipelineIndex(input.stageIndex ?? input.stage_index) ?? 0) : 0,
+    stageTotal: Math.min(16, nonNegativeInt(input.stageTotal ?? input.stage_total)),
+    outcome: pipelineOutcome(input.outcome),
+  };
+}
+
 export function parseJobEvent(value: unknown): JobEvent | null {
   const input = record(value);
   if (!input) return null;
@@ -263,6 +376,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     jobLoad: 0,
     background: parseBackground(null),
     onDevice: unavailableOnDevice(),
+    pipeline: unavailablePipeline(),
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
@@ -345,6 +459,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
     jobLoad: Math.min(1, Math.max(0, finiteNumber(input.job_load ?? input.jobLoad, 0))),
     background: parseBackground(input.background),
     onDevice: parseOnDevice(input.onDevice ?? input.ondevice_hardware),
+    pipeline: parsePipeline(input.pipeline),
     terminal: {
       sent: nonNegativeInt(terminal.sent),
       skipped: nonNegativeInt(terminal.skipped),

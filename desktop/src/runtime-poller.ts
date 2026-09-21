@@ -30,8 +30,9 @@ function snapshotSources(snapshot: RuntimeSnapshot | null): SourceLoads | undefi
     || background.geeknews.caption.length > 0
     || background.dbSync.caption.length > 0
     || background.geeknews.state !== "unknown"
-    || background.dbSync.state !== "unknown";
-  return hasStatus ? sourceLoads(background) : undefined;
+    || background.dbSync.state !== "unknown"
+    || snapshot.pipeline.active;
+  return hasStatus ? sourceLoads(background, snapshot.pipeline) : undefined;
 }
 
 export class RuntimeSnapshotPoller {

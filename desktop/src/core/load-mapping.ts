@@ -1,4 +1,15 @@
-import type { BackgroundStatus } from "../contracts";
+import type { BackgroundStatus, PipelineStatus } from "../contracts";
+
+export const PIPELINE_STAGE_IDS = [
+  "detect",
+  "authorize",
+  "queue",
+  "context",
+  "model",
+  "delay",
+  "send",
+  "confirm",
+] as const;
 
 export interface SourceLoads {
   reply: number;
@@ -12,9 +23,26 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-export function sourceLoads(background: BackgroundStatus): SourceLoads {
+export function pipelineLoad(status: PipelineStatus): number {
+  if (!status.active) return 0;
+  // Active reply phases map to bounded load: detect .10, authorize .15,
+  // queue .20, context .35, model .85, delay .05, send .60, confirm .25.
+  const weights: Record<(typeof PIPELINE_STAGE_IDS)[number], number> = {
+    detect: 0.10,
+    authorize: 0.15,
+    queue: 0.20,
+    context: 0.35,
+    model: 0.85,
+    delay: 0.05,
+    send: 0.60,
+    confirm: 0.25,
+  };
+  return clamp01(weights[status.stage as (typeof PIPELINE_STAGE_IDS)[number]] ?? 0);
+}
+
+export function sourceLoads(background: BackgroundStatus, pipeline: PipelineStatus): SourceLoads {
   return {
-    reply: clamp01(background.replyLoad),
+    reply: clamp01(Math.max(background.replyLoad, pipelineLoad(pipeline))),
     geeknews: clamp01(background.geeknews.activity),
     dbSync: clamp01(background.dbSync.activity),
     total: clamp01(background.activity),

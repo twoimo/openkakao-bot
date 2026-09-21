@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
 import { JarvisCore } from "../core/jarvis-core";
 import { RenderLifecycle } from "../core/lifecycle";
-import { parseBackground, parseJobEvent, parseOnDevice, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
+import { parseBackground, parseJobEvent, parseOnDevice, parsePipeline, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
 import {
   KnowledgeDrilldown,
   ON_SCREEN_NODE_CAP,
@@ -150,6 +150,55 @@ describe("safe shared contracts", () => {
     expect(snapshot.background.replyLoad).toBe(0.25);
     expect(snapshot.background.geeknews.state).toBe("confirmed");
     expect(snapshot.background.dbSync.state).toBe("ready");
+  });
+
+  it("parses pipeline stage selection, allowlists, and safe defaults", () => {
+    const idle = parsePipeline({
+      active_index: null,
+      event_id: "none",
+      outcome: "none",
+      stages: [
+        { id: "detect", state: "idle" },
+        { id: "authorize", state: "idle" },
+        { id: "queue", state: "idle" },
+        { id: "context", state: "idle" },
+        { id: "model", state: "idle" },
+        { id: "delay", state: "idle" },
+        { id: "send", state: "idle" },
+        { id: "confirm", state: "idle" },
+      ],
+    });
+    expect(idle).toEqual({ active: false, stage: "none", stageIndex: 0, stageTotal: 8, outcome: "none" });
+
+    const fallbackActive = parsePipeline({
+      active_index: null,
+      outcome: "scheduled",
+      stages: [
+        { id: "detect", state: "done" },
+        { id: "delay", state: "active" },
+      ],
+    });
+    expect(fallbackActive).toEqual({ active: true, stage: "delay", stageIndex: 1, stageTotal: 2, outcome: "scheduled" });
+
+    const indexed = parsePipeline({
+      activeIndex: 4,
+      outcome: "deferred",
+      stages: [
+        { id: "detect", state: "done" },
+        { id: "authorize", state: "done" },
+        { id: "queue", state: "done" },
+        { id: "context", state: "done" },
+        { id: "model", state: "idle" },
+      ],
+    });
+    expect(indexed).toEqual({ active: true, stage: "model", stageIndex: 4, stageTotal: 5, outcome: "deferred" });
+
+    expect(parsePipeline({ active_index: 0, outcome: "private", stages: [{ id: "private-stage", state: "active" }] }))
+      .toEqual({ active: true, stage: "unknown", stageIndex: 0, stageTotal: 1, outcome: "unknown" });
+    expect(parsePipeline({ active: true, stage: "send", stage_index: 6, stage_total: 8, outcome: "sent" }))
+      .toEqual({ active: true, stage: "send", stageIndex: 6, stageTotal: 8, outcome: "sent" });
+    expect(parsePipeline(undefined))
+      .toEqual({ active: false, stage: "none", stageIndex: 0, stageTotal: 0, outcome: "unknown" });
   });
 
   it("parses bounded on-device summaries from raw and bridged shapes", () => {
@@ -399,6 +448,40 @@ describe("background settings activity", () => {
     renderBackground(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
     expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 상태를 확인할 수 없습니다.");
   });
+
+  it("shows the safe pipeline stage only while the pipeline is active", () => {
+    document.body.innerHTML = settingsMarkup();
+    const active = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      pipeline: {
+        active_index: 4,
+        outcome: "scheduled",
+        stages: [
+          { id: "detect", state: "done" },
+          { id: "authorize", state: "done" },
+          { id: "queue", state: "done" },
+          { id: "context", state: "done" },
+          { id: "model", state: "active" },
+        ],
+      },
+    });
+    renderBackground(active);
+    expect(document.getElementById("settings-activity-source")?.textContent).toContain("파이프라인 model");
+
+    const inactive = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      background: { activity: 0.2 },
+      pipeline: { active_index: null, outcome: "none", stages: [{ id: "detect", state: "idle" }] },
+    });
+    renderBackground(inactive);
+    expect(document.getElementById("settings-activity-source")?.textContent).not.toContain("파이프라인");
+  });
 });
 
 describe("on-device hardware settings", () => {
@@ -476,9 +559,20 @@ describe("background signal polling", () => {
       voice: { available: true, rms: 0.2 },
       background: {
         activity: 0.8,
-        replyLoad: 0.5,
+        replyLoad: 0.25,
         geeknews: { state: "sending", activity: 0.6, caption: "" },
         dbSync: { state: "syncing", activity: 0.3, caption: "" },
+      },
+      pipeline: {
+        active_index: 4,
+        outcome: "scheduled",
+        stages: [
+          { id: "detect", state: "done" },
+          { id: "authorize", state: "done" },
+          { id: "queue", state: "done" },
+          { id: "context", state: "done" },
+          { id: "model", state: "active" },
+        ],
       },
     });
     const sink = { setSignals: vi.fn() };
@@ -494,7 +588,7 @@ describe("background signal polling", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(sink.setSignals).toHaveBeenCalledWith(0.9, 0.2, {
-      reply: 0.5,
+      reply: 0.85,
       geeknews: 0.6,
       dbSync: 0.3,
       total: 0.8,

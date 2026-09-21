@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BackgroundStatus } from "../contracts";
-import { latticePulse, ringTargetVelocities, sourceLoads } from "../core/load-mapping";
+import type { BackgroundStatus, PipelineStatus } from "../contracts";
+import { latticePulse, pipelineLoad, ringTargetVelocities, sourceLoads } from "../core/load-mapping";
 
 function background(overrides: Partial<BackgroundStatus> = {}): BackgroundStatus {
   return {
@@ -13,6 +13,17 @@ function background(overrides: Partial<BackgroundStatus> = {}): BackgroundStatus
   };
 }
 
+function pipeline(overrides: Partial<PipelineStatus> = {}): PipelineStatus {
+  return {
+    active: false,
+    stage: "none",
+    stageIndex: 0,
+    stageTotal: 0,
+    outcome: "unknown",
+    ...overrides,
+  };
+}
+
 describe("source load mapping", () => {
   it("maps each safe background source independently", () => {
     expect(sourceLoads(background({
@@ -20,7 +31,7 @@ describe("source load mapping", () => {
       replyLoad: 0.2,
       geeknews: { state: "sending", activity: 0.5, caption: "" },
       dbSync: { state: "syncing", activity: 0.7, caption: "" },
-    }))).toEqual({ reply: 0.2, geeknews: 0.5, dbSync: 0.7, total: 0.9 });
+    }), pipeline())).toEqual({ reply: 0.2, geeknews: 0.5, dbSync: 0.7, total: 0.9 });
   });
 
   it("fails closed for non-finite and out-of-range loads", () => {
@@ -29,7 +40,30 @@ describe("source load mapping", () => {
       replyLoad: 4,
       geeknews: { state: "unknown", activity: -2, caption: "" },
       dbSync: { state: "unknown", activity: Number.POSITIVE_INFINITY, caption: "" },
-    }))).toEqual({ reply: 1, geeknews: 0, dbSync: 0, total: 0 });
+    }), pipeline())).toEqual({ reply: 1, geeknews: 0, dbSync: 0, total: 0 });
+  });
+
+  it("weights active pipeline phases and keeps them bounded", () => {
+    const none = pipelineLoad(pipeline());
+    const detect = pipelineLoad(pipeline({ active: true, stage: "detect" }));
+    const context = pipelineLoad(pipeline({ active: true, stage: "context" }));
+    const send = pipelineLoad(pipeline({ active: true, stage: "send" }));
+    const model = pipelineLoad(pipeline({ active: true, stage: "model" }));
+    expect(model).toBeGreaterThan(send);
+    expect(send).toBeGreaterThan(context);
+    expect(context).toBeGreaterThan(detect);
+    expect(detect).toBeGreaterThan(none);
+    for (const value of [none, detect, context, send, model]) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+    expect(pipelineLoad(pipeline({ active: true, stage: "unknown" }))).toBe(0);
+  });
+
+  it("uses the larger of queued reply load and active pipeline load", () => {
+    const model = pipeline({ active: true, stage: "model", stageIndex: 4, stageTotal: 8 });
+    expect(sourceLoads(background({ replyLoad: 0.25 }), model).reply).toBe(0.85);
+    expect(sourceLoads(background({ replyLoad: 0.9 }), model).reply).toBe(0.9);
   });
 
   it("drives rings from reply, GeekNews, and DB sync loads and preserves base at zero", () => {

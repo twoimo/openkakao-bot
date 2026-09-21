@@ -193,11 +193,34 @@ pub struct SafeRuntimeSnapshot {
     background: SafeBackground,
     #[serde(rename = "onDevice")]
     on_device: SafeOnDevice,
+    pipeline: SafePipeline,
     terminal_counts: TerminalCounts,
     context_sync: ContextSync,
     reply_model_id: Option<String>,
     voice: SafeVoiceStatus,
     error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SafePipeline {
+    active: bool,
+    stage: String,
+    stage_index: u32,
+    stage_total: u32,
+    outcome: String,
+}
+
+impl Default for SafePipeline {
+    fn default() -> Self {
+        Self {
+            active: false,
+            stage: "none".to_string(),
+            stage_index: 0,
+            stage_total: 0,
+            outcome: "unknown".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -984,6 +1007,77 @@ fn sanitize_ondevice(value: Option<&Value>) -> SafeOnDevice {
     }
 }
 
+fn sanitize_pipeline(value: Option<&Value>) -> SafePipeline {
+    const STAGE_IDS: &[&str] = &[
+        "detect",
+        "authorize",
+        "queue",
+        "context",
+        "model",
+        "delay",
+        "send",
+        "confirm",
+    ];
+    const OUTCOMES: &[&str] = &[
+        "none",
+        "sent",
+        "skipped",
+        "deferred",
+        "scheduled",
+        "failed",
+        "aborted",
+    ];
+
+    let Some(pipeline) = value.and_then(Value::as_object) else {
+        return SafePipeline::default();
+    };
+    let Some(stages) = pipeline.get("stages").and_then(Value::as_array) else {
+        return SafePipeline::default();
+    };
+
+    let active_index = pipeline
+        .get("active_index")
+        .and_then(Value::as_i64)
+        .filter(|index| *index >= 0)
+        .and_then(|index| usize::try_from(index).ok())
+        .filter(|index| *index < stages.len())
+        .or_else(|| {
+            stages.iter().position(|stage| {
+                stage
+                    .as_object()
+                    .and_then(|item| item.get("state"))
+                    .and_then(Value::as_str)
+                    == Some("active")
+            })
+        });
+
+    let (active, stage, stage_index) = if let Some(index) = active_index {
+        let stage = stages[index]
+            .as_object()
+            .and_then(|item| item.get("id"))
+            .and_then(Value::as_str)
+            .filter(|id| STAGE_IDS.contains(id))
+            .unwrap_or("unknown")
+            .to_string();
+        (true, stage, index.min(16) as u32)
+    } else {
+        (false, "none".to_string(), 0)
+    };
+
+    SafePipeline {
+        active,
+        stage,
+        stage_index,
+        stage_total: stages.len().min(16) as u32,
+        outcome: pipeline
+            .get("outcome")
+            .and_then(Value::as_str)
+            .filter(|outcome| OUTCOMES.contains(outcome))
+            .unwrap_or("unknown")
+            .to_string(),
+    }
+}
+
 fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     let value = value?.trim();
     if value.is_empty() {
@@ -1516,6 +1610,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
             job_load: 0.0,
             background: SafeBackground::fallback(0.0, 0.0),
             on_device: SafeOnDevice::default(),
+            pipeline: SafePipeline::default(),
             terminal_counts: TerminalCounts::default(),
             context_sync: ContextSync {
                 mode: "async",
@@ -1590,6 +1685,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     let job_load = clamp01(reply_load.max(background_activity));
     let background = sanitize_background(root.get("background"), job_load, reply_load);
     let on_device = sanitize_ondevice(root.get("ondevice_hardware"));
+    let pipeline = sanitize_pipeline(root.get("pipeline"));
 
     let mut burst_superseded = 0_u64;
     if let Some(receipt_rooms) = root
@@ -1634,6 +1730,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         job_load,
         background,
         on_device,
+        pipeline,
         terminal_counts: TerminalCounts {
             sent: as_u64(root.get("sent")),
             skipped: as_u64(root.get("skipped")),
@@ -3164,6 +3261,120 @@ mod tests {
         ] {
             assert!(!text.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn snapshot_pipeline_selects_idle_fallback_and_indexed_stages() {
+        let idle = sanitize_snapshot(&json!({
+            "pipeline": {
+                "active_index": null,
+                "event_id": "none",
+                "outcome": "none",
+                "stages": [
+                    {"id": "detect", "state": "idle"},
+                    {"id": "authorize", "state": "idle"},
+                    {"id": "queue", "state": "idle"},
+                    {"id": "context", "state": "idle"},
+                    {"id": "model", "state": "idle"},
+                    {"id": "delay", "state": "idle"},
+                    {"id": "send", "state": "idle"},
+                    {"id": "confirm", "state": "idle"}
+                ]
+            }
+        }));
+        assert!(!idle.pipeline.active);
+        assert_eq!(idle.pipeline.stage, "none");
+        assert_eq!(idle.pipeline.stage_index, 0);
+        assert_eq!(idle.pipeline.stage_total, 8);
+        assert_eq!(idle.pipeline.outcome, "none");
+
+        let fallback = sanitize_snapshot(&json!({
+            "pipeline": {
+                "active_index": null,
+                "outcome": "scheduled",
+                "stages": [
+                    {"id": "detect", "state": "done"},
+                    {"id": "delay", "state": "active"}
+                ]
+            }
+        }));
+        assert!(fallback.pipeline.active);
+        assert_eq!(fallback.pipeline.stage, "delay");
+        assert_eq!(fallback.pipeline.stage_index, 1);
+        assert_eq!(fallback.pipeline.stage_total, 2);
+        assert_eq!(fallback.pipeline.outcome, "scheduled");
+
+        let indexed = sanitize_snapshot(&json!({
+            "pipeline": {
+                "active_index": 4,
+                "outcome": "deferred",
+                "stages": [
+                    {"id": "detect", "state": "done"},
+                    {"id": "authorize", "state": "done"},
+                    {"id": "queue", "state": "done"},
+                    {"id": "context", "state": "done"},
+                    {"id": "model", "state": "idle"}
+                ]
+            }
+        }));
+        assert!(indexed.pipeline.active);
+        assert_eq!(indexed.pipeline.stage, "model");
+        assert_eq!(indexed.pipeline.stage_index, 4);
+        assert_eq!(indexed.pipeline.stage_total, 5);
+        assert_eq!(indexed.pipeline.outcome, "deferred");
+    }
+
+    #[test]
+    fn snapshot_pipeline_unknown_and_missing_values_fail_closed() {
+        let unknown = sanitize_snapshot(&json!({
+            "pipeline": {
+                "active_index": 0,
+                "outcome": "private-outcome",
+                "stages": [{"id": "private-stage", "state": "active"}]
+            }
+        }));
+        assert!(unknown.pipeline.active);
+        assert_eq!(unknown.pipeline.stage, "unknown");
+        assert_eq!(unknown.pipeline.outcome, "unknown");
+
+        assert_eq!(
+            sanitize_snapshot(&json!({})).pipeline,
+            SafePipeline::default()
+        );
+        assert_eq!(
+            sanitize_snapshot(&json!({"pipeline": "invalid"})).pipeline,
+            SafePipeline::default()
+        );
+        assert_eq!(
+            sanitize_snapshot(&json!({"pipeline": {"outcome": "sent"}})).pipeline,
+            SafePipeline::default()
+        );
+    }
+
+    #[test]
+    fn snapshot_pipeline_serializes_only_allowlisted_summary() {
+        let safe = sanitize_snapshot(&json!({
+            "pipeline": {
+                "active_index": 1,
+                "event_id": "FORBIDDEN_EVENT_ID",
+                "outcome": "sent",
+                "stages": [
+                    {"id": "detect", "state": "blocked"},
+                    {"id": "send", "state": "active"}
+                ]
+            }
+        }));
+        let serialized = serde_json::to_value(&safe).unwrap();
+        let pipeline = serialized["pipeline"].as_object().unwrap();
+        assert_eq!(
+            pipeline.keys().map(String::as_str).collect::<HashSet<_>>(),
+            HashSet::from(["active", "stage", "stageIndex", "stageTotal", "outcome"])
+        );
+        let text = serde_json::to_string(pipeline).unwrap();
+        for forbidden in ["event_id", "FORBIDDEN_EVENT_ID", "stages", "blocked"] {
+            assert!(!text.contains(forbidden));
+        }
+        assert!(!text.contains(":\"active\""));
     }
 
     #[test]
