@@ -67,10 +67,47 @@ describe("model ownership settings", () => {
     expect(loadAction.mock.calls.map(([action]) => action)).toEqual([
       "models",
       "model-owner-status",
+      "mlx-server-status",
       "dream-rsi-status",
       "knowledge-graph-status",
       "knowledge-graph",
     ]);
     expect(document.querySelector("#model-owner-state")?.textContent).toBe(expected);
+  });
+
+  it.each([
+    ["app_owned", "Qwen3.8-27B-MLX-Serve-4bit", "앱 소유 서버 실행 중 · Qwen3.8-27B-MLX-Serve-4bit"],
+    ["foreign_listener", null, "외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다"],
+    ["stopped", null, "앱 소유 서버 없음"],
+    ["state_stale", null, "소유 기록이 프로세스와 불일치 · 27B 전환 차단"],
+    ["state_invalid", null, "소유 기록을 신뢰할 수 없음 · 27B 전환 차단"],
+  ])("renders app-owned MLX server state %s", async (ownerState, model, expected) => {
+    const loadAction = vi.fn(async (action: string): Promise<Record<string, unknown> | null> => {
+      if (action === "mlx-server-status") {
+        return { ok: true, action, owner_state: ownerState, app_owned: ownerState === "app_owned", model };
+      }
+      return null;
+    });
+
+    await bootSettings({
+      loadSnapshot: async () => snapshot,
+      loadAction,
+      wireVoice: () => undefined,
+      invokeCommand: async <T>() => undefined as T,
+    });
+
+    expect(document.querySelector("#mlx-server-state")?.textContent).toBe(expected);
+  });
+
+  it("never claims ownership when the status payload is unavailable", async () => {
+    await bootSettings({
+      loadSnapshot: async () => snapshot,
+      loadAction: async () => null,
+      wireVoice: () => undefined,
+      invokeCommand: async <T>() => undefined as T,
+    });
+
+    expect(document.querySelector("#mlx-server-state")?.textContent).toBe("앱 소유 서버 없음");
+    expect(document.querySelector("#mlx-server-state")?.textContent).not.toContain("실행 중");
   });
 });

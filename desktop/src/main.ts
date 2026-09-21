@@ -171,6 +171,35 @@ function renderModelOwnerState(payload: Record<string, unknown> | null): void {
   setText("model-owner-state", "소유권 미확인 · 27B 전환 차단");
 }
 
+/**
+ * Show who owns the MLX gateway port.
+ *
+ * A foreign listener is reported, never adopted: the app only ever starts or
+ * stops a server it can prove it started, so this line must not suggest that
+ * an external MLX Core was taken over.
+ */
+function renderMlxServerState(payload: Record<string, unknown> | null): void {
+  const ownerState = typeof payload?.owner_state === "string" ? payload.owner_state : "";
+  const model = typeof payload?.model === "string" && payload.model ? ` · ${payload.model}` : "";
+  if (ownerState === "app_owned") {
+    setText("mlx-server-state", `앱 소유 서버 실행 중${model}`);
+    return;
+  }
+  if (ownerState === "foreign_listener") {
+    setText("mlx-server-state", "외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다");
+    return;
+  }
+  if (ownerState === "state_stale") {
+    setText("mlx-server-state", "소유 기록이 프로세스와 불일치 · 27B 전환 차단");
+    return;
+  }
+  if (ownerState === "state_invalid") {
+    setText("mlx-server-state", "소유 기록을 신뢰할 수 없음 · 27B 전환 차단");
+    return;
+  }
+  setText("mlx-server-state", "앱 소유 서버 없음");
+}
+
 export function modelSwapFailureText(reason: string): string {
   if (reason === "model_residency_uncertain") {
     return "27B 전환 결과를 확인하지 못했습니다. 재시도 전에 상주 모델과 진행 중인 요청을 점검해 주세요.";
@@ -274,6 +303,7 @@ function renderSettingsUnavailable(): void {
   renderRooms(snapshot);
   renderModels(null, snapshot);
   renderModelOwnerState(null);
+  renderMlxServerState(null);
   renderVoice(snapshot);
   setText("model-status", "모델 상태를 확인할 수 없습니다. 기존 선택은 변경하지 않습니다.");
   setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
@@ -420,16 +450,26 @@ export async function bootSettings(
       dependencies.loadSnapshot(token),
       dependencies.loadAction("models"),
       dependencies.loadAction("model-owner-status"),
+      dependencies.loadAction("mlx-server-status"),
       dependencies.loadAction("dream-rsi-status"),
       dependencies.loadAction("knowledge-graph-status"),
       dependencies.loadAction("knowledge-graph"),
     ] as const);
-    const [snapshotResult, modelsResult, ownerResult, dreamResult, knowledgeResult, graphResult] = results;
+    const [
+      snapshotResult,
+      modelsResult,
+      ownerResult,
+      mlxServerResult,
+      dreamResult,
+      knowledgeResult,
+      graphResult,
+    ] = results;
     const snapshot = snapshotResult.status === "fulfilled"
       ? snapshotResult.value
       : unavailableSnapshot("settings_snapshot_unavailable");
     const models = modelsResult.status === "fulfilled" ? modelsResult.value : null;
     const owner = ownerResult.status === "fulfilled" ? ownerResult.value : null;
+    const mlxServer = mlxServerResult.status === "fulfilled" ? mlxServerResult.value : null;
     const dream = dreamResult.status === "fulfilled" ? dreamResult.value : null;
     const knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : null;
     const graphPayload = graphResult.status === "fulfilled" ? graphResult.value : null;
@@ -438,6 +478,7 @@ export async function bootSettings(
     renderRooms(snapshot);
     renderModels(models, snapshot);
     renderModelOwnerState(owner);
+    renderMlxServerState(mlxServer);
     wireModelSelection();
     renderVoice(snapshot);
     dependencies.wireVoice(document, dependencies.invokeCommand);

@@ -51,6 +51,12 @@ from auto_reply_ondevice import (
     read_managed_model_residency,
     write_managed_model_residency,
 )
+from mlx_serve_lifecycle import (
+    MlxLaunchSpec,
+    launch_app_owned_server,
+    ownership_status,
+    stop_app_owned_server,
+)
 
 _FROZEN = Path(__file__).resolve().with_name(
     "_auto_reply_menubar_wrapper.cpython-311.pyc"
@@ -2447,6 +2453,82 @@ async def _tool_browser_payload(
     return {"ok": True, "status": status, "errorCode": "", "result": result}
 
 
+_MLX_LIFECYCLE_ACTIONS = frozenset({"mlx-server-launch", "mlx-server-stop"})
+# The app-owned server may only be started from the signed MLX Core bundle that
+# already ships on this machine, serving one of the two fixed local models.
+_MLX_APP_OWNED_BINARY = Path("/Applications/MLX Core.app/Contents/MacOS/mlx-serve")
+_MLX_APP_OWNED_MODELS_DIR = Path.home() / ".mlx-serve" / "models"
+
+
+def _menubar_state_root() -> Path:
+    state_raw = _argv_flag_value("--state-root")
+    return Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+
+
+def _mlx_app_owned_model_dir(model_id: str | None) -> Path | None:
+    """Resolve one of the two fixed local models to its on-disk directory."""
+
+    name = str(model_id or "").strip()
+    if name.startswith("mlx/"):
+        name = name[4:]
+    allowed = {
+        FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
+        QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
+    }
+    if name not in allowed:
+        return None
+    return _MLX_APP_OWNED_MODELS_DIR / name
+
+
+def _mlx_app_owned_spec(state_root: Path, model_id: str | None) -> MlxLaunchSpec | None:
+    """Build the only launch spec the menu-bar app is allowed to own."""
+
+    resident = _mlx_app_owned_model_dir(model_id)
+    if resident is None:
+        return None
+    return MlxLaunchSpec(
+        executable=_MLX_APP_OWNED_BINARY,
+        resident_model_dir=resident,
+        models_dir=_MLX_APP_OWNED_MODELS_DIR,
+        log_path=state_root / "mlx-app-owned-server.log",
+    )
+
+
+def _mlx_server_status_payload(state_root: Path) -> dict:
+    """Read-only owner report; a probe failure never crashes the settings pane."""
+
+    try:
+        return ownership_status(state_root)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "action": "mlx-server-status",
+            "owner_state": "state_invalid",
+            "app_owned": False,
+            "model": None,
+            "reason": str(exc) or "mlx_server_status_unavailable",
+        }
+
+
+def _mlx_lifecycle_payload(action: str, state_root: Path) -> dict:
+    """Launch or stop the app-owned server; a foreign server is never touched.
+
+    Both actions are gated behind an explicit --explicit-opt-in flag because
+    they start or stop a resident model process.  The launch path can only
+    name the signed MLX Core bundle and the two fixed local models, so the
+    request surface stays bounded and auditable.
+    """
+
+    if "--explicit-opt-in" not in sys.argv:
+        return {"ok": False, "action": action, "reason": "explicit_opt_in_required"}
+    if action == "mlx-server-stop":
+        return stop_app_owned_server(state_root).report()
+    spec = _mlx_app_owned_spec(state_root, _argv_flag_value("--model"))
+    if spec is None:
+        return {"ok": False, "action": action, "reason": "mlx_model_not_supported"}
+    return launch_app_owned_server(spec, state_root).report()
+
+
 def main():
     try:
         _scope_menubar_rooms_to_enrollment()
@@ -2564,6 +2646,14 @@ def main():
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
         _print_json(managed_residency_status(state_root))
+        return 0
+    if action == "mlx-server-status":
+        _print_json(_mlx_server_status_payload(_menubar_state_root()))
+        return 0
+    if action in _MLX_LIFECYCLE_ACTIONS:
+        # Handled before the frozen dispatch: launch/stop own a resident model
+        # process and must never fall through to the model/vector code path.
+        _print_json(_mlx_lifecycle_payload(action, _menubar_state_root()))
         return 0
     args = type("Args", (), {"action": action})()
     if (

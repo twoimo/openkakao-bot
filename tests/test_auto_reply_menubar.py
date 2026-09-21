@@ -5049,5 +5049,169 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
         legacy_main.assert_not_called()
 
 
+class JarvisMlxServerActionTests(unittest.TestCase):
+    """The app-owned MLX server actions must stay bounded and opt-in gated."""
+
+    def _run(self, module, argv, **patches):
+        context = [
+            mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"),
+            mock.patch.object(module, "_apply_catalog_mutates"),
+        ]
+        for target, replacement in patches.items():
+            context.append(mock.patch.object(module, target, new=replacement))
+        print_json = mock.MagicMock()
+        context.append(mock.patch.object(module, "_print_json", new=print_json))
+        legacy_main = mock.MagicMock()
+        context.append(mock.patch.object(module, "_orig_main", new=legacy_main))
+        saved = sys.argv
+        try:
+            sys.argv = ["auto-reply-menubar.py", *argv]
+            with contextlib.ExitStack() as stack:
+                for entry in context:
+                    stack.enter_context(entry)
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = saved
+        legacy_main.assert_not_called()
+        self.assertEqual(print_json.call_count, 1)
+        return print_json.call_args.args[0]
+
+    def test_status_action_reports_only_bounded_codes(self):
+        module = load(f"auto_reply_menubar_mlx_status_{id(self)}")
+        payload = self._run(
+            module,
+            ["--action", "mlx-server-status", "--state-root", "/tmp/jarvis-mlx-state"],
+            ownership_status=lambda root: {
+                "ok": True,
+                "action": "mlx-server-status",
+                "owner_state": "foreign_listener",
+                "app_owned": False,
+                "model": None,
+            },
+        )
+        self.assertEqual(payload["owner_state"], "foreign_listener")
+        self.assertEqual(
+            set(payload), {"ok", "action", "owner_state", "app_owned", "model"}
+        )
+
+    def test_status_action_fails_closed_when_the_probe_raises(self):
+        module = load(f"auto_reply_menubar_mlx_status_fail_{id(self)}")
+
+        def boom(state_root):
+            raise RuntimeError("probe exploded")
+
+        with mock.patch.object(module, "ownership_status", new=boom):
+            payload = module._mlx_server_status_payload(Path("/tmp/jarvis-mlx-state"))
+        self.assertEqual(payload["owner_state"], "state_invalid")
+        self.assertFalse(payload["app_owned"])
+        self.assertIsNone(payload["model"])
+        self.assertEqual(payload["action"], "mlx-server-status")
+        self.assertIn("probe exploded", payload["reason"])
+
+    def test_lifecycle_actions_require_an_explicit_opt_in(self):
+        module = load(f"auto_reply_menubar_mlx_optin_{id(self)}")
+        launched = mock.MagicMock()
+        stopped = mock.MagicMock()
+        for action in ("mlx-server-launch", "mlx-server-stop"):
+            payload = self._run(
+                module,
+                ["--action", action, "--state-root", "/tmp/jarvis-mlx-state"],
+                launch_app_owned_server=launched,
+                stop_app_owned_server=stopped,
+            )
+            self.assertEqual(payload["reason"], "explicit_opt_in_required")
+            self.assertFalse(payload["ok"])
+        launched.assert_not_called()
+        stopped.assert_not_called()
+
+    def test_launch_names_only_the_signed_bundle_and_fixed_models(self):
+        module = load(f"auto_reply_menubar_mlx_launch_{id(self)}")
+        captured = {}
+
+        def fake_launch(spec, state_root):
+            captured["spec"] = spec
+            captured["state_root"] = state_root
+            return mock.MagicMock(report=lambda: {"ok": True, "action": "mlx-server-launch"})
+
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            launch_app_owned_server=fake_launch,
+        )
+        self.assertTrue(payload["ok"])
+        spec = captured["spec"]
+        self.assertEqual(spec.executable, module._MLX_APP_OWNED_BINARY)
+        self.assertEqual(spec.resident_model_dir.name, "Qwen3.8-27B-MLX-Serve-4bit")
+        self.assertEqual(spec.models_dir, module._MLX_APP_OWNED_MODELS_DIR)
+        self.assertEqual(
+            spec.log_path, Path("/tmp/jarvis-mlx-state") / "mlx-app-owned-server.log"
+        )
+        self.assertEqual(spec.host, "127.0.0.1")
+        self.assertEqual(spec.port, 11234)
+        self.assertEqual(spec.validate(), "")
+
+    def test_launch_accepts_the_prefixed_model_id_and_rejects_anything_else(self):
+        module = load(f"auto_reply_menubar_mlx_models_{id(self)}")
+        prefixed = module._mlx_app_owned_spec(
+            Path("/tmp/jarvis-mlx-state"),
+            "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+        )
+        self.assertIsNotNone(prefixed)
+        self.assertEqual(
+            prefixed.resident_model_dir.name,
+            "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+        )
+        for candidate in (None, "", "remote/arbitrary", "ddalcu/../../etc/passwd"):
+            self.assertIsNone(
+                module._mlx_app_owned_spec(Path("/tmp/jarvis-mlx-state"), candidate),
+                msg=f"accepted model {candidate!r}",
+            )
+
+        launched = mock.MagicMock()
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                "remote/arbitrary",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            launch_app_owned_server=launched,
+        )
+        self.assertEqual(payload["reason"], "mlx_model_not_supported")
+        launched.assert_not_called()
+
+    def test_stop_reports_the_owner_mismatch_without_signalling(self):
+        from mlx_serve_lifecycle import StopResult
+
+        module = load(f"auto_reply_menubar_mlx_stop_{id(self)}")
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-stop",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            stop_app_owned_server=lambda root: StopResult(
+                False, "stop_owner_mismatch", 38868
+            ),
+        )
+        self.assertEqual(payload, {"ok": False, "action": "mlx-server-stop", "reason": "stop_owner_mismatch"})
+        self.assertNotIn("38868", repr(payload))
+
+
 if __name__ == "__main__":
     unittest.main()

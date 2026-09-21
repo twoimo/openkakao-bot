@@ -21,6 +21,7 @@ const BROWSER_TOOL_TIMEOUT: Duration = Duration::from_secs(90);
 const BROWSER_TOOL_ABORT_GRACE: Duration = Duration::from_secs(2);
 const MODEL_SWAP_TIMEOUT: Duration = Duration::from_secs(120);
 const MODEL_SWAP_RECOVERY_TIMEOUT: Duration = Duration::from_secs(120);
+const MLX_LAUNCH_TIMEOUT: Duration = Duration::from_secs(150);
 const OUTPUT_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const BROWSER_TOOL_OUTPUT_LIMIT_BYTES: usize = 96 * 1024;
 const BROWSER_TOOL_RESULT_LIMIT_BYTES: usize = 64 * 1024;
@@ -35,6 +36,12 @@ const CUSTOM_WAKE_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const BUNDLED_CUSTOM_WAKE_MODEL: &str = resource_layout::WAKE_MODEL;
 const RESIDENT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
 const SWAP_MODEL_ID: &str = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
+// The on-disk directory names the app-owned server publishes in /v1/models.
+const RESIDENT_MODEL_NAME: &str = "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+const SWAP_MODEL_NAME: &str = "Qwen3.8-27B-MLX-Serve-4bit";
+const MLX_SERVER_STATUS_ACTION: &str = "mlx-server-status";
+const MLX_SERVER_LAUNCH_ACTION: &str = "mlx-server-launch";
+const MLX_SERVER_STOP_ACTION: &str = "mlx-server-stop";
 const MODEL_SWAP_OPT_IN: &str = "qwen38-27b-explicit-v1";
 const MODEL_SWAP_CANCEL_DIR: &str = "model-swap-cancel";
 const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
@@ -248,10 +255,13 @@ impl PythonBridge {
             token_id,
         )?;
         let is_swap = action == "model-swap";
+        let is_mlx_launch = action == MLX_SERVER_LAUNCH_ACTION;
         let bytes = self.run_python(
             &args,
             if is_swap {
                 MODEL_SWAP_TIMEOUT
+            } else if is_mlx_launch {
+                MLX_LAUNCH_TIMEOUT
             } else {
                 DEFAULT_TIMEOUT
             },
@@ -266,6 +276,9 @@ impl PythonBridge {
             "knowledge-graph" => sanitize_knowledge_graph(&value),
             "knowledge-graph-focus" => sanitize_knowledge_focus(&value),
             "model-owner-status" => sanitize_model_owner_status(&value),
+            MLX_SERVER_STATUS_ACTION => sanitize_mlx_server_status(&value),
+            MLX_SERVER_LAUNCH_ACTION => sanitize_mlx_lifecycle(&value, true),
+            MLX_SERVER_STOP_ACTION => sanitize_mlx_lifecycle(&value, false),
             "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
             "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
             "model-swap" => sanitize_model_swap_action(&value),
@@ -834,7 +847,11 @@ fn settings_action_args(
     token_id: Option<&str>,
 ) -> Result<Vec<String>, BridgeError> {
     let mut args = vec!["--action".to_string(), action.to_string()];
-    if action != "model-swap" && (explicit_opt_in.is_some() || token_id.is_some()) {
+    let opt_in_allowed = matches!(
+        action,
+        "model-swap" | MLX_SERVER_LAUNCH_ACTION | MLX_SERVER_STOP_ACTION
+    );
+    if !opt_in_allowed && (explicit_opt_in.is_some() || token_id.is_some()) {
         return Err(BridgeError::ActionNotAllowed);
     }
     match action {
@@ -842,7 +859,36 @@ fn settings_action_args(
         | "dream-rsi-status"
         | "knowledge-graph-status"
         | "knowledge-graph"
-        | "model-owner-status" => {}
+        | "model-owner-status"
+        | MLX_SERVER_STATUS_ACTION => {}
+        MLX_SERVER_LAUNCH_ACTION => {
+            // Starting a resident model needs a deliberate opt-in and one of
+            // the two fixed local models; the app supplies the binary, models
+            // directory, and log path itself so no path crosses this boundary.
+            if token_id.is_some() {
+                return Err(BridgeError::ActionNotAllowed);
+            }
+            if explicit_opt_in != Some(true) {
+                return Err(BridgeError::ActionNotAllowed);
+            }
+            let candidate = model
+                .filter(|value| *value == RESIDENT_MODEL_ID || *value == SWAP_MODEL_ID)
+                .ok_or(BridgeError::ActionNotAllowed)?;
+            args.push("--model".to_string());
+            args.push(candidate.to_string());
+            args.push("--explicit-opt-in".to_string());
+        }
+        MLX_SERVER_STOP_ACTION => {
+            // Stopping needs no model selector: it only ever signals the pid
+            // this app started, so an extra selector is a caller error.
+            if token_id.is_some() || model.is_some() {
+                return Err(BridgeError::ActionNotAllowed);
+            }
+            if explicit_opt_in != Some(true) {
+                return Err(BridgeError::ActionNotAllowed);
+            }
+            args.push("--explicit-opt-in".to_string());
+        }
         "knowledge-graph-focus" => {
             if let Some(value) = bounded_arg(query, 256) {
                 args.push("--knowledge-query".to_string());
@@ -1360,6 +1406,130 @@ fn sanitize_model_owner_status(value: &Value) -> Value {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         "current_model": current,
+    })
+}
+
+/// Reduce the owner report to fixed state codes, one flag, and a known name.
+fn sanitize_mlx_server_status(value: &Value) -> Value {
+    const OWNER_STATES: &[&str] = &[
+        "app_owned",
+        "stopped",
+        "foreign_listener",
+        "state_invalid",
+        "state_stale",
+    ];
+    let reported = value
+        .get("owner_state")
+        .and_then(Value::as_str)
+        .filter(|candidate| OWNER_STATES.contains(candidate))
+        .unwrap_or("state_invalid");
+    let app_owned = value
+        .get("app_owned")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && reported == "app_owned";
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|candidate| *candidate == RESIDENT_MODEL_NAME || *candidate == SWAP_MODEL_NAME);
+    json!({
+        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "action": MLX_SERVER_STATUS_ACTION,
+        "owner_state": if app_owned { "app_owned" } else { reported },
+        "app_owned": app_owned,
+        "model": model,
+    })
+}
+
+/// Reduce a launch/stop result to allowlisted codes; paths and pids are dropped.
+fn sanitize_mlx_lifecycle(value: &Value, launch: bool) -> Value {
+    const LAUNCH_REASONS: &[&str] = &[
+        "launch_ready",
+        "launch_already_running",
+        "launch_invalid_spec",
+        "launch_executable_unsafe",
+        "launch_executable_unverified",
+        "launch_model_dir_missing",
+        "launch_models_dir_missing",
+        "launch_port_in_use",
+        "launch_memory_insufficient",
+        "launch_memory_unavailable",
+        "launch_state_unsafe",
+        "launch_spawn_failed",
+        "launch_spawn_exited",
+        "launch_startup_timeout",
+        "launch_attest_failed",
+        "launch_state_write_failed",
+        "explicit_opt_in_required",
+        "mlx_model_not_supported",
+    ];
+    const STOP_REASONS: &[&str] = &[
+        "stop_stopped",
+        "stop_no_owned_server",
+        "stop_owner_mismatch",
+        "stop_signal_failed",
+        "explicit_opt_in_required",
+    ];
+    const STAGES: &[&str] = &[
+        "validate",
+        "executable",
+        "model_dir",
+        "models_dir",
+        "port_check",
+        "memory_check",
+        "state_check",
+        "spawn",
+        "startup",
+        "attest",
+        "already_running",
+        "ready",
+        "failed",
+    ];
+    let (fallback, allowlist) = if launch {
+        ("launch_invalid_spec", LAUNCH_REASONS)
+    } else {
+        ("stop_no_owned_server", STOP_REASONS)
+    };
+    let reason = value
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|candidate| allowlist.contains(candidate))
+        .unwrap_or(fallback);
+    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    if !launch {
+        return json!({
+            "ok": ok,
+            "action": MLX_SERVER_STOP_ACTION,
+            "reason": reason,
+        });
+    }
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|candidate| *candidate == RESIDENT_MODEL_NAME || *candidate == SWAP_MODEL_NAME);
+    let stage = value
+        .get("stage")
+        .and_then(Value::as_str)
+        .filter(|candidate| STAGES.contains(candidate));
+    let stages: Vec<Value> = value
+        .get("stages")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|candidate| STAGES.contains(candidate))
+                .map(|candidate| json!(candidate))
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "ok": ok,
+        "action": MLX_SERVER_LAUNCH_ACTION,
+        "stage": stage,
+        "reason": reason,
+        "model": model,
+        "stages": stages,
     })
 }
 
@@ -1903,6 +2073,210 @@ mod tests {
         }));
         assert_eq!(unknown["owner_state"], "model_owner_unknown");
         assert_eq!(unknown["ok"], false);
+    }
+
+    #[test]
+    fn fixed_model_names_match_served_ids() {
+        assert!(RESIDENT_MODEL_ID.ends_with(RESIDENT_MODEL_NAME));
+        assert!(SWAP_MODEL_ID.ends_with(SWAP_MODEL_NAME));
+    }
+
+    #[test]
+    fn mlx_server_status_is_code_only_and_read_only() {
+        assert_eq!(
+            settings_action_args(MLX_SERVER_STATUS_ACTION, None, None, None, None, None, None)
+                .unwrap(),
+            vec!["--action", "mlx-server-status"]
+        );
+        // The read-only probe never accepts model, opt-in, or token overrides.
+        assert!(matches!(
+            settings_action_args(
+                MLX_SERVER_STATUS_ACTION,
+                None,
+                None,
+                None,
+                Some(SWAP_MODEL_ID),
+                Some(true),
+                Some("123e4567-e89b-42d3-a456-426614174000"),
+            ),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+
+        let safe = sanitize_mlx_server_status(&json!({
+            "ok": true,
+            "action": "mlx-server-status",
+            "owner_state": "foreign_listener",
+            "app_owned": false,
+            "model": null,
+            "executable": "/Applications/MLX Core.app/Contents/MacOS/mlx-serve",
+            "pid": 38868,
+        }));
+        assert_eq!(safe["owner_state"], "foreign_listener");
+        assert_eq!(safe["app_owned"], false);
+        assert!(safe["model"].is_null());
+        assert!(safe.get("executable").is_none());
+        assert!(safe.get("pid").is_none());
+
+        // A verified claim is only honoured when the code says app_owned.
+        let coerced = sanitize_mlx_server_status(&json!({
+            "ok": true,
+            "owner_state": "foreign_listener",
+            "app_owned": true,
+        }));
+        assert_eq!(coerced["owner_state"], "foreign_listener");
+        assert_eq!(coerced["app_owned"], false);
+
+        let unknown = sanitize_mlx_server_status(&json!({
+            "owner_state": "../../etc/passwd",
+            "model": "/Users/private/models",
+        }));
+        assert_eq!(unknown["owner_state"], "state_invalid");
+        assert_eq!(unknown["ok"], false);
+        assert!(unknown["model"].is_null());
+    }
+
+    #[test]
+    fn mlx_server_launch_requires_opt_in_and_a_fixed_model() {
+        assert_eq!(
+            settings_action_args(
+                MLX_SERVER_LAUNCH_ACTION,
+                None,
+                None,
+                None,
+                Some(SWAP_MODEL_ID),
+                Some(true),
+                None,
+            )
+            .unwrap(),
+            vec![
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                SWAP_MODEL_ID,
+                "--explicit-opt-in"
+            ]
+        );
+        for (model, opt_in, token) in [
+            (Some(SWAP_MODEL_ID), None, None),
+            (Some(SWAP_MODEL_ID), Some(false), None),
+            (Some("remote/arbitrary"), Some(true), None),
+            (None, Some(true), None),
+            (
+                Some(SWAP_MODEL_ID),
+                Some(true),
+                Some("123e4567-e89b-42d3-a456-426614174000"),
+            ),
+        ] {
+            assert!(
+                matches!(
+                    settings_action_args(
+                        MLX_SERVER_LAUNCH_ACTION,
+                        None,
+                        None,
+                        None,
+                        model,
+                        opt_in,
+                        token,
+                    ),
+                    Err(BridgeError::ActionNotAllowed)
+                ),
+                "launch accepted model={model:?} opt_in={opt_in:?} token={token:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mlx_server_stop_requires_opt_in() {
+        assert_eq!(
+            settings_action_args(
+                MLX_SERVER_STOP_ACTION,
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+            )
+            .unwrap(),
+            vec!["--action", "mlx-server-stop", "--explicit-opt-in"]
+        );
+        assert!(matches!(
+            settings_action_args(
+                MLX_SERVER_STOP_ACTION,
+                None,
+                None,
+                None,
+                Some(SWAP_MODEL_ID),
+                Some(true),
+                None,
+            ),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+        assert!(matches!(
+            settings_action_args(MLX_SERVER_STOP_ACTION, None, None, None, None, None, None),
+            Err(BridgeError::ActionNotAllowed)
+        ));
+    }
+
+    #[test]
+    fn mlx_lifecycle_sanitizers_drop_paths_pids_and_unknown_codes() {
+        let launch = sanitize_mlx_lifecycle(
+            &json!({
+                "ok": false,
+                "action": "mlx-server-launch",
+                "stage": "failed",
+                "reason": "launch_port_in_use",
+                "model": null,
+                "stages": ["validate", "not-a-stage", "port_check"],
+                "pid": 4242,
+                "log_path": "/Users/private/mlx.log",
+            }),
+            true,
+        );
+        assert_eq!(launch["ok"], false);
+        assert_eq!(launch["action"], "mlx-server-launch");
+        assert_eq!(launch["reason"], "launch_port_in_use");
+        assert_eq!(launch["stage"], "failed");
+        assert_eq!(launch["stages"], json!(["validate", "port_check"]));
+        assert!(launch.get("pid").is_none());
+        assert!(launch.get("log_path").is_none());
+
+        let unknown = sanitize_mlx_lifecycle(
+            &json!({"ok": false, "reason": "not-a-real-code", "stage": "bogus"}),
+            true,
+        );
+        assert_eq!(unknown["reason"], "launch_invalid_spec");
+        assert!(unknown["stage"].is_null());
+        assert_eq!(unknown["stages"], json!([]));
+
+        let model = sanitize_mlx_lifecycle(
+            &json!({
+                "ok": true,
+                "reason": "launch_ready",
+                "model": "/Users/private/models/Qwen3.8-27B-MLX-Serve-4bit",
+            }),
+            true,
+        );
+        assert!(model["model"].is_null());
+
+        let named = sanitize_mlx_lifecycle(
+            &json!({"ok": true, "reason": "launch_ready", "model": SWAP_MODEL_NAME}),
+            true,
+        );
+        assert_eq!(named["model"], SWAP_MODEL_NAME);
+
+        let stop = sanitize_mlx_lifecycle(
+            &json!({"ok": true, "reason": "stop_stopped", "pid": 4242}),
+            false,
+        );
+        assert_eq!(stop["action"], "mlx-server-stop");
+        assert_eq!(stop["reason"], "stop_stopped");
+        assert!(stop.get("pid").is_none());
+        assert!(stop.get("stage").is_none());
+
+        let stop_unknown =
+            sanitize_mlx_lifecycle(&json!({"ok": false, "reason": "launch_ready"}), false);
+        assert_eq!(stop_unknown["reason"], "stop_no_owned_server");
     }
 
     #[test]

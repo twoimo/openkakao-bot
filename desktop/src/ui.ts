@@ -4,6 +4,7 @@ export const MAIN_PANEL_CONTROLS = Object.freeze(["gear"] as const);
 export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
   "model-owner-state",
+  "mlx-server-state",
   "settings-sync-source",
   "settings-sync-copy",
   "settings-sync-mode",
@@ -55,6 +56,7 @@ export function settingsMarkup(): string {
       </button>
       <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
       <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
+      <p id="mlx-server-state" class="muted">앱 소유 MLX 서버 상태를 확인 중입니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">

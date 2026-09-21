@@ -6,6 +6,7 @@ import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 type SettingsAction =
   | "models"
   | "model-owner-status"
+  | "mlx-server-status"
   | "dream-rsi-status"
   | "knowledge-graph-status"
   | "knowledge-graph"
@@ -15,6 +16,8 @@ export interface SettingsActionInput {
   query?: string;
   nodeId?: string;
   chatId?: string;
+  model?: string;
+  explicitOptIn?: boolean;
 }
 
 export async function fetchRuntimeSnapshot(token: CancellationToken): Promise<RuntimeSnapshot> {
@@ -48,6 +51,8 @@ export async function fetchSettingsAction(
       query: input.query,
       nodeId: input.nodeId,
       chatId: input.chatId,
+      model: input.model,
+      explicitOptIn: input.explicitOptIn,
     });
   } catch {
     return null;
