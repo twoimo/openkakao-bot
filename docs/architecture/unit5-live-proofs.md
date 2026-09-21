@@ -1030,3 +1030,25 @@ ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
 - 동시 실행 주의: 앱이 재색인 중일 때 같은 state root로 `--reindex-once`를 직접 실행하면 ANN 저장소에서 `unavailable:OperationalError:database is locked`가 기록됐다. fail-closed로 닫히고 직전 색인은 유지되지만, `collect_knowledge_graph` 경로의 재색인 가드와 달리 이 독립 실행 경로에는 가드가 없으므로 앱 재색인이 없는 시점에만 실행해야 한다.
 - dense 경로는 여전히 앱이 소유하지 않는 외부 `mlx-serve` 프로세스의 상태에 의존한다. 앱은 그 프로세스를 시작·정지·전환하지 않는다.
 - 이 절은 실제 카카오톡 전송, Qwen3.8 27B 생성, Developer ID 서명·notarization을 입증하지 않는다. 설치본 서명은 여전히 ad-hoc이다(`codesign -dv`에서 `flags=adhoc,runtime`, `TeamIdentifier=not set`).
+
+### 재설치본 Computer Use 크로스 체크 — 2026-09-22 KST
+
+- CUA 인벤토리에서 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`)가 등록되고 `isRunning: true`임을 확인했다.
+- 패널이 숨겨진 상태(창 0개)에서 `cua.getApp("OpenKakao Jarvis")`는 5.2초 뒤 `Computer Use server error -10005: timeoutReached`로 실패했다. 이는 포커스를 잃으면 패널을 숨기는 설계(`desktop/src-tauri/src/main.rs`의 `WindowEvent::Focused(false)`) 때문에 창이 0개인 상태의 attach가 실패한다는 기존 격리 결과를 재설치본에서 그대로 재현한 것으로, 새 빌드에서의 회귀가 아니다.
+- 설치본은 LaunchAgent `gui/501/com.openkakao.jarvis.desktop`에서 `state = running`, `program = /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop`, `pid = 98353`(2026-09-22 00:51:32 시작)로 확인됐고, 앱 번들 설치는 00:51:21이다.
+- 이번 세션의 커밋은 UI 코드를 바꾸지 않았으므로 2026-09-21에 캡처한 패널·설정 창 스크린샷을 그대로 근거로 쓴다. 새 스크린샷을 새로 만들었다고 주장하지 않는다.
+
+### 재설치 뒤 남은 중복 인스턴스 — 2026-09-22 KST (미해결)
+
+재설치 뒤 프로세스를 확인한 결과 `openkakao-jarvis-desktop`이 **두 개** 실행 중이었다.
+
+| pid | ppid | 시작 시각 | 실행 경로 | LaunchAgent 추적 |
+| --- | --- | --- | --- | --- |
+| 18028 | 1 | 2026-09-22 00:24:58 | `/Applications/.openkakao-jarvis.previous.20260922T003421.52158.app/Contents/MacOS/openkakao-jarvis-desktop` (lsof 기준, 그 경로는 이미 삭제됨) | 아니오 |
+| 98353 | 1 | 2026-09-22 00:51:32 | `/Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop` | 예 (`launchctl print` pid) |
+
+- pid 18028은 00:34:21 재설치가 만든 이전 번들 백업 경로에서 실행되고 있다. 그 번들은 설치 스크립트가 마지막에 `rm -rf`로 지웠지만 프로세스는 삭제된 경로를 그대로 물고 살아 있다. `ps` 기준 CPU는 두 프로세스 모두 0.0이고, 확인 시점에 둘 다 `knowledge-*` sqlite 파일을 열고 있지 않았다.
+- 원인: `scripts/install-jarvis-desktop.sh`는 `launchctl bootout` 뒤 `wait_for_absent`로 **서비스**가 사라진 것만 확인하고, 남아 있는 **프로세스**는 확인하지 않는다. 그 다음 단계에서 이전 번들을 `rm -rf`한다. 그래서 bootout을 벗어난 인스턴스가 삭제된 번들에서 계속 실행된다.
+- 영향: 같은 state root를 두 인스턴스가 색인하면 dense ANN 저장소에서 `unavailable:OperationalError:database is locked`가 기록될 수 있다. 이번 세션에서 관측한 lock 실패와 일치하는 시나리오다. 또한 메뉴바 상태 아이템과 폴러가 중복될 수 있다.
+- 계획이 요구한 전환 조건(“중복 작업자가 없음을 확인한 상태”)은 이 호스트에서 현재 충족되지 않았다. 이 세션은 프로세스를 종료하지 않았다(기존 규칙: 프로세스를 죽이지 않는다). 운영자가 남은 인스턴스를 종료해야 한다.
+- 권장 수정(다음 단계): 재설치 스크립트가 bootstrap 뒤에 대상 실행 파일 경로와 bundle id로 프로세스를 열거해 새 pid 외의 인스턴스가 남아 있으면 fail-closed로 보고하고, 이전 번들 삭제 전에도 같은 검사를 수행하도록 한다. 테스트는 기존 프로젝트 규칙대로 가짜 `launchctl`/`ps` 어댑터로 수행한다.
