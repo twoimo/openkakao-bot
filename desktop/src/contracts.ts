@@ -20,12 +20,38 @@ export interface RoomSummary {
   openJobs: number;
 }
 
+export type BackgroundSourceState =
+  | "sending"
+  | "confirmed"
+  | "idle"
+  | "retrying"
+  | "stalled"
+  | "syncing"
+  | "behind"
+  | "ready"
+  | "unknown";
+
+export interface BackgroundSource {
+  state: BackgroundSourceState;
+  activity: number;
+  caption: string;
+}
+
+export interface BackgroundStatus {
+  activity: number;
+  caption: string;
+  replyLoad: number;
+  geeknews: BackgroundSource;
+  dbSync: BackgroundSource;
+}
+
 export interface RuntimeSnapshot {
   available: boolean;
   rooms: RoomSummary[];
   jobs: JobEvent[];
   recentReceipts: RecentReceipt[];
   jobLoad: number;
+  background: BackgroundStatus;
   terminal: {
     sent: number;
     skipped: number;
@@ -70,6 +96,8 @@ const JOB_EVENT_KEYS = new Set(["jobId", "kind", "stage", "load", "time", "error
 const RECEIPT_OUTCOMES = new Set(["sent", "deferred", "scheduled", "skipped"]);
 const RECEIPT_REASON_SLUG = /^[a-z][a-z0-9_]{0,63}$/;
 const RETRIEVAL_STATES = new Set(["ok", "empty", "skipped", "error", "index_not_ready", "unrecorded"]);
+const GEEKNEWS_BACKGROUND_STATES = new Set<BackgroundSourceState>(["sending", "confirmed", "idle", "unknown"]);
+const DB_SYNC_BACKGROUND_STATES = new Set<BackgroundSourceState>(["retrying", "stalled", "syncing", "behind", "ready", "unknown"]);
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -81,12 +109,51 @@ function finiteNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function clamp01(value: unknown): number {
+  return Math.min(1, Math.max(0, finiteNumber(value, 0)));
+}
+
+function roundActivity(value: unknown): number {
+  return Math.round(clamp01(value) * 1000) / 1000;
+}
+
 function nonNegativeInt(value: unknown): number {
   return Math.max(0, Math.trunc(finiteNumber(value, 0)));
 }
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function parseBackgroundSource(value: unknown, allowed: ReadonlySet<BackgroundSourceState>): BackgroundSource {
+  const source = record(value);
+  const rawState = typeof source?.state === "string" ? source.state : "unknown";
+  const state = allowed.has(rawState as BackgroundSourceState) ? rawState as BackgroundSourceState : "unknown";
+  return {
+    state,
+    activity: roundActivity(source?.activity),
+    caption: text(source?.caption).slice(0, 120),
+  };
+}
+
+export function parseBackground(value: unknown): BackgroundStatus {
+  const background = record(value);
+  if (!background) {
+    return {
+      activity: 0,
+      caption: "",
+      replyLoad: 0,
+      geeknews: parseBackgroundSource(null, GEEKNEWS_BACKGROUND_STATES),
+      dbSync: parseBackgroundSource(null, DB_SYNC_BACKGROUND_STATES),
+    };
+  }
+  return {
+    activity: roundActivity(background.activity),
+    caption: text(background.caption).slice(0, 120),
+    replyLoad: roundActivity(background.replyLoad ?? background.reply_load),
+    geeknews: parseBackgroundSource(background.geeknews, GEEKNEWS_BACKGROUND_STATES),
+    dbSync: parseBackgroundSource(background.dbSync ?? background.db_sync, DB_SYNC_BACKGROUND_STATES),
+  };
 }
 
 export function parseJobEvent(value: unknown): JobEvent | null {
@@ -127,6 +194,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
     jobs: [],
     recentReceipts: [],
     jobLoad: 0,
+    background: parseBackground(null),
     terminal: { sent: 0, skipped: 0, deliveryUnknown: 0, burstSuperseded: 0 },
     contextSync: { mode: "async", waited: false },
     replyModelId: null,
@@ -207,6 +275,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
     jobs,
     recentReceipts,
     jobLoad: Math.min(1, Math.max(0, finiteNumber(input.job_load ?? input.jobLoad, 0))),
+    background: parseBackground(input.background),
     terminal: {
       sent: nonNegativeInt(terminal.sent),
       skipped: nonNegativeInt(terminal.skipped),

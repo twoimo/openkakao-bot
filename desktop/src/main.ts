@@ -7,6 +7,7 @@ import {
   type RuntimeSnapshot,
 } from "./contracts";
 import { JarvisCore } from "./core/jarvis-core";
+import type { SourceLoads } from "./core/load-mapping";
 import { RenderLifecycle } from "./core/lifecycle";
 import { KnowledgeHologram } from "./knowledge/hologram";
 import {
@@ -33,7 +34,7 @@ import {
   type SnapshotCanceller,
   type SnapshotLoader,
 } from "./runtime-poller";
-import { mainPanelMarkup, renderHistory, settingsMarkup } from "./ui";
+import { mainPanelMarkup, renderBackground, renderHistory, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
 
@@ -49,7 +50,7 @@ interface JarvisCoreControl {
   readonly renderCount: number;
   start(): void;
   stop(): void;
-  setSignals(jobLoad: number, voiceRms: number): void;
+  setSignals(jobLoad: number, voiceRms: number, sources?: SourceLoads): void;
   dispose(): void;
 }
 
@@ -306,6 +307,7 @@ function renderSettingsUnavailable(): void {
   renderMlxServerState(null);
   renderVoice(snapshot);
   renderHistory(snapshot);
+  renderBackground(snapshot);
   setText("model-status", "모델 상태를 확인할 수 없습니다. 기존 선택은 변경하지 않습니다.");
   setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
   setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
@@ -483,6 +485,7 @@ export async function bootSettings(
     wireModelSelection();
     renderVoice(snapshot);
     renderHistory(snapshot);
+    renderBackground(snapshot);
     dependencies.wireVoice(document, dependencies.invokeCommand);
 
     if (dream) {

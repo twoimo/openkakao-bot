@@ -7,6 +7,7 @@ export const SETTINGS_IDS = Object.freeze([
   "model-owner-state",
   "mlx-server-state",
   "settings-sync-source",
+  "settings-activity-source",
   "settings-sync-copy",
   "settings-sync-mode",
   "settings-sync-index",
@@ -73,6 +74,7 @@ export function settingsMarkup(): string {
     <section id="settings-sync-card" class="settings-card knowledge-accent" aria-labelledby="sync-title">
       <div class="section-heading"><h2 id="sync-title">카카오 DB 동기화 · 색인</h2><span class="tag">GraphRAG 준비</span></div>
       <p id="settings-sync-source">동기화: 확인 중</p>
+      <p id="settings-activity-source" class="muted">백그라운드 활동을 확인 중입니다.</p>
       <p id="settings-sync-copy">격리 복제: 확인 중</p>
       <p id="settings-sync-mode">색인 모드: 확인 중</p>
       <p id="settings-sync-index">마지막 색인: 확인 중</p>
@@ -145,4 +147,30 @@ export function renderHistory(snapshot: RuntimeSnapshot, root: Document = docume
     row.append(heading, detail);
     list.append(row);
   });
+}
+
+export function renderBackground(snapshot: RuntimeSnapshot, root: Document = document): void {
+  const target = root.getElementById("settings-activity-source");
+  if (!target) return;
+  if (!snapshot.available) {
+    target.textContent = "백그라운드 상태를 확인할 수 없습니다.";
+    return;
+  }
+
+  const background = snapshot.background;
+  const empty = background.activity === 0
+    && background.replyLoad === 0
+    && background.geeknews.activity === 0
+    && background.dbSync.activity === 0
+    && background.geeknews.state === "unknown"
+    && background.dbSync.state === "unknown"
+    && background.caption.length === 0;
+  if (empty) {
+    target.textContent = "백그라운드 활동이 없습니다.";
+    return;
+  }
+
+  const pendingReplies = Math.round(Math.min(1, Math.max(0, background.replyLoad)) * 4);
+  const caption = background.caption ? ` · ${background.caption.slice(0, 120)}` : "";
+  target.textContent = `백그라운드 · 답변 대기 ${pendingReplies} · 긱뉴스 ${background.geeknews.state} · DB 동기화 ${background.dbSync.state}${caption}`;
 }

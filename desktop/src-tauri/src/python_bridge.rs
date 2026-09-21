@@ -190,11 +190,52 @@ pub struct SafeRuntimeSnapshot {
     jobs: Vec<SafeJobEvent>,
     recent_receipts: Vec<SafeRecentReceipt>,
     job_load: f64,
+    background: SafeBackground,
     terminal_counts: TerminalCounts,
     context_sync: ContextSync,
     reply_model_id: Option<String>,
     voice: SafeVoiceStatus,
     error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SafeBackground {
+    activity: f64,
+    caption: String,
+    reply_load: f64,
+    geeknews: SafeBackgroundSource,
+    db_sync: SafeBackgroundSource,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SafeBackgroundSource {
+    state: String,
+    activity: f64,
+    caption: String,
+}
+
+impl SafeBackgroundSource {
+    fn unknown() -> Self {
+        Self {
+            state: "unknown".to_string(),
+            activity: 0.0,
+            caption: String::new(),
+        }
+    }
+}
+
+impl SafeBackground {
+    fn fallback(activity: f64, reply_load: f64) -> Self {
+        Self {
+            activity: round_activity(activity),
+            caption: String::new(),
+            reply_load: round_activity(reply_load),
+            geeknews: SafeBackgroundSource::unknown(),
+            db_sync: SafeBackgroundSource::unknown(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -815,6 +856,54 @@ fn clamp01(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
 
+fn round_activity(value: f64) -> f64 {
+    (clamp01(value) * 1000.0).round() / 1000.0
+}
+
+fn sanitize_background_source(value: Option<&Value>, allowed: &[&str]) -> SafeBackgroundSource {
+    let Some(source) = value.and_then(Value::as_object) else {
+        return SafeBackgroundSource::unknown();
+    };
+    let state = source
+        .get("state")
+        .and_then(Value::as_str)
+        .filter(|state| allowed.contains(state))
+        .unwrap_or("unknown")
+        .to_string();
+    SafeBackgroundSource {
+        state,
+        activity: round_activity(
+            source
+                .get("activity")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        ),
+        caption: bounded_json_string(source.get("caption"), 120),
+    }
+}
+
+fn sanitize_background(value: Option<&Value>, job_load: f64, reply_load: f64) -> SafeBackground {
+    const GEEKNEWS_STATES: &[&str] = &["sending", "confirmed", "idle", "unknown"];
+    const DB_SYNC_STATES: &[&str] = &[
+        "retrying", "stalled", "syncing", "behind", "ready", "unknown",
+    ];
+    let Some(background) = value.and_then(Value::as_object) else {
+        return SafeBackground::fallback(job_load, reply_load);
+    };
+    SafeBackground {
+        activity: round_activity(
+            background
+                .get("activity")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        ),
+        caption: bounded_json_string(background.get("caption"), 120),
+        reply_load: round_activity(reply_load),
+        geeknews: sanitize_background_source(background.get("geeknews"), GEEKNEWS_STATES),
+        db_sync: sanitize_background_source(background.get("db_sync"), DB_SYNC_STATES),
+    }
+}
+
 fn bounded_arg(value: Option<&str>, max_chars: usize) -> Option<String> {
     let value = value?.trim();
     if value.is_empty() {
@@ -1345,6 +1434,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
             jobs: Vec::new(),
             recent_receipts: Vec::new(),
             job_load: 0.0,
+            background: SafeBackground::fallback(0.0, 0.0),
             terminal_counts: TerminalCounts::default(),
             context_sync: ContextSync {
                 mode: "async",
@@ -1409,13 +1499,15 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     let recent_receipts = sanitize_recent_receipts(root, &titles);
 
     let open_jobs = as_u64(root.get("open_jobs"));
-    let background = root
+    let background_activity = root
         .get("background")
         .and_then(Value::as_object)
         .and_then(|obj| obj.get("activity"))
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
-    let job_load = clamp01((open_jobs as f64 / 4.0).max(background));
+    let reply_load = open_jobs as f64 / 4.0;
+    let job_load = clamp01(reply_load.max(background_activity));
+    let background = sanitize_background(root.get("background"), job_load, reply_load);
 
     let mut burst_superseded = 0_u64;
     if let Some(receipt_rooms) = root
@@ -1458,6 +1550,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         jobs: Vec::new(),
         recent_receipts,
         job_load,
+        background,
         terminal_counts: TerminalCounts {
             sent: as_u64(root.get("sent")),
             skipped: as_u64(root.get("skipped")),
@@ -2783,6 +2876,92 @@ mod tests {
         assert_eq!(safe.terminal_counts.delivery_unknown, 1);
         assert_eq!(safe.context_sync.mode, "async");
         assert!(!safe.context_sync.waited);
+    }
+
+    #[test]
+    fn snapshot_background_allowlists_clamps_rounds_and_truncates() {
+        let safe = sanitize_snapshot(&json!({
+            "open_jobs": 2,
+            "background": {
+                "activity": 0.1236,
+                "caption": "가".repeat(140),
+                "geeknews": {"state": "sending", "activity": 2.0, "caption": "긱".repeat(130)},
+                "db_sync": {"state": "behind", "activity": -0.4, "caption": "DB 정상"}
+            }
+        }));
+        assert_eq!(safe.job_load, 0.5);
+        assert_eq!(safe.background.activity, 0.124);
+        assert_eq!(safe.background.reply_load, 0.5);
+        assert_eq!(safe.background.caption.chars().count(), 120);
+        assert_eq!(safe.background.geeknews.state, "sending");
+        assert_eq!(safe.background.geeknews.activity, 1.0);
+        assert_eq!(safe.background.geeknews.caption.chars().count(), 120);
+        assert_eq!(safe.background.db_sync.state, "behind");
+        assert_eq!(safe.background.db_sync.activity, 0.0);
+    }
+
+    #[test]
+    fn snapshot_background_unknown_states_fail_closed() {
+        let safe = sanitize_snapshot(&json!({
+            "background": {
+                "activity": 0.2,
+                "geeknews": {"state": "unexpected", "activity": 0.4},
+                "db_sync": {"state": "unexpected", "activity": 0.6}
+            }
+        }));
+        assert_eq!(safe.background.geeknews.state, "unknown");
+        assert_eq!(safe.background.db_sync.state, "unknown");
+    }
+
+    #[test]
+    fn snapshot_background_missing_uses_job_load_safe_default() {
+        let safe = sanitize_snapshot(&json!({"open_jobs": 3}));
+        assert_eq!(safe.job_load, 0.75);
+        assert_eq!(safe.background.activity, 0.75);
+        assert_eq!(safe.background.reply_load, 0.75);
+        assert_eq!(safe.background.geeknews, SafeBackgroundSource::unknown());
+        assert_eq!(safe.background.db_sync, SafeBackgroundSource::unknown());
+    }
+
+    #[test]
+    fn snapshot_background_omits_unapproved_source_fields() {
+        let safe = sanitize_snapshot(&json!({
+            "background": {
+                "activity": 0.8,
+                "caption": "safe",
+                "rooms": [{"chat": "body-value"}],
+                "geeknews": {
+                    "state": "confirmed", "activity": 0.4, "caption": "done",
+                    "age_seconds": 7, "posted_slots": ["morning"]
+                },
+                "db_sync": {
+                    "state": "ready", "activity": 0.3, "caption": "ready",
+                    "age_seconds": 9, "capability_state": "cap-value", "fence_reason": "fence-value"
+                }
+            }
+        }));
+        let serialized = serde_json::to_value(&safe).unwrap();
+        let background = serialized["background"].as_object().unwrap();
+        assert_eq!(
+            background
+                .keys()
+                .map(String::as_str)
+                .collect::<HashSet<_>>(),
+            HashSet::from(["activity", "caption", "replyLoad", "geeknews", "dbSync"])
+        );
+        let text = serde_json::to_string(background).unwrap();
+        for forbidden in [
+            "rooms",
+            "age_seconds",
+            "posted_slots",
+            "capability_state",
+            "fence_reason",
+            "body-value",
+            "cap-value",
+            "fence-value",
+        ] {
+            assert!(!text.contains(forbidden));
+        }
     }
 
     #[test]

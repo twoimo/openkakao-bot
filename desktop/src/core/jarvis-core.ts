@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { AnimationLoop } from "./animation-loop";
+import { latticePulse, ringTargetVelocities, type SourceLoads } from "./load-mapping";
 
 const NEURON_COUNT = 96;
 const SYNAPSES_PER_NEURON = 3;
@@ -25,14 +26,18 @@ export class JarvisCore {
   private readonly rings: THREE.Mesh[] = [];
   private readonly ringVelocity = [0, 0, 0];
   private readonly ringBaseVelocity = [0.17, -0.12, 0.09];
+  private readonly ringGain = [1.4, 1.65, 1.9];
   private readonly neuronsMaterial: THREE.PointsMaterial;
   private readonly synapsesMaterial: THREE.LineBasicMaterial;
   private readonly particlesMaterial: THREE.PointsMaterial;
   private readonly lattice: THREE.LineSegments;
+  private readonly latticeMaterial: THREE.LineBasicMaterial;
   private readonly nucleus: THREE.Mesh;
   private readonly loop: AnimationLoop;
   private targetLoad = 0;
   private smoothLoad = 0;
+  private targetSources: SourceLoads = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
+  private smoothSources: SourceLoads = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
   private targetVoiceRms = 0;
   private smoothVoiceRms = 0;
   private nucleusScale = 1;
@@ -96,7 +101,8 @@ export class JarvisCore {
     this.root.add(new THREE.Points(particleGeometry, this.particlesMaterial));
 
     const latticeGeometry = new THREE.WireframeGeometry(new THREE.SphereGeometry(1.08, 18, 10));
-    this.lattice = new THREE.LineSegments(latticeGeometry, new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.09 }));
+    this.latticeMaterial = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.09 });
+    this.lattice = new THREE.LineSegments(latticeGeometry, this.latticeMaterial);
     this.root.add(this.lattice);
 
     this.nucleus = new THREE.Mesh(
@@ -120,9 +126,19 @@ export class JarvisCore {
     this.loop.stop();
   }
 
-  setSignals(jobLoad: number, voiceRms: number): void {
-    this.targetLoad = Math.min(1, Math.max(0, jobLoad));
-    this.targetVoiceRms = Math.min(1, Math.max(0, voiceRms));
+  setSignals(jobLoad: number, voiceRms: number, sources?: SourceLoads): void {
+    const safeLoad = Number.isFinite(jobLoad) ? Math.min(1, Math.max(0, jobLoad)) : 0;
+    const safeSource = (value: number): number => Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
+    this.targetLoad = safeLoad;
+    this.targetVoiceRms = Number.isFinite(voiceRms) ? Math.min(1, Math.max(0, voiceRms)) : 0;
+    this.targetSources = sources
+      ? {
+          reply: safeSource(sources.reply),
+          geeknews: safeSource(sources.geeknews),
+          dbSync: safeSource(sources.dbSync),
+          total: safeSource(sources.total),
+        }
+      : { reply: safeLoad, geeknews: safeLoad, dbSync: safeLoad, total: safeLoad };
     this.loop.setLoad(this.targetLoad);
   }
 
@@ -145,9 +161,14 @@ export class JarvisCore {
   private render(dt: number, nowMs: number): void {
     this.smoothLoad = damp(this.smoothLoad, this.targetLoad, 4.2, dt);
     this.smoothVoiceRms = damp(this.smoothVoiceRms, this.targetVoiceRms, 7.0, dt);
+    this.smoothSources.reply = damp(this.smoothSources.reply, this.targetSources.reply, 4.2, dt);
+    this.smoothSources.geeknews = damp(this.smoothSources.geeknews, this.targetSources.geeknews, 4.2, dt);
+    this.smoothSources.dbSync = damp(this.smoothSources.dbSync, this.targetSources.dbSync, 4.2, dt);
+    this.smoothSources.total = damp(this.smoothSources.total, this.targetSources.total, 4.2, dt);
 
+    const targetVelocities = ringTargetVelocities(this.ringBaseVelocity, this.smoothSources, this.ringGain);
     this.rings.forEach((ring, index) => {
-      const targetVelocity = this.ringBaseVelocity[index] * (1 + this.smoothLoad * (1.4 + index * 0.25));
+      const targetVelocity = targetVelocities[index] ?? 0;
       this.ringVelocity[index] = damp(this.ringVelocity[index], targetVelocity, 1.8 + index * 0.55, dt);
       ring.rotation.z += this.ringVelocity[index] * dt;
       ring.rotation.x += this.ringVelocity[index] * dt * (0.22 + index * 0.06);
@@ -159,8 +180,12 @@ export class JarvisCore {
     this.nucleusScale += this.nucleusVelocity * dt;
     this.nucleus.scale.setScalar(this.nucleusScale);
 
+    const seconds = nowMs / 1000;
+    const pulse = latticePulse(this.smoothSources.total, seconds);
+    const backgroundPulse = 1 + pulse.amplitude * Math.sin(seconds * pulse.frequency * Math.PI * 2);
     const acousticPulse = 1 + this.smoothVoiceRms * (0.07 + 0.025 * Math.sin(nowMs * 0.012));
-    this.lattice.scale.setScalar(acousticPulse);
+    this.lattice.scale.setScalar(backgroundPulse * acousticPulse);
+    this.latticeMaterial.opacity = pulse.opacity;
     this.neuronsMaterial.size = 0.036 + this.smoothLoad * 0.012;
     this.synapsesMaterial.opacity = 0.09 + this.smoothLoad * 0.16;
     this.particlesMaterial.opacity = 0.2 + this.smoothLoad * 0.45;

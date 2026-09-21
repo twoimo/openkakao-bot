@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
+import { JarvisCore } from "../core/jarvis-core";
 import { RenderLifecycle } from "../core/lifecycle";
-import { parseJobEvent, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
+import { parseBackground, parseJobEvent, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
 import {
   KnowledgeDrilldown,
   ON_SCREEN_NODE_CAP,
@@ -16,8 +17,9 @@ import {
   swapToLargeModel,
   type SettingsInvoke,
 } from "../runtime";
+import { RuntimeSnapshotPoller } from "../runtime-poller";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderHistory, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHistory, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -69,6 +71,16 @@ describe("render lifecycle", () => {
     expect(dts).toHaveLength(1);
     expect(dts[0]).toBeLessThanOrEqual(0.05);
   });
+
+  it("JarvisCore reports zero renders while stopped", () => {
+    const scheduler = new FakeScheduler();
+    const loop = new AnimationLoop(() => undefined, scheduler);
+    const core = Object.create(JarvisCore.prototype) as JarvisCore;
+    Object.defineProperty(core, "loop", { value: loop });
+    core.stop();
+    scheduler.step(1000);
+    expect(core.renderCount).toBe(0);
+  });
 });
 
 describe("safe shared contracts", () => {
@@ -96,6 +108,48 @@ describe("safe shared contracts", () => {
     expect(snapshot.contextSync).toEqual({ mode: "async", waited: false });
     expect(snapshot.jobLoad).toBe(0.7);
     expect(snapshot.voice).toEqual({ available: true, state: "speaking", rms: 0.42, errorCode: null, wakeSource: "stock", updatedAt: 10, wakePhrase: "", threshold: 0.65, customModelSelected: false });
+  });
+
+  it("normalizes per-source background state with bounded captions", () => {
+    const parsed = parseBackground({
+      activity: 1.4,
+      caption: "총".repeat(130),
+      reply_load: -0.5,
+      geeknews: { state: "sending", activity: 0.3336, caption: "긱".repeat(130) },
+      db_sync: { state: "unexpected", activity: Number.POSITIVE_INFINITY, caption: "DB" },
+    });
+    expect(parsed.activity).toBe(1);
+    expect(parsed.caption).toHaveLength(120);
+    expect(parsed.replyLoad).toBe(0);
+    expect(parsed.geeknews).toEqual({ state: "sending", activity: 0.334, caption: "긱".repeat(120) });
+    expect(parsed.dbSync).toEqual({ state: "unknown", activity: 0, caption: "DB" });
+    expect(parseBackground(undefined)).toEqual({
+      activity: 0,
+      caption: "",
+      replyLoad: 0,
+      geeknews: { state: "unknown", activity: 0, caption: "" },
+      dbSync: { state: "unknown", activity: 0, caption: "" },
+    });
+  });
+
+  it("reads background from runtime snapshots without changing jobLoad", () => {
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      job_load: 0.8,
+      context_sync: { mode: "async", waited: false },
+      background: {
+        activity: 0.6,
+        replyLoad: 0.25,
+        geeknews: { state: "confirmed", activity: 0.4, caption: "posted" },
+        dbSync: { state: "ready", activity: 0.2, caption: "fresh" },
+      },
+    });
+    expect(snapshot.jobLoad).toBe(0.8);
+    expect(snapshot.background.replyLoad).toBe(0.25);
+    expect(snapshot.background.geeknews.state).toBe("confirmed");
+    expect(snapshot.background.dbSync.state).toBe("ready");
   });
 
   it("fails closed on bad JSON, empty lists, and a missing model id", () => {
@@ -248,6 +302,72 @@ describe("history settings card", () => {
   });
 });
 
+describe("background settings activity", () => {
+  it("renders valid, empty, and unavailable states", () => {
+    document.body.innerHTML = settingsMarkup();
+    const active = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      context_sync: { mode: "async", waited: false },
+      background: {
+        activity: 0.75,
+        caption: "예약 작업 처리 중",
+        reply_load: 0.5,
+        geeknews: { state: "sending", activity: 0.7, caption: "" },
+        db_sync: { state: "behind", activity: 0.3, caption: "" },
+      },
+    });
+    renderBackground(active);
+    expect(document.getElementById("settings-activity-source")?.textContent)
+      .toBe("백그라운드 · 답변 대기 2 · 긱뉴스 sending · DB 동기화 behind · 예약 작업 처리 중");
+
+    renderBackground(parseRuntimeSnapshot({ available: true, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
+    expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 활동이 없습니다.");
+
+    renderBackground(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
+    expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 상태를 확인할 수 없습니다.");
+  });
+});
+
+describe("background signal polling", () => {
+  it("forwards differentiated source loads to the signal sink", async () => {
+    const snapshot = parseRuntimeSnapshot({
+      available: true,
+      rooms: [],
+      jobs: [],
+      job_load: 0.9,
+      context_sync: { mode: "async", waited: false },
+      voice: { available: true, rms: 0.2 },
+      background: {
+        activity: 0.8,
+        replyLoad: 0.5,
+        geeknews: { state: "sending", activity: 0.6, caption: "" },
+        dbSync: { state: "syncing", activity: 0.3, caption: "" },
+      },
+    });
+    const sink = { setSignals: vi.fn() };
+    const scheduler = { setTimeout: vi.fn(() => 1), clearTimeout: vi.fn() };
+    const poller = new RuntimeSnapshotPoller(
+      sink,
+      async () => snapshot,
+      async () => undefined,
+      () => ({ id: "background-test", cancelled: false }),
+      scheduler,
+    );
+    poller.start();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sink.setSignals).toHaveBeenCalledWith(0.9, 0.2, {
+      reply: 0.5,
+      geeknews: 0.6,
+      dbSync: 0.3,
+      total: 0.8,
+    });
+    poller.stop();
+  });
+});
+
 describe("layout and settings contract", () => {
   it("keeps live Extra geometry", () => {
     expect(LAYOUT).toMatchObject({ panelWidth: 276, panelHeight: 260, panelInset: 12, coreSize: 236, gearSize: 28 });
@@ -264,6 +384,7 @@ describe("layout and settings contract", () => {
     expect(markup.indexOf('id="settings-sync-card"')).toBeLessThan(markup.indexOf('id="settings-dream-rsi-card"'));
     for (const id of [
       "settings-room-popup", "settings-sync-source", "settings-sync-copy", "settings-sync-mode", "settings-sync-index",
+      "settings-activity-source",
       "settings-sync-card", "settings-dream-rsi-status", "settings-dream-rsi-gold", "settings-dream-rsi-card",
       "settings-slot-morning", "settings-slot-lunch", "settings-slot-evening",
     ]) expect(markup).toContain(`id="${id}"`);

@@ -1,8 +1,9 @@
 import { createCancellationToken, type CancellationToken, type RuntimeSnapshot } from "./contracts";
+import { sourceLoads, type SourceLoads } from "./core/load-mapping";
 import { cancelRuntimeRequest, fetchRuntimeSnapshot } from "./runtime";
 
 export interface RuntimeSignalSink {
-  setSignals(jobLoad: number, voiceRms: number): void;
+  setSignals(jobLoad: number, voiceRms: number, sources?: SourceLoads): void;
 }
 
 export interface PollTimerScheduler {
@@ -17,6 +18,21 @@ export const browserPollScheduler: PollTimerScheduler = {
   setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
   clearTimeout: (timerId) => window.clearTimeout(timerId),
 };
+
+function snapshotSources(snapshot: RuntimeSnapshot | null): SourceLoads | undefined {
+  if (!snapshot) return undefined;
+  const background = snapshot.background;
+  const hasStatus = background.activity > 0
+    || background.replyLoad > 0
+    || background.geeknews.activity > 0
+    || background.dbSync.activity > 0
+    || background.caption.length > 0
+    || background.geeknews.caption.length > 0
+    || background.dbSync.caption.length > 0
+    || background.geeknews.state !== "unknown"
+    || background.dbSync.state !== "unknown";
+  return hasStatus ? sourceLoads(background) : undefined;
+}
 
 export class RuntimeSnapshotPoller {
   private active = false;
@@ -86,7 +102,12 @@ export class RuntimeSnapshotPoller {
     if (!isCurrent) return;
 
     try {
-      this.signalSink.setSignals(snapshot?.jobLoad ?? 0, snapshot?.voice.rms ?? 0);
+      const sources = snapshotSources(snapshot);
+      if (sources) {
+        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, snapshot?.voice.rms ?? 0, sources);
+      } else {
+        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, snapshot?.voice.rms ?? 0);
+      }
     } catch {
       // Rendering state must not break polling cleanup or create an unhandled rejection.
     }
