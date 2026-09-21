@@ -2,131 +2,174 @@
   "schema_version": 1,
   "diagram_type": "sequence",
   "meta": {
-    "title": "GraphRAG ranked search sequence",
+    "title": "GraphRAG retrieval sequence",
     "quality_profile": "showcase",
     "column_fit": "spread",
     "viewBox": [
-      1480,
-      680
+      1080,
+      580
     ]
   },
   "participants": [
     {
-      "id": "caller",
-      "label": "Reply worker",
-      "type": "frontend"
+      "id": "turn",
+      "type": "external",
+      "label": "Incoming message"
     },
     {
-      "id": "copy",
-      "label": "Isolated SQLite replica",
-      "type": "security"
+      "id": "bundle",
+      "type": "backend",
+      "label": "Knowledge bundle",
+      "sublabel": "retrieve_knowledge_bundle"
+    },
+    {
+      "id": "normalize",
+      "type": "backend",
+      "label": "query_haystacks",
+      "sublabel": "normalize_text_query"
     },
     {
       "id": "bm25",
-      "label": "BM25 ranker",
-      "type": "backend"
+      "type": "database",
+      "label": "kg_entities_fts",
+      "sublabel": "_bm25_candidates / FTS5"
     },
     {
       "id": "dense",
-      "label": "Dense ANN",
-      "type": "backend"
+      "type": "database",
+      "label": "ann_buckets",
+      "sublabel": "_dense_ann_query"
     },
     {
-      "id": "merge",
-      "label": "RRF merger",
-      "type": "backend"
+      "id": "rrf",
+      "type": "backend",
+      "label": "_rrf_merge"
     },
     {
       "id": "graph",
-      "label": "Knowledge graph",
-      "type": "database"
+      "type": "database",
+      "label": "Graph expansion",
+      "sublabel": "k_hop_neighborhood"
+    }
+  ],
+  "segments": [
+    {
+      "from": 132,
+      "to": 235,
+      "label": "Ingest + normalize"
+    },
+    {
+      "from": 243,
+      "to": 378,
+      "label": "Independent retrieval"
+    },
+    {
+      "from": 386,
+      "to": 443,
+      "label": "Rank fusion"
+    },
+    {
+      "from": 451,
+      "to": 496,
+      "label": "Graph expansion + evidence"
     }
   ],
   "messages": [
     {
-      "from": "caller",
-      "to": "copy",
-      "label": "create consistent isolated copy",
-      "y": 160
+      "id": "ingest",
+      "from": "turn",
+      "to": "bundle",
+      "y": 160,
+      "label": "query_text + room/context",
+      "variant": "emphasis"
     },
     {
-      "from": "copy",
-      "to": "caller",
-      "label": "copy path; copy failure is fail-closed",
-      "y": 202
+      "id": "normalize_query",
+      "from": "bundle",
+      "to": "normalize",
+      "y": 190,
+      "label": "query_haystacks(query_text)",
+      "variant": "default"
     },
     {
-      "from": "caller",
+      "id": "normalized",
+      "from": "normalize",
+      "to": "bundle",
+      "y": 220,
+      "label": "normalized haystacks",
+      "variant": "return"
+    },
+    {
+      "id": "bm25_query",
+      "from": "bundle",
       "to": "bm25",
-      "label": "query copied knowledge rows",
-      "y": 244
+      "y": 250,
+      "label": "_bm25_candidates(..., limit=40)",
+      "variant": "default"
     },
     {
+      "id": "bm25_hits",
       "from": "bm25",
-      "to": "caller",
-      "label": "independent BM25 ranked list",
-      "y": 286
+      "to": "bundle",
+      "y": 280,
+      "label": "BM25 ranked entity ids",
+      "variant": "return"
     },
     {
-      "from": "caller",
+      "id": "dense_query",
+      "from": "bundle",
       "to": "dense",
-      "label": "query local dense ANN independently",
-      "y": 328
+      "y": 310,
+      "label": "_dense_ann_query(..., limit=40)",
+      "variant": "default"
     },
     {
+      "id": "dense_hits",
       "from": "dense",
-      "to": "caller",
-      "label": "success: independent dense ranked list",
-      "y": 370
+      "to": "bundle",
+      "y": 340,
+      "label": "dense ANN ids + watermark",
+      "variant": "return"
     },
     {
+      "id": "dense_fail",
       "from": "dense",
-      "to": "caller",
-      "label": "failure: bm25_only; skip RRF",
-      "y": 412
+      "to": "bundle",
+      "y": 370,
+      "label": "exception -> search_mode=bm25_only",
+      "variant": "dashed"
     },
     {
-      "from": "caller",
-      "to": "merge",
-      "label": "success path only: RRF(BM25, dense)",
-      "y": 454
+      "id": "rrf_query",
+      "from": "bundle",
+      "to": "rrf",
+      "y": 400,
+      "label": "_rrf_merge(bm25_ranked, dense_ranked)",
+      "variant": "emphasis"
     },
     {
-      "from": "merge",
-      "to": "caller",
-      "label": "search_mode = rrf",
-      "y": 496
+      "id": "rrf_hits",
+      "from": "rrf",
+      "to": "bundle",
+      "y": 430,
+      "label": "RRF ordered candidate ids",
+      "variant": "return"
     },
     {
-      "from": "caller",
+      "id": "expand",
+      "from": "bundle",
       "to": "graph",
-      "label": "expand selected seeds to 2 hops",
-      "y": 538
+      "y": 460,
+      "label": "k_hop_neighborhood(top candidate, DEFAULT_K_HOP)",
+      "variant": "default"
     },
     {
+      "id": "expanded",
       "from": "graph",
-      "to": "caller",
-      "label": "facts + relationships",
-      "y": 580
-    }
-  ],
-  "cards": [
-    {
-      "dot": "rose",
-      "title": "Dense failure branch",
-      "items": [
-        "Dense ANN exception clears the dense list.",
-        "RRF is skipped.",
-        "search_mode remains bm25_only; never hybrid or rrf."
-      ]
-    },
-    {
-      "dot": "emerald",
-      "title": "Dense success branch",
-      "items": [
-        "BM25 and dense are independent ranked lists.",
-        "RRF merges them before the 2-hop graph expansion."
-      ]
+      "to": "bundle",
+      "y": 490,
+      "label": "focused nodes + relation facts",
+      "variant": "return"
     }
   ]
 }

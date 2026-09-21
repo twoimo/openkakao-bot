@@ -5,76 +5,142 @@
     "title": "Jarvis Three.js render lifecycle",
     "quality_profile": "showcase",
     "viewBox": [
-      1280,
-      760
+      1080,
+      580
     ]
   },
   "lanes": [
     {
       "id": "main",
-      "label": "Render loop"
+      "label": "Visible render path"
+    },
+    {
+      "id": "visibility",
+      "label": "Hidden / resume path"
     }
   ],
   "states": [
     {
-      "id": "idle",
-      "label": "Idle · 15 fps",
-      "type": "active",
+      "id": "window_visible",
+      "type": "start",
+      "label": "Window visible",
+      "sublabel": "focus / visibilitychange",
       "lane": "main",
-      "col": 0
+      "col": 0,
+      "width": 118,
+      "height": 92,
+      "step": "01"
     },
     {
-      "id": "work",
-      "label": "Work · 30 fps",
+      "id": "lifecycle_active",
       "type": "active",
+      "label": "RenderLifecycle",
+      "sublabel": "transition(visible)",
       "lane": "main",
-      "col": 1
+      "col": 1,
+      "width": 118,
+      "height": 92,
+      "step": "02"
     },
     {
-      "id": "hidden",
-      "label": "Hidden · RAF off",
+      "id": "raf_running",
+      "type": "active",
+      "label": "AnimationLoop",
+      "sublabel": "RAF running",
+      "lane": "main",
+      "col": 2,
+      "width": 118,
+      "height": 92,
+      "step": "03"
+    },
+    {
+      "id": "runtime_snapshot",
+      "type": "active",
+      "label": "Snapshot poller",
+      "sublabel": "RuntimeSnapshotPoller",
+      "lane": "main",
+      "col": 3,
+      "width": 118,
+      "height": 92,
+      "step": "04"
+    },
+    {
+      "id": "core_response",
+      "type": "active",
+      "label": "JarvisCore.render()",
+      "sublabel": "rings / nucleus / lattice",
+      "lane": "main",
+      "col": 4,
+      "width": 118,
+      "height": 92,
+      "step": "05"
+    },
+    {
+      "id": "window_hidden",
       "type": "waiting",
-      "lane": "main",
-      "col": 2
+      "label": "Window hidden",
+      "sublabel": "blur / hidden / closed",
+      "lane": "visibility",
+      "col": 0,
+      "width": 118,
+      "height": 92,
+      "tag": "pause"
     },
     {
-      "id": "resume",
-      "label": "Visible again",
-      "type": "active",
-      "lane": "main",
-      "col": 3
+      "id": "raf_stopped",
+      "type": "waiting",
+      "label": "AnimationLoop.stop()",
+      "sublabel": "pending RAF cancelled",
+      "lane": "visibility",
+      "col": 1,
+      "width": 118,
+      "height": 92,
+      "tag": "RAF=0"
     }
   ],
   "transitions": [
     {
-      "from": "idle",
-      "to": "work"
+      "id": "visible_to_lifecycle",
+      "from": "window_visible",
+      "to": "lifecycle_active",
+      "variant": "emphasis"
     },
     {
-      "from": "work",
-      "to": "hidden"
+      "id": "lifecycle_to_raf",
+      "from": "lifecycle_active",
+      "to": "raf_running",
+      "variant": "emphasis"
     },
     {
-      "from": "hidden",
-      "to": "resume"
-    }
-  ],
-  "cards": [
-    {
-      "dot": "cyan",
-      "title": "Render contract",
-      "items": [
-        "While visible, idle targets 15 fps and work targets 30 fps.",
-        "Hide / close / lock from a visible state stops the owned RAF loop: 0 RAF target.",
-        "Show / unlock resumes the loop at the state-appropriate budget."
-      ]
+      "id": "raf_to_snapshot",
+      "from": "raf_running",
+      "to": "runtime_snapshot",
+      "variant": "default"
     },
     {
-      "dot": "amber",
-      "title": "Live proof still open",
-      "items": [
-        "Live hide-state render-call=0 was not measured in this turn."
-      ]
+      "id": "snapshot_to_core",
+      "from": "runtime_snapshot",
+      "to": "core_response",
+      "variant": "default"
+    },
+    {
+      "id": "hide",
+      "from": "raf_running",
+      "to": "window_hidden",
+      "variant": "security"
+    },
+    {
+      "id": "hidden_to_raf_stop",
+      "from": "window_hidden",
+      "to": "raf_stopped",
+      "variant": "security"
+    },
+    {
+      "id": "resume",
+      "from": "raf_stopped",
+      "to": "window_visible",
+      "variant": "emphasis",
+      "route": "bottom-channel"
     }
   ]
 }

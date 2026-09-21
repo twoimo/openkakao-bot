@@ -62,85 +62,40 @@ The diagrams are architectural references, not a live generation trace. On-devic
 
 ## Jarvis local-AI implementation status
 
-Unit 5 documentation includes the measured live browser hide, isolated real-STT/TTS smoke, local Tauri bundle proof, and the read-only style.gallery review. The primary Tauri app is now installed locally; signed/notarized distribution remains a separate release step.
+### Implementation status
 
-The 2026-09-21 cutover installs `/Applications/OpenKakao Jarvis.app` and runs
-`com.openkakao.jarvis.desktop` from the user's GUI LaunchAgent. The former
-Swift Extra is stopped, its LaunchAgent plist is backed up under
-`~/Library/Application Support/openkakao/install-backups/jarvis-desktop/`, and
-is not loaded. The installed local bundle is ad hoc signed by the toolchain;
-this proves local execution and resource staging, not notarization.
+- The desktop app is a Tauri v2 menu-bar application with TypeScript and Three.js (`desktop/package.json`, `desktop/src-tauri/Cargo.toml`, `desktop/src/`). `RenderLifecycle`, `AnimationLoop`, `RuntimeSnapshotPoller`, and `JarvisCore` implement the visible/hidden render path and load/voice signal handling (`desktop/src/core/lifecycle.ts`, `desktop/src/core/animation-loop.ts`, `desktop/src/runtime-poller.ts`, `desktop/src/core/jarvis-core.ts`). Diagram source: [Jarvis render lifecycle](docs/architecture/jarvis-three-render-lifecycle.archify.json).
+- Local MLX hardware detection, model residency/ownership checks, leases, and swap rollback live in `scripts/auto_reply_ondevice.py` through `ModelResidencyManager` and the swap gate.
+- Bounded tool runtime, owned Playwright browser use, voice control, and the emergency abort latch are implemented in `scripts/jarvis_tool_runtime.py`, `scripts/jarvis_browser_use.py`, `scripts/jarvis_voice.py`, and `scripts/jarvis_abort.py`.
+- Graph and retrieval code is implemented in `scripts/auto_reply_knowledge_graph.py` and `scripts/auto_reply_reference_search.py`: query normalization feeds BM25/FTS5 and dense ANN candidate paths, RRF fuses successful dual rankings, graph expansion uses `k_hop_neighborhood`, and result metadata includes evidence IDs and index/watermark fields. Diagram source: [GraphRAG retrieval sequence](docs/architecture/graphrag-search-sequence.archify.json).
+- Dataset, DPO/fine-tune, and offline DREAM-RSI support is present in `scripts/auto_reply_golden_dataset.py`, `scripts/auto_reply_finetune.py`, `scripts/auto_reply_dream_rsi.py`, and `scripts/dream_rsi_alphaxiv.py`. The DREAM-RSI provenance path explicitly does not promote or replace a live model automatically.
+- style.gallery was reviewed read-only and only its restrained UI font stack is applied, as `--font-ui` in `desktop/src/styles.css`. The ivory / warm-black palette with champagne gold reserved for the core and selection is unchanged, and no neon, bloom, or glow treatment is used.
 
-| Unit | Landed SHA | Status |
-| --- | --- | --- |
-| 1 | 278b3a6 | Landed |
-| 2 | 64b577c | Landed |
-| 3 | 845f209 | Landed |
-| 4 | b53bfb2 | Landed |
+### Verified results
 
-The table records the historical Units 1–4 landing commits; it is not a current HEAD marker. Verification recorded at the Unit 4 landing point (`b53bfb2`): **215 tests OK on UV Python 3.11**.
+- Render-lifecycle diagram: `validate lifecycle --quality showcase` reports 9/9 artifact checks with 0 errors / 0 warnings, `deliver` succeeds, and `visual-check` passes with no diagnostics at 1440x900, 1600x1000, 1920x1080, and 2048x1320 in light and dark themes (`scrollHeight <= innerHeight` at every viewport). Receipt: [jarvis-three-render-lifecycle.visual-check.json](docs/architecture/jarvis-three-render-lifecycle.visual-check.json).
+- GraphRAG retrieval diagram: the same 9/9 showcase validation, successful delivery, and four-viewport visual-check pass with zero diagnostics. Receipt: [graphrag-search-sequence.visual-check.json](docs/architecture/graphrag-search-sequence.visual-check.json).
+- `docs/architecture/unit5-live-proofs.md` records browser and Tauri/WKWebView hide probes where the outstanding RAF was cancelled and render-count delta remained zero while hidden.
+- The same proof log records controlled browser, abort, and isolated voice/STT checks. Those records are bounded component evidence; they do not establish an end-to-end KakaoTalk reply flow.
+- The same proof log holds the volatile cutover values (installed bundle paths, LaunchAgent state, individual probe timings, and per-run counts) that this summary deliberately does not duplicate.
 
-### Jarvis local tool-runtime boundary
+### Known limitations
 
-`JarvisToolRuntime` is a local, non-UI boundary for bounded browser and background AX jobs. Browser jobs use a fresh owned `DedicatedPlaywrightContext` and the fixed loopback MLX endpoint only; they do not attach to a live browser profile. AX jobs return a virtual cursor coordinate and status without moving the real pointer or activating/focusing a window, and requests that require either fail closed as `ax_focus_steal_required`. Every job observes the latched global abort and the runtime never resumes it automatically. Task, rectangle, and result sizes are bounded, failures expose fixed error codes, and status events contain only `jobId`, `kind`, `stage`, `load`, `time`, and `errorCode`.
+- Current repository evidence does not establish a live KakaoTalk send path for this Jarvis work, and `docs/architecture/unit5-live-proofs.md` explicitly records proof runs with no KakaoTalk or live AX send.
+- Dense retrieval can become unavailable because of index/version/watermark or embedding failures; `scripts/auto_reply_knowledge_graph.py` and `scripts/auto_reply_reference_search.py` keep this explicit as a BM25-only degradation instead of a cloud fallback.
+- DREAM-RSI and DPO outputs are offline artifacts and do not replace the resident model automatically (`scripts/auto_reply_dream_rsi.py`, `scripts/dream_rsi_alphaxiv.py`).
+- The repository files cited above do not by themselves prove live model generation or release signing/notarization. Local bundles are ad hoc signed (`OPENKAKAO_SIGN_IDENTITY=-`); Developer ID signing and notarization remain unverified.
+- Qwen3.8 27B generation is unverified. A real 27B swap needs an app-owned resident model: a foreign MLX server holding `127.0.0.1:11234` fails closed as `model_owner_unmanaged` (`scripts/auto_reply_ondevice.py`, `scripts/verify_local_models.py`), and settings report `외부 소유 · 27B 전환 차단` until the operator stops that external server.
+- Stock openWakeWord `hey_jarvis` misses the Korean "헤이 자비스" utterance. A bundled opt-in calibration model scores it above `WAKE_THRESHOLD=0.65` without lowering the threshold, but it is not enabled by default and human-speaker generalization is unverified (`scripts/jarvis_voice.py`, `scripts/train_jarvis_korean_wake.py`).
+- The alphaXiv paper-analysis CLI is still absent from the persistent `PATH`, so DREAM-RSI paper analysis fails closed; the installed `orx` openresearch CLI is not used as a substitute ([dream-rsi-alphaxiv-provenance.md](docs/dream-rsi-alphaxiv-provenance.md)).
 
-The Tauri `run_browser_tool` command now reaches this runtime through the internal `tool-browser` Python action. The command accepts only bounded job, task, and cancellation-token strings; the task body is passed to the owned child only through bounded UTF-8 stdin and never appears in child argv. A global abort publishes the durable latch first, then gives an active browser child a hard-capped two-second grace period to observe it, return the fixed `global_abort` envelope, and close its owned Playwright resources. Direct `cancel_python` remains an immediate hard cancellation, and failure to publish the abort latch fails closed by hard-cancelling the child. Model-swap marker recovery and snapshot cancellation retain their separate semantics. The bridge returns only `ok`, `status`, `errorCode`, and a bounded result string, exposes no model or browser-profile override, and adds no UI. Current verification is centered on fake owned-browser/agent adapters and bridge contract tests; it does not prove an authenticated website flow, perform an AX action, or send a KakaoTalk message.
+### Recovery
 
-### Retrieval and model-residency contracts
-
-- Reference-pack retrieval identifies the previous 128-dimensional hash vectors as `legacy_lexical_hash`, separate from local Dense embeddings. BM25 and Dense produce candidates independently and RRF fuses their rankings; the result contract carries room, participant, and time filters together with evidence IDs, index version, and watermark.
-- A missing, stale, mismatched, or failing local embedding engine/index degrades explicitly to `bm25_only`. There is no cloud embedding fallback.
-- `ModelResidencyManager` rolls back an owned prior model when memory admission, target load, or target probe fails after unload. It commits `current_model` only after the target probe succeeds; a failed rollback clears the current model and reports a `*_rollback_failed` fail-closed state. The swap gate also blocks new leases during a swap and fails closed on target-unload failure.
-- Rust startup now fails closed for local AutoReply unless the configured model is an exact allowlisted Flash-Next or 27B ID and the local profile is attested. It applies the same bounded, read-only readiness and generation probes only against `127.0.0.1:11234/v1/models` and `127.0.0.1:11234/v1/chat/completions`; the worker's local MLX path does not fall back to `127.0.0.1:10100`.
-- Earlier contract-focused evidence included a focused local MLX/readiness/worker Python regression of **25 tests**. It is historical context and is not part of the fresh validation counts below.
-- Current working-tree validation passes the focused local-AI Python suite (**159 tests**), root `cargo test --lib` (**624 tests**), desktop Vitest (**35 tests**), Tauri Rust (**24 tests**), the launcher contract suite (**5 tests**), the Vite build, and a release Tauri bundle. The previous broader selected Python regression result (**221 tests**) is historical evidence and was not rerun for this update. The release bundle contains `scripts/auto_reply_reference_search.py`. The CI workflow includes the focused checks, but no hosted run of the current workflow change has been recorded. These checks do not establish live 27B readiness, Developer ID signed/notarized distribution, alphaXiv availability, or end-to-end live-microphone success.
-
-Current limits:
-
-- The current live menu process is the installed Tauri executable at `/Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop` under `com.openkakao.jarvis.desktop`; no `AutoReplyMenu` process or legacy menu LaunchAgent remains loaded after cutover.
-- In the 2026-09-21 local read-only probe, Flash-Next reported `loaded=true` / `state=ready` and passed bounded generation. Qwen3.8 27B reported `loaded=false` / `state=unloaded`; local verification returned `model_not_ready`, and no 27B generation check was run.
-- The repository-only `scripts/verify_local_models.py --json` diagnostic probes the fixed Flash-Next and 27B IDs through localhost, performs a bounded generation check only when the gateway already reports `loaded=true` / `state=ready`, and never loads or swaps models. Its exit status is nonzero when either check is not proven; it is not bundled into the Tauri app.
-- The current LaunchAgent points to `runtime/20260920T224139Z-69184`, and the previous remote-runtime process has been removed. The service is `healthy=false` / `backoff` because the target KakaoTalk window was not open and the AX read-only preflight failed. It did not switch focus or open the window automatically and remains fail-closed.
-- Developer ID signing/notarization and Qwen3.8 27B actual generation remain open. Fixed-runtime microphone frame capture now passes, but human wake acceptance, menu-button-to-session end-to-end startup, and noisy/real Korean speech generalization remain unverified.
-- The existing Jarvis 27B `model-prepare` path remains a read-only readiness contract for compatibility. The UI calls the separate `model-swap` action only after the user presses the 27B button; Rust then requires the fixed 27B ID, an explicit opt-in flag, and a lowercase RFC 4122 UUID token.
-- A real swap proceeds only when the current resident model has verified product ownership, request drain is proven, and the conservative memory budget admits 27B. It reuses `ModelResidencyManager` for owned unload → load → probe and rollback. A foreign or uncertain resident is never unloaded. A live `127.0.0.1:11234` MLX gateway without the app's private ownership record fails closed as `model_owner_unmanaged`; settings report `외부 소유 · 27B 전환 차단`, and the operator must stop that external MLX Core before retrying. Other unverified ownership states remain `model_owner_unknown`.
-- Model-swap cancellation writes a private cooperative marker so Python can stop at a mutation boundary and roll back. The ordinary snapshot cancellation command keeps its immediate owned-child cancellation behavior; 120 seconds is the final hard timeout if cooperative completion does not return.
-- This change was tested only through fake gateways/process seams. No live Qwen3.8 27B load, unload, swap, or resident-process mutation was executed while implementing it.
-- On 2026-09-21 the release bundle was built and installed with `OPENKAKAO_SIGN_IDENTITY=-`; `codesign --verify --deep --strict '/Applications/OpenKakao Jarvis.app'` passed. The release `.app` contained `scripts/local_mlx_model_readiness.py`, `scripts/auto_reply_reference_search.py`, the local CLI, and the Korean wake model. This is ad hoc signing and validates local bundling and execution only; Developer ID signing and notarization remain unverified.
-- 최종 local bundle readback에서 source/bundle `jarvis_voice.py` SHA-256 일치, strict codesign, bundled CLI·Korean wake model, 설치된 LaunchAgent `running`(pid 5823), `AutoReplyMenu` 부재를 확인했다. 이는 ad hoc 설치 증거이며 Developer ID/notarization 증거는 아니다. 상세 값은 [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md)의 최종 signed local bundle 섹션에 기록했다.
-- DPO output does not promote or replace the live model automatically.
-- DREAM-RSI paper provenance is available through `scripts/dream_rsi_alphaxiv.py`, but the alphaXiv paper-analysis CLI remains missing from the persistent `PATH`, so paper analysis continues to fail closed. PyPI `alphaxiv==0.0.13` is instead a TTY-based W&B experiment synchronization CLI and does not provide the required `search`, `context`, and `paper summary` commands. The installed `orx` openresearch CLI is not used as an alphaXiv CLI substitute. See [dream-rsi-alphaxiv-provenance.md](docs/dream-rsi-alphaxiv-provenance.md).
- - `Qwen3TtsAdapter` loads `Qwen3TTSModel.generate_custom_voice` with default id `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`. A live bf16 smoke wrote a 3.2 s Korean WAV (153,644 bytes, speaker `aiden`) without speaker playback. Missing SoX remains a non-blocking warning.
-- 고정 Python 3.11 음성 런타임은 `hey_jarvis` 전용 stock 리소스, 로컬 whisper silence smoke, repo ID→HF cache snapshot 해석을 통한 Qwen3-TTS bf16 무네트워크 합성을 통과했다. 패키지 버전·용량 정리·마이크 수치·20개 단위 테스트 증적은 [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md)의 2026-09-21 고정 런타임 섹션에 기록했다.
-- style.gallery now loads read-only. Its restrained UI font stack is applied as `--font-ui`; the existing ivory/warm-black + champagne-gold palette remains unchanged.
-- Live Vite/browser hide is measured: visible `renderCount=9`/RAF `1`, then hidden `renderCount=9`/RAF `0` after 650 ms (delta `0`). The real Tauri/WKWebView hide is also measured: `renderCount=8→8`, pending RAF `1→0`, one RAF cancellation, delta `0` after 674 ms. Dedicated `.venv-voice` imports pass, and a real `MlxWhisperAdapter` smoke with `mlx-community/whisper-tiny-mlx` passes. The local Tauri debug binary/app bundle remains under `desktop/src-tauri/target`; that screenshot/probe predates the installed release cutover. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
- - Settings Knowledge now renders an E-R-E Three.js hologram (24-node cap, click → 2-hop, hidden RAF=0). See [jarvis-knowledge-hologram.png](docs/architecture/jarvis-knowledge-hologram.png).
-- Load-driven Jarvis motion at `32dc4b6` is measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): ring targets are `0.170/-0.120/0.090` rad/s at idle and `0.408/-0.318/0.261` rad/s at busy load; nucleus radius is `0.270→0.324`. The 760 x 760 settings capture is [jarvis-settings-panel.png](docs/architecture/jarvis-settings-panel.png) (87,872 bytes).
-- Remaining local proofs at `282933b` are measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): a real `BrowserUseRunner` owned Playwright context opened a controlled `file://` page, `jarvis_abort` returned `global_abort` in **371.770 ms**, and the owned context/browser closed. With the real `JarvisCore`, `jobLoad=0.5` and `voiceRms=0→0.8` changed acoustic-lattice center scale from **1.000→1.056** (RMS 0.8 range **1.036-1.076**).
-- Background AX handling at `fadb271` is live-measured in [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md): a controlled local accessory-window button succeeded in the background with frontmost **Aside pid 95964→95964**, while the focus-required path returned `ax_focus_steal_required` without invoking its callback; Extra pid **20042** remained alive.
-- Stock openWakeWord `hey_jarvis` still misses the Korean TTS “헤이 자비스” at **0.001959** versus `WAKE_THRESHOLD=0.65`. An opt-in **6,406-byte** custom ONNX calibration model now scores that same synthesized wake clip at **0.893993**, while the supplied unrelated Korean control is **0.194481** and silence **0.161939**; the threshold was not lowered. This single-positive proof does not establish human-speaker generalization, so the custom model is not enabled by default. See [unit5-live-proofs.md](docs/architecture/unit5-live-proofs.md).
-- Voice settings now show the locked 0.65 Korean wake path. Bundled `hey_jarvis_ko_ridge.onnx` is selected when it validates. A file pipeline accepted custom wake at **0.768**, then Flash-Next replied `네, 분청 합성 정상 작동 중입니다.` after `max_tokens=128`; TTS wrote a 3.04 s wav without playback. This is a historical pre-cutover smoke; full live microphone and human wake verification remain open.
-- At commit `38f77cb`, the parallel Tauri debug bundle was rebuilt and restarted as pid **62924**. The updated **760 x 760** Voice settings capture is [jarvis-settings-panel.png](docs/architecture/jarvis-settings-panel.png) (**76,125 bytes**); Extra pid **20042** remained alive and process readback showed only Flash-Next on `mlx-serve`, with no Qwen3.8 27B or Gemma process. The real Tauri hide RAF probe was not repeated because its temporary telemetry hook had been removed.
-- Snapshot Voice now selects bundled Korean ONNX from the file on disk when no session status exists. Production `whisper-large-v3-turbo` on the same TTS clip transcribed `안녕하세요 분성 합성 테스트입니다.` in 25.4 s (tiny had 분청). Extra pid **20042** unchanged.
-- At `96153df`, a debug Tauri build was observed as pid **63463** (`com.openkakao.jarvis.desktop`) without replacing Extra.
-- The rebuilt debug Jarvis SIGHUP check observed `open` pid **84521** survive `kill -HUP` with Extra **20042** unchanged. That historical process check does not supersede the current LaunchAgent/runtime state above.
-- Settings Voice has an opt-in **마이크 세션 시작** control that spawns the isolated `.venv-voice` `jarvis_voice.py` session. It does not auto-start. Extra was not restarted.
-- Debug Jarvis was rebuilt at `6f76876` as pid **40102**. The settings capture now includes **마이크 세션 시작**. Extra **20042** unchanged.
-- Unavailability no longer paints Voice as stock-only; the default card shows bundled ONNX plus the mic start control.
-- Opt-in voice sessions now set `OPENKAKAO_VOICE_TTS_OUT` to `state_root/jarvis-voice-out.wav`. `speak()` writes that WAV and does not call `sd.play`. Extra **20042** unchanged. Live mic was not opened.
-
-Recovery and safety:
-
-- SQLite acquisition is fail-closed: create an isolated consistent copy first; if that copy fails, do not open the live KakaoTalk database as a fallback.
-- Emergency operator escape is **⌘⌥Esc**.
-- A delivery_unknown result is never auto-retried.
-
-Interactive Unit 5 diagrams:
-
-- [Jarvis/openkakao architecture after Units 1–4](docs/architecture/jarvis-openkakao-units1-4.html)
-- [Jarvis Three.js render lifecycle](docs/architecture/jarvis-three-render-lifecycle.html)
-- [GraphRAG ranked search sequence](docs/architecture/graphrag-search-sequence.html)
-- [Jarvis 27B model-swap lifecycle](docs/architecture/jarvis-model-swap-lifecycle.html) — validate 9/9 showcase, 0 errors/0 warnings; specification SHA `c94a0a02e004a9c1149e13db80cf53dce8e50406eac6dfacd8593c7c4830a25`; artifact SHA `d5472fd8b4aa72239056bdf4f532b104c6ac6b01667be379984a8d4252a3d995`; visual-check pass, no overflow at 1440x900/1600x1000/1920x1080/2048x1320, light/dark capture.
+- Emergency operator escape is **⌘⌥Esc**. It cancels input, TTS, and queued browser/AX work through the latch in `scripts/jarvis_abort.py`, is registered in `desktop/src-tauri/src/main.rs`, and never auto-resumes.
+- A `delivery_unknown` result is never auto-retried; the operator confirms the real delivery state first (`scripts/auto-reply-tui.py`).
+- On a model swap failure, `ModelResidencyManager` in `scripts/auto_reply_ondevice.py` attempts rollback to the owned prior model and fails closed if rollback cannot be proven.
+- If dense GraphRAG lookup fails, `scripts/auto_reply_knowledge_graph.py` retains the BM25 candidate path and reports the degraded search mode while preserving evidence/index metadata.
+- After a hidden window becomes visible again, `RenderLifecycle` restarts the render loop and runtime polling path (`desktop/src/core/lifecycle.ts`, `desktop/src/main.ts`); the transition is represented in the [Jarvis render lifecycle source](docs/architecture/jarvis-three-render-lifecycle.archify.json).
 
 <h2 id="features">Features</h2>
 
