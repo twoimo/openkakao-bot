@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -18,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from array import array
+from collections.abc import Mapping
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -57,6 +59,100 @@ def _force_local_model_cache() -> None:
 
     for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
         os.environ[name] = "1"
+
+
+def _resolve_qwen3_tts_model_path(
+    model: str,
+    *,
+    environment: Mapping[str, str],
+    home: Path,
+) -> str:
+    """Resolve a trusted local model directory without contacting Hugging Face."""
+
+    raw_model = str(model or "").strip()
+    repo_match = re.fullmatch(
+        r"([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)",
+        raw_model,
+    )
+
+    def absolute_path(value: str | Path) -> Path | None:
+        raw = str(value).strip()
+        if raw == "~":
+            return home
+        if raw.startswith("~/"):
+            return home / raw[2:]
+        path = Path(raw)
+        return path if path.is_absolute() else None
+
+    root_inputs: list[Path] = []
+    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        configured = absolute_path(environment.get(name, ""))
+        if configured is not None:
+            root_inputs.append(configured)
+    hf_home = absolute_path(environment.get("HF_HOME", ""))
+    if hf_home is not None:
+        root_inputs.append(hf_home / "hub")
+    root_inputs.append(home / ".cache" / "huggingface" / "hub")
+
+    roots: list[Path] = []
+    for root in root_inputs:
+        try:
+            resolved = root.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved not in roots:
+            roots.append(resolved)
+
+    def resolved_absolute_directory(value: str | Path) -> Path | None:
+        path = Path(str(value).strip())
+        if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+            return None
+        try:
+            return path.resolve(strict=True)
+        except OSError:
+            return None
+
+    def trusted_directory(value: str | Path) -> Path | None:
+        path = absolute_path(value)
+        if path is None:
+            return None
+        resolved = resolved_absolute_directory(path)
+        if resolved is None:
+            return None
+        if any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            return resolved
+        return None
+
+    explicit_name = "OPENKAKAO_QWEN3_TTS_MODEL_PATH"
+    if explicit_name in environment:
+        local = resolved_absolute_directory(environment.get(explicit_name, ""))
+        if local is None:
+            raise RuntimeError("qwen3_tts_model_path_invalid")
+        return str(local)
+
+    if repo_match is None:
+        local = trusted_directory(raw_model)
+        if local is not None:
+            return str(local)
+        raise RuntimeError("qwen3_tts_model_path_invalid")
+
+    organization, name = repo_match.groups()
+    cache_name = f"models--{organization}--{name}"
+    for root in roots:
+        ref = root / cache_name / "refs" / "main"
+        if ref.is_symlink() or not ref.is_file():
+            continue
+        try:
+            revision = ref.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError):
+            continue
+        if re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
+            continue
+        snapshot = root / cache_name / "snapshots" / revision
+        local = trusted_directory(snapshot)
+        if local is not None:
+            return str(local)
+    return raw_model
 
 
 def _local_urlopen(request: urllib.request.Request, *, timeout: float):
@@ -232,7 +328,7 @@ class OpenWakeVadFrontend:
         from openwakeword.model import Model
 
         if custom_path is None:
-            return Model(inference_framework="onnx")
+            return Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
         path, framework = OpenWakeVadFrontend._validate_custom_wake_model_path(custom_path)
         return Model(wakeword_models=[str(path)], inference_framework=framework)
 
@@ -594,7 +690,11 @@ class Qwen3TtsAdapter:
             import torch
 
             dtype = torch.bfloat16 if QWEN3_TTS_PRECISION == "bf16" else torch.float16
-            model = os.environ.get("OPENKAKAO_QWEN3_TTS_MODEL_PATH", self.model).strip() or self.model
+            model = _resolve_qwen3_tts_model_path(
+                self.model,
+                environment=os.environ,
+                home=Path.home(),
+            )
             self._engine = Qwen3TTSModel.from_pretrained(
                 model,
                 dtype=dtype,

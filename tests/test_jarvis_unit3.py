@@ -17,10 +17,11 @@ from auto_reply_ax_ui import AX_ABORT_FOCUS_REQUIRED, AX_ABORT_GLOBAL, backgroun
 from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
 from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, VoiceState, WakePhraseGate
-from jarvis_voice import Qwen3TtsAdapter
+from jarvis_voice import QWEN3_TTS_MODEL_ID, Qwen3TtsAdapter
 from jarvis_voice import OpenWakeVadFrontend
 from jarvis_voice import BUNDLED_CUSTOM_WAKE_MODEL, resolve_custom_wake_model
 from jarvis_voice import LocalMlxLlm
+from jarvis_voice import _resolve_qwen3_tts_model_path
 
 
 class FakeStt:
@@ -131,6 +132,32 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
         self.assertEqual(vad.sample_rate, 16_000)
         self.assertAlmostEqual(analysis.stock_wake_score, 0.21)
         self.assertIsNone(analysis.custom_wake_score)
+
+    def test_openwake_stock_model_loads_only_hey_jarvis(self):
+        import types
+        from unittest import mock
+
+        calls: list[dict[str, object]] = []
+
+        class FakeModel:
+            def __init__(self, **kwargs: object) -> None:
+                calls.append(kwargs)
+
+        package = types.ModuleType("openwakeword")
+        model_module = types.ModuleType("openwakeword.model")
+        model_module.Model = FakeModel
+        package.model = model_module
+
+        with mock.patch.dict(
+            sys.modules,
+            {"openwakeword": package, "openwakeword.model": model_module},
+        ):
+            OpenWakeVadFrontend._make_wake_model(None)
+
+        self.assertEqual(
+            calls,
+            [{"wakeword_models": ["hey_jarvis"], "inference_framework": "onnx"}],
+        )
 
     def test_custom_wake_model_path_validation_is_bounded(self):
         with TemporaryDirectory() as temp_dir:
@@ -248,6 +275,112 @@ class JarvisBrowserAbortTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(owned.closed)
 
 
+class Qwen3TtsModelPathTests(unittest.TestCase):
+    def test_resolves_existing_huggingface_snapshot(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache = root / "hub"
+            revision = "a" * 40
+            model_cache = cache / "models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice"
+            (model_cache / "refs").mkdir(parents=True)
+            (model_cache / "refs" / "main").write_text(revision, encoding="ascii")
+            snapshot = model_cache / "snapshots" / revision
+            snapshot.mkdir(parents=True)
+
+            resolved = _resolve_qwen3_tts_model_path(
+                QWEN3_TTS_MODEL_ID,
+                environment={"HF_HUB_CACHE": str(cache)},
+                home=root / "home",
+            )
+
+            self.assertEqual(resolved, str(snapshot.resolve()))
+
+    def test_missing_snapshot_preserves_original_model_id(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache = root / "hub"
+            cache.mkdir()
+
+            resolved = _resolve_qwen3_tts_model_path(
+                QWEN3_TTS_MODEL_ID,
+                environment={"HF_HUB_CACHE": str(cache)},
+                home=root / "home",
+            )
+
+            self.assertEqual(resolved, QWEN3_TTS_MODEL_ID)
+
+    def test_explicit_environment_path_takes_priority(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache = root / "hub"
+            explicit = cache / "manual" / "qwen3-tts"
+            explicit.mkdir(parents=True)
+
+            resolved = _resolve_qwen3_tts_model_path(
+                QWEN3_TTS_MODEL_ID,
+                environment={
+                    "HF_HUB_CACHE": str(cache),
+                    "OPENKAKAO_QWEN3_TTS_MODEL_PATH": str(explicit),
+                },
+                home=root / "home",
+            )
+
+            self.assertEqual(resolved, str(explicit.resolve()))
+
+    def test_explicit_path_outside_cache_is_accepted(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache = root / "hub"
+            cache.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+
+            resolved = _resolve_qwen3_tts_model_path(
+                QWEN3_TTS_MODEL_ID,
+                environment={
+                    "HF_HUB_CACHE": str(cache),
+                    "OPENKAKAO_QWEN3_TTS_MODEL_PATH": str(outside),
+                },
+                home=root / "home",
+            )
+
+            self.assertEqual(resolved, str(outside.resolve()))
+
+    def test_explicit_path_rejects_empty_missing_file_symlink_and_relative(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache = root / "hub"
+            cache.mkdir()
+            regular_file = root / "model.bin"
+            regular_file.write_bytes(b"model")
+            directory = root / "model"
+            directory.mkdir()
+            symlink = root / "model-link"
+            symlink.symlink_to(directory, target_is_directory=True)
+
+            invalid_paths = (
+                "",
+                str(root / "missing"),
+                str(regular_file),
+                str(symlink),
+                "relative/model",
+            )
+            for explicit in invalid_paths:
+                with self.subTest(explicit=explicit):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "^qwen3_tts_model_path_invalid$",
+                    ):
+                        _resolve_qwen3_tts_model_path(
+                            QWEN3_TTS_MODEL_ID,
+                            environment={
+                                "HF_HUB_CACHE": str(cache),
+                                "OPENKAKAO_QWEN3_TTS_MODEL_PATH": explicit,
+                            },
+                            home=root / "home",
+                        )
+
+
 class Qwen3TtsAdapterApiTests(unittest.TestCase):
     def test_speak_writes_env_wav_without_playback(self):
         import types
@@ -322,9 +455,15 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
         adapter = Qwen3TtsAdapter()
         with TemporaryDirectory() as temp_dir:
             token = AbortController(Path(temp_dir)).token()
-        with mock.patch.dict(sys.modules, {"qwen_tts": fake_mod, "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"), "sounddevice": types.SimpleNamespace(play=lambda *a, **k: None, get_stream=lambda: types.SimpleNamespace(active=False), stop=lambda: None)}):
+        with (
+            mock.patch(
+                "jarvis_voice._resolve_qwen3_tts_model_path",
+                return_value=QWEN3_TTS_MODEL_ID,
+            ),
+            mock.patch.dict(sys.modules, {"qwen_tts": fake_mod, "torch": types.SimpleNamespace(bfloat16="bf16", float16="fp16"), "sounddevice": types.SimpleNamespace(play=lambda *a, **k: None, get_stream=lambda: types.SimpleNamespace(active=False), stop=lambda: None)}),
+        ):
             adapter.speak("안녕하세요", token)  # type: ignore[arg-type]
-        self.assertEqual(adapter._engine.loaded_model, "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+        self.assertEqual(adapter._engine.loaded_model, QWEN3_TTS_MODEL_ID)
         self.assertTrue(adapter._engine.kwargs["local_files_only"])
         self.assertEqual(adapter._engine.generated["language"], "Korean")
         self.assertEqual(adapter._engine.generated["speaker"], "ryan")

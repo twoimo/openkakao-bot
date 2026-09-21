@@ -534,3 +534,103 @@ no `AutoReplyMenu` process remains. A temporary Applications/LaunchAgents
 harness also passed the legacy backup, atomic staging, plist path readback,
 and bootstrap/kickstart sequence. No KakaoTalk send, live AX send, microphone
 session, model swap, or speaker playback was performed by this cutover proof.
+
+## Fixed Python 3.11 voice runtime and wake resources — 2026-09-21 KST
+
+음성 런타임을 다음 고정 인터프리터로 검증했다.
+
+```text
+/Users/twoimo/Library/Application Support/openkakao/runtimes/voice/bin/python3.11
+Python 3.11.9
+```
+
+고정 런타임에서 다음 패키지 import가 모두 통과했다.
+
+| Package | Version | Result |
+| --- | --- | --- |
+| `openwakeword` | 0.6.0 | PASS |
+| `mlx-whisper` | 0.4.3 | PASS |
+| `qwen-tts` | 0.1.1 | PASS |
+| `sounddevice` | 0.5.1 | PASS |
+| `numpy` | 2.4.6 | PASS |
+
+공식 `openwakeword.utils.download_models(['hey_jarvis'])`를 사용해 아래 리소스만 설치했다. 다른 stock wake 모델은 다운로드하지 않았다.
+
+- `embedding_model.tflite`
+- `embedding_model.onnx`
+- `melspectrogram.tflite`
+- `melspectrogram.onnx`
+- `silero_vad.onnx`
+- `hey_jarvis_v0.1.tflite`
+- `hey_jarvis_v0.1.onnx`
+
+고정 런타임에 중복으로 남아 있던 `lib/python3.12` 1.4 GB를 제거했다. 런타임 크기는 **2.9 GB → 1.5 GB**로 줄었고, 최종 `sys.path`에는 Python 3.11 경로만 남았다. `OpenWakeVadFrontend`의 stock 경로는 `hey_jarvis` 하나만 명시적으로 로드한다. 이 고정 Python 3.11에서 `python3.11 -m unittest tests.test_jarvis_unit3` 최종 결과는 **20 tests OK**다.
+
+실제 MacBook Pro 내장 마이크 입력 스트림은 원음을 저장하지 않고 20 ms 프레임만 처리했다.
+
+| Field | Result |
+| --- | --- |
+| frames | 100 × 20 ms |
+| format | 16 kHz, mono, int16, 320 samples / 640 bytes |
+| elapsed | **2.207 s** |
+| speech frames | 0 |
+| overflow | 0 |
+| stock `hey_jarvis` max | **0.000047** |
+| bundled custom Korean max | **0.154974** |
+| RMS max | 0 |
+| raw audio persisted | no |
+
+이 측정은 실제 장치 스트림 초기화와 bounded frame 처리를 입증하지만, 무음 구간이었다. 인간 발화로 호출어를 수락한 증적은 아니다.
+
+고정 Python 3.11과 로컬 `mlx-community/whisper-tiny-mlx`를 사용한 silence smoke도 통과했다. transcript는 빈 문자열이었고 소요 시간은 **1.372 s**였다. 클라우드 또는 네트워크 fallback은 사용하지 않았다.
+
+고정 Python 3.11에서 로컬 캐시된 Qwen3-TTS 1.7B CustomVoice의 bf16 합성도 통과했다. `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` repo ID를 Hugging Face 캐시의 로컬 snapshot으로 자동 해석한 뒤 `from_pretrained`에 해당 디렉터리를 전달했다.
+
+| Field | Result |
+| --- | --- |
+| resolved snapshot | `…/snapshots/0c0e3051f131929182e2c023b9537f8b1c68adfe` |
+| elapsed | **64.025 s** |
+| WAV bytes | **157,484** |
+| audio | 24 kHz, mono, 78,720 frames |
+| speaker playback | no |
+| network / `snapshot_download` | none |
+
+이전에는 offline 모드에서도 qwen-tts 0.1.1의 `from_pretrained(repo-id, local_files_only=True)`가 API 조회를 시도해 `OfflineModeIsEnabled`로 실패했다. local-only model path resolver는 `OPENKAKAO_QWEN3_TTS_MODEL_PATH`로 명시한 유효 로컬 디렉터리 또는 자동 발견한 Hugging Face cache 경로를 사용한다. 명시한 absolute local directory는 cache 밖이어도 허용하고, 자동 repo-id discovery만 `HF_HUB_CACHE`·`HUGGINGFACE_HUB_CACHE`·`HF_HOME/hub`·기본 Hugging Face cache 안의 `refs/main`과 40자리 revision snapshot으로 제한한다. 자동 cache 경로가 없으면 기존 model ID를 유지해 offline fail-closed 동작을 보존한다. 캐시 해석 성공, 캐시 부재, cache 밖 explicit path 허용, 환경 경로 우선, invalid explicit path 거부, 자동 repo-id 경로의 cache-root 제한을 helper 단위 테스트로 검증했다.
+
+SoX와 `flash-attn` 경고는 이 smoke를 막지 않은 비차단 경고였다. 다음 항목은 여전히 미검증이다.
+
+- 인간 발화로 “헤이 자비스” 호출어를 수락하는 동작
+- 메뉴의 **마이크 세션 시작** 버튼에서 실제 세션 시작까지의 end-to-end 동작
+- 잡음 환경과 실제 한국어 발화에 대한 wake/STT 일반화
+
+## Final signed local bundle readback — 2026-09-21 KST
+
+다음 명령으로 release bundle을 다시 생성했다.
+
+```bash
+OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh
+```
+
+생성된 bundle과 설치된 앱의 최종 readback은 다음과 같다.
+
+| Field | Result |
+| --- | --- |
+| `codesign --verify --deep --strict` | PASS |
+| `CFBundleIdentifier` | `com.openkakao.jarvis.desktop` |
+| `LSUIElement` | `true` |
+| `Signature` | `adhoc` |
+| `TeamIdentifier` | `not set` |
+| source `scripts/jarvis_voice.py` SHA-256 | `05cfbe98a07b251b3c167115afc095d821d0f376dc57b8cf3339b7bd84a6c8d1` |
+| bundle `Contents/Resources/scripts/jarvis_voice.py` SHA-256 | `05cfbe98a07b251b3c167115afc095d821d0f376dc57b8cf3339b7bd84a6c8d1` |
+| bundled Korean wake model | `voice/models/hey_jarvis_ko_ridge.onnx` present |
+| bundled CLI | `bin/openkakao-cli` present |
+
+bundle을 `/Applications/OpenKakao Jarvis.app`에 설치한 뒤 `gui/501/com.openkakao.jarvis.desktop` LaunchAgent를 다시 읽었다.
+
+```text
+state = running
+program = /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop
+pid = 5823
+```
+
+동일 시점에 `AutoReplyMenu` 프로세스는 없었다. 이 readback은 source와 local release bundle의 음성 스크립트 일치, ad hoc 서명 검증, 로컬 설치 및 LaunchAgent 실행을 입증한다. `Signature=adhoc`이고 `TeamIdentifier=not set`이므로 Developer ID 서명과 notarization은 여전히 미검증이다.
