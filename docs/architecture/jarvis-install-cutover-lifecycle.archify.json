@@ -107,7 +107,7 @@
       "id": "guard",
       "type": "decision",
       "label": "중복 인스턴스 가드",
-      "sublabel": "2회 · pid 동일성 확인",
+      "sublabel": "2회 · pid 생존·동일성 확인",
       "lane": "main",
       "col": 4,
       "width": 150,
@@ -259,7 +259,7 @@
       "dot": "amber",
       "title": "가드 계약",
       "items": [
-        "pid는 kickstart -kp · 후보는 경로 무관 pid 동일성 · lstart 재확인"
+        "pid는 kickstart -kp · 후보는 경로 무관 pid 동일성 · 생존 확인 · lstart 재확인"
       ]
     },
     {

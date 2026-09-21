@@ -272,11 +272,29 @@ reported_app_path() {
 check_duplicate_guard() {
   guard_launchd_pid=$1
   live_app_pids=""
+  guard_attempt=1
 
-  if ! live_app_pids=$(list_live_app_pids); then
-    echo "install-jarvis-desktop: cannot prove there is no duplicate instance; process enumeration is unknown" >&2
-    return 2
-  fi
+  # A pid reported by launchd is not proof that the app survived activation.
+  # Require that pid to be a live app process before trusting the cutover, with
+  # a short bounded wait for the exec window right after kickstart.
+  while :; do
+    if ! live_app_pids=$(list_live_app_pids); then
+      echo "install-jarvis-desktop: cannot prove there is no duplicate instance; process enumeration is unknown" >&2
+      return 2
+    fi
+    if printf '%s\n' "$live_app_pids" |
+      /usr/bin/awk -v launchd_pid="$guard_launchd_pid" \
+        '$0 == launchd_pid { found = 1 } END { exit found ? 0 : 1 }'; then
+      break
+    fi
+    if [ "$guard_attempt" -ge 5 ]; then
+      printf 'install-jarvis-desktop: launchd pid %s is not a live app process\n' \
+        "$guard_launchd_pid" >&2
+      return 1
+    fi
+    guard_attempt=$((guard_attempt + 1))
+    /bin/sleep 0.2
+  done
 
   stray_pids=$(printf '%s\n' "$live_app_pids" |
     /usr/bin/awk -v launchd_pid="$guard_launchd_pid" -v installer_pid="$$" '

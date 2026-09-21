@@ -37,6 +37,8 @@ class JarvisDesktopLauncherTests(unittest.TestCase):
         stray_reported_path: str | None = None,
         kickstart_output: str = "4242",
         pid_never: bool = False,
+        launchd_pid_absent: bool = False,
+        launchd_pid_delay: int = 0,
         initial_jarvis_loaded: bool = False,
         initial_legacy_loaded: bool = False,
         has_legacy_plist: bool = False,
@@ -206,6 +208,11 @@ esac
                 """#!/bin/sh
 set -eu
 status=$OPENKAKAO_FAKE_PGREP_STATUS
+if [ "$OPENKAKAO_FAKE_LAUNCHD_PID_ABSENT" = 1 ]; then
+  # Model the real failure: the app process is gone, so pgrep reports no match
+  # (status 1, no output) instead of naming a live pid.
+  status=1
+fi
 if [ "$status" -eq 0 ]; then
   count=0
   if [ -f "$OPENKAKAO_FAKE_PGREP_COUNT" ]; then
@@ -213,10 +220,15 @@ if [ "$status" -eq 0 ]; then
   fi
   count=$((count + 1))
   printf '%s\n' "$count" >"$OPENKAKAO_FAKE_PGREP_COUNT"
-  printf '4242\n'
-  if [ "$OPENKAKAO_FAKE_STRAY" = 1 ] || \
-    { [ "$OPENKAKAO_FAKE_STRAY_AFTER_FIRST_GUARD" = 1 ] && [ "$count" -ge 2 ]; }; then
+  if [ "$OPENKAKAO_FAKE_LAUNCHD_PID_DELAY" != 0 ] && \
+    [ "$count" -le "$OPENKAKAO_FAKE_LAUNCHD_PID_DELAY" ]; then
     printf '7777\n'
+  else
+    printf '4242\n'
+    if [ "$OPENKAKAO_FAKE_STRAY" = 1 ] || \
+      { [ "$OPENKAKAO_FAKE_STRAY_AFTER_FIRST_GUARD" = 1 ] && [ "$count" -ge 2 ]; }; then
+      printf '7777\n'
+    fi
   fi
 fi
 exit "$status"
@@ -310,6 +322,10 @@ exit 1
                         "1" if block_bootout else "0"
                     ),
                     "OPENKAKAO_FAKE_PID_NEVER": "1" if pid_never else "0",
+                    "OPENKAKAO_FAKE_LAUNCHD_PID_ABSENT": (
+                        "1" if launchd_pid_absent else "0"
+                    ),
+                    "OPENKAKAO_FAKE_LAUNCHD_PID_DELAY": str(launchd_pid_delay),
                     "OPENKAKAO_FAKE_KICKSTART_OUTPUT": kickstart_output,
                     "OPENKAKAO_FAKE_PGREP_STATUS": str(pgrep_status),
                     "OPENKAKAO_FAKE_PS_MODE": "stray" if stray else ps_mode,
@@ -629,6 +645,10 @@ exit 1
         self.assertIn('-v launchd_pid="$guard_launchd_pid" -v installer_pid="$$"', source)
         self.assertIn('$0 != launchd_pid && $0 != installer_pid', source)
         self.assertIn("cannot prove there is no duplicate instance", source)
+        self.assertIn('$0 == launchd_pid { found = 1 }', source)
+        self.assertIn("is not a live app process", source)
+        self.assertIn('if [ "$guard_attempt" -ge 5 ]; then', source)
+        self.assertIn('guard_attempt=$((guard_attempt + 1))', source)
         self.assertIn("post_activation_failure() {", source)
         self.assertIn("perform_rollback() {", source)
         self.assertIn("rollback was attempted", source)
@@ -1257,6 +1277,29 @@ esac
             f"bootout gui/{os.getuid()}/com.openkakao.jarvis.desktop",
             case["launchctl_calls"],
         )
+
+    def test_installer_dead_launchd_pid_rolls_back(self) -> None:
+        case = self._run_installer_fixture(launchd_pid_absent=True)
+
+        self.assertEqual(case["returncode"], 3)
+        self.assertIn("is not a live app process", case["stderr"])
+        self.assertNotIn("stray Jarvis process", case["stderr"])
+        self.assertIn("rollback was attempted", case["stderr"])
+        self.assertIn("previous bundle restored", case["stderr"])
+        self.assertEqual(case["target_marker"], "old")
+        self.assertFalse(case["service_loaded"])
+        self.assertIsNone(case["installed_readback"])
+        self.assertIsNotNone(case["rollback_readback"])
+
+    def test_installer_late_live_pid_does_not_roll_back(self) -> None:
+        case = self._run_installer_fixture(launchd_pid_delay=2)
+
+        self.assertEqual(case["returncode"], 0)
+        self.assertNotIn("rollback was attempted", case["stderr"])
+        self.assertNotIn("stray Jarvis process", case["stderr"])
+        self.assertTrue(case["service_loaded"])
+        self.assertIsNotNone(case["installed_readback"])
+        self.assertEqual(case["previous_apps"], [])
 
     def test_installer_first_install_healthy_is_exact_and_has_no_previous_bundle(
         self,
