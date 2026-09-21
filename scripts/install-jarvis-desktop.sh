@@ -107,6 +107,8 @@ PREVIOUS_APP_MOVED=0
 APP_ACTIVATED=0
 JARVIS_PLIST_INSTALLED=0
 JARVIS_BOOTSTRAPPED=0
+ROLLBACK_ATTEMPTED=0
+RUNTIME_TOUCHED=0
 
 cleanup() {
   if [ -n "$PLIST_STAGE" ] && [ -f "$PLIST_STAGE" ]; then
@@ -120,6 +122,10 @@ cleanup() {
 signal_exit() {
   signal_status=$1
   cleanup
+  if [ "$RUNTIME_TOUCHED" -eq 1 ] || [ "$APP_ACTIVATED" -eq 1 ] || \
+    [ "$JARVIS_PLIST_INSTALLED" -eq 1 ] || [ "$JARVIS_BOOTSTRAPPED" -eq 1 ]; then
+    perform_rollback "signal exit $signal_status"
+  fi
   exit "$signal_status"
 }
 
@@ -233,29 +239,14 @@ list_live_app_pids() {
     fi
   fi
 
-  for candidate_pid in $candidate_pids; do
-    candidate_path=$(reported_app_path "$candidate_pid")
-    # argv and resolved paths are discovery evidence, not authoritative process
-    # identity. A definite identity scheme is a separate change.
-    case "$candidate_path" in
-      "$APPLICATIONS_DIR"/*)
-        printf '%s\n' "$candidate_pid"
-        ;;
-      /*)
-        ;;
-      *)
-        # An unresolved or non-absolute path cannot prove this is unrelated.
-        printf '%s\n' "$candidate_pid"
-        ;;
-    esac
-  done
+  printf '%s\n' "$candidate_pids"
 }
 
 reported_app_path() {
   reported_pid=$1
   reported_path=""
 
-  # Resolve a candidate path only far enough to disprove an Applications match;
+  # Paths are diagnostic evidence only; duplicate identity is based on pid.
   # macOS ps may still show an exec-time path after a bundle has moved.
   if [ -x "$LSOF" ]; then
     reported_path=$("$LSOF" -p "$reported_pid" -a -d txt -Fn 2>/dev/null |
@@ -306,16 +297,39 @@ check_duplicate_guard() {
   return 1
 }
 
-post_activation_failure() {
-  failure_reason=$1
+perform_rollback() {
+  rollback_reason=$1
+
+  if [ "$ROLLBACK_ATTEMPTED" -eq 1 ]; then
+    return 0
+  fi
+  ROLLBACK_ATTEMPTED=1
+  trap '' HUP INT TERM
+
   rollback_target_action="unchanged"
   rollback_plist_action="unchanged"
+  rollback_jarvis_runtime_action="not previously loaded"
+  rollback_legacy_plist_action="unchanged"
+  rollback_legacy_runtime_action="not previously loaded"
+  rollback_artifact="$BACKUP_DIR/$JARVIS_LABEL.installed.txt"
 
   printf 'install-jarvis-desktop: %s; rollback was attempted\n' \
-    "$failure_reason" >&2
+    "$rollback_reason" >&2
+
+  if [ -e "$rollback_artifact" ]; then
+    if rm -f "$rollback_artifact" && [ ! -e "$rollback_artifact" ]; then
+      echo "install-jarvis-desktop: rollback installed artifact: removed" >&2
+    else
+      echo "install-jarvis-desktop: rollback installed artifact: removal failed" >&2
+    fi
+  fi
 
   if [ "$JARVIS_BOOTSTRAPPED" -eq 1 ]; then
-    "$LAUNCHCTL" bootout "$JARVIS_SERVICE" >/dev/null 2>&1 || true
+    if "$LAUNCHCTL" bootout "$JARVIS_SERVICE" >/dev/null 2>&1; then
+      echo "install-jarvis-desktop: rollback active Jarvis LaunchAgent: bootout succeeded" >&2
+    else
+      echo "install-jarvis-desktop: rollback active Jarvis LaunchAgent: bootout failed" >&2
+    fi
   fi
 
   if [ "$APP_ACTIVATED" -eq 1 ]; then
@@ -358,29 +372,78 @@ post_activation_failure() {
     fi
   fi
 
+  if [ -e "$BACKUP_DIR/$LEGACY_LABEL.disabled.plist" ]; then
+    if mv "$BACKUP_DIR/$LEGACY_LABEL.disabled.plist" "$LEGACY_PLIST"; then
+      rollback_legacy_plist_action="previous plist restored"
+    else
+      rollback_legacy_plist_action="previous plist restore failed"
+    fi
+  fi
+
+  if [ "$JARVIS_LOADED" -eq 1 ]; then
+    if [ -f "$JARVIS_PLIST" ] && \
+      "$LAUNCHCTL" bootstrap "$DOMAIN" "$JARVIS_PLIST"; then
+      rollback_jarvis_runtime_action="bootstrap restored"
+    else
+      rollback_jarvis_runtime_action="bootstrap restore failed"
+    fi
+  fi
+
+  if [ "$LEGACY_LOADED" -eq 1 ]; then
+    if [ -f "$LEGACY_PLIST" ] && \
+      "$LAUNCHCTL" bootstrap "$DOMAIN" "$LEGACY_PLIST"; then
+      rollback_legacy_runtime_action="bootstrap restored"
+    else
+      rollback_legacy_runtime_action="bootstrap restore failed"
+    fi
+  fi
+
   if [ -e "$TARGET_APP" ]; then
     rollback_target_readback="present"
   else
     rollback_target_readback="absent"
   fi
-  if "$LAUNCHCTL" print "$JARVIS_SERVICE" \
-    >"$BACKUP_DIR/$JARVIS_LABEL.rollback.txt" 2>&1; then
-    rollback_service_loaded="yes"
+  rollback_readback="$BACKUP_DIR/$JARVIS_LABEL.rollback.txt"
+  if "$LAUNCHCTL" print "$DOMAIN" >"$rollback_readback" 2>&1; then
+    if /usr/bin/grep -F "$JARVIS_LABEL" "$rollback_readback" >/dev/null 2>&1; then
+      rollback_jarvis_loaded="yes"
+    else
+      rollback_jarvis_loaded="no"
+    fi
+    if /usr/bin/grep -F "$LEGACY_LABEL" "$rollback_readback" >/dev/null 2>&1; then
+      rollback_legacy_loaded="yes"
+    else
+      rollback_legacy_loaded="no"
+    fi
   else
-    rollback_service_loaded="no"
+    rollback_jarvis_loaded="unknown"
+    rollback_legacy_loaded="unknown"
   fi
 
   printf 'install-jarvis-desktop: rollback target: %s (%s; readback %s)\n' \
     "$TARGET_APP" "$rollback_target_action" "$rollback_target_readback" >&2
   printf 'install-jarvis-desktop: rollback plist: %s (%s)\n' \
     "$JARVIS_PLIST" "$rollback_plist_action" >&2
-  printf 'install-jarvis-desktop: rollback LaunchAgent loaded: %s\n' \
-    "$rollback_service_loaded" >&2
+  printf 'install-jarvis-desktop: rollback Jarvis runtime: %s\n' \
+    "$rollback_jarvis_runtime_action" >&2
+  printf 'install-jarvis-desktop: rollback legacy plist: %s (%s)\n' \
+    "$LEGACY_PLIST" "$rollback_legacy_plist_action" >&2
+  printf 'install-jarvis-desktop: rollback legacy runtime: %s\n' \
+    "$rollback_legacy_runtime_action" >&2
+  printf 'install-jarvis-desktop: rollback Jarvis LaunchAgent loaded: %s\n' \
+    "$rollback_jarvis_loaded" >&2
+  printf 'install-jarvis-desktop: rollback legacy LaunchAgent loaded: %s\n' \
+    "$rollback_legacy_loaded" >&2
   printf 'install-jarvis-desktop: rollback backups: %s\n' "$BACKUP_DIR" >&2
   if [ -n "$PREVIOUS_APP" ]; then
     printf 'install-jarvis-desktop: previous bundle backup path: %s\n' \
       "$PREVIOUS_APP" >&2
   fi
+}
+
+post_activation_failure() {
+  failure_reason=$1
+  perform_rollback "$failure_reason"
   exit 3
 }
 
@@ -427,6 +490,9 @@ chmod 600 "$PLIST_STAGE"
 
 # The legacy state and plist above are authoritative backups. Only now may the
 # old jobs be unloaded. Moving the legacy plist prevents it returning at login.
+# Anything from here on mutates runtime state, so a signal must run the same
+# rollback even before the new bundle is activated.
+RUNTIME_TOUCHED=1
 if [ "$LEGACY_LOADED" -eq 1 ]; then
   "$LAUNCHCTL" bootout "$LEGACY_SERVICE"
 fi
@@ -498,6 +564,9 @@ if [ -z "$LAUNCHD_PID" ]; then
   fi
 fi
 
+LAUNCHD_START_MARKER=$("$PS" -p "$LAUNCHD_PID" -o lstart= 2>/dev/null |
+  /usr/bin/sed -n '1p' || true)
+
 # Fail closed before deleting the previous bundle. A surviving process may be
 # executing an older bundle even when launchd itself reports only this service.
 if ! check_duplicate_guard "$LAUNCHD_PID"; then
@@ -513,6 +582,12 @@ fi
 # Re-enumerate immediately before the irreversible previous-bundle deletion so
 # cleanup never relies on the earlier process snapshot.
 if [ -n "$PREVIOUS_APP" ] && [ -e "$PREVIOUS_APP" ]; then
+  launchd_recheck_marker=$("$PS" -p "$LAUNCHD_PID" -o lstart= 2>/dev/null |
+    /usr/bin/sed -n '1p' || true)
+  if [ -z "$LAUNCHD_START_MARKER" ] || [ -z "$launchd_recheck_marker" ] || \
+    [ "$launchd_recheck_marker" != "$LAUNCHD_START_MARKER" ]; then
+    post_activation_failure "launchd pid identity changed before deletion"
+  fi
   if ! check_duplicate_guard "$LAUNCHD_PID"; then
     post_activation_failure "duplicate instance recheck failed"
   fi
