@@ -688,3 +688,23 @@ readback의 raw `pipeline` 값은 다음과 같았다.
 같은 bridge의 in-flight job registry는 최신순 최대 8건(`JOB_EVENT_CAP = 8`), 300초 초과 제거(`JOB_EVENT_MAX_AGE_SECS = 300.0`)를 적용한다. 각 event의 직렬화 키는 정확히 `{jobId, kind, stage, load, time, errorCode}`이며 prompt, task text, token/secret, 대화 내용은 포함하지 않는다. browser 작업은 `kind="browser"`, `stage="running"`, `load=0.7`, model swap은 `kind="model_swap"`, `stage="swap"`, `load=0.9`로 등록된다.
 
 이 두 단위에 대한 측정 검증은 desktop Vitest **77/77**(5 files), Rust **58/58**, clean `tsc`, 성공한 Vite production build, Python menubar suite **165 tests, OK**, `sh desktop/scripts/smoke.sh` exit 0이었다. 이 기록은 component-level snapshot-shape와 bounded bridge contract 증거이며 live KakaoTalk 전송이나 live model generation을 입증하지 않는다.
+
+## DREAM-RSI paper provenance and replay guarantee — 2026-09-21 KST
+
+이미 조회된 DREAM-RSI alphaXiv report의 provenance는 arXiv `2609.14858`, alphaXiv `https://www.alphaxiv.org/abs/2609.14858`, GitHub `https://github.com/zhengkid/Dream-RSI`다. 2026-09-21에 아래 read-only 명령으로 report를 조회했으며 exit 0, report body **14,515 chars**가 측정됐다.
+
+```bash
+orx paper 2609.14858
+```
+
+고정 replay history 한정 non-degradation 계약은 `scripts/auto_reply_dream_rsi.py`의 `INCUMBENT_POLICY`와 checkpoint `replay_guarantee`로 기록한다. `replay_guarantee.scope`는 정확히 `fixed_replay_set_only`이며, incumbent와 selected policy의 유한한 objective score를 비교할 수 있을 때만 `status="verified"`를 사용한다. `NaN`/`Infinity`, 누락 incumbent, 비정상 입력은 성공 비교로 취급하지 않는다.
+
+검증 명령은 다음과 같다.
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 -m unittest tests.test_auto_reply_dream_rsi tests.test_dream_rsi_alphaxiv -v
+```
+
+결과는 `Ran 68 tests in 0.033s`, `OK`였다. 별도 `py_compile scripts/auto_reply_dream_rsi.py`도 `COMPILE_OK`였다.
+
+이 기록은 paper retrieval provenance와 offline fixed-replay evaluation에 대한 component-level 증거다. live KakaoTalk send, live model generation, future online performance의 non-degradation, 모델 train/promote/replace/start를 입증하지 않는다.

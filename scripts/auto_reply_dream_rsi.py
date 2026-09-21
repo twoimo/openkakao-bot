@@ -53,6 +53,9 @@ GOLD_SOURCE_HUMAN_AND_MODEL = "human_and_model"
 # measure is deliberately simple and deterministic: it ranks candidate
 # policies, and it never pretends to be a language-quality judge.
 MAX_EVAL_ROWS = 400
+# The paper's replay guarantee compares every candidate with the current policy.
+# Keep that incumbent in the candidate set so the fixed-history comparison exists.
+INCUMBENT_POLICY = "echo_last_message"
 
 
 def _char_ngrams(text: str, n: int = 2) -> Counter:
@@ -300,10 +303,68 @@ def _candidate_policies() -> dict[str, Callable[[dict[str, Any]], str]]:
     messages that preceded it (2026-09-19).
     """
     return {
-        "echo_last_message": _last_window_message,
+        INCUMBENT_POLICY: _last_window_message,
         "mirror_prompt_tail": lambda row: str(row.get("prompt") or "")[-60:],
         "longest_window_message": _longest_window_message,
     }
+
+
+def replay_guarantee(
+    evaluations: dict[str, dict[str, Any]],
+    selected: str,
+    *,
+    incumbent: str = INCUMBENT_POLICY,
+) -> dict[str, Any]:
+    """Report the paper's non-degradation check on the fixed replay set only."""
+    incumbent_name = incumbent if isinstance(incumbent, str) and incumbent else INCUMBENT_POLICY
+    selected_name = selected if isinstance(selected, str) else ""
+    report: dict[str, Any] = {
+        "incumbent_policy": incumbent_name,
+        "incumbent_score": None,
+        "selected_policy": selected_name,
+        "selected_score": None,
+        "non_degradation_on_replay": None,
+        "status": "not_applicable",
+        "scope": "fixed_replay_set_only",
+        "scope_note": (
+            "Guarantee covers the fixed replay history only and does not extend "
+            "to future online performance."
+        ),
+    }
+
+    if not selected_name:
+        report["status"] = "insufficient_data"
+        report["non_degradation_on_replay"] = False
+        return report
+    if not isinstance(evaluations, dict):
+        return report
+
+    incumbent_eval = evaluations.get(incumbent_name)
+    if not isinstance(incumbent_eval, dict):
+        return report
+    selected_eval = evaluations.get(selected_name)
+    if not isinstance(selected_eval, dict):
+        return report
+
+    def finite_score(entry: dict[str, Any]) -> float | None:
+        raw = entry.get("objective_score")
+        if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+            return None
+        try:
+            value = float(raw)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    incumbent_value = finite_score(incumbent_eval)
+    selected_value = finite_score(selected_eval)
+    if incumbent_value is None or selected_value is None:
+        return report
+    report["incumbent_score"] = incumbent_value
+    report["selected_score"] = selected_value
+    report["non_degradation_on_replay"] = selected_value >= incumbent_value
+    report["status"] = "verified"
+    return report
 
 
 def select_experiment_action(
@@ -413,6 +474,7 @@ def dream_policy_evaluation(
     winner = ""
     if usable:
         winner = max(usable.items(), key=lambda item: item[1]["objective_score"])[0]
+    guarantee = replay_guarantee(evaluations, winner)
 
     checkpoint = {
         "schema_version": DEFAULT_SCHEMA_VERSION,
@@ -429,6 +491,7 @@ def dream_policy_evaluation(
         "parse_errors": simulator.parse_errors,
         "evaluations": evaluations,
         "selected_policy": winner,
+        "replay_guarantee": guarantee,
         "status": "evaluated" if usable else "insufficient_data",
         "active_features": {name: True for name in candidates},
     }

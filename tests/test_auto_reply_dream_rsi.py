@@ -21,11 +21,13 @@ from typing import Any
 
 from scripts.auto_reply_dream_rsi import (
     DreamRsiSimulator,
+    INCUMBENT_POLICY,
     _candidate_policies,
     answer_similarity,
     distribution_report,
     dream_policy_evaluation,
     load_replay_rows,
+    replay_guarantee,
 )
 
 NL = chr(10)
@@ -382,6 +384,68 @@ class TestCandidatePolicies(unittest.TestCase):
                 self.assertEqual(policies[name]({"window": ["not a dict"]}), "")
 
 
+class TestReplayGuarantee(unittest.TestCase):
+    def test_verified_when_selected_is_not_worse_than_incumbent(self):
+        report = replay_guarantee(
+            {
+                INCUMBENT_POLICY: {"objective_score": 0.4},
+                "candidate": {"objective_score": 0.7},
+            },
+            "candidate",
+        )
+        self.assertEqual(report["status"], "verified")
+        self.assertTrue(report["non_degradation_on_replay"])
+        self.assertEqual(report["incumbent_score"], 0.4)
+        self.assertEqual(report["selected_score"], 0.7)
+
+    def test_verified_false_when_selected_is_worse_than_incumbent(self):
+        report = replay_guarantee(
+            {
+                INCUMBENT_POLICY: {"objective_score": 0.8},
+                "candidate": {"objective_score": 0.2},
+            },
+            "candidate",
+        )
+        self.assertEqual(report["status"], "verified")
+        self.assertFalse(report["non_degradation_on_replay"])
+
+    def test_not_applicable_when_incumbent_was_not_evaluated(self):
+        report = replay_guarantee({"candidate": {"objective_score": 0.7}}, "candidate")
+        self.assertEqual(report["status"], "not_applicable")
+        self.assertIsNone(report["incumbent_score"])
+        self.assertIsNone(report["non_degradation_on_replay"])
+
+    def test_insufficient_data_when_selection_is_empty(self):
+        report = replay_guarantee({INCUMBENT_POLICY: {"objective_score": 0.7}}, "")
+        self.assertEqual(report["status"], "insufficient_data")
+        self.assertFalse(report["non_degradation_on_replay"])
+
+    def test_arbitrary_evaluation_input_is_total_and_fail_closed(self):
+        for value in (None, [], "x", 5):
+            with self.subTest(value=value):
+                report = replay_guarantee(value, "candidate")  # type: ignore[arg-type]
+                self.assertIsInstance(report, dict)
+                self.assertEqual(report["status"], "not_applicable")
+                self.assertIsNone(report["non_degradation_on_replay"])
+
+    def test_non_finite_scores_are_unavailable(self):
+        cases = (
+            {
+                INCUMBENT_POLICY: {"objective_score": float("nan")},
+                "candidate": {"objective_score": 0.8},
+            },
+            {
+                INCUMBENT_POLICY: {"objective_score": 0.5},
+                "candidate": {"objective_score": float("inf")},
+            },
+        )
+        for evaluations in cases:
+            with self.subTest(evaluations=evaluations):
+                report = replay_guarantee(evaluations, "candidate")
+                self.assertEqual(report["status"], "not_applicable")
+                self.assertIsNone(report["non_degradation_on_replay"])
+
+
 class TestDreamLoop(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -442,6 +506,54 @@ class TestDreamLoop(unittest.TestCase):
             policies={"first": lambda row: "", "second": lambda row: ""},
         )
         self.assertEqual(result["active_features"], {"first": True, "second": True})
+
+    def test_checkpoint_includes_fixed_replay_guarantee_without_changing_selection(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "정확한 답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
+        )
+        result = dream_policy_evaluation(
+            self.root,
+            policies={
+                "perfect": lambda row: "정확한 답변",
+                "blank": lambda row: "",
+            },
+        )
+        self.assertEqual(result["selected_policy"], "perfect")
+        self.assertEqual(result["active_features"], {"perfect": True, "blank": True})
+        self.assertEqual(result["replay_guarantee"]["scope"], "fixed_replay_set_only")
+        stored = json.loads(
+            (self.root / "dream-rsi-policy.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(stored["replay_guarantee"], result["replay_guarantee"])
+
+    def test_incumbent_can_win_and_verifies_non_degradation(self):
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "다른 질문",
+                    "completion": "정확한 답변",
+                    "room": "a",
+                    "source": "self_history",
+                    "window": [
+                        {"message": "전혀 관계 없는 아주 길고 반복되는 과거 메시지입니다"},
+                        {"message": "정확한 답변"},
+                    ],
+                }
+            ],
+        )
+        result = dream_policy_evaluation(self.root)
+        self.assertEqual(result["selected_policy"], INCUMBENT_POLICY)
+        self.assertTrue(result["replay_guarantee"]["non_degradation_on_replay"])
+        self.assertEqual(result["replay_guarantee"]["status"], "verified")
 
     def test_checkpoint_write_errors_are_surfaced(self):
         blocked_root = self.root / "not-a-directory"
