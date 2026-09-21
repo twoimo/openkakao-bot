@@ -1051,45 +1051,121 @@ class DenseRefreshBatchingTests(unittest.TestCase):
         finally:
             dense.close()
 
+    def _embedding_response(self, count: int):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "data": [
+                            {"index": index, "embedding": [1.0, 0.0]}
+                            for index in range(count)
+                        ]
+                    }
+                ).encode("utf-8")
+
+        return Response()
+
     def test_dense_refresh_default_batch_size_is_eight(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 17)
-            calls: list[int] = []
+            calls: list[tuple[int, float]] = []
 
-            def fake_embeddings(texts):
-                calls.append(len(texts))
-                return [(1.0, 0.0)] * len(texts)
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                calls.append((len(payload["input"]), timeout))
+                return self._embedding_response(len(payload["input"]))
 
             try:
-                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                with mock.patch.object(
+                    KG.urllib.request,
+                    "urlopen",
+                    side_effect=fake_urlopen,
+                ):
                     result = KG.refresh_dense_index(conn, root)
             finally:
                 conn.close()
 
-            self.assertEqual(calls, [8, 8, 1])
+            self.assertEqual(
+                calls,
+                [
+                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
+                    (8, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                    (1, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                ],
+            )
             self.assertEqual(result["status"], "indexed")
             self.assertEqual(result["indexed"], 17)
+
+    def test_dense_refresh_cold_start_succeeds_without_splitting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls: list[tuple[int, float]] = []
+            simulated_duration_seconds = 10.0
+
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                calls.append((len(payload["input"]), timeout))
+                if timeout < simulated_duration_seconds:
+                    raise TimeoutError("simulated cold-start timeout")
+                return self._embedding_response(len(payload["input"]))
+
+            try:
+                with mock.patch.object(
+                    KG.urllib.request,
+                    "urlopen",
+                    side_effect=fake_urlopen,
+                ):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                calls,
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
+            )
+            self.assertEqual(result["status"], "indexed")
+            self.assertEqual(result["indexed"], 8)
 
     def test_dense_refresh_splits_timeout_batch_and_indexes_all_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 8)
-            calls: list[int] = []
+            calls: list[tuple[int, float]] = []
 
-            def fake_embeddings(texts):
-                calls.append(len(texts))
-                if len(texts) == 8:
-                    raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
-                return [(1.0, 0.0)] * len(texts)
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                input_count = len(payload["input"])
+                calls.append((input_count, timeout))
+                if input_count == 8:
+                    raise TimeoutError("simulated first-attempt timeout")
+                return self._embedding_response(input_count)
 
             try:
-                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                with mock.patch.object(
+                    KG.urllib.request,
+                    "urlopen",
+                    side_effect=fake_urlopen,
+                ):
                     result = KG.refresh_dense_index(conn, root)
             finally:
                 conn.close()
 
-            self.assertEqual(calls, [8, 4, 4])
+            self.assertEqual(
+                calls,
+                [
+                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
+                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                ],
+            )
             self.assertEqual(result["status"], "indexed")
             self.assertEqual(result["indexed"], 8)
             self.assertEqual(self._dense_counts(root)[0], 8)
@@ -1110,10 +1186,14 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             dense.commit()
             dense.close()
             prior_counts = self._dense_counts(root)
-            calls: list[int] = []
+            calls: list[tuple[int, float]] = []
 
-            def fake_embeddings(texts):
-                calls.append(len(texts))
+            def fake_embeddings(
+                texts,
+                *,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+            ):
+                calls.append((len(texts), timeout_seconds))
                 raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
 
             try:
@@ -1123,7 +1203,15 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             finally:
                 conn.close()
 
-            self.assertEqual(calls, [8, 4, 2, 1])
+            self.assertEqual(
+                calls,
+                [
+                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
+                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                    (2, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                    (1, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                ],
+            )
             self.assertEqual(result["status"], "unavailable")
             self.assertTrue(dense_status.startswith("unavailable:"))
             self.assertEqual(prior_counts, (1, 1))
@@ -1152,9 +1240,17 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             conn = self._make_graph(root, 8)
             calls = 0
 
-            def fake_embeddings(_texts):
+            def fake_embeddings(
+                _texts,
+                *,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+            ):
                 nonlocal calls
                 calls += 1
+                self.assertEqual(
+                    timeout_seconds,
+                    KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS,
+                )
                 raise KG._DenseEmbeddingPermanentError(
                     "local dense embedding dimension mismatch"
                 )
@@ -1214,7 +1310,11 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             root = Path(tmp)
             conn = self._make_graph(root, 10)
 
-            def fake_embeddings(texts):
+            def fake_embeddings(
+                texts,
+                *,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+            ):
                 return [(1.0, 0.0)] * len(texts)
 
             try:

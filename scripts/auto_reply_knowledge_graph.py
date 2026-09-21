@@ -51,6 +51,7 @@ DENSE_EMBEDDING_URL = os.environ.get(
     "OPENKAKAO_LOCAL_EMBEDDING_URL", DEFAULT_DENSE_EMBEDDING_URL
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
+DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 30.0
 DENSE_STATUS_MAX_LENGTH = 400
 RRF_K = 60
 ANN_BANDS = 8
@@ -2707,7 +2708,11 @@ def _normalize_dense_vector(values: Any) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
-def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
+def _local_dense_embeddings(
+    texts: list[str],
+    *,
+    timeout_seconds: float | None = None,
+) -> list[tuple[float, ...]]:
     """Embed text through a loopback-only multilingual embedding endpoint.
 
     The product path is local-only. A non-loopback URL is rejected before any
@@ -2733,8 +2738,13 @@ def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    request_timeout = (
+        DENSE_EMBEDDING_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else timeout_seconds
+    )
     try:
-        with urllib.request.urlopen(request, timeout=DENSE_EMBEDDING_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
     except TimeoutError as error:
         raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
@@ -2770,20 +2780,33 @@ def _local_dense_embeddings(texts: list[str]) -> list[tuple[float, ...]]:
     return [vector for vector in ordered if vector is not None]
 
 
-def _local_dense_embeddings_adaptive(texts: list[str]) -> list[tuple[float, ...]]:
+def _local_dense_embeddings_adaptive(
+    texts: list[str],
+    *,
+    first_attempt_timeout_seconds: float | None = None,
+) -> list[tuple[float, ...]]:
     """Retry timeout-only failures by splitting batches while preserving row order."""
     if not texts:
         return []
     pending = [texts]
     vectors: list[tuple[float, ...]] = []
     attempts_remaining = 2 * len(texts) - 1
+    first_attempt = True
     while pending:
         if attempts_remaining <= 0:
             raise _DenseEmbeddingTimeoutError("local dense embedding unavailable")
         batch = pending.pop()
         attempts_remaining -= 1
+        attempt_timeout = first_attempt_timeout_seconds if first_attempt else None
+        first_attempt = False
         try:
-            batch_vectors = _local_dense_embeddings(batch)
+            if attempt_timeout is None:
+                batch_vectors = _local_dense_embeddings(batch)
+            else:
+                batch_vectors = _local_dense_embeddings(
+                    batch,
+                    timeout_seconds=attempt_timeout,
+                )
         except _DenseEmbeddingTimeoutError:
             if len(batch) == 1:
                 raise
@@ -2901,11 +2924,16 @@ def refresh_dense_index(
         dense.execute("DELETE FROM ann_buckets")
         dense.execute("DELETE FROM dense_vectors")
         bounded_batch_size = max(1, int(batch_size))
+        first_attempt_timeout_seconds: float | None = (
+            DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS
+        )
         for start in range(0, len(rows), bounded_batch_size):
             batch = rows[start : start + bounded_batch_size]
             vectors = _local_dense_embeddings_adaptive(
-                [_entity_dense_text(row) for row in batch]
+                [_entity_dense_text(row) for row in batch],
+                first_attempt_timeout_seconds=first_attempt_timeout_seconds,
             )
+            first_attempt_timeout_seconds = None
             if len(vectors) != len(batch):
                 raise RuntimeError("local dense embedding response mismatch")
             for row, vector in zip(batch, vectors):

@@ -395,6 +395,8 @@ class LiveRetrievalTests(unittest.TestCase):
             conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
             with mock.patch.object(KG, "DENSE_EMBEDDING_URL", url), mock.patch.object(
                 KG, "DENSE_EMBEDDING_TIMEOUT_SECONDS", 0.01
+            ), mock.patch.object(
+                KG, "DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS", 0.01
             ):
                 result = KG.refresh_dense_index(conn, root)
                 bundle = KG.retrieve_knowledge_bundle("최연우", state_root=root)
