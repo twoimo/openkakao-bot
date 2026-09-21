@@ -1242,3 +1242,35 @@ OK
 - 따라서 01:44:37 이후 색인 사이클을 실제로 구동한 호출자가 없다는 것이 이 시각 상태의 내용이다. 설정 카드의 stale·DB 동기화 stalled·dense indexed:50/00:51은 이 상태를 그대로 표시한 것이며 가짜 정상 표시가 아니다.
 - 확인 방법: kg_meta는 앱 디렉터리가 아니라 /tmp에 만든 사본에서 읽었다. 이번 읽기로 앱 디렉터리에 새 -wal·-shm이 생기지 않았고, 직전 03:44 절이 만든 0바이트 knowledge-dense-ann.sqlite3-wal(32,768 bytes -shm)과 knowledge-graph.sqlite3-wal(0 bytes)은 그대로 두었다.
 - 이번 세션은 재색인 호출자를 새로 시작하지 않았고 0바이트 lock 파일도 삭제하지 않았다. 자동 색인 소유권을 앱으로 옮기는 변경도 하지 않았다: 앱이 외부 소유 모델·프로세스를 임의로 시작·중지하지 않는다는 기존 계약과 충돌하고, 동시 재색인에서 ANN 저장소 잠금(unavailable:OperationalError:database is locked)이 관측된 전례가 있기 때문이다. 이 항목은 미해결로 남긴다.
+
+### 두 모델 실제 생성 검증과 style.gallery 재확인 — 2026-09-22 KST
+
+이 절은 04:00~04:05 KST에 실행한 실측이다. 재설치·재색인·카카오톡 전송은 하지 않았다.
+
+#### Qwen3.8 27B 텍스트·비전 실측 (신규)
+
+앱이 쓰는 11234 서버를 건드리지 않고 별도 포트 12345에 27B를 직접 적재해 실측했다. 바이너리와 주요 인자는 앱 번들이 쓰는 것과 같다: /Applications/MLX Core.app/Contents/MacOS/mlx-serve 에 --serve, --model <27B 디렉터리>, --model-dir /Users/twoimo/.mlx-serve/models, --host 127.0.0.1, --port 12345, --ctx-size 8192, --skip-mem-preflight 를 주었다.
+
+- 1차 시도는 적재 전 pre-flight에서 거부됐다: weights 약 16.95 GB, available 8.90 GB, InsufficientMemory. 같은 시각 이 호스트는 swap 23,552 MB 중 22,211 MB 사용, 압축 페이지 2,850,223개(약 43.6 GB), free 10,455 페이지였다. 즉 거부는 현재 메모리 압박을 반영한 것이고, MLX buffer-pool cap 8192 MB 로그는 별도 계산이다(11234 로그에도 같은 cap 줄이 남아 있다).
+- 그래서 프로덕트 자신의 설정 노브(SKIP_PREFLIGHT, ~/.mlx-serve/ops/profile.conf)와 바이너리 안내(검사는 보수적이며 macOS가 file cache를 회수한다)에 따라 --skip-mem-preflight로 적재했다. 결과: Warmup complete (2165 ms), Model ready (loaded on inference thread), Server listening on http://127.0.0.1:12345. 모델은 qwen3_5_moe(64 layers, 5120-dim, head_dim=256, 24h/4kv, 4-bit affine quant)로 인식됐다.
+- 텍스트 생성: POST /v1/chat/completions, 38 prompt tokens, 응답 content는 두 줄로 첫 줄 '안녕하세요.', 둘째 줄 '4'. prompt 1114.9 ms(34.1 tok/s), decode 6 tokens 861.3 ms(6.97 tok/s), http=200 total 1.985 s.
+- 비전 생성: 128x128 PNG(흰 바탕, 빨간 원)을 data URL로 넣고 도형과 색을 물었다. 응답 content는 '빨간 원'. prompt 106 tokens(이미지 때문에 40에서 106으로 증가), 1881 ms에 완료, decode 41.0 tok/s, http=200 total 1.887 s. 서버 로그에 64 image soft tokens 삽입과 M-RoPE 1 images 처리가 남았다.
+- 정리: 내가 띄운 프로세스(session 66639, pid 49257)만 Ctrl-C로 정상 종료했고 포트 12345는 반납됐다. 앱의 11234 서버(pid 38868)와 ops 상태는 시작·중지·전환하지 않았고, 실측 후에도 같은 pid로 LISTEN 중임을 확인했다.
+- 비용 관측(정직 기록): 27B 적재 동안 이 호스트의 swap 사용이 22,211 MB에서 50,099 MB로 늘었다. 11234 로그에는 같은 구간에 client_disconnect로 끝난 0+0 tokens 요청(5,001 ms, 20,004 ms)이 남았고, prefix cache가 데워진 뒤에는 같은 요청이 1,671 ms에 완료됐다. 두 모델 동시 상주(75.3 GB + 16.9 GB + KV)는 이 호스트 예산에서 사실상 불가하므로, 계획의 전환 순서(요청 배출, 기존 모델 해제, 대상 로드, 짧은 검증)가 타당하다는 관측이다.
+
+#### Qwen3.8 Flash-Next 실측 (재확인)
+
+- GET /health: http=200, 0.4 ms.
+- GET /v1/models: ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit, loaded true, state ready, bytes_resident 75,303,252,216, context_length 786432, batched_decode true, capabilities chat/tool_use/streaming/reasoning/json_schema, input_modalities text(프로파일 NO_VISION=1과 일치).
+- POST /v1/chat/completions 응답 content는 첫 줄 '안녕하세요.', 둘째 줄 '42'. prompt 39 tokens(38 cached), predicted 7 tokens 84.3 ms(83.0 tok/s), http=200 total 1.671 s.
+- 이 값들은 외부 프로세스 상태에 따라 변하며 앱은 그 프로세스를 시작·정지·전환하지 않는다.
+
+#### style.gallery 재확인과 적용 (계획 항목)
+
+계획은 style.gallery를 읽기 전용으로 검토하고, 접근하지 못한 스타일을 적용했다고 기록하지 말라고 했다. 이번에는 접근에 성공했다.
+
+- GET https://style.gallery/ 는 http=200, 240,456 bytes였다(2026-09-22 04:03 KST). 문서 제목은 '다음 화면의 시작점 · Style Gallery'이고 github.com/changeroa/StyleGallery 를 가리킨다.
+- 이 사이트는 색·토큰 중심의 테마 시스템이 아니라 인터페이스 제작 지식 라이브러리다. llms.txt는 'Layout defines spatial behavior; the consuming product owns visual styling.'이라고 경계를 명시한다. 그래서 여기서 가져올 것은 시각 토큰이 아니라 상호작용·상태·플랫폼 계약이다. 현재 UI의 ivory·warm black·샴페인 골드 결정은 oh-my-design 절차를 따른 결과이며 style.gallery를 근거로 색을 바꾸지 않았다.
+- 적용 1, Design Engineering Latest Request Wins(수명주기 experimental): 핵심 계약은 'identity decides acceptance', 'Both success and failure must match the current request', 'Do not use this policy to discard the outcomes of independent writes that all matter'이다. 우리 구현 대조: conversation_advanced_past_event (scripts/auto-reply-worker.py:4226)는 안정적 워터마크가 아니면 None으로 닫는 fail-closed 판정이고, _superseded_by(같은 파일 4207)는 영속 테이블 reply_job_supersessions에서 대체 관계를 읽는다. finish_burst_superseded(같은 파일 14533)는 대체된 이벤트 자신의 행만 status, due_at, reply=None으로 갱신하고 현재 턴의 결과를 건드리지 않는다. 전송은 write이므로 이 정책으로 버리지 않으며, 전송 직전 워터마크 재검사 뒤 AX local-send만 쓰고 delivery_unknown은 자동 재전송하지 않는다. 즉 stale 실패가 현재 상태를 지우는 경로가 없다.
+- 적용 2, Platform Guides Input And Focus: 설치본은 글로벌 탈출 단축키를 tauri_plugin_global_shortcut으로 등록하고 desktop/src-tauri/src/main.rs:148에서 Modifiers::SUPER | Modifiers::ALT 와 Code::Escape(즉 ⌘⌥Esc)로 고정한다. AX 백그라운드 제어는 전면 활성화가 필요한 동작을 거부하므로 포커스 계약을 넘지 않는다.
+- 한계: 위 두 항목은 style.gallery가 experimental로 표기한 지침과의 대조이며, 사이트가 우리 제품을 검증한 것이 아니다. 라이브 카카오톡 전송과 독립 리뷰 점수는 여전히 미확인이다.
