@@ -1038,7 +1038,7 @@ ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
 - 설치본은 LaunchAgent `gui/501/com.openkakao.jarvis.desktop`에서 `state = running`, `program = /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop`, `pid = 98353`(2026-09-22 00:51:32 시작)로 확인됐고, 앱 번들 설치는 00:51:21이다.
 - 이번 세션의 커밋은 UI 코드를 바꾸지 않았으므로 2026-09-21에 캡처한 패널·설정 창 스크린샷을 그대로 근거로 쓴다. 새 스크린샷을 새로 만들었다고 주장하지 않는다.
 
-### 재설치 뒤 남은 중복 인스턴스 — 2026-09-22 KST (미해결)
+### 재설치 뒤 남은 중복 인스턴스 — 2026-09-22 KST (미해결, 이후 readback으로 대체)
 
 재설치 뒤 프로세스를 확인한 결과 `openkakao-jarvis-desktop`이 **두 개** 실행 중이었다.
 
@@ -1055,10 +1055,10 @@ ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
 
 ### 중복 인스턴스 가드 수정 — 2026-09-22 KST
 
-- 라이밌 재확인: 재설치 뒤 `openkakao-jarvis-desktop`이 두 개 실행 중이다. `launchctl print gui/501/com.openkakao.jarvis.desktop`은 `state = running`·`pid = 98353`만 보고하지만, `ps -axo pid,ppid,lstart,command`는 pid 18028(ppid 1, 00:24:58 시작)과 pid 98353(ppid 1, 00:51:32 시작)을 함께 보여준다. `lsof -p 18028`의 txt 세그먼트는 `/Applications/.openkakao-jarvis.previous.20260922T003421.52158.app/Contents/MacOS/openkakao-jarvis-desktop`이고 그 디렉토리는 `ls -d /Applications/.openkakao-jarvis*`가 no matches found를 반환하듯이 이미 삭제됐다.
+- 라이브 재확인: 재설치 뒤 `openkakao-jarvis-desktop`이 두 개 실행 중이다. `launchctl print gui/501/com.openkakao.jarvis.desktop`은 `state = running`·`pid = 98353`만 보고하지만, `ps -axo pid,ppid,lstart,command`는 pid 18028(ppid 1, 00:24:58 시작)과 pid 98353(ppid 1, 00:51:32 시작)을 함께 보여준다. `lsof -p 18028`의 txt 세그먼트는 `/Applications/.openkakao-jarvis.previous.20260922T003421.52158.app/Contents/MacOS/openkakao-jarvis-desktop`이고 그 디렉토리는 `ls -d /Applications/.openkakao-jarvis*`가 no matches found를 반환하듯이 이미 삭제됐다.
 - 경로 증거의 함정: 같은 프로세스에 대해 `ps -p 18028 -o comm=`는 `/Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop`을 출력한다. macOS `ps`는 exec 시점의 argv 경로를 그대로 보여주며, 재설치 뒤 그 경로가 다시 유효해지므로 삭제된 번들에서 실행 중이라는 사실이 드러나지 않는다. 그래서 이번 가드는 프로세스 pid 동일성으로만 판정하고, 경로는 lsof(없으면 ps) 기반 진단 문구로만 쓴다.
-- 가드 구현(commit `f2f1a77`): `scripts/install-jarvis-desktop.sh`가 `wait_for_pid`(10회, 0.5초 간격, 매 시도마다 `launchctl print` 재실행)로 새 pid를 얻은 뒤 `list_live_app_pids`(pgrep `-f`, 없으면 ps+awk)의 pid 집합에서 launchd pid와 자기 `$$`를 떼 나머지를 stray로 본다. stray가 있으면 이전 번들을 지우지 않고 exit 3으로 닫으며 각 stray pid와 진단 경로를 stderr에 출력한다. `OPENKAKAO_PS`/`OPENKAKAO_PGREP`/`OPENKAKAO_LSOF`로 대재 가능하고 프로세스를 죽이지 않는다.
-- 라이밌 열거 실측: 이 호스트에서 `/usr/bin/pgrep -f openkakao-jarvis-desktop`은 정확히 두 앱 pid만 반환했고(WebKit helper 등 오검출 없음), 따라서 이 가드는 지금 이 호스트에서 pid 18028을 stray로 판정하고 exit 3으로 닫는다. 남은 인스턴스 종료는 운영자 몴이며 이 세션은 프로세스를 죽이지 않았다.
+- 가드 구현(commit `f2f1a77`): `scripts/install-jarvis-desktop.sh`가 `wait_for_pid`(10회, 0.5초 간격, 매 시도마다 `launchctl print` 재실행)로 새 pid를 얻은 뒤 `list_live_app_pids`(pgrep `-f`, 없으면 ps+awk)의 pid 집합에서 launchd pid와 자기 `$$`를 떼 나머지를 stray로 본다. stray가 있으면 이전 번들을 지우지 않고 exit 3으로 닫으며 각 stray pid와 진단 경로를 stderr에 출력한다. `OPENKAKAO_PS`/`OPENKAKAO_PGREP`/`OPENKAKAO_LSOF`로 재현 가능하고 프로세스를 죽이지 않는다.
+- 라이브 열거 실측: 이 호스트에서 `/usr/bin/pgrep -f openkakao-jarvis-desktop`은 정확히 두 앱 pid만 반환했고(WebKit helper 등 오검출 없음), 따라서 이 가드는 지금 이 호스트에서 pid 18028을 stray로 판정하고 exit 3으로 닫는다. 남은 인스턴스 종료는 운영자 몫이며 이 세션은 프로세스를 죽이지 않았다.
 - 테스트: `tests.test_jarvis_desktop_launchers` **10 tests, OK**(기존 6 + 신규 4). 신규 4개는 (1) 소스 계약 검사, (2) 가짜 어댑터 실행으로 stray 없음 exit 0·이전 번들 삭제, stray 있음 exit 3·pid 7777 보고·이전 번들 유지(진단 ps가 현재 설치 경로를 잘못 보고하는 경우 포함), (3) launchd pid가 3번째 print에서야 나오는 경합 exit 0, (4) pid가 끝까지 안 나옴 11회 시도 뒤 exit 3·이전 번들 유지.
 - CI 회귀 발견 및 수정(commit `4b75c7e`): commit `5fcf47b`가 `auto_reply_ondevice.py`의 지역 상수를 `from local_mlx_gateway import ...`로 바꾼 뒤, `tests/test_auto_reply_ondevice.py`만 `scripts/`를 `sys.path`에 넣지 않아 `python3 -m unittest tests.test_auto_reply_ondevice`가 ModuleNotFoundError ‘local_mlx_gateway’로 죽었다. 이 모듈이 CI focused 목록의 첫 항목이라 작업 전체가 error 1건으로 실패했다. 다른 테스트 모듈과 같은 bootstrap을 추가한 뒤 CI focused 10개 모듈은 **313 tests, OK**다.
 - 검증 명령: 고정 Python 3.11로 CI focused 10개 모듈을 `-m unittest`로 실행, `/bin/sh -n scripts/install-jarvis-desktop.sh`, `git diff --check`.
@@ -1068,3 +1068,52 @@ ROOT="$HOME/Library/Application Support/openkakao/bujamentor"
 
 - `tests.test_jarvis_unit4`도 같은 누락이었다. 이 파일은 `scripts.auto_reply_knowledge_graph`를 import하고, 그 모듈은 `5fcf47b`가 넣은 bare `from local_mlx_gateway import MLX_GATEWAY_EMBEDDINGS_URL`를 갖는다. 그래서 단독 `python3 -m unittest tests.test_jarvis_unit4`는 `ModuleNotFoundError: No module named 'local_mlx_gateway'`로 죽었고, CI focused 목록에서는 앞선 `tests.test_auto_reply_reference_search`가 `scripts/`를 `sys.path`에 넣어 준 뒤라 통과했다(모듈 순서 의존). bootstrap을 추가한 뒤 단독 실행은 **24 tests, OK**이고 CI focused 10개 모듈은 **313 tests, OK**를 유지한다.
 - 같은 유형을 전수 확인했다: `tests/test_*.py` 28개 중 `from scripts.` 형태로 import하면서 `sys.path` bootstrap이 없는 파일은 6개였고, 그 중 실제로 실패한 것은 `test_auto_reply_ondevice`와 `test_jarvis_unit4` 두 개다(나머지 4개는 bare sibling import가 없는 모듈만 import해서 안전하다). 수정 뒤 연관 7개 모듈(`test_auto_reply_ondevice`, `test_jarvis_unit4`, `test_auto_reply_dream_rsi`, `test_auto_reply_finetune`, `test_auto_reply_golden_dataset`, `test_dream_rsi_alphaxiv`, `test_mlx_serve_lifecycle`)을 각각 단독 실행해 모두 OK임을 확인했다.
+
+
+### 열거 오류 fail-closed·rollback·복구 artifact 수정과 현재 호스트 readback — 2026-09-22 KST
+
+- 독립 리뷰(commit `7d69b65` 기준)가 지적한 설치·전환 경로 결함을 수정했다. 대상은 `scripts/install-jarvis-desktop.sh`와 `tests/test_jarvis_desktop_launchers.py`다.
+- 열거 오류 fail-closed: 종전 구현은 `"$PGREP" -f "$APP_EXECUTABLE" 2>/dev/null || true`였다. `pgrep`가 2/3으로 죽으면 `|| true`가 그 실패를 빈 출력으로 바꾸고, 빈 출력은 살아 있는 앱 프로세스 없음으로 해석돼 중복 가드가 조용히 통과했다. 이제 `pgrep` 종료 코드를 보존해 0만 출력을 신뢰하고(출력이 비면 2), 1은 일치 없음, 2/3과 기타는 `ps` fallback으로 간다. `ps` 실패나 PID 컬럼이 하나도 없는 파싱 불가 출력도 2다. `list_live_app_pids`가 2를 반환하면 `check_duplicate_guard`는 `cannot prove there is no duplicate instance; process enumeration is unknown`을 출력하고 rollback한다.
+- 후보 확인: 열거된 각 pid는 `reported_app_path`(lsof txt, 없으면 `ps -p <pid> -o comm=`)로 확인하고, 경로가 `$APPLICATIONS_DIR` 밖임이 확증된 경우에만 제외한다. 해석되지 않은 후보는 남긴다.
+- pid 출처: `launchctl print` 텍스트 파싱은 pid를 보고하지 않는 상태에서 fail-closed로 이어졌다. 이제 `launchctl kickstart -kp`가 반환한 pid를 우선 쓰고, `-kp`가 실패하거나 파싱되지 않을 때만 `kickstart -k`와 유계 `wait_for_pid`(10회, 0.5초)로 내려간다.
+- rollback: `post_activation_failure`는 bootout, 이전 번들 복원 또는 신규 설치 제거, 이전 plist 복원 또는 설치 plist 제거를 수행하고 대상·plist·서비스 readback과 backup 경로를 stderr에 출력한 뒤 exit 3으로 닫는다. 이전 번들이 남아 있는 시점에만 호출된다.
+- 복구 artifact: `com.openkakao.jarvis.desktop.installed.txt`는 중복 가드 통과 직후(이전 번들이 남아 있는 동안) 기록한다. 유계 대기 원문은 `.wait.txt`에 두고 `installed.txt`의 `wait-readback:` 절에 함께 묶는다. 실패 경로의 `rollback.txt`와 분리된다.
+- 시그널: `trap cleanup EXIT`는 정리 전용이고, `HUP`·`INT`·`TERM`은 cleanup 뒤 각각 129·130·143으로 종료한다. 종전 `trap cleanup EXIT HUP INT TERM`은 시그널에서 종료하지 않았다.
+- 신규 테스트 8건: pgrep 2/3 → `ps` fallback 정상, 열거 불명 rollback, 비파싱 `ps` rollback, stray rollback(app·service·plist), pid 미보고 rollback, 최초 설치 정상 경로의 stdout·stderr 정확성, 최초 설치 가드 실패 시 신규 상태 제거, `kickstart -kp` pid 사용 시 print 대기 없음과 `wait-readback` 기록.
+- 재검증: `/bin/sh -n scripts/install-jarvis-desktop.sh` 통과, `git diff --check` clean, `tests.test_jarvis_desktop_launchers` **18 tests, OK**, CI focused 10개 모듈 **321 tests, OK**(고정 Python 3.11, 74.4초).
+
+#### 현재 호스트 readback — 2026-09-22 KST
+
+이전 절들이 기록한 인스턴스 pid 18028과 pid 98353은 이번 확인 시점에 존재하지 않는다. 저장소에 앱 인스턴스를 종료하는 코드가 없으므로 사라진 원인은 검증되지 않았다.
+
+```
+$ /usr/bin/pgrep -fl openkakao-jarvis-desktop
+84125 /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop
+
+$ launchctl list | grep -i jarvis
+-	0	com.openkakao.jarvis.desktop
+84125	0	application.com.openkakao.jarvis.desktop.286915917.286915922
+
+$ launchctl print gui/501/com.openkakao.jarvis.desktop
+gui/501/com.openkakao.jarvis.desktop = {
+	state = not running
+	program = /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop
+	runs = 2
+	last exit code = 0
+	# 이 출력에는 pid = N 줄이 없다.
+}
+
+$ /bin/ps -p 84125 -o pid=,lstart=,etime=,%cpu=,rss=,comm=
+84125 Tue Sep 22 01:44:30 2026 47:52 0.0 85296 /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop
+
+$ launchctl print gui/501/application.com.openkakao.jarvis.desktop.286915917.286915922
+	path = (submitted by runningboardd.418)
+	type = Submitted
+	managed_by = com.apple.runningboard
+	state = running
+	bundle id = com.openkakao.jarvis.desktop
+```
+
+- 현재 살아 있는 앱 인스턴스는 pid 84125 하나이고 그것은 LaunchServices(RunningBoard)가 제출한 job이다. 우리 LaunchAgent `com.openkakao.jarvis.desktop`은 `state = not running`·`runs = 2`·`last exit code = 0`이며 `launchctl list`에서 `-`로 표시된다. 중복 작업자는 없지만 그 단일 인스턴스는 launchd가 추적하지 않는다.
+- 이 호스트에 지금 재설치하면 `check_duplicate_guard`는 84125를 stray로 판정하고 exit 3으로 rollback한다. 이는 의도한 fail-closed 동작이고, 운영자가 그 인스턴스를 종료해야 전환이 진행된다. 이 세션은 프로세스를 종료하지 않았다.
+- `ps`의 argv와 경로는 exec 시점 값이며 executable identity의 authoritative 증거가 아니다. 앞선 절들이 lsof·ps 경로로 삭제된 번들 실행을 추적한 것은 호스트 관측이고, 가드 자체는 pid 동일성만 쓴다. 복사한 `/bin/sleep`으로 삭제 경로 argv를 재현하려던 시도는 코드서명 때문에 커널이 프로세스를 종료해 재현하지 못했으므로 그것도 재현 불가 호스트 관측으로만 기록한다.
