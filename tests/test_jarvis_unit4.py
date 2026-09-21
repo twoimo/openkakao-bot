@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import socket
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -14,7 +15,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import auto_reply_knowledge_graph as KG
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from scripts import auto_reply_knowledge_graph as KG  # noqa: E402
 from scripts.auto_reply_dream_rsi import (
     answer_similarity,
     run_fixed_budget_loop,

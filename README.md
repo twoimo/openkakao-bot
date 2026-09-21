@@ -132,6 +132,9 @@ The diagrams are architectural references, not a live generation trace. On-devic
 
 - 같은 작업에서 CI 회귀를 발견해 고쳤다. commit `5fcf47b`가 `auto_reply_ondevice`를 `from local_mlx_gateway import ...`로 바꾼 뒤 `tests/test_auto_reply_ondevice.py`만 `scripts/`를 `sys.path`에 넣지 않아 CI focused 목록의 첫 모듈이 ModuleNotFoundError로 죽었다. 다른 테스트 모듈과 같은 bootstrap을 복원한 뒤 CI focused 10개 모듈은 **313 tests, OK**다(commit `4b75c7e`).
 
+
+- 같은 누락이 `tests/test_jarvis_unit4.py`에도 있었다. 이 파일은 `scripts.auto_reply_knowledge_graph`를 import하는데 그 모듈에도 `5fcf47b`가 넣은 bare `from local_mlx_gateway import ...`가 있어, 단독 `python3 -m unittest tests.test_jarvis_unit4`는 `ModuleNotFoundError`로 죽고 CI focused 목록에서는 앞선 모듈이 `scripts/`를 먼저 `sys.path`에 넣어 준 순서 덕에 통과해 오는 위험한 상태였다. 같은 bootstrap을 넣어 이제 단독으로도 **24 tests, OK**이고 CI focused 10개 모듈은 **313 tests, OK**를 유지한다.
+
 ### Known limitations
 
 - Stray menubar instances are now detected but not terminated. `scripts/install-jarvis-desktop.sh` waits for the launchd pid and exits 3 without deleting the previous bundle when another live instance of the app remains (`f2f1a77`). On this host pid 18028 still runs from the already-deleted previous bundle while launchd tracks pid 98353, so the cutover precondition of no duplicate workers is still unmet and terminating it is left to the operator; no process was killed during this work. Detection matches the executable name in the process table, so an unrelated process whose command line contains `openkakao-jarvis-desktop` can produce a false positive that fails closed; a false negative was not observed, because argv[0] is fixed at exec (`docs/architecture/unit5-live-proofs.md`).
