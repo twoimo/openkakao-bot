@@ -66,6 +66,7 @@ The diagrams are architectural references, not a live generation trace. On-devic
 
 - The desktop app is a Tauri v2 menu-bar application with TypeScript and Three.js (`desktop/package.json`, `desktop/src-tauri/Cargo.toml`, `desktop/src/`). `RenderLifecycle`, `AnimationLoop`, `RuntimeSnapshotPoller`, and `JarvisCore` implement the visible/hidden render path and load/voice signal handling (`desktop/src/core/lifecycle.ts`, `desktop/src/core/animation-loop.ts`, `desktop/src/runtime-poller.ts`, `desktop/src/core/jarvis-core.ts`). Diagram source: [Jarvis render lifecycle](docs/architecture/jarvis-three-render-lifecycle.archify.json).
 - 백그라운드 소스별 신호는 menubar snapshot의 `background` 객체에서 시작해 `desktop/src-tauri/src/python_bridge.rs`의 `sanitize_background`에서 allowlist·범위 제한을 거치고, `desktop/src/contracts.ts`의 `parseBackground`와 `desktop/src/core/load-mapping.ts`를 통과해 `JarvisCore`에 전달된다. 답변 대기·GeekNews·DB 동기화가 각각 독립 ring target velocity를 구동한다. Diagram: [Jarvis core load mapping](docs/architecture/jarvis-core-load-mapping.html), source: [Archify JSON](docs/architecture/jarvis-core-load-mapping.archify.json).
+- 온디바이스 하드웨어 요약은 menubar snapshot의 `ondevice_hardware`에서 시작해 `desktop/src-tauri/src/python_bridge.rs`의 `sanitize_ondevice`에서 allowlist와 범위 제한을 거치고, `desktop/src/contracts.ts`의 `parseOnDevice`를 통해 `desktop/src/ui.ts`의 `renderHardware`가 기존 AI 모델 설정 카드에 한 줄로 표시한다. `chip` 64자, `cores` 0..1024, `memoryGb` 0..4096 및 소수점 1자리, `engine` 32자, `recommendedModel` 128자, `quant` 32자, `statusLabel`/`statusDetail` 240자로 제한하며 `memory_bytes`, `reason`, `engine_paths`, `fallback_models`, `worker_model_id`, `last_probe`는 전달하지 않는다. 메인 패널은 core + gear 구성을 유지한다.
 - Local MLX hardware detection, model residency/ownership checks, leases, and swap rollback live in `scripts/auto_reply_ondevice.py` through `ModelResidencyManager` and the swap gate.
 - Bounded tool runtime, owned Playwright browser use, voice control, and the emergency abort latch are implemented in `scripts/jarvis_tool_runtime.py`, `scripts/jarvis_browser_use.py`, `scripts/jarvis_voice.py`, and `scripts/jarvis_abort.py`.
 - Graph and retrieval code is implemented in `scripts/auto_reply_knowledge_graph.py` and `scripts/auto_reply_reference_search.py`: query normalization feeds BM25/FTS5 and dense ANN candidate paths, RRF fuses successful dual rankings, graph expansion uses `k_hop_neighborhood`, and result metadata includes evidence IDs and index/watermark fields. Diagram source: [GraphRAG retrieval sequence](docs/architecture/graphrag-search-sequence.archify.json).
@@ -88,6 +89,19 @@ The diagrams are architectural references, not a live generation trace. On-devic
   ```json
   {"activity":0.0,"caption":"","db_sync":{"activity":0.0,"age_seconds":null,"capability_state":"","caption":"","fence_reason":"","state":"unknown"},"geeknews":{"activity":0.0,"age_seconds":null,"caption":"","posted_slots":0,"state":"unknown"},"rooms":[],"schema_version":1}
   ```
+- 온디바이스 하드웨어도 같은 read-only menubar snapshot 경로에서 확인했다. 실행 명령은 다음과 같다.
+
+  ```bash
+  /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/auto-reply-menubar.py --state-root <temp dir>
+  ```
+
+  출력의 `ondevice_hardware.hardware` 블록은 아래와 같았고, `recommendation.primary_engine`은 `"mlx-serve"`, `recommendation.recommended_model`은 `"ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"`, `recommendation.recommended_quant`은 `"mixed 4/8bit"`, `last_probe`는 `null`이었다.
+
+  ```json
+  {"chip":"Apple M5 Max","cores":18,"is_apple_silicon":true,"memory_bytes":137438953472,"memory_gb":128.0}
+  ```
+
+  같은 `ondevice_hardware` 객체에는 절대 로컬 경로가 들어 있는 `engine_paths`도 포함된다. 이 때문에 desktop bridge는 해당 원본 객체를 그대로 전달하지 않고 위 allowlist 필드만 전달한다.
 - `docs/architecture/unit5-live-proofs.md` records browser and Tauri/WKWebView hide probes where the outstanding RAF was cancelled and render-count delta remained zero while hidden.
 - The same proof log records controlled browser, abort, and isolated voice/STT checks. Those records are bounded component evidence; they do not establish an end-to-end KakaoTalk reply flow.
 - The same proof log holds the volatile cutover values (installed bundle paths, LaunchAgent state, individual probe timings, and per-run counts) that this summary deliberately does not duplicate.
