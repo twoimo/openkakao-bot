@@ -771,3 +771,29 @@ commit `d96aa7f`에서 두 가지를 바꿨다. (1) `desktop/src-tauri/src/pytho
 설치 번들 재검증: `OPENKAKAO_SIGN_IDENTITY=- sh scripts/build-jarvis-desktop.sh`(exit 0) 뒤 `sh scripts/install-jarvis-desktop.sh`로 2026-09-21 21:23:04에 재설치했고, 번들 바이너리(21:22)에서 `dense_indexed_at` 심볼이, 번들 `scripts/auto_reply_knowledge_graph.py`에서 `last_dense_status`가 확인됐다. 설치본의 `--action knowledge-graph-status`를 provisioned menubar runtime으로 실행한 read-only 프로브는 exit 0, stderr 0 bytes였고 payload에 `dense_status = "unavailable:RuntimeError:local dense embedding unavailable"`, `dense_indexed_at = 0`, `snapshot_status = "copy_ok"`가 들어 있었다. 같은 payload의 `node_count`/`edge_count`는 이 action이 노드 목록을 읽지 않기 때문에 설계상 0이며, 노드 목록은 별도 `knowledge-graph` action이 제공한다.
 
 이 검증이 덮는 범위는 Python → menubar action → Rust allowlist 데이터 경로와 Rust/Vitest 단위 증거까지다. live UI 스크린샷은 여전히 확보하지 못했으므로 화면에 실제로 그려진 문구는 육안으로 확인하지 않았다.
+
+### 설치 번들 프로브의 재현 경로 — 2026-09-21 KST
+
+위 프로브는 제3자가 같은 값을 재현할 수 있도록 state root와 명령을 남긴다. 프로브에 쓴 state root는 `/var/folders/8d/nwv_19w124zbq0dxqx2r1jn40000gn/T/jarvis-installed-kg-h72ztio1/menubar`이고, 같은 임시 부모 아래 `/var/folders/8d/nwv_19w124zbq0dxqx2r1jn40000gn/T/jarvis-installed-kg-h72ztio1/context.sqlite3`(1,077,248 bytes)가 색인 원본으로 놓여 있었다. 실행한 명령은 다음과 같다.
+
+```
+
+    "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11" \
+      "/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/auto-reply-menubar.py" \
+      --action knowledge-graph-status \
+      --state-root "/var/folders/8d/nwv_19w124zbq0dxqx2r1jn40000gn/T/jarvis-installed-kg-h72ztio1/menubar"
+```
+
+exit 0, stderr 0 bytes였고 stdout은 한 줄로 다음 payload였다.
+
+```
+{"dense_indexed_at": 0, "dense_status": "unavailable:RuntimeError:local dense embedding unavailable", "edge_count": 0, "edges": [], "grounded_nodes": 0, "indexed_at": 1789993434, "indexed_count": 1, "indexing_mode": "wal+isolated-copy+mode=ro+query_only", "node_count": 0, "nodes": [], "ok": true, "snapshot_status": "copy_ok", "stale": true}
+```
+
+그 state root의 `knowledge-graph.sqlite3` kg_meta 행은 `last_index_error`(빈 값), `last_snapshot_status=copy_ok`, `last_indexed_at=1789993434`, `last_dense_status=unavailable:RuntimeError:local dense embedding unavailable`였고, `knowledge-dense-ann.sqlite3`(32,768 bytes)와 `knowledge-graph.sqlite3`(53,248 bytes)의 mtime이 모두 2026-09-21 21:23 KST였다. 이 payload는 2026-09-21 21:23:04 재설치 뒤에 이 state root로 프로브를 다시 실행해 재확인했다.
+
+체인을 다시 만드는 순서는 (1) 부모 디렉터리와 그 아래 `menubar` 하위 디렉터리를 만들고, (2) 부모의 `context.sqlite3`를 앱 자체 동기화로 채우고(`openkakao-cli context-sync-local --chat-id <id> --chat <방이름> --db <부모>/context.sqlite3`), (3) 설치 번들의 `scripts/auto_reply_knowledge_graph.py`를 `--reindex-once --state-root <부모>/menubar`로 실행하고, (4) 위 프로브 명령을 실행하는 것이다.
+
+이 state root는 `mktemp -d` 방식 임시 디렉터리라 macOS가 정리할 수 있고 durable copy를 남기지 않았다. 그래서 값 자체보다 재현 경로와 명령을 남긴다. 빈 state root로 같은 프로브를 실행하면 `snapshot_status`와 `dense_status`가 모두 `unknown`이 된다(부모 관측). 최초 프로브 기록은 state root를 임시 디렉터리로만 적고 경로를 남기지 않았으며, 이 절이 그 공백을 닫는다.
+
+재색인·dense ANN 갱신 단계와 dense 상태의 설정 노출 경로는 두 개의 sequence 다이어그램으로 기록했다. [재색인·dense ANN 갱신 시퀀스](graphrag-reindex-dense-refresh.html)는 `validate sequence --quality showcase`에서 9/9 artifact checks, 0 errors / 0 warnings, `deliver` artifact SHA-256 `24e7b9c18db1d118aac43818bfb22cad73f6955e554b114158ee72cb88b7aacc`(805,887 bytes), 표준 `visual-check` `status="pass"`와 diagnostics 0, 1440x900·1600x1000·1920x1080·2048x1320 light containment와 1440x900·2048x1320 light/dark capture를 기록했다. [dense 상태 노출 경로 시퀀스](graphrag-dense-status-exposure.html)도 같은 검사에서 9/9 artifact checks, 0 errors / 0 warnings, artifact SHA-256 `7cc3b096f4b5b4f2b0a35e931b86ef6a0749d329dc922406a09e924250ed2078`(803,834 bytes), `visual-check` `status="pass"`, diagnostics 0을 기록했다. 두 다이어그램은 1080x560과 1080x500 viewBox로 나눠 dense 단계의 실패 분기와 상태 노출 읽기 경로를 각각 담았고, 발광·네온 계열 표현은 쓰지 않았다.

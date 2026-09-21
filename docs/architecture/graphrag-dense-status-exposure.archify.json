@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "dense 상태의 설정 노출 경로 시퀀스",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1080, 500]
+  },
+  "participants": [
+    {"id": "settings", "type": "frontend", "label": "설정 창", "sublabel": "카카오 DB 동기화·색인 카드"},
+    {"id": "rust", "type": "backend", "label": "Rust 브리지", "sublabel": "sanitize_knowledge_status"},
+    {"id": "status", "type": "backend", "label": "상태 조회", "sublabel": "auto-reply-menubar --action"},
+    {"id": "graph", "type": "database", "label": "지식 그래프 저장소", "sublabel": "mode=ro + query_only"}
+  ],
+  "segments": [
+    {"from": 132, "to": 232, "label": "설정 · 상태 조회 요청"},
+    {"from": 244, "to": 316, "label": "읽기 전용 payload"},
+    {"from": 328, "to": 352, "label": "브리지 정제 · 표시"}
+  ],
+  "messages": [
+    {"id": "settings_poll", "from": "settings", "to": "rust", "y": 160, "label": "loadAction('knowledge-graph-status')", "variant": "emphasis"},
+    {"id": "status_call", "from": "rust", "to": "status", "y": 190, "label": "상태 action 전달", "variant": "default"},
+    {"id": "status_read", "from": "status", "to": "graph", "y": 220, "label": "collect_knowledge_graph_status · 복사·재색인을 시작하지 않음", "variant": "emphasis"},
+    {"id": "status_payload", "from": "graph", "to": "status", "y": 250, "label": "dense_status · dense_indexed_at · snapshot/index metadata", "variant": "return"},
+    {"id": "python_payload", "from": "status", "to": "rust", "y": 280, "label": "python payload", "variant": "return"},
+    {"id": "sanitize", "from": "rust", "to": "settings", "y": 310, "label": "allowlist: 400자·제어문자 제거 · indexed_at 비음수", "variant": "return"},
+    {"id": "render", "from": "rust", "to": "settings", "y": 340, "label": "renderDenseStatus -> settings-sync-dense", "variant": "emphasis"}
+  ]
+}

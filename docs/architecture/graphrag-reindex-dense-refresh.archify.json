@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "GraphRAG 재색인·dense ANN 갱신 시퀀스",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1080, 560]
+  },
+  "participants": [
+    {"id": "reindex", "type": "backend", "label": "재색인 프로세스", "sublabel": "_reindex_all"},
+    {"id": "copy", "type": "database", "label": "격리 snapshot", "sublabel": "임시 읽기 복제본"},
+    {"id": "graph", "type": "database", "label": "지식 그래프", "sublabel": "그래프 SQLite"},
+    {"id": "dense", "type": "database", "label": "dense ANN", "sublabel": "ANN SQLite"}
+  ],
+  "segments": [
+    {"from": 132, "to": 232, "label": "격리 snapshot 재색인"},
+    {"from": 244, "to": 316, "label": "그래프 색인 · 상태 도장"},
+    {"from": 332, "to": 406, "label": "독립 dense ANN 갱신"}
+  ],
+  "messages": [
+    {"id": "isolated_read", "from": "reindex", "to": "copy", "y": 160, "label": "topics·rooms·people·membership: _index_db_path 읽기", "variant": "emphasis"},
+    {"id": "snapshot_ready", "from": "copy", "to": "reindex", "y": 190, "label": "DB + WAL/SHM 복제 -> mode=ro + query_only · source 폴백 없음", "variant": "return"},
+    {"id": "index_write", "from": "reindex", "to": "graph", "y": 220, "label": "topic·chat·person 엔티티 · membership 관계 색인", "variant": "emphasis"},
+    {"id": "prune_write", "from": "reindex", "to": "graph", "y": 250, "label": "prune_indexed_entities · _merge_seed_rooms · attach_ledger_evidence", "variant": "default"},
+    {"id": "stamp_success", "from": "reindex", "to": "graph", "y": 280, "label": "성공 도장: last_index_error / last_snapshot_status=copy_ok / last_indexed_at", "variant": "emphasis"},
+    {"id": "stamp_failure", "from": "reindex", "to": "graph", "y": 310, "label": "실패 기록: last_index_error · 격리 snapshot 실패면 fail_closed", "variant": "dashed"},
+    {"id": "dense_refresh", "from": "reindex", "to": "dense", "y": 340, "label": "refresh_dense_index · vectors + ANN buckets 재작성", "variant": "emphasis"},
+    {"id": "dense_success", "from": "dense", "to": "graph", "y": 370, "label": "성공: last_dense_status=indexed:N · last_dense_indexed_at", "variant": "return"},
+    {"id": "dense_failure", "from": "dense", "to": "graph", "y": 400, "label": "실패: bounded last_dense_status · 그래프 색인 판정과 독립", "variant": "dashed"}
+  ]
+}
