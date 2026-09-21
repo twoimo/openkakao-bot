@@ -1176,3 +1176,22 @@ OK
 - 검증: 고정 Python 3.11로 `tests.test_jarvis_desktop_launchers` **26 tests, OK**(34.5초), CI focused 10개 모듈 **329 tests, OK**(86.3초), `/bin/sh -n scripts/install-jarvis-desktop.sh` 통과, `git diff --check` clean.
 - 이 절의 한계: 이 호스트에서 실제 재설치나 rollback을 실행하지 않았고 프로세스도 종료하지 않았다. 생존 확인은 가드가 이미 쓰는 가정(앱 프로세스의 argv에 실행 파일 이름이 남는다)을 그대로 쓴다. 또한 `list_live_app_pids`가 판단할 수 없는 pgrep 종료 코드는 여전히 2(불명)로 닫힌다.
 - 다이어그램과 README도 같이 갱신해 `guard` sublabel을 `2회 · pid 생존·동일성 확인`으로, 가드 카드에 생존 확인을 추가했고 재배포(receipt) 수치는 specification `eb702b7f4197fb5df8a60dc55dbd9631a31e9b8ef1c65ac70e819e06f71d4a1c`(6,214 bytes)·artifact `d1b627f8fd494915a37b248d24e45ac2eca561ace557caeaccdb95fde5a9d4b0`(814,606 bytes)다.
+
+### 설치본 live 지식 그래프 readback — 2026-09-22 KST
+
+위 절들이 기록한 00:51 설치본을 그대로 둔 채 03:44:31 KST에 read-only 상태 action만 다시 실행했다. 이번 확인에서 재설치·재색인·전송은 실행하지 않았다.
+
+- 앱 프로세스는 pid 84125(01:44:30 시작, RunningBoard 제출 job)이고 같은 시각 01:44:37에 BM25 색인이 갱신돼 있었다.
+- 상태 action은 exit 0으로 다음 payload를 반환했다.
+
+```json
+{"dense_indexed_at": 1790005911, "dense_status": "unavailable:RuntimeError:local dense embedding unavailable", "edge_count": 0, "edges": [], "grounded_nodes": 0, "indexed_at": 1790009077, "indexed_count": 31, "indexing_mode": "wal+isolated-copy+mode=ro+query_only", "node_count": 0, "nodes": [], "ok": true, "snapshot_status": "copy_ok", "stale": true}
+```
+
+- 시각 환산: `indexed_at` 1790009077 = 01:44:37 KST, `dense_indexed_at` 1790005911 = 00:51:51 KST(마지막 성공), dense watermark 1790005898 = 00:51:38 KST.
+- `indexing_mode`가 `wal+isolated-copy+mode=ro+query_only`이고 `snapshot_status`가 `copy_ok`다. 원본 DB의 journal mode를 바꾸지 않고 임시 복제본을 read-only·query_only로 읽는 경로가 이 시각에도 그대로 쓰였다.
+- 그래프 실측: 원본 `knowledge-graph.sqlite3`를 `file:...?mode=ro`로 열어 `kg_entities` 50 · `kg_relations` 341을 확인했다. 이는 00:51 기록과 같은 값이다.
+- dense endpoint: `lsof -nP -iTCP:11234 -sTCP:LISTEN`은 외부 소유 `mlx-serve`(pid 38868)를 보고하지만, `curl -X POST http://127.0.0.1:11234/v1/embeddings`(6초 상한, `bge-m3` 1건)는 `http_code=000`(무응답)이었다. 그래서 이 시각 dense 단계는 fail-closed로 닫혔고 응답 본문은 저장되지 않았다.
+- 직전 ANN 저장소는 `knowledge-dense-ann.sqlite3`(00:51, 2,940,928 bytes)이다. `/tmp` 격리 복사본에서 `dense_vectors` 50 · `ann_buckets` 400 · `dense_meta` `bge-m3-lsh-v1`·watermark 1790005898을 읽어, dense 재색인이 실패한 뒤에도 직전 색인이 남아 있음을 확인했다.
+- 이 절이 닫지 않는 것: 이번 측정은 BM25·그래프 상태와 dense의 현재 실패만 보여준다. dense 하이브리드 검색(`search_mode "rrf"`)은 00:51 기록이며 이번에 재현하지 않았고, endpoint가 응답하지 않는 동안 검색은 `bm25_only`다. `stale` true는 원본 대비 색인이 오래됐다는 뜻이며 이번 절에서 원인을 분해하지 않았다.
+- 관측(정정 기록): 상태 action 자체는 read-only지만, 이 절의 확인 과정에서 `sqlite3`로 dense 저장소를 직접 열었을 때 SQLite가 0바이트 `knowledge-dense-ann.sqlite3-wal`과 32,768바이트 `-shm`을 만들었다. 본 DB 파일(2,940,928 bytes, 00:51)은 바뀌지 않았고, 그 뒤 dense 확인은 `/tmp`로 복사한 사본에서만 수행했다. 앱 데이터 디렉터리에는 그 두 파일이 남아 있으며 삭제하지 않았다.
