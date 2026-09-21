@@ -660,5 +660,44 @@ class TestDistribution(unittest.TestCase):
             self.assertAlmostEqual(report["mean_length"], float(len("사람 답변")))
 
 
+class TestSimilarityScopeBoundary(unittest.TestCase):
+    """리플레이 유사도가 선호도 손실로 오인되지 않게 경계를 고정한다."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def _one_human_row(self) -> None:
+        _write_golden(
+            self.root,
+            [
+                {
+                    "prompt": "질문",
+                    "completion": "정확한 답변",
+                    "room": "a",
+                    "source": "self_history",
+                }
+            ],
+        )
+
+    def test_replay_report_labels_its_similarity_scope(self):
+        self._one_human_row()
+        simulator = DreamRsiSimulator(self.root)
+        result = simulator.replay_policy(lambda row: "정확한 답변")
+        self.assertEqual(result["status"], "evaluated")
+        self.assertTrue(result["string_similarity_used"])
+        self.assertEqual(result["string_similarity_scope"], "replay_answer_distribution")
+        self.assertEqual(result["preference_evaluation"], "separate_dpo_logprob_path")
+        self.assertEqual(result["metric"], "character_bigram_cosine_replay")
+
+    def test_checkpoint_labels_the_same_boundary(self):
+        self._one_human_row()
+        checkpoint = dream_policy_evaluation(self.root)
+        self.assertTrue(checkpoint["string_similarity_used"])
+        self.assertEqual(checkpoint["string_similarity_scope"], "replay_answer_distribution")
+        self.assertEqual(checkpoint["preference_evaluation"], "separate_dpo_logprob_path")
+
+
 if __name__ == "__main__":
     unittest.main()

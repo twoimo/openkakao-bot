@@ -57,6 +57,15 @@ MAX_EVAL_ROWS = 400
 # Keep that incumbent in the candidate set so the fixed-history comparison exists.
 INCUMBENT_POLICY = "echo_last_message"
 
+# The replay metric is a character-bigram cosine over gold answers. It selects
+# dreaming-loop candidates; it is not a preference loss. The DPO path in
+# scripts/auto_reply_finetune.py computes the preference loss from response
+# token logprobs and never substitutes this similarity for a missing number
+# (2026-09-22).
+REPLAY_SIMILARITY_METRIC = "character_bigram_cosine_replay"
+STRING_SIMILARITY_SCOPE = "replay_answer_distribution"
+PREFERENCE_EVALUATION_PATH = "separate_dpo_logprob_path"
+
 
 def _char_ngrams(text: str, n: int = 2) -> Counter:
     compact = "".join(text.split())
@@ -264,6 +273,10 @@ class DreamRsiSimulator:
             "answered_rows": answered,
             "room_spread": len(rooms),
             "candidate_errors": dict(sorted(candidate_errors.items())),
+            "metric": REPLAY_SIMILARITY_METRIC,
+            "string_similarity_used": True,
+            "string_similarity_scope": STRING_SIMILARITY_SCOPE,
+            "preference_evaluation": PREFERENCE_EVALUATION_PATH,
             "status": "evaluated",
         }
 
@@ -500,6 +513,10 @@ def dream_policy_evaluation(
         "evaluations": evaluations,
         "selected_policy": winner,
         "replay_guarantee": guarantee,
+        "metric": REPLAY_SIMILARITY_METRIC,
+        "string_similarity_used": True,
+        "string_similarity_scope": STRING_SIMILARITY_SCOPE,
+        "preference_evaluation": PREFERENCE_EVALUATION_PATH,
         "status": "evaluated" if usable else "insufficient_data",
         "active_features": {name: True for name in candidates},
     }

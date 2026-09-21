@@ -1284,6 +1284,6 @@ OK
 - 실제 수집(고정 Python 3.11, scripts/auto_reply_finetune.py): 프롬프트 `한 문장으로 답하세요: 오늘 서울 날씨 어때?`에 `max_tokens=1` → `저` 1토큰 합계 `-0.351563`, `max_tokens=6` → `저는 실시간 데이터에 접근` 6토큰 합계 `-1.313843`.
 - 이 두 값을 `--dpo-pairs`·`--dpo-ref-pairs`(동일 기준값)로 넣은 CLI 실행은 exit 0, `report['dpo'].evaluation` = status `ok`, evaluated 1, objective `dpo`, loss `0.6931471805599453`(마진 0일 때의 정확한 값 ln 2), `string_similarity_used=false`였다. 기준 파일을 빼면 같은 실행이 `missing_reference_logprobs`로 평가 불가가 된다.
 - 기준 값 없이 계산하는 경로는 `objective=reference_free_preference`, `reference_free=true`로 표시되며 표준 DPO 수치로 보고하지 않는다. 문자열 유사도로 대체하는 경로는 어디에도 없다.
-- 테스트: `tests.test_auto_reply_finetune` **60 tests, OK**(기존 30 + 신규 30), CI focused 11개 모듈 **389 tests, OK**.
+- 테스트: `tests.test_auto_reply_finetune` **60 tests, OK**(기존 30 + 신규 30), `tests.test_auto_reply_dream_rsi` **43 tests, OK**(기존 41 + 신규 2), CI focused 11개 모듈 **391 tests, OK**.
 - 크로스체크: 이번 단위는 desktop/ 소스를 바꾸지 않았으므로 설치 앱 UI 캡처를 다시 만들지 않았다(같은 날 03:47 KST 캡처가 유효). 같은 시각 앱 pid 84125는 살아 있고, launchctl job gui/501/com.openkakao.jarvis.desktop은 여전히 `state not running`·`job state exited`·`runs 2`이고, 11234는 외부 mlx-serve pid 38868이 점유 중이다. 따라서 이전에 기록한 전환 전제 미충족과 `외부 소유 · 27B 전환 차단` 상태는 그대로다.
 - 미해결: 어댑터 학습·승격과 독립 리뷰 AHP 점수는 여전히 미확인이다. 이번 단위는 로그확률 수집과 표준 DPO 산술의 실측이며 어댑터 품질을 입증하지 않는다.
