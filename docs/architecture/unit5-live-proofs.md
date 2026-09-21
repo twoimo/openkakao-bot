@@ -907,3 +907,25 @@ print("posted click at \(x),\(y)")
 - RRF가 실제로 기여한 부분도 관측됐다. `"알쫀쿠"`에서 BM25는 `ent:tech:alizonku`·`ent:person:moon_seunghyun` 2건만 찾았지만 dense 후보 23건에는 `person:변우중:최연우`, `chat:변우중`, `topic:computer_use`가 섞여 있었고, `"누가 마라톤 훈련 기록을 공유하나"`에서는 BM25 후보에 없던 `ent:person:choi_yeonwoo`가 dense 상위에 올랐다.
 
 이 절이 입증하는 것은 살아 있는 loopback 임베딩 서버에 대해 dense ANN 색인과 RRF 결합이 실제로 동작한다는 점이다. 남은 결함은 기본 배치 크기와 요청당 timeout의 불일치이며, 그 수정과 수정 후 재측정은 별도 변경으로 기록한다. live 모델 생성, live KakaoTalk 전송, 클라우드 폴백 제거 상태의 최종 서명·notarization은 이 절의 범위가 아니다.
+
+## 로컬 모델 생성·전환 상태 재검증 — 2026-09-21 KST
+
+`scripts/verify_local_models.py`의 bounded localhost 프로브(`LOCAL_BASE_URL = http://127.0.0.1:11234/v1`)로 두 고정 모델을 다시 확인했다.
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/verify_local_models.py \
+  --model ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit \
+  --model ddalcu/Qwen3.8-27B-MLX-Serve-4bit \
+  --timeout 60 --owner --json
+```
+
+결과는 exit 1(두 모델 모두 `ok`는 아님), stderr 0 bytes, stdout은 한 줄 JSON이었다.
+
+```json
+{"ok": false, "owner": "model_owner_unmanaged", "results": [{"elapsed_ms": 15842, "generation": true, "model": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit", "readiness": true, "reason": "ok"}, {"elapsed_ms": 2, "generation": false, "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit", "readiness": false, "reason": "model_not_ready"}]}
+```
+
+- Flash-Next는 `readiness true`·`generation true`·`reason ok`, 15,842 ms였다. 앱 자신의 probe 경로로 실제 로컬 생성을 재현한 값이며, 설치 앱 설정 카드의 `실추론 통과` 표기와 독립적으로 같은 결론을 낸다.
+- 27B는 `readiness false`·`generation false`·`reason model_not_ready`, 2 ms였고 `owner = model_owner_unmanaged`였다. 외부 `mlx-serve`가 11234를 점유하므로 앱은 시작·정지·전환을 하지 않고 fail-closed하며, 이는 설정 카드의 `외부 소유 · 27B 전환 차단`과 일치한다.
+- 설정 카드의 `실추론 통과 (Qwen3.8 Flash-Next)` 문자열 출처는 `~/Library/Application Support/openkakao/bujamentor/ondevice-last-probe.json`에 영속된 레코드다: `timestamp 2026-09-19T18:47:40+00:00`, `engine mlx-serve-gateway`, `model ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`, `latency_ms 15617`, `ok true`, `preview OK`(파일 mtime 2026-09-20 03:47 KST). 카드 문구는 과거에 성공한 게이트웨이 생성을 가리키는 기록이며, 위 프로브가 그 결론을 새 시각에 재현했다.
+- 이 절은 Flash-Next 텍스트 생성만 확인한다. 27B 생성과 비전, 실제 카카오톡 전송, Developer ID 서명·notarization은 여전히 미입증이다.
