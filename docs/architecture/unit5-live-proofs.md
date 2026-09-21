@@ -924,7 +924,7 @@ print("posted click at \(x),\(y)")
 | 수정 전 | `93ee760e2c2a137e39aa6a367f9a585a65221afdf0f2944cb5d67ac0db1e05fe` | 4.009초 `unavailable` | `dense_vectors` 0 | 전부 `bm25_only` (candidate 2–4) |
 | 수정 후 | `ca2e1c1ff6437993bed204a2959f764d690948f77a3d09b75a26803893ca54b0` | 11.533초 `indexed:50` | `dense_vectors` 50 · `ann_buckets` 400 | 전부 `rrf` (candidate 24–40, entities 7–13) |
 
-위 `수정 후` 행은 색인 행 수 방어를 추가하기 전 작업 트리 리비전에서 얻은 값이다. 방어까지 포함한 커밋 대상 리비전 `a1ec95b7…`의 live 재측정은 같은 날 외부 `mlx-serve`가 포화되어(아래 cold 지연 참조) 얻지 못했으므로, 그 리비전은 요청 지연을 그대로 재현한 real-HTTP stub과 단위 테스트로 검증했다.
+위 `수정 후` 행은 색인 행 수 방어를 추가하기 전 작업 트리 리비전에서 얻은 값이다. 방어까지 포함한 커밋 대상 리비전 `a1ec95b7…`에 대한 live 재측정은 처음에 외부 `mlx-serve`가 포화되어(아래 cold 지연 참조) 얻지 못했으나, 서버가 데워진 뒤 같은 스크립트(`/tmp/jarvis_dense_default_check.py`, 같은 read-only 복제본 50 entities, `OPENKAKAO_LOCAL_EMBEDDING_URL=http://127.0.0.1:11234/v1/embeddings`)를 다시 실행해 성공했다: `refresh_default_s 10.269`, `{"status": "indexed", "indexed": 50, "watermark": "1789993399"}`, `last_dense_status`가 `unavailable:RuntimeError:local dense embedding unavailable`에서 `indexed:50`으로 바뀌었고 `dense_vectors` 50/50·`ann_buckets` 400이 생성됐으며 네 질의가 모두 `search_mode "rrf"`(candidate 24–40, entities 7–13, relations 3)였다. 같은 실행 직전의 endpoint 프로브는 1건 6.693초(콜드)·8건 0.2초(웜)로, 식은 서버의 첫 요청은 여전히 4.0초 예산을 넘는다는 점도 함께 재현됐다.
 
 ### 커밋 대상 리비전의 real-HTTP stub 재검증 — 2026-09-21 KST
 
@@ -942,7 +942,7 @@ print("posted click at \(x),\(y)")
 - cold 케이스는 배치 3이 timeout되고 singleton까지 timeout되면 더 분할하지 않고 fail-closed하는지, 그리고 실패가 트랜잭션 롤백으로 닫혀 미리 넣어 둔 직전 `dense_vectors` 1행(`ent:prior:001`)이 삭제되지 않고 남는지 고정한다. `ann_buckets`는 0행이므로 부분 색인이 남지 않는다.
 - permanent 케이스는 응답 행 수가 요청과 다른 경우 분할 재시도 없이 단일 호출로 즉시 닫히는지 고정한다.
 
-이 수정으로 닫히지 않는 외부 요인도 있다. 같은 날 idle 이후 첫 요청 지연을 직접 측정했는데 첫 요청 60.008초 timeout, 다음 요청 26.341초, 이후 0.475초였고(같은 조건의 앞선 측정에서는 첫 요청 12.0초), 8건 1.283초·50건 13.751초였다. 서버가 식은 직후에는 singleton 요청조차 4.0초 예산을 넘으므로 배치 정책으로는 회복할 수 없고, 이때는 fail-closed로 닫혀 `last_dense_status`에 `unavailable:...`이 남는다. 재색인 판정은 `now - last_updated >= reindex_interval_seconds`(모듈 기본 300초)이므로 다음 재색인 사이클에서 dense 단계를 다시 시도한다. 이 값들은 외부 프로세스 상태에 의존하며 앱은 그 프로세스를 시작·정지·전환하지 않는다. 이 절은 live model generation이나 live KakaoTalk 전송을 입증하지 않는다.
+이 수정으로 닫히지 않는 외부 요인도 있다. 같은 날 idle 이후 첫 요청 지연을 직접 측정했는데 첫 요청 60.008초 timeout, 다음 요청 26.341초, 이후 0.475초였고(같은 조건의 앞선 측정에서는 첫 요청 12.0초), 8건 1.283초·50건 13.751초였다. 서버가 식은 직후에는 singleton 요청조차 4.0초 예산을 넘으므로 배치 정책으로는 회복할 수 없고, 이때는 fail-closed로 닫혀 `last_dense_status`에 `unavailable:...`이 남는다. 재색인 판정은 `now - last_updated >= reindex_interval_seconds`(모듈 기본 300초)이고 `last_indexed_at`은 dense 성공 여부와 독립적으로 그래프 색인이 성공할 때만 찍히므로, dense 단계는 그래프 내용이 바뀌지 않아도 매 재색인 사이클(최대 300초 간격)마다 다시 시도된다. 이 값들은 외부 프로세스 상태에 의존하며 앱은 그 프로세스를 시작·정지·전환하지 않는다. 이 절은 live model generation이나 live KakaoTalk 전송을 입증하지 않는다.
 
 
 ## 로컬 모델 생성·전환 상태 재검증 — 2026-09-21 KST
