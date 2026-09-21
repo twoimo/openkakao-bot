@@ -1214,3 +1214,13 @@ OK
 - 설정 창의 close button을 누른 뒤 앱은 창 0개 · isRunning true(app id com.openkakao.jarvis.desktop)였고 pid 84125는 살아 있었다. 이 리비전도 포커스 상실·닫기에서 패널을 hide하고 프로세스를 유지한다.
 - 캡처 출처: 이번 PNG는 screencapture 대신 CUA 서비스가 자체 저장한 캡처(임시 디렉터리 com.openai.sky.CUAService, 03:47:04 · 03:47:09 JPEG)를 sips로 PNG 변환해 기록했다. 이 호스트 세션에서 screencapture -l windowID는 30초 안에 끝나지 않아 중단했다(호스트 프로세스에 화면 기록 권한 없음). 갱신한 PNG SHA-256은 jarvis-live-panel.png 0cedac6cc227464b06ae1801cfb386c97630b883714f0ecd7876fe6ed9c60903, jarvis-live-settings.png eac575b0b316398c636b6da171dd2853de86ff1bacd75de649efd6fa5c77532b이다.
 - 이 절의 한계: 이번 확인은 AX 트리·렌더 픽셀·창 생명주기에 대한 것이다. live 모델 생성, dense 재색인, 실제 카카오톡 전송을 입증하지 않는다. 설정 화면의 dense indexed:50 · indexed_at 1790005911과 마지막 색인 값은 00:51 성공 시점의 영속 상태를 읽은 것이며 이번에 재측정한 값이 아니다.
+
+### 전환 전제 미충족 상태 재확인 — 2026-09-22 KST
+
+위 UI 크로스체크와 같은 시각(03:5x KST)에 launchd와 프로세스 상태를 read-only로만 읽었다. 재설치·bootout·kickstart·종료는 실행하지 않았다.
+
+- launchd job gui/501/com.openkakao.jarvis.desktop는 state = not running, job state = exited, runs = 2, last exit code = 0이다. plist는 /Users/twoimo/Library/LaunchAgents/com.openkakao.jarvis.desktop.plist(00:51 작성)이고 program은 설치 번들 실행 파일 /Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop이다.
+- 같은 번들 경로에서 살아 있는 앱 프로세스는 pid 84125 하나뿐이다(01:44:30 시작, ppid 1, RSS 약 100 MB). 이 프로세스는 launchd가 추적하지 않는다.
+- 직전 설치(2026-09-22 00:51:21)의 백업 receipt install-backups/jarvis-desktop/20260922T005121-98225/com.openkakao.jarvis.desktop.installed.txt는 그 시각 launchd가 state = xpcproxy, pid = 98353이었다고 기록한다. 즉 00:51에 활성화한 인스턴스는 이후 종료됐고(exit code 0), 84125는 그 뒤 별도로 시작된 인스턴스다.
+- 함의: 재설치를 실행하면 kickstart -kp가 새 launchd pid를 만들고 84125가 살아 있는 stray로 판정되어, 가드가 이전 번들을 지우지 않고 exit 3으로 닫는다. 계획 5단계의 전환 전제(중복 작업자 없음, launchd가 소유한 단일 인스턴스)는 이 호스트에서 아직 미충족이다. 이 세션은 프로세스를 종료하지 않았고 84125도 그대로 두었다.
+- 이번 UI 크로스체크는 이 untracked 인스턴스(같은 설치 번들 경로, 번들 mtime 00:51)를 본 것이므로 위 UI 증거는 그 번들에 대한 것이지만, launchd 감독 상태나 자동 재시작을 입증하지는 않는다.
