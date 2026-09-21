@@ -727,7 +727,7 @@ parent 재측정 결과는 다음과 같다.
 
 - 이 Computer Use 프로브 당시 설치 번들의 빌드 시각 관측값은 2026-09-21 14:50:30이었다. commit `4b25149` 기준으로 그 시각 뒤에 17개 커밋이 있었고 가장 이른 커밋은 `7387aa1`(15:13)이었다. 이 커밋에 고정한 관측으로 당시 설치본은 pipeline stage, bridge job ring, on-device hardware 카드, DREAM-RSI provenance를 포함하지 않았다.
 - 같은 프로브에서 LaunchAgent `com.openkakao.jarvis.desktop`(`KeepAlive=false`, `RunAtLoad=true`)는 pid 68708로 관측됐고 child process는 없었다. unattended host는 별도 `com.openkakao.auto-reply.session-monitor`이며 이 프로브는 어떤 프로세스도 종료하거나 재시작하지 않았다. 빌드 시각 14:50:30과 pid 68708은 모두 이 프로브 실행 당시의 관측값이며, 설치 번들은 이후 2026-09-21 19:15:27에 재설치됐다.
-- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.0초 뒤 오류 **-10005 timeoutReached**로 실패했다. 이를 `LSUIElement` 메뉴바 앱 특성에 기인한 것으로 보는 설명은 한 환경에서 1회 관측한 결과에 대한 미검증 attribution이며 원인은 격리되지 않았다. 따라서 이 프로브에서는 live UI 스크린샷을 얻지 못했고, 스크린샷 기반 크로스 체크로 대체하지 않았다.
+- `cua.getState()`는 `OpenKakao Jarvis`(`com.openkakao.jarvis.desktop`, `isRunning=true`)를 앱 목록에 노출했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.0초 뒤 오류 **-10005 timeoutReached**로 실패했다. 2026-09-21 21:23:04 설치본(번들 바이너리 21:22, `dense_status` 노출 포함)에 대해 같은 프로브를 다시 실행했고 결과는 동일했다: `cua.getState()`는 실행 중 앱을 나열했지만 `cua.getApp("OpenKakao Jarvis")`는 약 5.08초 뒤 **-10005 timeoutReached**로 실패했다. 따라서 이번 재설치 이후에도 live UI 스크린샷은 확보하지 못했고, 메뉴바 패널을 여는 사용자 클릭 없이 스크린샷을 대체하지 않았다. 이를 `LSUIElement` 메뉴바 앱 특성에 기인한 것으로 보는 설명은 한 환경에서 1회 관측한 결과에 대한 미검증 attribution이며 원인은 격리되지 않았다. 따라서 이 프로브에서는 live UI 스크린샷을 얻지 못했고, 스크린샷 기반 크로스 체크로 대체하지 않았다.
 
 ### 설치 번들 Python 스크립트 패키징 누락 — 2026-09-21 KST
 
