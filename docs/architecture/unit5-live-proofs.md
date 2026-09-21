@@ -906,7 +906,44 @@ print("posted click at \(x),\(y)")
 - 그 색인으로 `retrieve_knowledge_bundle`을 호출하면 네 개 질의가 모두 `search_mode = "rrf"`였다. `"알쫀쿠"`는 `candidate_count 23`, `"가성비 좋은 클라우드 추천"`·`"야외 러닝 사진 자주 올리는 사람"`·`"누가 마라톤 훈련 기록을 공유하나"`는 각각 `candidate_count 40`이었고 `entities_count` 12–13, `relations_count` 3, `index_version = unit4-rrf-bm25-dense-v1`, `watermark = 1789993399`였다.
 - RRF가 실제로 기여한 부분도 관측됐다. `"알쫀쿠"`에서 BM25는 `ent:tech:alizonku`·`ent:person:moon_seunghyun` 2건만 찾았지만 dense 후보 23건에는 `person:변우중:최연우`, `chat:변우중`, `topic:computer_use`가 섞여 있었고, `"누가 마라톤 훈련 기록을 공유하나"`에서는 BM25 후보에 없던 `ent:person:choi_yeonwoo`가 dense 상위에 올랐다.
 
-이 절이 입증하는 것은 살아 있는 loopback 임베딩 서버에 대해 dense ANN 색인과 RRF 결합이 실제로 동작한다는 점이다. 남은 결함은 기본 배치 크기와 요청당 timeout의 불일치이며, 그 수정과 수정 후 재측정은 별도 변경으로 기록한다. live 모델 생성, live KakaoTalk 전송, 클라우드 폴백 제거 상태의 최종 서명·notarization은 이 절의 범위가 아니다.
+이 절이 입증하는 것은 살아 있는 loopback 임베딩 서버에 대해 dense ANN 색인과 RRF 결합이 실제로 동작한다는 점이다. 남은 결함은 기본 배치 크기와 요청당 timeout의 불일치이며, 그 수정과 수정 후 검증은 바로 아래 절에 기록한다. live 모델 생성, live KakaoTalk 전송, 클라우드 폴백 제거 상태의 최종 서명·notarization은 이 절의 범위가 아니다.
+## dense 배치 크기·timeout 정책 수정과 stub 재검증 — 2026-09-21 KST
+
+직전 절에서 실측한 기본 `batch_size=32`와 `DENSE_EMBEDDING_TIMEOUT_SECONDS=4.0`의 불일치를 수정했다. 변경 파일은 `scripts/auto_reply_knowledge_graph.py`와 `tests/test_auto_reply_knowledge_graph.py` 두 개이다. 커밋 대상 모듈 리비전의 sha256은 `a1ec95b7e0520b2160b008033aef8a25f8b020dde0f4936bfe906a9b99b93896`, 수정 전 리비전은 `93ee760e2c2a137e39aa6a367f9a585a65221afdf0f2944cb5d67ac0db1e05fe`였다.
+
+- `refresh_dense_index`의 기본 `batch_size`를 32에서 8로 낮췄다. 실측 요청 지연이 8건 0.837–1.283초, 32건 4.864초였으므로 8건이 4.0초 예산 안에 들어온다. 요청당 timeout 기본값 4.0초는 그대로 유지했다.
+- `_local_dense_embeddings`의 실패를 `_DenseEmbeddingTimeoutError`(배치 분할로 회복 가능)와 `_DenseEmbeddingPermanentError`(즉시 fail-closed)로 나눴다. 응답 형식·차원·row index·중복 index 문제는 permanent로 분류되어 분할 재시도를 일으키지 않는다. 두 클래스 모두 `RuntimeError` 하위이고 메시지 텍스트가 기존과 같아 `last_dense_status`의 `unavailable:RuntimeError:...` 형태가 유지된다.
+- 새 함수 `_local_dense_embeddings_adaptive`가 timeout에서만 배치를 절반으로 나눠 재시도하고 순서를 보존한다. 시도 상한은 최초 배치 크기 N당 `2N-1`이며 singleton까지 timeout이면 그대로 fail-closed한다.
+- 실패 경로의 의미는 바뀌지 않았다. dense 재구성은 `BEGIN`부터 `commit`까지 단일 트랜잭션이므로 실패 시 롤백만으로 직전 색인이 그대로 남고, 실패를 이유로 이전 ANN 색인을 삭제하지 않는다. `last_dense_status`에는 `unavailable:...`이 기록된다.
+- `indexed != len(rows)`이면 오류로 닫는 방어를 추가해, 행 수가 어긋난 부분 색인이 조용히 저장되지 않게 했다.
+
+검증은 고정 Python 3.11에서 실행했다. 커밋 대상 리비전에서 `tests.test_auto_reply_knowledge_graph`와 `tests.test_auto_reply_menubar`를 함께 실행해 **233 tests, OK**(54.606초), CI focused 10개 모듈(`tests.test_auto_reply_ondevice`·`tests.test_auto_reply_reference_search`·`tests.test_auto_reply_knowledge_graph`·`tests.test_jarvis_unit4`·`tests.test_jarvis_desktop_launchers`·`tests.test_local_mlx_model_readiness`·`tests.test_verify_local_models`·`tests.test_mlx_serve_lifecycle`·`tests.test_auto_reply_dream_rsi`·`tests.test_dream_rsi_alphaxiv`)을 실행해 **305 tests, OK**(15.581초)를 확인했다. 같은 리비전의 live dense 전후 비교는 아래와 같다(같은 스크립트 `/tmp/jarvis_dense_default_check.py`, 같은 그래프 = 앱 자체 state root의 read-only 복제본 50 entities, 같은 endpoint).
+
+| 시점 | 모듈 sha256 | 기본 refresh | ANN 저장소 | 네 질의 mode |
+| --- | --- | --- | --- | --- |
+| 수정 전 | `93ee760e2c2a137e39aa6a367f9a585a65221afdf0f2944cb5d67ac0db1e05fe` | 4.009초 `unavailable` | `dense_vectors` 0 | 전부 `bm25_only` (candidate 2–4) |
+| 수정 후 | `ca2e1c1ff6437993bed204a2959f764d690948f77a3d09b75a26803893ca54b0` | 11.533초 `indexed:50` | `dense_vectors` 50 · `ann_buckets` 400 | 전부 `rrf` (candidate 24–40, entities 7–13) |
+
+위 `수정 후` 행은 색인 행 수 방어를 추가하기 전 작업 트리 리비전에서 얻은 값이다. 방어까지 포함한 커밋 대상 리비전 `a1ec95b7…`의 live 재측정은 같은 날 외부 `mlx-serve`가 포화되어(아래 cold 지연 참조) 얻지 못했으므로, 그 리비전은 요청 지연을 그대로 재현한 real-HTTP stub과 단위 테스트로 검증했다.
+
+### 커밋 대상 리비전의 real-HTTP stub 재검증 — 2026-09-21 KST
+
+`/tmp/jarvis_dense_stub_check2.py`는 loopback `127.0.0.1:8791`에 `ThreadingHTTPServer`를 띄워 `POST /v1/embeddings`에 `{"model": "BAAI/bge-m3", "input": [...]}`를 받고, 실측 분당 지연을 재현해 2560차원 벡터와 `index`를 돌려준다. 앱 코드는 수정 없이 그대로 쓰고, 모듈 sha256·timeout·기본 배치를 함께 출력해 대상 리비전을 고정했다.
+
+| 케이스 | 요청당 지연 | HTTP 호출 | 결과 | ANN 저장소 | `last_dense_status` |
+| --- | --- | --- | --- | --- | --- |
+| warm 50 | 0.05초/건 | `[8,8,8,8,8,8,2]` | 4.977초 `indexed:50` | `dense_vectors` 50 · `ann_buckets` 400 | `indexed:50` |
+| slow 16 | 0.6초/건 | `[8,4,4,8,4,4]` | 18.419초 `indexed:16` | `dense_vectors` 16 · `ann_buckets` 128 | `indexed:16` |
+| cold 3 | 5.0초/건 | `[3,1]` | 8.007초 `unavailable` | 직전 `dense_vectors` 1행 유지 · `ann_buckets` 0 | `unavailable:RuntimeError:...` |
+| permanent 8 | 0.05초/건(행 1건 누락 응답) | `[8]` | 0.413초 `unavailable` | `dense_vectors` 0 | `unavailable:RuntimeError:local dense embedding response mismatch` |
+
+- warm 케이스는 기본 배치 8이 그대로 유지되고 50건이 7회 호출로 전부 색인되는지 고정한다. 응답 순서가 뒤섞여도 `index`로 재배열해 `ent:test:000`부터 순서대로 영속된다.
+- slow 케이스는 8건이 4.0초 예산을 넘을 때만 배치가 4+4로 갈라지고(추가 재시도 없이 6회 호출), 전체 16건이 순서대로 색인되는지 고정한다.
+- cold 케이스는 배치 3이 timeout되고 singleton까지 timeout되면 더 분할하지 않고 fail-closed하는지, 그리고 실패가 트랜잭션 롤백으로 닫혀 미리 넣어 둔 직전 `dense_vectors` 1행(`ent:prior:001`)이 삭제되지 않고 남는지 고정한다. `ann_buckets`는 0행이므로 부분 색인이 남지 않는다.
+- permanent 케이스는 응답 행 수가 요청과 다른 경우 분할 재시도 없이 단일 호출로 즉시 닫히는지 고정한다.
+
+이 수정으로 닫히지 않는 외부 요인도 있다. 같은 날 idle 이후 첫 요청 지연을 직접 측정했는데 첫 요청 60.008초 timeout, 다음 요청 26.341초, 이후 0.475초였고(같은 조건의 앞선 측정에서는 첫 요청 12.0초), 8건 1.283초·50건 13.751초였다. 서버가 식은 직후에는 singleton 요청조차 4.0초 예산을 넘으므로 배치 정책으로는 회복할 수 없고, 이때는 fail-closed로 닫혀 `last_dense_status`에 `unavailable:...`이 남는다. 재색인 판정은 `now - last_updated >= reindex_interval_seconds`(모듈 기본 300초)이므로 다음 재색인 사이클에서 dense 단계를 다시 시도한다. 이 값들은 외부 프로세스 상태에 의존하며 앱은 그 프로세스를 시작·정지·전환하지 않는다. 이 절은 live model generation이나 live KakaoTalk 전송을 입증하지 않는다.
+
 
 ## 로컬 모델 생성·전환 상태 재검증 — 2026-09-21 KST
 
