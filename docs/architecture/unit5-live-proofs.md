@@ -893,3 +893,17 @@ print("posted click at \(x),\(y)")
 ### 이 절의 한계
 
 이 증거는 설치된 Tauri 빌드의 UI 렌더 결과, 창 생명주기, 설정 표면 구성에 대한 것이다. live model generation, live KakaoTalk 전송, Developer ID 서명·notarization, 사람 음성에 대한 한국어 호출어 일반화는 입증하지 않는다. 또 `cua.getApp`이 성공하려면 대상 앱에 최소 1개의 visible window가 있어야 한다는 제약을 이 실측 범위에서 기록한다. 창이 0개인 메뉴바 상주 앱은 Computer Use로 attach할 수 없으므로 같은 확인을 다시 하려면 위 클릭 절차로 패널을 먼저 열어야 한다.
+
+## 실제 loopback 임베딩 endpoint에서의 live dense ANN·RRF 검증 — 2026-09-21 KST
+
+이 호스트의 외부 소유 `mlx-serve`(`127.0.0.1:11234`)가 `/v1/embeddings`를 실제로 제공한다는 것을 확인하고, 같은 그래프에서 dense ANN 색인과 RRF 하이브리드 검색을 실제 임베딩으로 재현했다. in-process stub이 아니라 살아 있는 loopback 서버를 쓴 첫 측정이다. 대상 원본은 앱 자체 state root의 `bujamentor/knowledge-graph.sqlite3`이며 sqlite backup API로 임시 state root에 read-only 복제만 했고 원본에 write하지 않았다. 앱과 외부 `mlx-serve`의 설정·프로세스는 바꾸지 않았다.
+
+- endpoint 프로브: `POST http://127.0.0.1:11234/v1/embeddings` body `{"model": "BAAI/bge-m3", "input": [...]}` → HTTP 200, 각 row에 `index`와 2560차원 `embedding`, `usage.prompt_tokens` 반환. 앱 클라이언트가 요구하는 `index`·`embedding`·차원 일치 조건을 만족한다.
+- 복제한 그래프는 `kg_entities` 50행, `kg_relations` 341행으로 설정 카드의 `E-R-E 50 nodes · 341 relations`와 일치했고 `kg_meta.last_dense_status`는 `unavailable:RuntimeError:local dense embedding unavailable`였다.
+- 엔티티 밀집 텍스트 50건은 총 9,154자(최대 396자, `usage.prompt_tokens` 5,702)였다. 요청당 지연 실측은 1건 2.2초, 8건 0.837초, 32건 4.864초, 50건 8.314초였고 idle 서버의 첫 요청은 12.0초였다.
+- 기본값 `batch_size=32`는 `DENSE_EMBEDDING_TIMEOUT_SECONDS=4.0`을 넘겨 `refresh_dense_index`가 `{"indexed": 0, "reason": "unavailable:RuntimeError:local dense embedding unavailable", "status": "unavailable"}`로 fail-closed했고 `dense_vectors` 0행·`ann_buckets` 0행이 남았다. 실제 endpoint가 있어도 기본 배치 크기로는 이 그래프의 dense 색인이 완료되지 않는다는 뜻이다.
+- 같은 그래프를 `batch_size=1`로 색인하면 19.814초에 `{"indexed": 50, "status": "indexed", "watermark": "1789993399"}`를 반환했고, `kg_meta.last_dense_status = indexed:50`, `last_dense_indexed_at = 1789999715`, ANN 저장소에 `dense_vectors` 50행·`ann_buckets` 400행(50 × 8 band)·`dim` 2560이 생겼다.
+- 그 색인으로 `retrieve_knowledge_bundle`을 호출하면 네 개 질의가 모두 `search_mode = "rrf"`였다. `"알쫀쿠"`는 `candidate_count 23`, `"가성비 좋은 클라우드 추천"`·`"야외 러닝 사진 자주 올리는 사람"`·`"누가 마라톤 훈련 기록을 공유하나"`는 각각 `candidate_count 40`이었고 `entities_count` 12–13, `relations_count` 3, `index_version = unit4-rrf-bm25-dense-v1`, `watermark = 1789993399`였다.
+- RRF가 실제로 기여한 부분도 관측됐다. `"알쫀쿠"`에서 BM25는 `ent:tech:alizonku`·`ent:person:moon_seunghyun` 2건만 찾았지만 dense 후보 23건에는 `person:변우중:최연우`, `chat:변우중`, `topic:computer_use`가 섞여 있었고, `"누가 마라톤 훈련 기록을 공유하나"`에서는 BM25 후보에 없던 `ent:person:choi_yeonwoo`가 dense 상위에 올랐다.
+
+이 절이 입증하는 것은 살아 있는 loopback 임베딩 서버에 대해 dense ANN 색인과 RRF 결합이 실제로 동작한다는 점이다. 남은 결함은 기본 배치 크기와 요청당 timeout의 불일치이며, 그 수정과 수정 후 재측정은 별도 변경으로 기록한다. live 모델 생성, live KakaoTalk 전송, 클라우드 폴백 제거 상태의 최종 서명·notarization은 이 절의 범위가 아니다.
