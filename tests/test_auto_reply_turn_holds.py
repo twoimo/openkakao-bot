@@ -1002,5 +1002,131 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
         self.assertFalse(event["provenance"]["context_sync"]["waited"])
 
 
+    def _allowlist_preflight_stderr(self) -> str:
+        return (
+            'Error: chat "Vision AI 경진대회" '
+            "is not in the local-send allowlist. local-send matches chats by "
+            "display-name text scraped from the KakaoTalk UI, not a chat-id, so "
+            "an explicit allowlist is required to avoid sending to the wrong room."
+        )
+
+    def _run_send_reply_against_preflight_stderr(self, module, stderr_text):
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, _state_path, _state = fixture
+            connection = self._worker_queue_connection(module)
+            try:
+                connection.execute(
+                    "UPDATE reply_jobs SET status='processing' WHERE event_id=?",
+                    (event["event_id"],),
+                )
+                connection.commit()
+                calls = []
+
+                def fake_run(command, **_kwargs):
+                    calls.append(command)
+                    return (1, b"", stderr_text.encode("utf-8"))
+
+                hold_reasons = []
+                module._SEND_PREFLIGHT_DIAGNOSTIC_ROOMS.clear()
+                captured = io.StringIO()
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {module.DB_MODE_ENV: "database_authoritative"},
+                        clear=False,
+                    ),
+                    mock.patch.object(module, "BIN", module.Path("/usr/bin/true")),
+                    mock.patch.object(
+                        module, "numeric_author_identity_status", return_value="allowed"
+                    ),
+                    mock.patch.object(
+                        module, "send_readiness_fence", return_value=(True, ("token",))
+                    ),
+                    mock.patch.object(
+                        module, "privacy_attestation_current", return_value=True
+                    ),
+                    mock.patch.object(module, "PRE_SEND_PREFLIGHT_ATTEMPTS", 1),
+                    mock.patch.object(
+                        module, "_run_bounded_process", side_effect=fake_run
+                    ) as sender,
+                    redirect_stderr(captured),
+                ):
+                    first = module.send_reply(
+                        "formed reply",
+                        event=event,
+                        event_id=event["event_id"],
+                        connection=connection,
+                        expected_target_chat_id=42,
+                        expected_owner="owner",
+                        expected_epoch=7,
+                        hold_out=hold_reasons,
+                    )
+                    second = module.send_reply(
+                        "formed reply",
+                        event=event,
+                        event_id=event["event_id"],
+                        connection=connection,
+                        expected_target_chat_id=42,
+                        expected_owner="owner",
+                        expected_epoch=7,
+                        hold_out=hold_reasons,
+                    )
+                return (
+                    (first, second, hold_reasons, calls, sender.call_count),
+                    captured.getvalue(),
+                    connection,
+                )
+            except BaseException:
+                connection.close()
+                raise
+
+    def test_send_reply_makes_an_allowlist_rejection_a_terminal_named_skip(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_allowlist_block_test")
+        result, logged, connection = self._run_send_reply_against_preflight_stderr(
+            module, self._allowlist_preflight_stderr()
+        )
+        try:
+            first, second, hold_reasons, calls, call_count = result
+            # A permanent configuration rejection must not be reported as a send.
+            self.assertFalse(first)
+            self.assertFalse(second)
+            self.assertEqual(
+                hold_reasons, ["send_allowlist_rejected", "send_allowlist_rejected"]
+            )
+            # Both calls stopped at the read-only preflight: no composing mutation
+            # ever ran, so nothing could be typed into the room.
+            self.assertEqual(call_count, 2)
+            for command in calls:
+                self.assertIn("--preflight", command)
+                # The read-only preflight is the only command that may run; the
+                # composing send never appears.
+                self.assertIn("openkakao-read-only-preflight", command)
+            # The permanent condition is named once per process, not once per attempt.
+            self.assertEqual(logged.count("[reply-send] send_allowlist_rejected"), 1)
+            self.assertIn("is not in the local-send allowlist", logged)
+        finally:
+            connection.close()
+
+    def test_send_reply_keeps_generic_preflight_failures_on_the_existing_path(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_generic_block_test")
+        result, logged, connection = self._run_send_reply_against_preflight_stderr(
+            module, "Error: scheduled reply source row is unavailable"
+        )
+        try:
+            first, second, hold_reasons, calls, call_count = result
+            self.assertFalse(first)
+            self.assertFalse(second)
+            # A transient preflight failure keeps the pre-existing behaviour: it is
+            # logged and not turned into a terminal hold reason.
+            self.assertEqual(hold_reasons, [])
+            self.assertEqual(call_count, 2)
+            for command in calls:
+                self.assertIn("--preflight", command)
+            self.assertEqual(logged.count("[reply-send] preflight_unavailable"), 2)
+            self.assertNotIn("send_allowlist_rejected", logged)
+        finally:
+            connection.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -458,6 +458,7 @@ fn known_reason(code: &str) -> Option<&'static str> {
         "reply_laughter_policy_violation" => Some("웃음만 있어 넘어감"),
         "conversation_advanced" => Some("대화가 이미 진행됨"),
         "reconcile_gave_up" => Some("전송 확인 포기"),
+        "send_allowlist_rejected" => Some("전송 허용 목록 거부"),
         "style_evidence_empty" => Some("말투 근거 없음"),
         "recipient_style_profile_malformed" => Some("말투 정보 깨짐"),
         "burst_superseded" => Some("뒤 메시지로 대체됨"),

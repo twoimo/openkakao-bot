@@ -63,6 +63,8 @@ MAX_RESPONSE_TIMING_SECONDS = 24 * 60 * 60
 MAX_REPLY_DELAY_SECONDS = MAX_RESPONSE_TIMING_SECONDS
 QUEUE_PARENT_MODE = 0o700
 QUEUE_FILE_MODE = 0o600
+SEND_PREFLIGHT_ALLOWLIST_MARKER = "is not in the local-send allowlist"
+_SEND_PREFLIGHT_DIAGNOSTIC_ROOMS: set[tuple[str, str]] = set()
 import auto_reply_ondevice
 import auto_reply_metrics as perf
 import auto_reply_transition_journal as transition_journal
@@ -3336,7 +3338,7 @@ def _queue_reconciliation_blockers(connection: sqlite3.Connection) -> int:
                 AND (
                   reason IS NULL
                   OR reason = ''
-                  OR reason IN ('model_usage_limited', 'model_rate_limited', 'model_authentication_unavailable', 'model_temporarily_unavailable', 'stale_backlog', 'conversation_advanced', 'burst_superseded', 'author_not_allowlisted', 'self_author', 'author_identity_drift', 'retrieval_command_failed', 'reconcile_required', 'reconcile_gave_up', 'delivery_unknown', 'delivery_ack_uncertain')
+                  OR reason IN ('model_usage_limited', 'model_rate_limited', 'model_authentication_unavailable', 'model_temporarily_unavailable', 'stale_backlog', 'conversation_advanced', 'burst_superseded', 'author_not_allowlisted', 'self_author', 'author_identity_drift', 'retrieval_command_failed', 'reconcile_required', 'reconcile_gave_up', 'delivery_unknown', 'delivery_ack_uncertain', 'send_allowlist_rejected')
                 )
               )
               OR (
@@ -13232,6 +13234,11 @@ def _log_pre_send_block(
     elif isinstance(stderr, str):
         detail = stderr
     detail = " ".join(detail.split())[:200]
+    if stage == "send_allowlist_rejected":
+        room_key = (stage, reason or detail)
+        if room_key in _SEND_PREFLIGHT_DIAGNOSTIC_ROOMS:
+            return
+        _SEND_PREFLIGHT_DIAGNOSTIC_ROOMS.add(room_key)
     print(
         f"[reply-send] {stage} rc={returncode} status={status} reason={reason} detail={detail}",
         file=sys.stderr,
@@ -13462,6 +13469,21 @@ def send_reply(
         if attempt + 1 < PRE_SEND_PREFLIGHT_ATTEMPTS:
             time.sleep(PRE_SEND_PREFLIGHT_RETRY_SECONDS)
     if preflight is None:
+        detail_text = ""
+        if isinstance(preflight_stderr, (bytes, bytearray)):
+            detail_text = bytes(preflight_stderr).decode("utf-8", "replace")
+        elif isinstance(preflight_stderr, str):
+            detail_text = preflight_stderr
+        if SEND_PREFLIGHT_ALLOWLIST_MARKER in detail_text:
+            _log_pre_send_block(
+                "send_allowlist_rejected",
+                preflight_returncode,
+                preflight_candidate,
+                preflight_stderr,
+            )
+            if hold_out is not None:
+                hold_out.append("send_allowlist_rejected")
+            return False
         _log_pre_send_block(
             "preflight_unavailable",
             preflight_returncode,
@@ -15177,7 +15199,12 @@ def process_job(
                 # proven no-send: record the policy skip instead of retrying an
                 # expired or repeated draft.
                 hold_reason = hold_reasons[0]
-                if not durable_policy_skip(event, event_id, hold_reason, category="policy"):
+                hold_category = (
+                    "configuration"
+                    if hold_reason == "send_allowlist_rejected"
+                    else "policy"
+                )
+                if not durable_policy_skip(event, event_id, hold_reason, category=hold_category):
                     finish_delivery_unknown(
                         event,
                         event_id,
@@ -15194,7 +15221,7 @@ def process_job(
                     due_at=None,
                     decision="skip",
                     reason=hold_reason,
-                    category="policy",
+                    category=hold_category,
                     reply=None,
                     scheduled_delay_seconds=None,
                     error_class=hold_reason,
