@@ -1718,7 +1718,7 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 
 검증: 신규 `desktop/src/__tests__/lifecycle-wiring.test.ts` 10건이 blur→정지, focus→재개(RAF 정확히 1회), `document.visibilityState`가 visible인데도 명시적 hidden이 오면 정지, pagehide 1회 close와 멱등 detach, 브리지 실패 시 DOM 경로 유지, 종료 시 구독 해제를 확인한다. Rust의 `#[cfg(test)]` 3건은 payload에 불리언 하나만 있는지, `include_str!`로 읽은 프런트엔드 파일이 같은 이벤트 이름을 쓰는지(두 언어에 걸친 계약), 트레이 아이콘이 18x18 RGBA인지 검사한다.
 
-남는 한계: 이번 턴에 설치본을 다시 띄워 숨김 상태의 렌더 호출 0회를 재지는 않았다. 숨김 창의 렌더 호출 0회는 기존 실기기 기록(`jarvis-three-render-lifecycle`)이고, 이번 변경이 바꾼 것은 그 정지를 DOM 추론이 아니라 셸 신호로 확정한 점이다.
+남는 한계: 이번 턴에 설치본을 다시 띄워 숨김 상태의 렌더 호출 0회를 재지는 않았다. 숨김 창의 렌더 호출 0회는 기존 실기기 기록(`jarvis-three-render-lifecycle`)이고, 이번 변경이 바꾼 것은 그 정지를 DOM 추론이 아니라 셸 신호로 확정한 점이다. 같은 턴에 그 정지·재개 계약 자체를 빌드된 번들의 브라우저 하네스에서 다시 쟀고 결과는 6절에 있다(설치본 측정은 아니다).
 
 ### 4. 검증 수치, CI, 위임 상태
 
@@ -1727,6 +1727,7 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 - Rust: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked --offline` **62 passed**(이전 59). 러너의 `Test desktop Rust bridge offline` step도 `62 passed; 0 failed; 0 ignored`다. `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings`와 루트 크레이트의 같은 명령이 모두 경고 0으로 `Finished`였다.
 - 커밋 3개로 나눠 push했다: `7b8cb7b`(질의 경로), `c478907`(렌더 프레임·숨김 신호), `c304fe5`(문서). CI는 `c304fe5` run [35704737359](https://github.com/twoimo/openkakao-bot/actions/runs/35704737359) → 3개 job 모두 success이고, 직전 `66c104b` run 35701418189도 3/3 success다.
 - 이번 턴의 검증 범위: 소스 변경, 로컬 테스트, 러너 CI까지다. 설치된 앱을 다시 띄워 숨김 상태의 렌더 호출 0회나 실제 카카오톡 전송을 재지는 않았고 그 두 가지는 여전히 미검증으로 남는다.
+- 러너 기준 최종 확인: 수정·문서 커밋 `20f1014`의 CI run [35706369013](https://github.com/twoimo/openkakao-bot/actions/runs/35706369013)이 3개 job 모두 success다. 러너 로그의 수치는 Python focused **Ran 651 tests in 61.408s / OK (skipped=60)**, 데스크톱 `Test Files 9 passed (9)` / `Tests 121 passed (121)`, Rust 데스크톱 크레이트(`Test desktop Rust bridge offline`) **63 passed; 0 failed; 0 ignored**다. 즉 5절의 리뷰 수정 뒤 로컬 수치(121·63)는 러너에서도 같다.
 
 ### 5. 서브에이전트 리뷰 반영: pause-on-hide 계약 4건 수정
 
@@ -1745,4 +1746,38 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 검출력은 되돌림 실험으로 확인했다. 수정한 4개 파일(`core/lifecycle-wiring.ts`·`core/lifecycle.ts`·`main.ts`·`src-tauri/src/main.rs`)을 `git checkout HEAD --`로 되돌리고 새 테스트만 남겨 돌리면 **8건이 실패**한다: 이벤트 이름 pin, boot handshake pin, open_settings 순서 pin, 부팅 시 hidden 유지, 셸이 visible이라고 답할 때 시작, 셸이 답하지 못할 때 DOM 유지, detach 후 late subscription 해제, start 실패 후 재시도. 복원 후에는 `npx vitest run` **121 tests / 9 files**가 통과한다(수정 전 113; 신규 8건 = wiring 7 + lifecycle 1).
 
 이 수정 뒤의 수치는 데스크톱 `npx vitest run` **121 tests / 9 files**, Rust 데스크톱 크레이트 **63 passed**, `npx tsc -p tsconfig.json --noEmit` clean, `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings` 경고 0, 편집한 `src-tauri/src/main.rs`의 `rustfmt --check` clean이다(같은 크레이트의 `python_bridge.rs`에는 이 호스트 rustfmt 버전이 요구하는 포맷 차이가 남아 있으나 이번 수정 대상이 아니며 건드리지 않았다. 루트 크레이트도 같은 이유로 `cargo fmt --check` 차이가 246건 있어 CI가 fmt를 게이트하지 않는다). Python focused 25개 모듈 651건은 이번 수정이 TS/Rust에만 닿았으므로 그대로다.
+### 6. 숨김 정지·재개를 빌드된 번들에서 브라우저 하네스로 재측정
 
+부모 에이전트가 로컬에서 수행했다. 3절의 셸 신호는 소스와 단위 테스트로만 고정돼 있었고, 실기기 정지는 이전 턴 기록(`jarvis-three-render-lifecycle`과 설치본 `ps` 표본)에 의존했다. 이번 턴에 `cd desktop && npm run build`로 `desktop/dist`를 만들고 loopback(`python3 -m http.server 8765 --bind 127.0.0.1`)에 띄운 뒤, 앱 내 브라우저 탭에서 Computer Use로 CDP `Runtime.evaluate`를 **main world**에서 실행해 제품 훅 `window.__jarvisRenderCount`를 직접 읽었다. 이 훅은 `scripts/jarvis_desktop_render_check.py`가 쓰는 것과 같은 제품 카운터다.
+
+측정 함정 두 개를 먼저 기록한다. (1) `Runtime.evaluate`는 `{"result": {"type": "number", "value": N}}` 모양으로 답하므로 값을 `r.result.value`에서 읽어야 한다. (2) Playwright의 `evaluate`는 isolated world라 이 훅을 -1로 본다. 제품 카운터를 보려면 main world CDP가 필요하다.
+
+#### 측정 결과
+
+`wireRenderLifecycle`이 실제로 듣는 신호를 main world에서 합성해 발화하고 구간마다 카운터 증가율을 쟀다. 새로 로드한 한 페이지에서 한 번에 재었다.
+
+| 구간 | 카운터 | 증가율 |
+| --- | --- | --- |
+| 기준(가시·유휴) | 222 → 241 (1.4초) | 19프레임 / 13.3 fps |
+| `blur` 합성 후 1.6초 | 242 → 242 | **0프레임 / 0 fps** |
+| `focus` 뒤 재개 #1 | 247 → 266 | 19프레임 / 13.4 fps |
+| `focus` 뒤 재개 #2 | 266 → 285 | 19프레임 / 13.4 fps |
+| `blur`→`focus` 5회 반복(숨김 구간 각 약 400 ms) | 숨김 구간별 증가 | 0, 0, 0, 0, 0 |
+| 5회 반복 직후 | 305 → 325 | 20프레임 / 14.0 fps |
+| `pagehide` 합성 후 1.2초 | 325 → 325 | **0프레임 / 0 fps** |
+
+세 가지를 이 표에서 읽는다.
+
+1. 숨김 구간에서 렌더 호출이 정확히 0회다. 그 구간에서 `document.visibilityState`는 `blur` 때도 `focus` 때도 `visible`이었다. 즉 이 정지는 Chromium의 탭 스로틀이 아니라 앱 자신의 신호 배선에서 나온다. 이 구분이 이 측정의 요점이다.
+2. 5회 반복 뒤 증가율이 기준과 사실상 같다(14.0 fps vs 13.3 fps). `RenderLifecycle`의 `start`/`stop`이나 `detach`가 RAF 체인을 누적시켰다면 카운터가 프레임당 2회씩 올라 약 27 fps로 보였을 것이다. 체인이 중복되지 않는다는 증거다.
+3. `pagehide`도 0 fps로 멈춘다. 종료 경로도 같은 정지 계약을 지난다. 다만 이 신호는 멱등 teardown이라, 이후 `focus`를 다시 보내도 루프가 되살아나지 않는다(이번 측정에서 페이지가 1949에서 멈춘 채 유지됐다). 이는 테스트로 고정한 계약과 일치한다.
+
+#### 단순화 레이아웃의 재확인
+
+같은 시점에 잡힌 이 탭의 AX 트리는 `container Jarvis → image Jarvis core` + `button 설정 열기(ID: gear)`가 전부였다. 제거 대상인 대량 검증·기능 점검·자기개선·권한 설정 표면이 빌드본에 남아 있지 않다는 것을 렌더된 픽셀이 아니라 접근성 트리에서 확인한 것이다.
+
+#### 이 측정이 닫지 않는 것
+
+- **AppKit order-out 경로 자체는 이 하네스로 재현되지 않는다.** 이 Chromium은 창이 가려지거나 IAB에서 숨겨져도 rAF를 멈추지 않는다. 직접 확인한 두 가지: 브라우저 수준 `capabilities.get("visibility").set(false)` 뒤에도 카운터가 21프레임 / 12.9 fps로 계속 올랐고 그때 `document.visibilityState`는 `visible`이었다(탭 수준에는 이 capability가 아예 없다: `Capability is not available: visibility`). 따라서 여기서 증명한 것은 계약의 DOM/이벤트 절반이다. 셸 절반(`show()`/`hide()`가 성공한 뒤에만 `jarvis://visibility`를 보낸다는 부분)은 Rust `#[cfg(test)]` 4건과 이전 턴 설치본의 `ps` 표본(패널 열림 2.9-3.1, 닫힘 6회 모두 0.0)이 담당한다.
+- **설치본 재측정이 아니다.** 이번 하네스는 `desktop/dist`를 일반 브라우저에 띄운 것이고 설치된 앱 번들의 WKWebView에서 잰 값이 아니다. 설치본의 숨김 렌더 정지에 대한 실기기 근거는 여전히 이전 턴의 `ps` 표본 하나다.
+- 하네스 정리: 합성용 scratch 탭은 닫았고 loopback 서버는 중지했으며(포트 8765 리스너 0 확인) 패널 탭은 정상 가시 상태로 되돌렸다.
