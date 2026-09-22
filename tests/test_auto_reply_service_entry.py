@@ -26,9 +26,28 @@ SESSION_UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-session-monitor.s
 
 
 def _test_python() -> Path:
-    if PINNED_PYTHON.exists():
-        return PINNED_PYTHON
-    return Path(sys.executable)
+    # Presence is not enough: a Homebrew keg can exist while its
+    # Python.framework binary is gone, and every child then dies with
+    # "dyld: Library not loaded". Probe each candidate so the suite runs on the
+    # first interpreter that actually starts.
+    for candidate in (PINNED_PYTHON, Path(sys.executable)):
+        try:
+            probe = subprocess.run(
+                [str(candidate), "-c", "import sys; sys.exit(0)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            # Homebrew opt kegs are symlinks the service deliberately keeps
+            # unresolved; anything else is resolved the way the service does.
+            if "/opt/homebrew/opt/python@" in str(candidate):
+                return candidate
+            return candidate.resolve()
+    return Path(sys.executable).resolve()
 
 
 
@@ -2023,8 +2042,8 @@ raise SystemExit(73)
             json.dumps(db_state), encoding="utf-8"
         )
 
-    def test_status_is_nonzero_when_unloaded_stale_or_fenced(self):
-        for case in ("unloaded", "stale", "fenced", "pending"):
+    def test_status_is_nonzero_when_unloaded_stale_or_pending(self):
+        for case in ("unloaded", "stale", "pending"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 fixture = self._fixture(root)
@@ -2037,7 +2056,6 @@ raise SystemExit(73)
                     self._write_health(
                         fixture["state"], 42,
                         stale=case == "stale",
-                        fenced=case == "fenced",
                         pending=case == "pending",
                     )
                 result = self._run(
@@ -2048,6 +2066,38 @@ raise SystemExit(73)
                     env,
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_status_tolerates_a_transient_fence_and_reports_a_persistent_one(self):
+        # 46eabb5 made the readiness-lease grace explicit: while the supervisor is
+        # running and its status file is fresh, a short readiness dip or a fence is
+        # an in-flight transition rather than a failure. The same fence must be
+        # reported once the file goes stale, so the grace cannot hide a stuck room.
+        for stale, expected_nonzero in ((False, False), (True, True)):
+            with self.subTest(stale=stale), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                fixture = self._fixture(root)
+                launchctl, plutil = self._fake_launchctl(root)
+                env, _, _, _, loaded, _ = self._service_env(
+                    root, fixture, launchctl, plutil
+                )
+                loaded.touch()
+                self._write_health(fixture["state"], 42, stale=stale, fenced=True)
+                result = self._run(
+                    [
+                        "/bin/sh", str(STATUS), "--state-root", str(fixture["state"]),
+                        "--chat-id", "42",
+                    ],
+                    env,
+                )
+                if expected_nonzero:
+                    self.assertNotEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                else:
+                    self.assertEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                    self.assertIn("healthy=true", result.stdout)
 
     def test_status_accepts_fresh_ready_target_room(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -166,6 +166,7 @@ jobs:
           tests.test_auto_reply_reference_store
           tests.test_auto_reply_session_monitor
           tests.test_rag_eval
+          tests.test_auto_reply_service_entry
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
