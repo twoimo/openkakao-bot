@@ -2900,6 +2900,10 @@ fn response_time_distribution_second_splits(
     minimum: usize,
 ) -> Vec<Option<usize>> {
     #[allow(clippy::too_many_arguments)]
+    // The loop variable is the answer, not an iteration counter: the winning
+    // position is stored in optima and reused as a boundary bound in the
+    // recursive calls, so enumerating the slice would only rename it.
+    #[allow(clippy::needless_range_loop)]
     fn search(
         prefix_sum: &[f64],
         prefix_square_sum: &[f64],
@@ -9577,4 +9581,3 @@ mod tests {
     }
 
 }
-

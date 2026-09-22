@@ -1594,3 +1594,14 @@ receipt:
 - 검증: 같은 리비전에서 `cargo clippy --all-targets -- -D warnings` 가 경고 0으로 `Finished` 이고, `cargo test` 는 **59 passed; 0 failed** 다. 종전 호출부와 대조해 `cooperative_cancel`·output limit·stdin payload·abort grace 값이 호출자별로 보존됨을 확인했다.
 - 남는 한계: clippy는 CI 게이트가 아니므로 이 청정 상태는 로컬 측정이다. CI에 clippy를 추가하는 변경은 이번 패스에서 하지 않았다.
 - TypeScript 쪽은 `npm run build` 가 `tsc -p tsconfig.json` 을 먼저 돌리므로 타입 오류는 이미 게이트된다. Python 쪽은 핀 인터프리터에 pyflakes/ruff/vulture가 없어 같은 감사를 실행하지 못했고, 도구를 임의로 설치하지 않았다.
+
+### clippy 게이트를 CI에 추가 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+앞 절은 "clippy는 CI 게이트가 아니므로 이 청정 상태는 로컬 측정"으로 끝났다. 저장소가 `rust-toolchain.toml` 에서 `channel = "1.95.0"` 과 `components = ["clippy", "rustfmt"]` 를 고정하므로 로컬과 러너의 clippy가 같은 버전이다(로컬 `clippy 0.1.95 (59807616e1 2026-04-14)`, `rustc 1.95.0`). 버전 드리프트로 게이트가 흔들릴 수 없다는 전제가 서서 두 크레이트를 게이트했다.
+
+- 루트 크레이트(`openkakao-cli`)의 clippy 경고는 **2건**이었다: `src/reply_receipt.rs:424` 의 `manual_pattern_char_comparison` 과 `src/context/mod.rs:2933` 의 `needless_range_loop`.
+- 앞의 한 건은 고쳤다. 응답 영수증의 코드/설명 분리 지점을 찾는 `split_explained_reason` 에서 콜론과 세미콜론을 직접 비교하던 클로저 패턴을 char 배열 패턴으로 바꿨다(`code.find([':', ';'])`). 두 형태가 찾는 위치는 같다.
+- 뒤의 한 건은 사유를 적어 남겼다. 그 루프 변수는 반복 횟수가 아니라 **답**이다: 이긴 위치가 `optima` 에 저장되고 재귀 호출의 경계(`best_position` → `second_end`)로 다시 쓰이므로, 슬라이스를 `enumerate` 로 돌리면 이름만 바뀐다. 같은 함수에는 이미 `too_many_arguments` 허용이 같은 방식으로 붙어 있다.
+- `.github/workflows/ci.yml` 에 두 스텝을 넣었다: macOS job의 `Lint CLI crate (clippy)`(`cargo clippy --manifest-path $MANIFEST --all-targets -- -D warnings`, `Cargo test` 뒤)와 데스크톱 job의 `Lint desktop Rust bridge offline`(다른 Rust 스텝과 같이 `--locked --offline` 과 `OPENKAKAO_TAURI_SOURCE_CHECK=1`).
+- 로컬 검증: 두 명령이 모두 경고 0으로 `Finished` 였고(`cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings`, `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings`), 루트 크레이트 `cargo test` 는 42개 테스트 타깃에서 **1087 passed; 0 failed; 0 ignored** 다(데스크톱 크레이트는 같은 리비전 59 passed).
+- 남는 한계: 이 게이트는 Rust 두 크레이트만 덮는다. Python은 핀 인터프리터에 pyflakes/ruff/vulture가 없어 같은 정적 감사를 돌리지 않았고, 도구를 임의로 설치하지 않았다.

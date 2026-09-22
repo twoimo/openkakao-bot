@@ -421,7 +421,7 @@ pub fn reason_code_unknown(code: &str) -> bool {
 /// colon or a semicolon: social_reply: 티보 주문 소식에 대한 확인. Only the head
 /// is a code, so the tail is trimmed off before the lookup.
 fn split_explained_reason(code: &str) -> Option<(&str, &str)> {
-    let index = code.find(|ch: char| ch == ':' || ch == ';')?;
+    let index = code.find([':', ';'])?;
     let (head, tail) = code.split_at(index);
     Some((head.trim(), tail.get(1..).unwrap_or_default().trim()))
 }

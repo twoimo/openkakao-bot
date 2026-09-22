@@ -69,6 +69,11 @@ jobs:
       - name: Cargo test
         run: cargo test --manifest-path $MANIFEST
 
+      # The toolchain is pinned to 1.95.0 with the clippy component in
+      # rust-toolchain.toml, so this gate cannot drift with the runner image.
+      - name: Lint CLI crate (clippy)
+        run: cargo clippy --manifest-path $MANIFEST --all-targets -- -D warnings
+
       - name: Smoke CLI
         run: cargo build --manifest-path $MANIFEST && ./target/debug/openkakao-cli --version
 
@@ -219,6 +224,14 @@ jobs:
         env:
           OPENKAKAO_TAURI_SOURCE_CHECK: "1"
         run: cargo check --manifest-path desktop/src-tauri/Cargo.toml --locked --offline
+
+      # Every desktop-crate lint is either fixed or carries an in-code reason,
+      # so this step keeps the bridge free of dead code and accidental
+      # signatures instead of relying on a local clippy run (2026-09-22).
+      - name: Lint desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings
 
       # These Rust steps are source-level Tauri checks, not packaged app proof.
       # A packaged build still requires the fail-closed frozen CPython and CLI
