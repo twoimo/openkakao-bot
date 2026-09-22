@@ -1653,3 +1653,8 @@ receipt:
 결과: 두 클래스 **13 tests, OK**, 두 모듈 **90 tests, OK**, CI focused 25개 모듈 **Ran 644 tests in 113.283s / OK (skipped=9)**다. 같은 목록의 직전 측정은 635 tests(`c264535`)이므로 신규 9건이 그대로 더해졌다.
 
 README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같은 bullet 뒤쪽의 24/24와 어긋났다. "렌더 교차 검증은 23개 check로 처음 통과했고(이후 `status_label` 렌더 check가 더해져 24개가 된다)"로 정정해 두 수치의 관계를 명시했다.
+
+### 4. CI와 위임 리뷰 상태
+
+- 같은 리비전의 CI: run [35699214811](https://github.com/twoimo/openkakao-bot/actions/runs/35699214811) at `d11a01f` → 3/3 jobs success. 직전 `a362de8` run 35697996000 → 3/3 success, `568c6ee` run 35697623043 → 3/3 success. run 35696758313(`9aa2e2d`)은 branch concurrency로 cancelled이므로 green으로 세지 않는다.
+- 위임 리뷰는 이번 턴에도 성립하지 않았다. `multi_agent_v1__spawn_agent`의 model override 목록은 여전히 `gpt-6-astra`, `gpt-5.6-sol`, `chatgpt-web/{medium,high,extra-high}` 뿐이고 사용자가 지정한 `GPT-5.6 Luna`는 없다. `chatgpt-web/extra-high`(xhigh) 새 스레드 3개(Fermat `01a0c7fe…`, Sartre `01a0c804…`, Bohr `01a0c80a…`)가 3회 모두 `stream disconnected before completion: page.goto: Timeout 60000ms exceeded`(navigating to `https://chatgpt.com/?temporary-chat=true`)로 끝났고, 같은 시각 `curl https://chatgpt.com/`은 http=403, `curl https://api.github.com/repos/twoimo/openkakao-bot`은 http=200이었다. 누적 실패는 23회(abort 19 · timeout 4)다. 따라서 AHP 점수를 얻지 못했으므로 98점 달성을 주장하지 않는다.
