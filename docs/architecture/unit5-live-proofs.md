@@ -1915,3 +1915,48 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 2. LaunchAgent 교체: `launchctl bootout gui/$(id -u)/com.openkakao.auto-reply.session-monitor` → 기존 plist 백업 → 새 plist bootstrap.
 3. owner lock을 쥔 pid 71513/71515 중단(진행 중 전송이 없음을 먼저 확인해야 한다. 상태는 `reason preflight_failed`로, 392회 연속 자식을 띄우지 못한 상태다).
 4. GeekNews는 `nimda-geeknews-slot.sh`가 newest runtime을 고르므로 1번만으로 다음 슬롯(08:40/12:35/19:50 KST)부터 복구된다. 다만 이는 실제 방으로 나가는 전송이므로 별도 확인 후 진행한다.
+
+## 자동답변·GeekNews 운영 복구 — 2026-09-22 KST
+
+### 1. 증상과 사전 상태 (2026-09-22 18:45–18:47 KST)
+
+- 사용자 보고: 카카오톡 자동 답변과 GeekNews 자동 전송이 동작하지 않음.
+- `~/Library/Application Support/openkakao/bujamentor/session-watchdog-status.json`: `attempt 398`, `consecutive_failures 398`, `state circuit_open`, `reason preflight_failed`, `service_pid 71515`, `backoff_seconds 300.0`.
+- `session-service/watchdog.err.log`가 `session watchdog: preflight_failed: auto-reply preflight failed for every catalog room`를 반복.
+- LaunchAgent `com.openkakao.auto-reply.session-monitor`의 plist는 runtime `20260920T224139Z-69184`의 `session-monitor-manifest.json`을 가리켰고, 그 runtime의 `start-auto-reply-session.command`를 실행하는 pid 71513(`/bin/sh`)와 pid 71515(python3.13 `auto-reply-service.py --mode session`)가 PPID 1로 2026-09-21 07:42부터 고아 상태로 남아 `session-watchdog.owner.lock`(6 bytes, 값 `71515`)을 쥐고 있었다.
+- `nimda-geeknews.log`: 마지막 성공 슬롯은 2026-09-20 19:50 KST(`status accepted_unconfirmed`, `confirmed log_id=3933957100273530883`). 2026-09-21 08:40:01 KST 슬롯부터 매 슬롯 `ModuleNotFoundError: No module named 'auto_reply_ondevice'`로 `exit=1`.
+- `nimda-geeknews-slot.sh` 12행 `RT=$(ls -td "$STATE"/runtime/*/ 2>/dev/null | head -1)`가 고르는 newest runtime은 `20260920T225025Z-92735`였고 그 `scripts/`는 12개 파일뿐이라 누락 6개 모듈이 없었다.
+
+### 2. 실행한 복구 (2026-09-22 18:47–18:59 KST)
+
+1. `cargo build --release --bin openkakao-cli` (40.23 s). 디스크의 바이너리(Sep 21 11:21)보다 `src/`가 앞서 있었기 때문이다(커밋 `afe728e`의 lint 정리로 `src/context/mod.rs`, `src/reply_receipt.rs`만 변경됨).
+2. `./target/release/openkakao-cli auto-reply-host --bake --json` → `runtime_root /Users/twoimo/Library/Application Support/openkakao/bujamentor/runtime/20260922T094747Z-78013`, `activated false`, `exit_code 0`.
+3. 새 runtime 검증: `scripts/` 18개 asset(모듈 17 + `auto-reply-schema.json`), 누락 6개(`auto_reply_knowledge_graph`·`auto_reply_ondevice`·`auto_reply_reference_search`·`auto_reply_reference_store`·`jarvis_abort`·`local_mlx_gateway`) 모두 존재. `python3.13 -E -B -S`로 `auto-reply-service.py --help`, `auto-reply-session-monitor.py --help`가 usage를 출력했고 `auto-reply-worker.py --help`는 `{"ack": "skipped", "reason": "invalid_event"}`를 냈으며 어느 쪽도 ModuleNotFoundError가 없었다. runtime 자체 `openkakao-cli`는 `openkakao-cli 1.8.0`으로 실행됐다.
+4. 읽기 전용 preflight 실측: 새 runtime의 `_filter_catalog_selectors`를 새 runtime의 `config.toml`과 `openkakao-cli`로 호출 → `accepted` 3/3(`bind:417780809780519:부자멘토멘티`, `bind:325472527151234:NIMDA 인수인계 임원방 ⚠`, `bind:437046948660911:Vision AI 경진대회`), `skipped []`, 4.3 s. 원시 CLI로 같은 세 `--chat`을 주면 `"valid":true`와 target 3건이 나왔다.
+5. 라이브 plist를 `/private/tmp/okb-cutover-20260922/plist.before.plist`(SHA-256 `ee1e315e0c0b99294e1c345540c13fd6b789f8d367d6a5ce934849e5b1bdc078`)와 `~/Library/LaunchAgents/com.openkakao.auto-reply.session-monitor.plist.bak-20260922T185500`로 백업했다.
+6. `kill -TERM 71515` → 기존 watchdog이 스스로 `state stopped`, `reason stop_requested`를 기록하고 종료했다(강제 종료 아님).
+7. 경합 기록: 교체 직전 tick 한 번이 아직 로드돼 있던 옛 job 정의로 18:50:53에 옛 runtime(`20260920T224139Z-69184`)의 watchdog(pid 95849/95850)을 띄워 owner lock을 다시 잡았다. 교체 후 tick은 18:51:03에 `watchdog_running / owner_lock_held`를 `command_sha256 296fe656d10ecbcded1189e450170265fbf3e1427f79be1617aa27905db45177`(새 command)로 기록했다. 따라서 한 번 더 정지와 kickstart가 필요했다.
+8. `launchctl bootout gui/501/com.openkakao.auto-reply.session-monitor` → 새 runtime의 plist를 `~/Library/LaunchAgents/`로 복사 → `launchctl bootstrap` → `launchctl kickstart -k`. 로드된 job의 `arguments`가 새 runtime의 `session-monitor-manifest.json`을 가리키는 것을 `launchctl print`로 확인했다.
+9. `kill -TERM 95850` → `launchctl kickstart -k` → 18:53:06 tick이 새 runtime의 watchdog을 띄웠다.
+
+### 3. 복구 후 상태
+
+- `session-watchdog-status.json`: `attempt 2`, `state running`, `child_pid 38978`, `service_pid 11550`, `started_at` 18:53:30 KST.
+- 프로세스 트리(단일 소유자): 11506 `/bin/sh <새 runtime>/start-auto-reply-session.command`(PPID 1) → 11550 python3.13 `auto-reply-service.py --mode session`(새 runtime) → 38978 세션 자식 → 39018 `~/Library/Application Support/openkakao/bin/openkakao-cli auto-reply` → 39019 `/usr/bin/caffeinate -i …`. `auto-reply-service.py --mode session` 소유자는 정확히 1개다.
+- 방 `417780809780519`의 `db-watch-state.json`(18:59 KST): `capability_state ready`, `delivery_enabled true`, `fence ready`, `fence_reason ""`, `acked_watermark`가 2026-09-21 이후 3934011820824459265에 멈춰 있다가 3934560893236758528로 전진했고 `heartbeat_at`도 갱신됐다.
+- `db-watch.log`가 실제 감시 동작을 보인다: `context_sync_transient:SqliteBusyTransient:database command failed:     Error code 5: The database file is locked`, `image download failed: DbFence: database command failed: Error: PNG IEND is invalid`, `skip_ack_unconfirmed:self_author:none`.
+- `supervisor-status.json`: `ax_state healthy`, `reply_worker_state running`, `reply_model_state available`, `auto_reply_enabled true`, `auto_reply_reason local_model`, `delivery_state fenced_db_authoritative`. 18:59:25 KST 시점 `readiness`는 `fenced`, `fence_reason db_heartbeat_stale`이었다(방금 시작한 supervisor의 heartbeat 확인이 아직 따라오는 중).
+- GeekNews: `ls -td "$STATE"/runtime/*/ | head -1`이 이제 `20260922T094747Z-78013`을 고르고, 그 runtime의 `auto-reply-worker.py --geeknews --help`가 usage를 출력한다(ModuleNotFoundError 없음).
+- 같은 시각 `sh scripts/status-auto-reply-service.sh`는 `healthy=false`와 `problems=room_417780809780519:db_pending,room_417780809780519:db_candidate_active,room_417780809780519:db_stale,room_437046948660911:db_stale`를 냈다. 이는 18:56 KST의 `db_capability/db_delivery/db_fenced` 문제가 capability `ready`로 해소된 뒤 남은 방별 일시 상태이고, 417 방에는 후보 답변이 진행 중(`db_candidate_active`)이었다.
+
+### 4. 한계와 잔여 위험
+
+- 새 watchdog의 **attempt 1은 preflight에 실패했고 attempt 2에서 성공**했다. 즉 이 경로는 결정론적이지 않고 재시도로 자가 회복한다.
+- 그 실패의 관측된 형태는 겹쳐 실행된 `auto-reply --check`가 방 하나를 target 집합에서 떨어뜨려 `AutoReply room_reply_authors contains unselected chat ID …`가 되는 것이다(두 실행이 겹칠 때 재현, 직렬 실행에서는 `"valid":true`). 재시도가 이를 닫는다는 사실만 확인했고 완전한 원인 규명이나 직렬화 패치는 이번 범위에 없다.
+- **실제 카카오톡 전송은 아직 관측하지 않았다.** 다음 GeekNews 슬롯은 19:50 KST이고, 자동 답변은 실제 수신 메시지에 반응하므로 이 절은 "서비스가 fence 없이 상주하고 워커가 돌아간다"까지의 증거다.
+- `auto-reply-host --status`의 `healthy`는 위 방별 problem 목록에서 계산되므로 시점에 따라 false가 될 수 있다.
+- `db-watch.log`의 SQLite `Error code 5: The database file is locked`는 실제 카카오톡 DB 잠금이며 transient로 기록되고 있다.
+
+### 5. CI
+
+- 커밋 `3e198e8`의 CI run [35712115257](https://github.com/twoimo/openkakao-bot/actions/runs/35712115257)이 3개 job 모두 success다(2 m 34 s). 직전 `6413835`의 run 35710797187은 `Tauri desktop and focused Python tests`만 실패했고, 그 실패는 옛 계약 `test_panel_source_keeps_the_single_gear`(`AssertionError: 0 != 1`, `Ran 665 tests / FAILED (failures=1, skipped=60)`)이며 `3e198e8`이 닫았다.
