@@ -2635,6 +2635,13 @@ mod imp {
     const CONTEXT_MENU_TITLES_REPLY: &[&str] = &["답장"];
     const CONTEXT_MENU_TITLES_DELETE_EVERYONE: &[&str] = &["모두에게서 삭제"];
     const OPEN_CHAT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Bounded retry budget for the composer walk. `find_input_field_in` spends
+    /// a fixed AX walk budget, so a loaded machine can expire that budget in a
+    /// window that is actually the right one and report a missing composer.
+    /// Retrying keeps the window identity check before any mutation unchanged
+    /// while removing that false negative (2026-09-22).
+    const COMPOSER_FIELD_TIMEOUT: Duration = Duration::from_secs(5);
+    const COMPOSER_FIELD_POLL: Duration = Duration::from_millis(150);
     /// Poll interval while an already-open window's AX transcript settles.
     /// KakaoTalk repaints the message list after a room switch or raise, so the
     /// first read can legitimately return no rows.
@@ -3388,6 +3395,25 @@ mod imp {
         composer
     }
 
+    /// Retry [`find_input_field_in`] until its bounded deadline.
+    ///
+    /// The single walk is bounded so a large virtualized transcript cannot
+    /// stall the caller, which means a busy machine can expire it before the
+    /// composer is reachable. Absence is reported only after the retry budget,
+    /// so the caller's "no input field" error means what it says.
+    fn find_input_field_in_bounded(root: &AXUIElement) -> Option<AXUIElement> {
+        let deadline = Instant::now() + COMPOSER_FIELD_TIMEOUT;
+        loop {
+            if let Some(field) = find_input_field_in(root) {
+                return Some(field);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            sleep(COMPOSER_FIELD_POLL);
+        }
+    }
+
     /// Find the composer field in the exact chat window named by
     /// `chat_display_name`. Refuse a whole-app fallback because it could
     /// select a different chat's composer.
@@ -4044,7 +4070,7 @@ mod imp {
                 }
             }
         };
-        let field = find_input_field_in(&window).ok_or_else(|| {
+        let field = find_input_field_in_bounded(&window).ok_or_else(|| {
             anyhow!(
                 "could not find the message input field in the already-open chat {chat_display_name:?}"
             )
@@ -4234,6 +4260,15 @@ mod imp {
         fn open_chat_timeout_is_bounded() {
             assert!(OPEN_CHAT_TIMEOUT.as_secs() > 0);
         }
+
+        #[test]
+        fn composer_field_retry_budget_is_bounded() {
+            // The retry must terminate and must poll instead of spinning.
+            assert!(COMPOSER_FIELD_TIMEOUT.as_secs() > 0);
+            assert!(COMPOSER_FIELD_POLL.as_millis() > 0);
+            assert!(COMPOSER_FIELD_POLL < COMPOSER_FIELD_TIMEOUT);
+        }
+
         #[test]
         fn service_traversal_budget_is_bounded() {
             const {
