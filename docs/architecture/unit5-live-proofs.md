@@ -2352,3 +2352,60 @@ OPENKAKAO_ENROLLMENT_SHA256=<enrollment sha256> OPENKAKAO_ATTEST_MANUAL=1 \
 - 실제 카카오톡 발송 없음. 프리플라이트는 창·트랜스크립트·작성기를 읽기만 한다.
 - dense 임베딩 복구 없음(3항). 외부 소유 MLX 서버를 건드리지 않았다.
 - 세션·워커를 재시작하지 않았다. 바이너리도 이번 단위에서 교체하지 않았다(7차 스테이징본 그대로).
+
+## 사용자 보고 3건의 재판정과 local-send 허용목록이 무발송의 단일 원인 — 2026-09-23 KST (10차)
+
+이 절은 앱 내 브라우저에 남긴 사용자 코멘트 3건(기어 제거, 우클릭 설정, 카카오톡 자동답변·긱뉴스 무발송)을 같은 턴에 재판정한 실측이다. 실제 카카오톡 발송 0건, 세션·워커 재시작 0회, `allowed_send_chats`·`~/.config/openkakao/config.toml`·`dream-rsi-policy.json` 변경 0건, `~/Library/Application Support/openkakao/**` 쓰기 0건이다.
+
+### 1. 보고 1 — 패널 우상단 기어는 이 빌드에 없다
+
+사용자가 선택한 요소는 `button#gear`(접근성 이름 `설정 확인 불가`)이고 페이지는 `http://127.0.0.1:8765/index.html` 이다. 이 턴에 다시 확인했다.
+
+* 8765 리스너 0: `lsof` 결과 없음, `curl -sS -m 5 http://127.0.0.1:8765/index.html` → `Failed to connect … Couldn't connect to server`. 사용자가 본 탭은 죽은 dev 프리뷰다.
+* 저장소·빌드·설치본에 기어 없음: `rg -n 'gear|⚙'` 는 `desktop/src/__tests__/ui-removal-contract.test.ts`(제거를 고정하는 계약) 1건만 반환하고, `desktop/dist`·`desktop/index.html`·`desktop/src` 에는 0건이다. 설치본 `/Applications/OpenKakao Jarvis.app/Contents/Resources` 에도 `gear`/`⚙` 문자열이 0건이다.
+* 소스·빌드 일치: `cd desktop && npm run build` 가 커밋된 소스와 같은 자산 해시(`index-BF0PVkH5.js`, `index-BLBtzPBm.css`)를 재현했다. 즉 지금 `desktop/dist` 는 워킹트리 소스와 바이트 단위로 같다.
+* 렌더 하네스 재실행(2026-09-23 02:16 KST, `browser/.venv/bin/python3 scripts/jarvis_desktop_render_check.py --json` → `status: pass`): `panel.zero_interactive_elements` detail `[]`, `panel.single_main_shell` classes `["jarvis-panel"]`, `panel.no_panel_side_open_settings_invocation` detail `{commands: [fetch_runtime_snapshot, plugin:event|listen, window_is_visible], snapshot_calls: 4}` — 패널은 `open_settings` 를 절대 호출하지 않는다.
+* 추가 Playwright 렌더: 실제 창 크기 276×260에서 `document.querySelector('#gear')` 는 `null`, 기어 글리프를 포함한 요소 수 0, `button,select,input,textarea,a,details,summary` 개수 0, `main.jarvis-panel` 1개, `canvas` 1개, `window.__jarvisRenderCount` 34, `pageerror` 0건. 같은 번들의 `?view=settings` 는 `h2` 7개가 `대상 채팅방 · AI 모델 · Voice · 카카오 DB 동기화 · 색인 · DREAM-RSI · Knowledge · History` 순서로 일치했다.
+* 남는 한계: 사용자의 탭 자체는 재현되지 않는다. 이 호스트에서는 `exec` 세션이 끝나면 백그라운드 리스너가 회수되어(측정: `nohup`/`setsid` 모두 다음 호출에서 연결 거부) 8765 프리뷰를 상시로 띄워 둘 수 없다. 사용자가 본 화면은 정지된 프리뷰의 잔상이며 제품 UI가 아니다.
+
+### 2. 보고 2 — 우클릭으로 설정
+
+`desktop/src-tauri/src/main.rs` 의 트레이는 좌클릭 `MouseButtonState::Up` 에 `toggle_panel`, 우클릭 Up에 `open_settings` 를 연결한다. 하네스 검사 `tray_source.right_click_opens_settings_and_left_up_toggles_panel` 이 `ok`(detail: main.rs sha256 `15f71c2aed923bbc4d7263beef29b9af11fe8c06821d2cf88449f7481d44ae0b`, `left_up_toggles_panel: true`, `right_up_opens_settings: true`). 설치본 실행 파일 시각은 2026-09-22 19:01:30으로, 그 연결을 추가한 커밋 `2f88b59`(2026-09-22 18:21:02)보다 뒤다.
+
+한계는 그대로다: Chromium은 macOS `TrayIconEvent` 를 만들 수 없으므로 실제 트레이 우클릭은 이 턴에도 실행하지 않았고 하네스도 `browser_exercised: false` 로 기록한다. 이 항목은 소스·렌더 수준 증거이며 실기 클릭 증거가 아니다.
+
+### 3. 보고 3 — 무발송의 실제 원인
+
+**437( Vision AI 경진대회)은 허용목록 하나로 100% 막혀 있다.** `reply-worker.log` 4,194행 중 3,639행이 같은 줄이다.
+
+```
+[reply-send] preflight_unavailable rc=1 status= reason= detail=Error: chat "Vision AI 경진대회" is not in the local-send allowlist.
+local-send matches chats by display-name text scraped from the KakaoTalk UI, not a chat-id, so an explicit allowlist is required to avo…
+```
+
+런타임 config `/Users/twoimo/Library/Application Support/openkakao/bujamentor/runtime/20260922T144341Z-5047/config.toml` 의 `[safety] allowed_send_chats` 는 `["부자멘토멘티", "kakao-test", "NIMDA 인수인계 임원방 ⚠"]` 뿐인데, 같은 파일의 `[bujamentor] chats` 와 `[bujamentor.room_reply_authors]` 는 437을 자동답변 방으로 선언한다(`"437046948660911" = ["권준혁", "김선규"]`). 그래서 이 방은 자동답변 대상인데 전송 프리플라이트가 영구 실패하고, 원장에는 재시도 가능한 장애처럼 남아 결국 `reconcile_gave_up` 이 된다.
+
+**417(부자멘토멘티)의 잔여 원인은 다른 축이다.** `preflight_unavailable` 는 202건이고 그 마지막은 로그 끝에서 119행 전이며, 이후 실패 유형은 `Error: scheduled reply source row is unavailable` — 커밋 `c6a3149` 가 겨냥한 축이다. 그 뒤 로그에는 `[reply-worker] OperationalError: database is locked` 와, 42.5초 생성 성공 뒤 러너 봉투 파싱 실패(`[reply-gen] unparsed_output head=b'{\n  \"result\": \"fail\", …'`)가 남는다. 즉 417은 허용목록이 아니라 큐 DB 잠금 경합과 러너 출력 파싱이다. 같은 시각 `db-watch.log` 는 `context_sync_transient:SqliteBusyTransient: Error code 5: The database file is locked` 와 `context_sync_writer_lock_timeout` 으로 채워져 있다.
+
+**긱뉴스는 6개 슬롯 연속 미배달이다.** 방 325의 실제 메시지를 `local-read` 로 읽으면 마지막 배달된 TOP5는 **2026-09-20 19:50 KST** 이고, 그 뒤 09-21과 09-22의 08:40·12:35·19:50 여섯 슬롯이 모두 방에 없다. 슬롯 로그는 그 구간을 이렇게 기록한다.
+
+* 이전 슬롯들: 선택된 런타임이 불완전해 워커가 import 단계에서 죽었다(런타임 선택 로직은 2026-09-22 22:00에 강화됨).
+* 2026-09-22 19:50 `send`: `Error: could not find the message input field in the already-open chat "NIMDA 인수인계 임원방 ⚠"` / `exit=1`.
+* 이번 턴 재연습(2026-09-23 02:20:38 KST, `nimda-geeknews-slot.sh preview`): `preview runtime=20260922T154213Z-39212`, `ids=[34134, 34133, 34131, 34130, 34129]`, `exit=0`, TOP5가 빈 줄로 구분된 형식으로 출력됐다. 미리보기는 발송이 아니므로 배달 증거가 아니다.
+
+**`conversation_advanced` 는 무발송의 원인이 아니라고 판정했다.** 437의 마지막 잡은 최신 인바운드(`3935479470502981635`)에 대한 것이고 그 종결 사유는 `stale_backlog` 이며, 그 앞을 막은 것은 허용목록 프리플라이트다. 417·437의 `conversation_advanced` 스킵은 채팅방이 계속 움직일 때 오래된 턴을 최신 턴에 양보하는 정상 동작이다. 그래서 이 턴에 시도한 `conversation_advanced` 완화 패치는 **되돌렸다**: (a) `tests.test_auto_reply_turn_holds` 의 `test_send_reply_blocks_watermark_advance_after_preflight_before_mutation` 은 HEAD에서 통과하고 그 패치에서만 실패해 CI가 red가 된다(전송 직전 워터마크 전진 차단이라는 고정 계약을 약화한다), (b) 홀드 검사마다 `reply_jobs` 전 행을 JSON 파싱하는 비용이 붙는다. 되돌린 뒤 워킹트리는 다시 clean이다(`?? ed.hup` 는 기존 파일).
+
+**대기 큐 행의 세대 불일치도 기록한다.** 남아 있는 `reply_jobs` 행의 `event_json` 은 이전 세대의 `owner_id`/`source_epoch` 를 싣고 있다(예: 437의 `54917-e0f2ecb6ae4b4c5eacddb8fbf842d852` / `1790081178638010000`). 현재 db-watch 상태와 supervisor 는 `13308-355c7199b57a4e7f9c0e1afd6cf6d3b4` / `1790088597248490000` 이고 `legacy_drained: false` 다. 현재 워커(pid 13330·13333·13339, 2026-09-22 23:50 KST 시작)는 그 이후 로그를 한 줄도 쓰지 않았고 `phase: idle` 이다. 즉 재시작 전 세대의 대기 행은 지금 워커에 귀속되지 않는다.
+
+### 4. 남은 활성화 단계(이번 턴에 하지 않음)
+
+437을 실제로 발송 가능하게 만드는 유일한 변경은 런타임 config `[safety] allowed_send_chats` 에 `"Vision AI 경진대회"` 를 추가하는 것이다. 전송 허용목록은 계정 보호용 안전 게이트이고 값은 사용자 소유 런타임에 있으므로, 이 단위는 그 값을 바꾸지 않고 재시작도 하지 않았다. 같은 이유로 큐 DB 잠금 경합과 러너 봉투 파싱은 소스 수준 후속 작업으로 분리했다.
+
+### 5. 이번 단위에서 하지 않은 것
+
+* 실제 카카오톡 발송·재전송 없음. 이번 턴 배달 증거는 0건이다.
+* 세션·워커 재시작 없음, 바이너리 교체 없음, MLX Serve 조작 없음.
+* `allowed_send_chats`·`~/.config/openkakao/config.toml`·`dream-rsi-policy.json` 변경 없음.
+* `~/Library/Application Support/openkakao/**` 쓰기 없음(읽기 전용 `mode=ro` 조회만).
+* 실제 트레이 우클릭 실기 클릭 없음.
+* AHP 98점 이상은 달성하지 않았고 그 주장도 하지 않는다.
