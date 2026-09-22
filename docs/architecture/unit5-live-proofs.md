@@ -2255,3 +2255,51 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 결함 A 의 라이브 전제(원본 행이 최신 20행 밖)는 현재 세 방이 22:16 이후 조용해 재현하지 못했다. 근거는 로그의 70건 기록과 메커니즘이며, 유닛 테스트는 폴백 경로를 고정한다.
 - `conversation_advanced`(AHP 정책)와 `delivery_unknown`/`reconcile_gave_up` 게이트는 사용자 판단 없이 완화하지 않았다. 자문자답·중복 발송을 막는 장치이며, 이번 단위는 그 게이트가 정상 판단할 수 있도록 **입력**(트랜스크립트·소스 행)을 고쳤다.
 - 3D 셰이더·음성 파이프라인·MLX 27B 교체·Browser-Use 실동작·⌘⌥Esc 비상 중단은 이번에도 미검증이다.
+
+## 45시간 무발송의 실제 원인과 긱뉴스 경로 재구성 — 2026-09-23 KST (8차)
+
+### 1. 신고 3항의 지배적 원인은 45시간 파이프라인 정지다
+
+- 방 417 `reply_jobs` 의 생성 시각을 전량 재구성하면 마지막 작업은 09-20 21:35:52 생성 → 09-20 21:58:47 종료이고, 다음 작업은 09-22 18:57:37 이다. 그 사이 약 45시간 동안 큐에 작업이 하나도 생성되지 않았다.
+- 그 구간에 방은 조용하지 않았다. 방 417 의 KakaoTalk DB 메시지를 읽으면 09-21 15:28~23:34 와 09-22 00:34~18:56 에 타인 발신 메시지가 계속 있었다(최신 400건 기준 09-21 102건, 09-22 111건). 실제로 조용했던 구간은 09-20 21:39~09-21 15:28 의 17.8시간뿐이다.
+- 세 방이 같은 순간에 멈췄다. 방 437 은 09-21 작업이 0건, 방 325 도 09-21 이 0건이다. 정지 후 첫 작업은 09-22 18:57:34(437), 09-22 18:57:37(417), 09-22 20:10:34(325) 로 같은 세션 재시작에 함께 돌아왔다.
+- 런타임 베이크 이력이 정지 구간을 그대로 보여준다. `runtime/` 생성 시각은 09-21 07:33·07:35·07:41·07:49·07:50 다섯 개 뒤 **09-22 18:47 까지 새 런타임이 없다.** 17분 동안 다섯 번 베이크된 것은 시작 실패 루프의 흔적이다.
+- 원인은 그 런타임들의 내용이다. 09-21 에 베이크된 런타임은 `scripts` 가 12개이고 `auto_reply_ondevice.py` 가 없다. 09-22 18:47 이후 베이크는 18개이고 있다. 워커는 로드 시 `from auto_reply_ondevice import (...)` 를 수행하므로 그 런타임의 워커 자식은 import 에서 죽는다.
+- 같은 불완전 런타임으로 실행된 긱뉴스 슬롯 로그가 정확히 그 예외를 남겼다. `nimda-geeknews.log` 의 09-21 08:40·12:35·19:50 과 09-22 08:40·12:35 는 `runtime/20260920T225025Z-92735`(09-21 07:50 베이크) 에서 `ModuleNotFoundError: No module named 'auto_reply_ondevice'` 로 exit=1 이다.
+- 세션 가디언 plist 도 그 불완전 런타임을 가리켰다. `com.openkakao.auto-reply.session-monitor.plist.bak-20260922T185500` 은 `runtime/20260920T224139Z-69184/session-monitor-manifest.json` 을 가리키고, 그 런타임은 `auto_reply_ondevice.py` 가 없는 12개 런타임이다. 현재 plist 는 18개 완전 런타임인 `runtime/20260922T144341Z-5047` 을 가리킨다.
+- 즉 세션 자체는 살아 있었고 워커 자식만 로드에 실패했으며, 가디언은 소유자 락이 잡혀 있다는 이유로 런치하지 않았다. 이 무증상 저하는 45시간 동안 어떤 상태 파일에도 드러나지 않았다.
+
+### 2. 이 부류는 이제 fail-closed 로 막힌다
+
+- `6413835`(2026-09-22 18:30)가 `scripts/prepare-auto-reply-session-runtime.py` 에 import 폐포 검사를 넣었다. `import_closure` 가 런타임 엔트리에서 도달 가능한 로컬 모듈을 AST 로 계산하고, `runtime_import_gaps` 가 복사 목록에서 빠진 모듈을 반환하며, `stage_runtime` 은 그 집합이 비어 있지 않으면 `PackagingError("runtime script copy list is missing local import modules: ...")` 로 **베이크 전에** 실패한다. 같은 커밋이 `auto_reply_ondevice.py` 를 `RUNTIME_SCRIPT_NAMES` 에 넣었다(모듈 자체는 09-17 `c37687b` 부터 저장소에 있었다).
+- 이 실패 케이스는 이미 테스트로 고정돼 있다. `tests/test_auto_reply_session_packager.py` 의 `test_runtime_copy_list_covers_repository_import_closure`(폐포 = 복사 목록), `test_runtime_copy_list_contains_required_local_modules`, `test_runtime_import_gap_checker_reports_deliberate_omissions`(여섯 모듈을 일부러 빼면 검사기가 그 여섯을 정확히 보고한다).
+- 살아 있는 워커는 cwd 가 `/Users/twoimo/Documents/projects/openkakao-bot` 이고 `scripts/auto-reply-worker.py` 를 상대 경로로 실행한다. 즉 이 저장소 작업 트리가 곧 라이브 코드이며, 여기서 165개 파이썬 계약 테스트가 통과한다(턴 홀드·재시도 정책·db-watch·세션 모니터·전이 저널·dw 시작 인수·폴백 리스·MLX·온디바이스).
+
+### 3. 남는 구멍: 자식 시작 실패를 승격하는 경로가 없다
+
+- 가디언(`scripts/auto-reply-session-monitor.py`)은 소유자 락이 잡혀 있으면 `owner_lock_held` 로 기록하고 런치하지 않는다. 세션은 살아 있는데 방이 ready 가 아닌 상태를 승격시키는 경로가 없고, `session-monitor-status.json` 도 `state=watchdog_running`, `reason=owner_lock_held` 만 남긴다.
+- 베이크 단계가 fail-closed 가 되어 이 특정 원인은 재발하지 않지만, 같은 형태(자식이 시작하지 못함)의 다른 원인은 여전히 조용하다. 이번 단위는 그 승격을 구현하지 않았다. 런치 결정은 살아 있는 세션을 죽일 수 있어 사용자 판단이 필요한 영역으로 남긴다.
+
+### 4. 정지가 풀린 뒤에도 발송이 없었던 이유
+
+- 정지 후 첫 작업들은 09-21 백로그를 재생한 것이고, 재생 창이 DB 최신 구간으로 제한돼 09-21 15:28 부터 시작한다. 그 백로그는 이미 지난 대화이므로 엄격한 conversation_advanced 게이트가 전부 버렸다(방 417 16건, 방 437 187건).
+- 실제 인바운드에 대한 시도는 세 번 있었다. 09-22 21:20 현준의 샵검색 메시지에 대해 초안 비율이 미쳤네 가 생성됐지만 발송 직전 단계가 600초 창+유예를 넘겨 stale_backlog 로 만료됐다(att 4). 21:44 현준의 질문은 사용자가 직접 최연우로 답해 워터마크가 앞서 있었고(정상 동작), 21:45 아아 는 모델이 스키마가 아닌 판정문을 반환해 reconcile_gave_up 으로 끝났다.
+- 즉 7차의 두 축(잘린 트랜스크립트 97건, 예약 발송 소스 행 70건)은 발송 직전 경로를 계속 불가로 만든 원인이고, 그 불가가 위 초안을 창 밖으로 밀어냈다.
+
+### 5. 긱뉴스 경로 재구성
+
+- 방 417 의 proactive GeekNews 작업은 `upper=600.0` 로 09-20 08:58(att 81)·09:13(70)·09:25(12) 과 09-22 20:16(9)·20:30(26) 모두 `stale_backlog` 로 죽었다. proactive 는 conversation_advanced 와 응답 창 게이트를 우회하므로 이 죽음은 `defer_scheduled_pre_send_unavailable` 의 만료, 즉 발송 직전 경로가 창 전체 동안 불가였다는 뜻이다. 7차의 두 축과 같은 원인이다.
+- 호스트 슬롯은 별개 경로다. `nimda-geeknews.log` 는 09-21 세 슬롯과 09-22 두 슬롯을 불완전 런타임 import 실패로, 09-22 19:50 을 작성기 미발견(could not find the message input field)으로 기록한다. 22:00·00:11·00:31·00:32 의 `--preview` 는 모두 exit=0 이고 완전 런타임 `20260922T153057Z-4754` 를 골랐다. 슬롯 스크립트는 이미 `auto_reply_ondevice.py` 와 `--geeknews` 지원을 요구하도록 강화돼 있다.
+- 방 325 의 GeekNews 발송 이력은 09-16 08:50 한 건이다. 다음 실제 슬롯은 launchd `StartCalendarInterval` 기준 08:40 KST 이고, 그때 NIMDA 인수인계 임원방 AX 창이 열려 있어야 한다. 새 바이너리로 같은 세 창에서 작성기 탐색이 112~117ms 로 통과한다(7차).
+
+### 6. 검증
+
+- `cargo clippy --all-targets -- -D warnings` clean, `cargo test` 1102 passed / 0 failed(7차와 동일. 이번 단위는 Rust 를 바꾸지 않았다).
+- 파이썬 계약 테스트 165개 통과(2항). CI 는 0d5fa42 기준으로 확인한다.
+
+### 7. 이번 단위에서 하지 않은 것
+
+- **실제 카카오톡 발송을 수행하지 않았다.** 다음 실제 인바운드 또는 08:40 KST 슬롯이 종단 증거다.
+- 자식 시작 실패를 승격하는 재런치 경로는 구현하지 않았다(3항).
+- conversation_advanced·delivery_unknown·reconcile_gave_up 게이트는 그대로다.
+- 3D 셰이더·음성 파이프라인·MLX 27B 교체·Browser-Use 실동작·⌘⌥Esc 비상 중단은 여전히 미검증이다.
