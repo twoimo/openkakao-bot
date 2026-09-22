@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 MAX_OUTPUT_BYTES = 64 * 1024
+PREFLIGHT_TIMEOUT_SECONDS = 240
+MAX_CATALOG_PREFLIGHT_TIMEOUT_SECONDS = 15 * 60
 RECEIPT_SCHEMA = 3
 RECEIPT_MAX_AGE_SECONDS = 120.0
 SESSION_STATUS_SCHEMA = 1
@@ -546,6 +548,8 @@ def _preflight_cli(
     binary: Path,
     config: Path,
     chat_selectors: list[str],
+    *,
+    timeout_seconds: int = PREFLIGHT_TIMEOUT_SECONDS,
 ) -> tuple[bool, dict[str, Any], str]:
     """Run one auto-reply --check call; return (ok, payload, diagnostics)."""
     result = subprocess.run(
@@ -560,7 +564,7 @@ def _preflight_cli(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_runtime_env(config),
-        timeout=240,
+        timeout=timeout_seconds,
         check=False,
     )
     if len(result.stderr) > MAX_OUTPUT_BYTES:
@@ -591,6 +595,22 @@ def _filter_catalog_selectors(
     attest itself is dropped instead, and the reason is recorded so the menu can
     show it.
     """
+    if not candidates:
+        return [], []
+
+    whole_set_timeout = min(
+        PREFLIGHT_TIMEOUT_SECONDS * len(candidates),
+        MAX_CATALOG_PREFLIGHT_TIMEOUT_SECONDS,
+    )
+    ok, _payload, _diagnostics = _preflight_cli(
+        binary,
+        config,
+        candidates,
+        timeout_seconds=whole_set_timeout,
+    )
+    if ok:
+        return list(candidates), []
+
     accepted: list[str] = []
     skipped: list[dict[str, str]] = []
     for selector in candidates:

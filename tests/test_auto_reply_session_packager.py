@@ -183,6 +183,47 @@ class SessionRuntimePackagerTests(unittest.TestCase):
                  *module.RUNTIME_DATA_NAMES},
             )
 
+    def test_runtime_copy_list_covers_repository_import_closure(self):
+        module = load("session_packager_import_closure_test")
+        closure = module.import_closure(
+            (ROOT / "scripts").resolve(strict=True),
+            module.RUNTIME_ENTRY_SCRIPT_NAMES,
+        )
+        prepared = {Path(name).stem for name in module.RUNTIME_SCRIPT_NAMES}
+        self.assertEqual(closure - prepared, set())
+
+    def test_runtime_copy_list_contains_required_local_modules(self):
+        module = load("session_packager_required_modules_test")
+        required = {
+            "auto_reply_knowledge_graph.py",
+            "auto_reply_ondevice.py",
+            "auto_reply_reference_search.py",
+            "auto_reply_reference_store.py",
+            "jarvis_abort.py",
+            "local_mlx_gateway.py",
+        }
+        self.assertTrue(required <= set(module.RUNTIME_SCRIPT_NAMES))
+
+    def test_runtime_import_gap_checker_reports_deliberate_omissions(self):
+        module = load("session_packager_import_gap_test")
+        omitted = {
+            "auto_reply_knowledge_graph.py",
+            "auto_reply_ondevice.py",
+            "auto_reply_reference_search.py",
+            "auto_reply_reference_store.py",
+            "jarvis_abort.py",
+            "local_mlx_gateway.py",
+        }
+        reduced = tuple(
+            name for name in module.RUNTIME_SCRIPT_NAMES if name not in omitted
+        )
+        self.assertEqual(
+            module.runtime_import_gaps(
+                (ROOT / "scripts").resolve(strict=True), reduced
+            ),
+            {Path(name).stem for name in omitted},
+        )
+
     def test_rejects_ambiguous_duplicate_or_nonexact_selectors_before_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

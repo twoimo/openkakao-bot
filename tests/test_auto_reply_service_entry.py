@@ -176,6 +176,72 @@ class CatalogSelectorTests(unittest.TestCase):
                     ["bind:7:답변방", "bind:8:긱뉴스만"],
                 )
 
+    def test_catalog_preflight_accepts_whole_set_in_one_call(self):
+        module = load_entry("auto_reply_catalog_whole_set_test")
+        candidates = ["id:1", "id:2", "id:3"]
+        with mock.patch.object(
+            module, "_preflight_cli", return_value=(True, {"valid": True}, "")
+        ) as preflight:
+            accepted, skipped = module._filter_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, candidates)
+        self.assertEqual(skipped, [])
+        preflight.assert_called_once()
+        self.assertEqual(preflight.call_args.args[2], candidates)
+        self.assertGreater(
+            preflight.call_args.kwargs["timeout_seconds"],
+            module.PREFLIGHT_TIMEOUT_SECONDS,
+        )
+
+    def test_catalog_preflight_falls_back_and_records_bad_room_reason(self):
+        module = load_entry("auto_reply_catalog_fallback_test")
+        candidates = ["id:1", "id:2", "id:3"]
+        calls = []
+
+        def fake_preflight(_binary, _config, selectors, **kwargs):
+            calls.append((tuple(selectors), kwargs.get("timeout_seconds")))
+            if len(selectors) > 1:
+                return False, {}, "whole set rejected"
+            if selectors == ["id:2"]:
+                return False, {}, "room two rejected"
+            return True, {"valid": True}, ""
+
+        with mock.patch.object(module, "_preflight_cli", side_effect=fake_preflight):
+            accepted, skipped = module._filter_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, ["id:1", "id:3"])
+        self.assertEqual(
+            skipped, [{"selector": "id:2", "reason": "room two rejected"}]
+        )
+        self.assertEqual(
+            [selectors for selectors, _timeout in calls],
+            [("id:1", "id:2", "id:3"), ("id:1",), ("id:2",), ("id:3",)],
+        )
+
+    def test_catalog_preflight_requires_full_set_capable_first_call(self):
+        module = load_entry("auto_reply_catalog_full_set_only_test")
+        candidates = ["id:1", "id:2", "id:3"]
+
+        def full_set_only(_binary, _config, selectors, **_kwargs):
+            if selectors == candidates:
+                return True, {"valid": True}, ""
+            return False, {}, "single-room calls are invalid for this config"
+
+        with mock.patch.object(
+            module, "_preflight_cli", side_effect=full_set_only
+        ) as preflight:
+            accepted, skipped = module._filter_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, candidates)
+        self.assertEqual(skipped, [])
+        self.assertEqual(preflight.call_count, 1)
+
 class AutoReplyServiceEntryTests(unittest.TestCase):
     maxDiff = None
 
