@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -36,6 +37,8 @@ from scripts.auto_reply_ondevice import (  # noqa: E402
     detect_mlx_gateway_models,
     download_command,
     generate_command,
+    ONDEVICE_RUNTIME_VERIFIED_LABEL,
+    ondevice_status_strings,
     ondevice_summary_dict,
     probe_ondevice_generation,
     read_last_probe,
@@ -1142,3 +1145,103 @@ class TestProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+UI_CONTRACT_PATH = ROOT / "desktop" / "src" / "__tests__" / "ui-removal-contract.test.ts"
+
+
+def _removed_ui_tokens() -> list[str]:
+    """The banned-token list the desktop markup contract enforces."""
+    source = UI_CONTRACT_PATH.read_text(encoding="utf-8")
+    match = re.search(r"const REMOVED_TOKENS = \[(.*?)\];", source, re.S)
+    if match is None:
+        raise AssertionError("ui-removal-contract.test.ts no longer exposes REMOVED_TOKENS")
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+class TestOnDeviceRenderedTextGuard(unittest.TestCase):
+    """The settings window renders this text, so it must respect the UI contract.
+
+    desktop/src/ui.ts is token-clean, but the on-device status line is built
+    here and injected through the Tauri bridge's status_label, which the markup
+    contract cannot see. The installed settings window surfaced the leak.
+    """
+
+    PROBE = {
+        "ok": True,
+        "engine": "mlx-serve-gateway",
+        "model": FLASH_NEXT_MODEL_ID,
+        "latency_ms": 15617,
+        "preview": "OK",
+    }
+
+    def _offending(self, text: str) -> list[str]:
+        folded = text.lower()
+        return [token for token in _removed_ui_tokens() if token.lower() in folded]
+
+    def _bits(self, verified: bool, last_probe: dict | None):
+        return ondevice_status_strings(
+            chip="Apple M5 Max",
+            memory_gb=128.0,
+            reason="MLX Serve/gateway 확인",
+            recommended_model=FLASH_NEXT_MODEL_ID,
+            verified=verified,
+            last_probe=last_probe,
+        )
+
+    def test_offender_detector_is_not_vacuous(self):
+        self.assertEqual(self._offending("일괄 검증 · 권한"), ["검증", "권한", "일괄"])
+        self.assertEqual(self._offending("런타임·가중치 확인됨"), [])
+
+    def test_contract_lists_the_tokens_this_module_must_avoid(self):
+        tokens = _removed_ui_tokens()
+        self.assertIn("검증", tokens)
+        self.assertIn("점검", tokens)
+        self.assertGreaterEqual(len(tokens), 8)
+
+    def test_status_strings_carry_no_banned_ui_token(self):
+        cases = [
+            ("verified with probe", True, self.PROBE),
+            ("verified without probe", True, None),
+            ("unverified without probe", False, None),
+            ("unverified with failed probe", False, dict(self.PROBE, ok=False, model="")),
+        ]
+        for name, verified, last_probe in cases:
+            with self.subTest(case=name):
+                status_bits, detail_bits = self._bits(verified, last_probe)
+                self.assertTrue(status_bits)
+                self.assertTrue(detail_bits)
+                self.assertEqual(self._offending(" · ".join(detail_bits + status_bits)), [])
+
+    def test_status_shape_matches_what_the_card_renders(self):
+        status_bits, _ = self._bits(True, self.PROBE)
+        self.assertEqual(status_bits[0], "온디바이스 감지: Apple M5 Max (128GB RAM)")
+        self.assertEqual(status_bits[1], "MLX Core/Serve")
+        self.assertEqual(status_bits[2], "Qwen3.8 Flash-Next")
+        self.assertEqual(status_bits[3], ONDEVICE_RUNTIME_VERIFIED_LABEL)
+        self.assertEqual(status_bits[4], "실추론 통과 (Qwen3.8 Flash-Next)")
+
+        without_probe, _ = self._bits(False, None)
+        self.assertEqual(without_probe[-1], "런타임 미확인")
+        self.assertEqual(len(without_probe), 4)
+
+    def test_summary_dict_uses_the_pure_formatter(self):
+        rec = _gateway_rec()
+        with TemporaryDirectory() as temp_dir:
+            with patch("scripts.auto_reply_ondevice.detect_hardware", return_value=_hw("Apple M5 Max", 128.0)), patch(
+                "scripts.auto_reply_ondevice.recommend_ondevice_setup", return_value=rec
+            ), patch(
+                "scripts.auto_reply_ondevice.verify_ondevice_setup",
+                return_value={"ok": True, "engine": "mlx-serve", "model": rec.recommended_model, "checks": [], "errors": []},
+            ):
+                summary = ondevice_summary_dict(Path(temp_dir))
+        status_bits, detail_bits = ondevice_status_strings(
+            chip="Apple M5 Max",
+            memory_gb=128.0,
+            reason=rec.reason,
+            recommended_model=rec.recommended_model,
+            verified=True,
+            last_probe=None,
+        )
+        self.assertEqual(summary["status_label"], " · ".join(status_bits))
+        self.assertEqual(summary["status_detail"], " · ".join(bit for bit in detail_bits if bit))
+        self.assertEqual(self._offending(summary["status_label"] + summary["status_detail"]), [])

@@ -45,6 +45,32 @@ DEFAULT_CONTRACT = ROOT / "desktop" / "src" / "__tests__" / "ui-removal-contract
 DEFAULT_OUT = ROOT / "docs" / "architecture"
 DEFAULT_PORT = 8712
 
+# The on-device status line is produced by the product, not written here. The
+# TypeScript contract cannot see text the Tauri bridge injects as status_label,
+# and the installed settings window once rendered a banned token exactly that
+# way, so the stub feeds the real formatter and the scan below sees its output.
+sys.path.insert(0, str(ROOT / "scripts"))
+from auto_reply_ondevice import ondevice_status_strings  # noqa: E402
+
+STUB_ONDEVICE_MODEL = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+STUB_ONDEVICE_PROBE = {
+    "ok": True,
+    "engine": "mlx-serve-gateway",
+    "model": STUB_ONDEVICE_MODEL,
+    "latency_ms": 15617,
+    "preview": "OK",
+}
+STUB_ONDEVICE_STATUS_BITS, STUB_ONDEVICE_DETAIL_BITS = ondevice_status_strings(
+    chip="Apple M5 Max",
+    memory_gb=128.0,
+    reason="Apple Silicon MLX Core/Serve 경로를 사용합니다",
+    recommended_model=STUB_ONDEVICE_MODEL,
+    verified=True,
+    last_probe=STUB_ONDEVICE_PROBE,
+)
+STUB_ONDEVICE_STATUS_LABEL = " · ".join(STUB_ONDEVICE_STATUS_BITS)
+STUB_ONDEVICE_STATUS_DETAIL = " · ".join(bit for bit in STUB_ONDEVICE_DETAIL_BITS if bit)
+
 PANEL_SIZE = (276, 260)
 SETTINGS_SIZE = (760, 760)
 PANEL_LABEL = "\uc124\uc815 \uc5f4\uae30"
@@ -137,7 +163,8 @@ IDLE_SNAPSHOT: dict[str, Any] = {
         "hardware": {"chip": "Apple M5 Max", "cores": 18, "memory_gb": 128.0, "is_apple_silicon": True},
         "recommendation": {"primary_engine": "MLX Core/Serve", "recommended_model": "Qwen3.8 Flash-Next", "recommended_quant": "4-8bit"},
         "verification": {"ok": True},
-        "status_label": "Apple M5 Max (128GB RAM) \u00b7 MLX Core/Serve \u00b7 \uc2e4\ucd94\ub860 \ud1b5\uacfc (Qwen3.8 Flash-Next)",
+        "status_label": STUB_ONDEVICE_STATUS_LABEL,
+        "status_detail": STUB_ONDEVICE_STATUS_DETAIL,
     },
     "pipeline": {"active": False, "stage": "none", "stageIndex": 0, "stageTotal": 8, "outcome": "none"},
     "terminal_counts": {"sent": 12, "skipped": 1, "delivery_unknown": 0, "burst_superseded": 1},
@@ -512,6 +539,11 @@ def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[s
     checks.append(check("settings.no_iframe", settings["iframes"] == 0, settings["iframes"]))
     checks.append(check("settings.knowledge_canvas_present", any(item["id"] == "knowledge-graph-canvas" for item in settings["canvases"]), settings["canvases"]))
     checks.append(check("settings.no_removed_control_tokens", scan_banned_tokens([settings["text"], settings["html"]], contract["banned_tokens"]) == [], scan_banned_tokens([settings["text"], settings["html"]], contract["banned_tokens"])))
+    checks.append(check(
+        "settings.ondevice_status_is_product_formatted",
+        STUB_ONDEVICE_STATUS_LABEL in settings["text"],
+        {"product_label": STUB_ONDEVICE_STATUS_LABEL[:160]},
+    ))
 
     checks.append(check("knowledge.hologram_renders_frames", (knowledge.get("render_count_after_focus") or 0) > 0, knowledge.get("render_count_after_focus")))
     checks.append(check("knowledge.drilldown_focuses_a_node", bool(knowledge.get("focused")), {"probes": knowledge.get("probes"), "title": knowledge.get("focus_title")}))

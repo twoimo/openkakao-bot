@@ -190,3 +190,47 @@ class BridgeStub(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+class ProductSuppliedStatusText(unittest.TestCase):
+    """The stub must render the product's own on-device status text.
+
+    The markup contract cannot see text the Tauri bridge injects as
+    status_label, so the browser scan only has teeth if the stub carries what
+    the product actually builds.
+    """
+
+    REASON = "Apple Silicon MLX Core/Serve 경로를 사용합니다"
+
+    def bits(self):
+        return check.ondevice_status_strings(
+            chip="Apple M5 Max",
+            memory_gb=128.0,
+            reason=self.REASON,
+            recommended_model=check.STUB_ONDEVICE_MODEL,
+            verified=True,
+            last_probe=check.STUB_ONDEVICE_PROBE,
+        )
+
+    def test_stub_label_is_the_factory_output(self) -> None:
+        status_bits, detail_bits = self.bits()
+        self.assertEqual(check.STUB_ONDEVICE_STATUS_LABEL, " · ".join(status_bits))
+        self.assertEqual(
+            check.STUB_ONDEVICE_STATUS_DETAIL,
+            " · ".join(bit for bit in detail_bits if bit),
+        )
+
+    def test_stub_status_text_avoids_the_banned_tokens(self) -> None:
+        contract = check.parse_contract(CONTRACT_SOURCE)
+        haystacks = [check.STUB_ONDEVICE_STATUS_LABEL, check.STUB_ONDEVICE_STATUS_DETAIL]
+        self.assertEqual(check.scan_banned_tokens(haystacks, contract["banned_tokens"]), [])
+
+    def test_stub_snapshot_uses_the_factory_output(self) -> None:
+        ondevice = check.IDLE_SNAPSHOT["onDevice"]
+        self.assertEqual(ondevice["status_label"], check.STUB_ONDEVICE_STATUS_LABEL)
+        self.assertEqual(ondevice["status_detail"], check.STUB_ONDEVICE_STATUS_DETAIL)
+        self.assertEqual(ondevice["verification"], {"ok": True})
+
+    def test_busy_snapshot_carries_the_same_status_text(self) -> None:
+        self.assertEqual(
+            check.BUSY_SNAPSHOT["onDevice"]["status_label"],
+            check.STUB_ONDEVICE_STATUS_LABEL,
+        )

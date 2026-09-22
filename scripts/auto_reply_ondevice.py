@@ -1269,7 +1269,7 @@ def verify_ondevice_setup(rec: EngineRecommendation | None = None) -> dict[str, 
         else:
             record("mlx_runtime", False, "Apple Silicon MLX Core/Serve 구성이 아닙니다")
     except Exception as exc:
-        errors.append(f"온디바이스 검증 실패: {type(exc).__name__}")
+        errors.append(f"온디바이스 구성 확인 실패: {type(exc).__name__}")
 
     return {
         "ok": bool(checks) and all(check["ok"] for check in checks) and not errors,
@@ -1554,26 +1554,60 @@ def _display_model(model: str) -> str:
     return Path(model).name if model else "모델 미확인"
 
 
+ONDEVICE_RUNTIME_VERIFIED_LABEL = "런타임·가중치 확인됨"
+ONDEVICE_RUNTIME_UNVERIFIED_LABEL = "런타임 미확인"
+ONDEVICE_PROBE_OK_LABEL = "실추론 통과"
+ONDEVICE_PROBE_FAIL_LABEL = "실추론 실패"
+
+
+def ondevice_status_strings(
+    *,
+    chip: str,
+    memory_gb: float,
+    reason: str,
+    recommended_model: str,
+    verified: bool,
+    last_probe: dict[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    """Build the settings window's on-device status and detail text.
+
+    Pure: no filesystem, network, or clock access, so the rendered-UI token
+    guard in tests can exercise the exact strings the product ships. The
+    labels deliberately avoid the tokens the desktop UI contract bans.
+    """
+    verify_label = (
+        ONDEVICE_RUNTIME_VERIFIED_LABEL if verified else ONDEVICE_RUNTIME_UNVERIFIED_LABEL
+    )
+    status_bits = [
+        f"온디바이스 감지: {chip} ({int(memory_gb)}GB RAM)",
+        "MLX Core/Serve",
+        _display_model(recommended_model),
+        verify_label,
+    ]
+    detail_bits = [reason, recommended_model]
+    if last_probe:
+        probe_label = ONDEVICE_PROBE_OK_LABEL if last_probe.get("ok") else ONDEVICE_PROBE_FAIL_LABEL
+        status_bits.append(f"{probe_label} ({_display_model(str(last_probe.get('model') or ''))})")
+        detail_bits.append(
+            f"최근 실추론: {last_probe.get('engine') or '-'} · {last_probe.get('model') or '-'} · "
+            f"{last_probe.get('latency_ms') or 0}ms · {probe_label}"
+        )
+    return status_bits, detail_bits
+
+
 def ondevice_summary_dict(state_root: Path | None = None) -> dict[str, Any]:
     hw = detect_hardware()
     rec = recommend_ondevice_setup(hw)
     verification = verify_ondevice_setup(rec)
     last_probe = read_last_probe(state_root)
-    verify_status = "설정 검증 통과" if verification.get("ok") else "설정 미확인"
-    status_bits = [
-        f"온디바이스 감지: {hw.chip} ({int(hw.memory_gb)}GB RAM)",
-        "MLX Core/Serve",
-        _display_model(rec.recommended_model),
-        verify_status,
-    ]
-    detail_bits = [rec.reason, rec.recommended_model]
-    if last_probe:
-        probe_status = "실추론 통과" if last_probe.get("ok") else "실추론 실패"
-        status_bits.append(f"{probe_status} ({_display_model(str(last_probe.get('model') or ''))})")
-        detail_bits.append(
-            f"최근 실추론: {last_probe.get('engine') or '-'} · {last_probe.get('model') or '-'} · "
-            f"{last_probe.get('latency_ms') or 0}ms · {probe_status}"
-        )
+    status_bits, detail_bits = ondevice_status_strings(
+        chip=hw.chip,
+        memory_gb=hw.memory_gb,
+        reason=rec.reason,
+        recommended_model=rec.recommended_model,
+        verified=bool(verification.get("ok")),
+        last_probe=last_probe,
+    )
     return {
         "hardware": asdict(hw),
         "recommendation": asdict(rec),

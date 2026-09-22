@@ -1539,3 +1539,29 @@ receipt:
 - Tauri 브리지는 stub이다. 실제 Rust 브리지가 돌려주는 스냅샷 형식(6키 작업 이벤트 등)은 기존 Rust 테스트가 담당한다.
 - DREAM-RSI·색인·모델 소유권 값은 stub payload이므로 실측이 아니다. `model-swap` 은 이 호스트의 실제 상태(외부 `mlx-serve` 가 11234 점유 → 27B 전환 차단)를 그대로 stub에 옮긴 것이고, 앱이 실제로 전환을 거부하는지는 이 절이 입증하지 않는다.
 - fps는 headless Chromium의 RAF 환경에서 측정한 값이다. 실제 webview의 합성 주기와 같다고 주장하지 않는다.
+
+### 설치본 설정 창이 드러낸 백엔드 문자열 누출 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+`ui-removal-contract.test.ts` 와 `scripts/jarvis_desktop_render_check.py` 는 마크업과 번들이 그리는 화면을 고정한다. 그런데 설정 창 AI 모델 카드의 온디바이스 한 줄은 마크업이 아니라 **Tauri 브리지가 `status_label` 로 주입하는 문자열** 이고, 두 검사 모두 그 값을 실제 제품에서 읽지 않았다. 이번 턴에 Computer Use로 설치본을 직접 열어 읽으면서 그 구멍이 뚫려 있는 것을 확인했다.
+
+재현과 관측:
+
+- 설치본 pid 84125는 평소 창이 0개다(패널은 `label() == "jarvis"` 가 포커스를 잃으면 hide된다). 트레이 아이템은 AX로 `2917, 3, 36, 24` 였고 `/tmp/jarvis_click 2935 15` 로 합성 HID 클릭을 보냈다. 앱이 한가할 때 패널은 즉시 뜨지 않고 **약 5–8초 뒤**에 뜨며(창 수를 0.25초 간격으로 40회 샘플링해 마지막 샘플에서 1이 됐다), 뜬 뒤에도 포커스를 잃으면 다시 hide된다. 종전 기록의 "클릭 0.1초 뒤 바인딩"은 창이 이미 떠 있던 조건의 값이다.
+- 그 창이 떠 있는 동안 `cua.getApp("/Applications/OpenKakao Jarvis.app")` 는 즉시 붙었다. 패널 AX 트리는 종전과 같다: `0 standard window` → `1 scroll area` → `2 HTML content (tauri://localhost)` → `3 container Jarvis` → `4 image Jarvis core` + `5 button 설정 열기`, 즉 조작 요소는 톱니바퀴 1개다. 스크린샷도 같은 톤이었다: 아이보리 배경, 샴페인 골드 다중 짐벌 링 + 구형 코어, 얇은 시냅스 선과 작은 입자. bloom 후처리·네온·발광 텍스트는 없었다.
+- 같은 세션에서 gear(요소 5)를 실제로 클릭해 설정 창(760x760)을 열었다. AX 트리는 `대상 채팅방 · AI 모델 · Voice · 카카오 DB 동기화 · 색인 · DREAM-RSI · Knowledge · History` 7개 `h2` 와 heading 없는 `GeekNews 슬롯` 컨테이너만 담았고 대량 검증·기능 점검·권한 관리 화면은 없었다.
+- 그런데 AI 모델 카드의 온디바이스 줄은 `온디바이스: 온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve · Qwen3.8 Flash-Next · 설정 검증 통과 · 실추론 통과 (Qwen3.8 Flash-Next)` 였다. `검증` 은 데스크톱 계약이 UI에서 금지한 토큰인데, 이 문자열은 `scripts/auto_reply_ondevice.py` 가 만들고 브리지의 `status_label` 로 들어오므로 마크업 스캔에 걸리지 않는다. 렌더 검사의 stub 도 `status_label` 을 손으로 적어 두어(`실추론 통과` 만 포함) 같은 이유로 통과했다.
+- 설정 창은 CUA의 close button(요소 92) 클릭으로 닫았다. 클릭 뒤 관측 호출이 `-10005 timeoutReached` 로 끝난 것은 창이 사라져서이고, 곧이어 AX 창 수 0 · pid 84125 생존을 확인해 이 턴이 찾은 상태로 되돌렸다.
+
+수정은 세 갈래다.
+
+- `scripts/auto_reply_ondevice.py` 의 상태 문자열을 순수 함수 `ondevice_status_strings(...)` 로 분리하고 라벨을 `런타임·가중치 확인됨` / `런타임 미확인` 으로 바꿨다(종전 `설정 검증 통과` / `설정 미확인`). 예외 진단 문구 `온디바이스 검증 실패` 도 `온디바이스 구성 확인 실패` 로 맞췄다. 이 함수는 파일·네트워크·시계에 접근하지 않으므로 렌더되는 문자열을 그대로 검사할 수 있다.
+- `tests/test_auto_reply_ondevice.py` 에 `TestOnDeviceRenderedTextGuard` 5개를 추가했다. 금지 토큰은 `desktop/src/__tests__/ui-removal-contract.test.ts` 의 `REMOVED_TOKENS` 에서 직접 읽고, 검출기가 비지 않음도 먼저 확인한다(`일괄 검증 · 권한` → `["검증","권한","일괄"]`). verified/미확인 × probe 있음/없음 4조합 모두에서 상태·상세 문자열에 금지 토큰이 없고, `ondevice_summary_dict` 가 그 순수 함수를 실제로 쓰는지도 확인한다.
+- `scripts/jarvis_desktop_render_check.py` 의 Tauri stub 은 이제 같은 함수를 호출해 `status_label` / `status_detail` 을 만든다. 새 check `settings.ondevice_status_is_product_formatted` 는 설정 창이 그 제품 문자열을 정말 렌더하는지 보므로, 토큰 스캔이 렌더되지 않은 문자열에 대해 공허하게 통과할 수 없다. `tests/test_jarvis_desktop_render_check.py` 에는 stub 라벨이 그 함수의 출력과 같은지, 금지 토큰이 없는지, busy 스냅샷도 같은 문자열을 쓰는지 확인하는 4개를 추가했다.
+
+검사에 이빨이 있는지는 주입으로 확인했다. stub 라벨을 종전 문자열(`설정 검증 통과` 포함)로 바꾼 별도 실행에서 렌더 검사는 `status fail` 이고 `settings.no_removed_control_tokens` 가 `['검증']` 로 떨어졌다. 같은 리비전의 수정 상태에서는 **24/24 checks pass** 이다. 영수증 [jarvis-desktop-render-check.json](jarvis-desktop-render-check.json) 과 캡처 7장을 이 실행으로 갱신했다.
+
+이 절이 닫지 않는 것:
+
+- 설치는 수정 전 번들 그대로다. pid 84125는 여전히 `설정 검증 통과` 를 렌더하므로, 이 수정은 다음 재빌드·재설치(전환) 때 화면에 반영된다. `docs/architecture/jarvis-live-settings.png` 는 수정 전 설치본을 담은 그대로 둔다.
+- 이 셸에서 `screencapture` 는 신뢰할 수 없다: `-R` 은 15–20초 뒤에야 파일을 쓰고 그동안 화면이 바뀌면 다른 창을 담았으며(실제로 Spark 창을 담아 되돌렸다), `-l <windowID>` 는 25초를 넘겨도 끝나지 않아 스스로 종료해야 했다. 창 ID 조회는 `CGWindowListCopyWindowInfo` 를 쓰는 `/tmp/jarvis_win <pid> [title]` 로 됐다. CUA 스크린샷은 대화에만 남고 파일로 저장할 수 없다(`nodeRepl` 에 파일 API가 없고 `nodeRepl.rpc` 는 service 식별자를 요구한다).
+- `macos/AutoReplyMenu/main.swift` 에는 같은 부류의 문자열이 아직 7개 있다(`점검 중` 5개, `검증 통과` 계열 2개). 그 앱은 아직 CI에서 빌드되지만 제품 런타임은 Tauri이고, 전환 시 함께 사라질 대상이라 이번 패스에서는 건드리지 않았다.
