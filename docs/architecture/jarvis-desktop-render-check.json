@@ -1,6 +1,6 @@
 {
   "schema": "jarvis-desktop-render-check/1",
-  "generated_at": "2026-09-22T16:06:22Z",
+  "generated_at": "2026-09-22T17:42:33Z",
   "dist": {
     "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/dist",
     "index_sha256": "82e37a118535069784265293de93ad677f7f423972cc397290a3d5b9a6bfefcb",
@@ -84,13 +84,13 @@
         "counter": "__jarvisRenderCount",
         "frames": 27,
         "seconds": 2.002,
-        "fps": 13.49
+        "fps": 13.48
       },
       "busy": {
         "counter": "__jarvisRenderCount",
         "frames": 44,
-        "seconds": 2.001,
-        "fps": 21.99
+        "seconds": 2.002,
+        "fps": 21.98
       }
     },
     "luminance": {
@@ -103,13 +103,13 @@
       "busy": {
         "width": 552,
         "height": 520,
-        "meanLuminance": 234.16,
+        "meanLuminance": 234.2,
         "litRatio": 1
       }
     },
     "render_count": {
       "idle": 17,
-      "busy": 107
+      "busy": 109
     },
     "actions": {
       "snapshot_calls": 4,
@@ -122,23 +122,23 @@
     "captures": {
       "idle": {
         "file": "jarvis-render-panel.idle.png",
-        "bytes": 109396,
-        "sha256": "889129321019578e30c570b328b33d3ae663fc34de59fc0da3f323dd4664a235"
+        "bytes": 109886,
+        "sha256": "65f33edddcd65c2160d573e3d5697fcb49fdc661fc0118133e88304ef8b0d5ee"
       },
       "busy": {
         "file": "jarvis-render-panel.busy.png",
-        "bytes": 122932,
-        "sha256": "73e21188211809b685f2401639bf38816c4e000f3d4aeabf5490b5bf9292a140"
+        "bytes": 119891,
+        "sha256": "654c1682dd0df1a7ac86931ecc2c6f219cc5d707f4c09fd297beb32a2bd6df16"
       },
       "light": {
         "file": "jarvis-render-panel.light.png",
-        "bytes": 109818,
-        "sha256": "21b882f34491bcf174f4b880b1cda6565dcc77262a1aa0aa5b4c8187a1c01f0c"
+        "bytes": 108773,
+        "sha256": "612b6db296754e6591da323028001c83e628b48cfe7007a64228db031647c8ab"
       },
       "dark": {
         "file": "jarvis-render-panel.dark.png",
-        "bytes": 106266,
-        "sha256": "2688b45efe08ab4b63045b80d764078ccce030a325e34b64097acac63976484e"
+        "bytes": 105456,
+        "sha256": "5f2f32a61dc1f1d15e1a3ee949a6020d0ffb58adbd9c3ee2a7325a68f0834ddd"
       }
     },
     "text": "",
@@ -157,9 +157,9 @@
       },
       "visible": {
         "counter": "__jarvisRenderCount",
-        "frames": 34,
+        "frames": 33,
         "seconds": 1.502,
-        "fps": 22.64
+        "fps": 21.97
       },
       "blur": {
         "counter": "__jarvisRenderCount",
@@ -169,9 +169,9 @@
       },
       "focus": {
         "counter": "__jarvisRenderCount",
-        "frames": 32,
-        "seconds": 1.502,
-        "fps": 21.3
+        "frames": 34,
+        "seconds": 1.501,
+        "fps": 22.65
       },
       "hidden_poll_delta": 0
     }
@@ -265,7 +265,7 @@
       "seconds": 1.501,
       "fps": 13.32
     },
-    "render_count_after_focus": 83,
+    "render_count_after_focus": 91,
     "settings_focus_capture": {
       "file": "jarvis-render-settings.focus.png",
       "bytes": 114978,
@@ -320,7 +320,7 @@
         "counter": "__jarvisRenderCount",
         "frames": 27,
         "seconds": 2.002,
-        "fps": 13.49
+        "fps": 13.48
       }
     },
     {
@@ -329,16 +329,16 @@
       "detail": {
         "counter": "__jarvisRenderCount",
         "frames": 44,
-        "seconds": 2.001,
-        "fps": 21.99
+        "seconds": 2.002,
+        "fps": 21.98
       }
     },
     {
       "name": "panel.fps_within_cap",
       "ok": true,
       "detail": {
-        "idle": 13.49,
-        "busy": 21.99
+        "idle": 13.48,
+        "busy": 21.98
       }
     },
     {
@@ -390,9 +390,9 @@
       "ok": true,
       "detail": {
         "counter": "__jarvisRenderCount",
-        "frames": 34,
+        "frames": 33,
         "seconds": 1.502,
-        "fps": 22.64
+        "fps": 21.97
       }
     },
     {
@@ -410,9 +410,9 @@
       "ok": true,
       "detail": {
         "counter": "__jarvisRenderCount",
-        "frames": 32,
-        "seconds": 1.502,
-        "fps": 21.3
+        "frames": 34,
+        "seconds": 1.501,
+        "fps": 22.65
       }
     },
     {
@@ -499,7 +499,7 @@
     {
       "name": "knowledge.hologram_renders_frames",
       "ok": true,
-      "detail": 83
+      "detail": 91
     },
     {
       "name": "knowledge.drilldown_focuses_a_node",
