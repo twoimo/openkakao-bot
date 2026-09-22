@@ -426,6 +426,79 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
         turn_hold.assert_called_once_with(event, None)
         repeat_hold.assert_not_called()
 
+    def test_geeknews_digest_does_not_repeat_hold_against_geeknews_self_history(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_geeknews_repeat_test")
+        event = self._burst_event(module, 512, "예약 다이제스트", int(time.time()))
+        event.update(proactive=True, proactive_query="geeknews-rss")
+        recent = [
+            {
+                "is_self": True,
+                "message": "GeekNews TOP5 KST https://news.hada.io/topic?id=1",
+                "sent_at": 100,
+                "proactive": True,
+                "proactive_query": "geeknews-rss",
+            },
+            {
+                "is_self": True,
+                "message": "GeekNews TOP5 KST https://news.hada.io/topic?id=2",
+                "sent_at": 101,
+                "reason": "geeknews_rss",
+            },
+            {
+                "is_self": True,
+                "message": "GeekNews TOP5 KST https://news.hada.io/topic?id=3",
+                "sent_at": 102,
+                "proactive": True,
+            },
+        ]
+        fresh = [
+            {
+                "is_self": True,
+                "message": "GeekNews TOP5 KST https://news.hada.io/topic?id=4",
+                "sent_at": 103,
+                "proactive": True,
+                "proactive_query": "geeknews-rss",
+            }
+        ]
+        reply = "GeekNews TOP5 KST https://news.hada.io/topic?id=5"
+        self.assertTrue(
+            module._outbound_similar_recent_self(reply, recent + fresh)
+        )
+        with mock.patch.object(module, "_recent_sent_self_rows", return_value=fresh):
+            self.assertIsNone(
+                module._send_time_repeat_hold(
+                    event,
+                    reply,
+                    recent,
+                    object(),
+                )
+            )
+
+    def test_reactive_reply_still_repeat_holds_after_geeknews_change(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_reactive_repeat_test")
+        recent = [
+            {
+                "is_self": True,
+                "message": "같은 반응형 답변 내용입니다",
+                "sent_at": 100,
+            }
+        ]
+        event = self._burst_event(module, 513, "반응형 입력", int(time.time()))
+        with mock.patch.object(
+            module,
+            "_recent_sent_self_rows",
+            return_value=recent,
+        ):
+            self.assertEqual(
+                module._send_time_repeat_hold(
+                    event,
+                    "같은 반응형 답변 내용입니다",
+                    [],
+                    object(),
+                ),
+                "similar_recent_self",
+            )
+
     def test_authoritative_watermark_fails_closed_on_regression_identity_or_unstable_reads(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_watermark_safety_test")
         with self._queued_turn_with_authoritative_watermark(module) as fixture:

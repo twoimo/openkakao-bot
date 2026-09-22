@@ -6245,6 +6245,17 @@ def _constructed_geeknews_outbound(
     return reason == "geeknews_rss"
 
 
+def _is_constructed_geeknews_row(row: dict) -> bool:
+    """Identify durable self replies created by the GeekNews scheduler."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("proactive") is True:
+        return True
+    if str(row.get("proactive_query") or "").strip() == "geeknews-rss":
+        return True
+    return str(row.get("reason") or "").strip() == "geeknews_rss"
+
+
 def _policy_valid_draft(
     reply: str,
     inbound: str,
@@ -10126,7 +10137,7 @@ def _recent_sent_self_rows(
     try:
         rows = connection.execute(
             """
-            SELECT reply, updated_at
+            SELECT reply, updated_at, event_json
               FROM reply_jobs
              WHERE status = 'sent'
                AND reply IS NOT NULL
@@ -10147,6 +10158,13 @@ def _recent_sent_self_rows(
         text = " ".join(str(row["reply"] or "").split())
         if not text:
             continue
+        event_json = {}
+        try:
+            parsed = json.loads(row["event_json"] or "{}")
+            if isinstance(parsed, dict):
+                event_json = parsed
+        except (TypeError, ValueError):
+            event_json = {}
         out.append(
             {
                 "is_self": True,
@@ -10154,6 +10172,9 @@ def _recent_sent_self_rows(
                 "message": text,
                 "sent_at": int(float(row["updated_at"])),
                 "author_nickname": "최연우",
+                "proactive": event_json.get("proactive"),
+                "proactive_query": event_json.get("proactive_query"),
+                "reason": event_json.get("reason"),
             }
         )
     return out
@@ -10243,6 +10264,8 @@ def _send_time_repeat_hold(
         row for row in (recent_conversation or []) if isinstance(row, dict)
     ] + fresh
     combined.sort(key=lambda row: _fence_int(row.get("sent_at")) or 0)
+    if _constructed_geeknews_outbound(event):
+        combined = [row for row in combined if not _is_constructed_geeknews_row(row)]
     if _outbound_similar_recent_self(reply, combined):
         return "similar_recent_self"
     hold = _partner_streak_hold_reason(
