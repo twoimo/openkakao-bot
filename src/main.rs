@@ -1724,7 +1724,9 @@ fn select_auto_reply_llm(
 const LOCAL_MLX_BASE_URL: &str = "http://127.0.0.1:11234/v1";
 const LOCAL_MLX_MODELS_URL: &str = "http://127.0.0.1:11234/v1/models";
 const LOCAL_MLX_CHAT_URL: &str = "http://127.0.0.1:11234/v1/chat/completions";
-const LOCAL_MLX_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+// 2026-09-22 실측 cold-start 첫 토큰은 23.09초였다. 15초 중단은 warm-up도
+// 취소해 preflight_failed가 5회 연속 발생했으므로 충분한 기동 여유를 둔다.
+const LOCAL_MLX_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
 const LOCAL_MLX_MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const LOCAL_MLX_MAX_MODEL_ROWS: usize = 256;
 const LOCAL_MLX_MAX_CHOICES: usize = 8;
