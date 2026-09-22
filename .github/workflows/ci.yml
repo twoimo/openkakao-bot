@@ -171,6 +171,7 @@ jobs:
           tests.test_jarvis_wake_eval
           tests.test_jarvis_wake_evidence
           tests.test_jarvis_browser_runtime
+          tests.test_jarvis_desktop_render_check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

@@ -1,0 +1,440 @@
+{
+  "schema": "jarvis-desktop-render-check/1",
+  "generated_at": "2026-09-22T06:13:03Z",
+  "dist": {
+    "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/dist",
+    "index_sha256": "c989e88fb8121a193ac3e4b89f842cb16b645bc38bbd5e8b4a3bd18a56aa12b6",
+    "assets": [
+      "index-CEKtvzmx.css",
+      "index-Cd_I4qHa.js"
+    ]
+  },
+  "contract": {
+    "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/src/__tests__/ui-removal-contract.test.ts",
+    "sha256": "9f934ce756bd3acaa927164588c153f09b6781eaf5b2975f2a9a372334f9697e"
+  },
+  "expected": {
+    "banned_tokens": [
+      "검증",
+      "점검",
+      "권한",
+      "자기개선",
+      "자가개선",
+      "자동개선",
+      "일괄",
+      "대량",
+      "permission",
+      "verify",
+      "self-improv",
+      "selfimprov",
+      "bulk",
+      "approve",
+      "audit"
+    ],
+    "settings_sections": [
+      "대상 채팅방",
+      "AI 모델",
+      "Voice",
+      "카카오 DB 동기화 · 색인",
+      "DREAM-RSI",
+      "Knowledge",
+      "History"
+    ]
+  },
+  "browser": {
+    "channel": "chrome",
+    "version": "153.0.8010.53",
+    "executable": "/Users/twoimo/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+  },
+  "panel": {
+    "view_state": "ready",
+    "interactive": [
+      {
+        "tag": "button",
+        "id": "gear",
+        "label": "설정 열기",
+        "disabled": false
+      }
+    ],
+    "extra_focusable": [],
+    "headings": [],
+    "mains": 1,
+    "main_classes": [
+      "jarvis-panel"
+    ],
+    "iframes": 0,
+    "canvases": [
+      {
+        "id": "",
+        "cls": "jarvis-core",
+        "width": 472,
+        "height": 472,
+        "cssWidth": 236,
+        "cssHeight": 236
+      }
+    ],
+    "webgl": {
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "renderer": "WebKit WebGL",
+      "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "gl_error": "0"
+    },
+    "frames": {
+      "idle": {
+        "counter": "__jarvisRenderCount",
+        "frames": 26,
+        "seconds": 2.002,
+        "fps": 12.99
+      },
+      "busy": {
+        "counter": "__jarvisRenderCount",
+        "frames": 44,
+        "seconds": 2.002,
+        "fps": 21.98
+      }
+    },
+    "luminance": {
+      "idle": {
+        "width": 552,
+        "height": 520,
+        "meanLuminance": 237.98,
+        "litRatio": 1
+      },
+      "busy": {
+        "width": 552,
+        "height": 520,
+        "meanLuminance": 234.34,
+        "litRatio": 1
+      }
+    },
+    "render_count": {
+      "idle": 17,
+      "busy": 109
+    },
+    "actions": {
+      "open_settings_called": true,
+      "snapshot_calls": 4,
+      "commands": [
+        "fetch_runtime_snapshot",
+        "open_settings"
+      ]
+    },
+    "captures": {
+      "idle": {
+        "file": "jarvis-render-panel.idle.png",
+        "bytes": 110859,
+        "sha256": "6bf31c45a9845e541333e9ed5e76a22d17d932b5d14732fbb0c1f98b3a8e764a"
+      },
+      "busy": {
+        "file": "jarvis-render-panel.busy.png",
+        "bytes": 117152,
+        "sha256": "59c649003aa6789e1cb36275018f335ecbb200a958e05a2d42867bf86dbbcee3"
+      },
+      "light": {
+        "file": "jarvis-render-panel.light.png",
+        "bytes": 109683,
+        "sha256": "e01721be4c369250dbe1bcda93a052ecca08d396f35874f6a8bdc02f23a00eb9"
+      },
+      "dark": {
+        "file": "jarvis-render-panel.dark.png",
+        "bytes": 107571,
+        "sha256": "0cafd40ffc020c99b3aa13c83339dd631d0a016c032200a972729cb11a872f45"
+      }
+    },
+    "text": "⚙︎",
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"jarvis-panel\" aria-label=\"Jarvis\">\n    <canvas class=\"jarvis-core\" width=\"472\" height=\"472\" aria-label=\"Jarvis core\" data-engine=\"three.js r180\"></canvas>\n    <button id=\"gear\" class=\"gear\" type=\"button\" aria-label=\"설정 열기\" title=\"설정\">⚙︎</button>\n  </main></div>\n  \n\n"
+  },
+  "settings": {
+    "view_state": "ready",
+    "headings": [
+      "대상 채팅방",
+      "AI 모델",
+      "Voice",
+      "카카오 DB 동기화 · 색인",
+      "DREAM-RSI",
+      "Knowledge",
+      "History"
+    ],
+    "mains": 1,
+    "main_classes": [
+      "settings-shell"
+    ],
+    "iframes": 0,
+    "canvases": [
+      {
+        "id": "knowledge-graph-canvas",
+        "cls": "",
+        "width": 1372,
+        "height": 640,
+        "cssWidth": 686,
+        "cssHeight": 320
+      }
+    ],
+    "webgl": {
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "renderer": "WebKit WebGL",
+      "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "gl_error": "0"
+    },
+    "slot_morning": "대기",
+    "captures": {
+      "light": {
+        "file": "jarvis-render-settings.light.png",
+        "bytes": 171381,
+        "sha256": "fa05356b476aa6ee46b8bf0fbf577426c106ce0476e6615fb7e3cd7ea88ef24e"
+      },
+      "dark": {
+        "file": "jarvis-render-settings.dark.png",
+        "bytes": 173093,
+        "sha256": "0892524ffa0016fdfd1f84c3973ec9e83d5aac1d03bf241c9d296329d66e623f"
+      }
+    },
+    "text": "OPENKAKAO · LOCAL\n\nJarvis 설정\n\n하나의 창에서 대상 방과 로컬 AI, 지식 상태를 확인합니다.\n\n대상 채팅방\nNIMDA 인수인계 임원방\n\n등록 1 · live 1 · 본문 미전달\n\nAI 모델\n온디바이스\nFlash-Next\nddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit\n기본 상주\nQwen3.8 27B\nddalcu/Qwen3.8-27B-MLX-Serve-4bit\n온디맨드 스왑 · 미로딩\n\n현재 선택: ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit\n\n소유권 미확인 · 27B 전환 차단\n\n외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다\n\n온디바이스: Apple M5 Max (128GB RAM) · MLX Core/Serve · 실추론 통과 (Qwen3.8 Flash-Next)\n\nVoice\n로컬 전용\n\n상태 idle · wake custom · RMS 0.000\n\n호출어: 헤이 자비스\n\n임계값: 0.65 고정\n\n한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)\n\nRMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.\n\n마이크 세션 시작\n카카오 DB 동기화 · 색인\nGraphRAG 준비\n\n동기화: ready\n\n백그라운드 · 답변 대기 0 · 긱뉴스 idle · DB 동기화 ready\n\n격리 복제: copy_ok\n\n색인 모드: wal+isolated-copy+mode=ro+query_only\n\n마지막 색인: 1790005911 · indexed 31\n\ndense: indexed:50\n\nDREAM-RSI\n체크포인트 provenance\n\nstatus: evaluated · selected_policy: mirror_prompt_tail\n\ngold_rows: 400 · gold_source_policy: human_only\n\nKnowledge\nGraphRAG · ready\n\nE-R-E 5 nodes · 4 relations · 화면 최대 24 nodes\n\noverview · 최대 24 nodes\n+1 hop\n노드를 선택하면 2-hop으로 집중합니다.\n\nsubject · relation · object / room · time · evidence\n\n선택 시 기존 read-only GraphRAG retrieve를 사용합니다.\n\n아침\n대기\n점심\n대기\n저녁\n대기\nHistory\n안전 요약\n\n최근 1건 · 본문·프롬프트 제외\n\n09:41 · NIMDA 인수인계 임원방\n전송 · 정상 · 검색 ok",
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"settings-shell\">\n    <header class=\"settings-header\">\n      <p class=\"eyebrow\">OPENKAKAO · LOCAL</p>\n      <h1>Jarvis 설정</h1>\n      <p>하나의 창에서 대상 방과 로컬 AI, 지식 상태를 확인합니다.</p>\n    </header>\n\n    <section class=\"settings-card\" aria-labelledby=\"rooms-title\">\n      <div class=\"section-heading\"><h2 id=\"rooms-title\">대상 채팅방</h2><span class=\"status-dot\" aria-hidden=\"true\"></span></div>\n      <select id=\"settings-room-popup\" aria-label=\"대상 채팅방\"><option value=\"417780809780519\">NIMDA 인수인계 임원방</option></select>\n      <p id=\"room-summary\" class=\"muted\">등록 1 · live 1 · 본문 미전달</p>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"model-title\">\n      <div class=\"section-heading\"><h2 id=\"model-title\">AI 모델</h2><span class=\"tag\">온디바이스</span></div>\n      <button class=\"model-row selection\" type=\"button\" data-model-id=\"ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit\" aria-pressed=\"true\">\n        <span class=\"model-copy\"><strong>Flash-Next</strong><span class=\"model-id\">ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit</span></span><span class=\"tag\">기본 상주</span>\n      </button>\n      <button class=\"model-row\" type=\"button\" data-model-id=\"ddalcu/Qwen3.8-27B-MLX-Serve-4bit\" aria-pressed=\"false\">\n        <span class=\"model-copy\"><strong>Qwen3.8 27B</strong><span class=\"model-id\">ddalcu/Qwen3.8-27B-MLX-Serve-4bit</span></span><span class=\"tag muted-tag\">온디맨드 스왑 · 미로딩</span>\n      </button>\n      <p id=\"model-status\" class=\"muted\" role=\"status\" aria-live=\"polite\">현재 선택: ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit</p>\n      <p id=\"model-owner-state\" class=\"muted\">소유권 미확인 · 27B 전환 차단</p>\n      <p id=\"mlx-server-state\" class=\"muted\">외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다</p>\n      <p id=\"settings-hardware-status\" class=\"muted\" role=\"status\" aria-live=\"polite\">온디바이스: Apple M5 Max (128GB RAM) · MLX Core/Serve · 실추론 통과 (Qwen3.8 Flash-Next)</p>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"voice-title\">\n      <div class=\"section-heading\"><h2 id=\"voice-title\">Voice</h2><span class=\"tag muted-tag\">로컬 전용</span></div>\n      <p id=\"voice-status\">상태 idle · wake custom · RMS 0.000</p>\n      <p id=\"voice-phrase\">호출어: 헤이 자비스</p>\n      <p id=\"voice-threshold\">임계값: 0.65 고정</p>\n      <p id=\"voice-custom\">한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)</p>\n      <p class=\"muted\">RMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.</p>\n      <button id=\"voice-start\" type=\"button\">마이크 세션 시작</button>\n    </section>\n\n    <section id=\"settings-sync-card\" class=\"settings-card knowledge-accent\" aria-labelledby=\"sync-title\">\n      <div class=\"section-heading\"><h2 id=\"sync-title\">카카오 DB 동기화 · 색인</h2><span class=\"tag\">GraphRAG 준비</span></div>\n      <p id=\"settings-sync-source\">동기화: ready</p>\n      <p id=\"settings-activity-source\" class=\"muted\">백그라운드 · 답변 대기 0 · 긱뉴스 idle · DB 동기화 ready</p>\n      <p id=\"settings-sync-copy\">격리 복제: copy_ok</p>\n      <p id=\"settings-sync-mode\">색인 모드: wal+isolated-copy+mode=ro+query_only</p>\n      <p id=\"settings-sync-index\">마지막 색인: 1790005911 · indexed 31</p>\n      <p id=\"settings-sync-dense\">dense: indexed:50</p>\n    </section>\n\n    <section id=\"settings-dream-rsi-card\" class=\"settings-card\" aria-labelledby=\"dream-title\">\n      <div class=\"section-heading\"><h2 id=\"dream-title\">DREAM-RSI</h2><span class=\"tag muted-tag\">체크포인트 provenance</span></div>\n      <p id=\"settings-dream-rsi-status\">status: evaluated · selected_policy: mirror_prompt_tail</p>\n      <p id=\"settings-dream-rsi-gold\">gold_rows: 400 · gold_source_policy: human_only</p>\n    </section>\n\n    <section id=\"settings-knowledge-card\" class=\"settings-card knowledge-accent\" aria-labelledby=\"knowledge-title\">\n      <div class=\"section-heading\"><h2 id=\"knowledge-title\">Knowledge</h2><span id=\"knowledge-mode\" class=\"tag\">GraphRAG · ready</span></div>\n      <p id=\"knowledge-summary\">E-R-E 5 nodes · 4 relations · 화면 최대 24 nodes</p>\n      <div class=\"knowledge-hologram-shell\">\n        <canvas id=\"knowledge-graph-canvas\" width=\"1372\" height=\"640\" aria-label=\"Knowledge E-R-E hologram graph\" data-engine=\"three.js r180\"></canvas>\n        <div class=\"knowledge-hologram-toolbar\">\n          <span id=\"knowledge-hop-label\">overview · 최대 24 nodes</span>\n          <button id=\"knowledge-expand-hop\" type=\"button\" disabled=\"\">+1 hop</button>\n        </div>\n      </div>\n      <div class=\"knowledge-focus-card\" aria-live=\"polite\">\n        <strong id=\"knowledge-focus-title\">노드를 선택하면 2-hop으로 집중합니다.</strong>\n        <p id=\"knowledge-focus-meta\">subject · relation · object / room · time · evidence</p>\n        <div id=\"knowledge-relations\" class=\"knowledge-relations\"></div>\n        <p id=\"knowledge-retrieve\">선택 시 기존 read-only GraphRAG retrieve를 사용합니다.</p>\n      </div>\n      <div class=\"slot-grid\" aria-label=\"GeekNews 슬롯\">\n        <span>아침 <b id=\"settings-slot-morning\">대기</b></span>\n        <span>점심 <b id=\"settings-slot-lunch\">대기</b></span>\n        <span>저녁 <b id=\"settings-slot-evening\">대기</b></span>\n      </div>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"history-title\">\n      <div class=\"section-heading\"><h2 id=\"history-title\">History</h2><span class=\"tag muted-tag\">안전 요약</span></div>\n      <p id=\"history-summary\" class=\"muted\" role=\"status\" aria-live=\"polite\">최근 1건 · 본문·프롬프트 제외</p>\n      <div id=\"history-list\" class=\"knowledge-relations\" role=\"list\" aria-label=\"최근 답변 기록\"><div class=\"knowledge-relation-row\" role=\"listitem\"><strong>09:41 · NIMDA 인수인계 임원방</strong><span>전송 · 정상 · 검색 ok</span></div></div>\n    </section>\n  </main></div>\n  \n\n"
+  },
+  "knowledge": {
+    "canvas_box": {
+      "left": 37,
+      "top": 220.3125,
+      "width": 686,
+      "height": 320
+    },
+    "probes": 233,
+    "focused": true,
+    "overview_title": "노드를 선택하면 2-hop으로 집중합니다.",
+    "overview_meta": "subject · relation · object / room · time · evidence",
+    "locator": {
+      "probes": 233,
+      "title": "최연우",
+      "start_title": "노드를 선택하면 2-hop으로 집중합니다.",
+      "hit": {
+        "x": 371.0,
+        "y": 378.3
+      },
+      "pitch": 22.0
+    },
+    "hit": {
+      "x": 371.0,
+      "y": 378.3
+    },
+    "focus_title": "최연우",
+    "focus_meta": "2-hop · 4 nodes · 3 relations",
+    "hop_label": "2-hop · 4/24 nodes",
+    "relation_rows": 2,
+    "retrieve": "retrieve rrf · facts 2 · 알촀쿠 = 알리바바 클라우드 축약",
+    "expand_disabled": false,
+    "retrieve_after_settle": "retrieve rrf · facts 2 · 알촀쿠 = 알리바바 클라우드 축약",
+    "hop_label_after_expand": "3-hop · 5/24 nodes",
+    "focus_meta_after_expand": "3-hop · 5 nodes · 4 relations",
+    "expand_disabled_after_expand": true,
+    "frames_after_focus": {
+      "counter": "__knowledgeRenderCount",
+      "frames": 19,
+      "seconds": 1.502,
+      "fps": 12.65
+    },
+    "render_count_after_focus": 82,
+    "settings_focus_capture": {
+      "file": "jarvis-render-settings.focus.png",
+      "bytes": 114970,
+      "sha256": "af0d9f29c7abab306b6b63a84ae733ae05832bcbe71789a3eb261c7cec0105aa"
+    }
+  },
+  "checks": [
+    {
+      "name": "panel.view_state_ready",
+      "ok": true,
+      "detail": "ready"
+    },
+    {
+      "name": "panel.single_interactive_element",
+      "ok": true,
+      "detail": [
+        {
+          "tag": "button",
+          "id": "gear",
+          "label": "설정 열기",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "name": "panel.gear_is_the_only_control",
+      "ok": true,
+      "detail": {
+        "tag": "button",
+        "id": "gear",
+        "label": "설정 열기",
+        "disabled": false
+      }
+    },
+    {
+      "name": "panel.no_extra_focusable",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "panel.single_main_shell",
+      "ok": true,
+      "detail": {
+        "mains": 1,
+        "classes": [
+          "jarvis-panel"
+        ]
+      }
+    },
+    {
+      "name": "panel.no_iframe",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "panel.webgl_context_live",
+      "ok": true,
+      "detail": {
+        "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+        "renderer": "WebKit WebGL",
+        "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "gl_error": "0"
+      }
+    },
+    {
+      "name": "panel.render_loop_advances_idle",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 26,
+        "seconds": 2.002,
+        "fps": 12.99
+      }
+    },
+    {
+      "name": "panel.render_loop_advances_under_load",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 44,
+        "seconds": 2.002,
+        "fps": 21.98
+      }
+    },
+    {
+      "name": "panel.fps_within_cap",
+      "ok": true,
+      "detail": {
+        "idle": 12.99,
+        "busy": 21.98
+      }
+    },
+    {
+      "name": "panel.gear_invokes_open_settings",
+      "ok": true,
+      "detail": {
+        "open_settings_called": true,
+        "snapshot_calls": 4,
+        "commands": [
+          "fetch_runtime_snapshot",
+          "open_settings"
+        ]
+      }
+    },
+    {
+      "name": "panel.no_removed_control_tokens",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "settings.view_state_ready",
+      "ok": true,
+      "detail": "ready"
+    },
+    {
+      "name": "settings.sections_in_order",
+      "ok": true,
+      "detail": {
+        "actual": [
+          "대상 채팅방",
+          "AI 모델",
+          "Voice",
+          "카카오 DB 동기화 · 색인",
+          "DREAM-RSI",
+          "Knowledge",
+          "History"
+        ],
+        "expected": [
+          "대상 채팅방",
+          "AI 모델",
+          "Voice",
+          "카카오 DB 동기화 · 색인",
+          "DREAM-RSI",
+          "Knowledge",
+          "History"
+        ]
+      }
+    },
+    {
+      "name": "settings.single_main_shell",
+      "ok": true,
+      "detail": {
+        "mains": 1,
+        "classes": [
+          "settings-shell"
+        ]
+      }
+    },
+    {
+      "name": "settings.no_iframe",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "settings.knowledge_canvas_present",
+      "ok": true,
+      "detail": [
+        {
+          "id": "knowledge-graph-canvas",
+          "cls": "",
+          "width": 1372,
+          "height": 640,
+          "cssWidth": 686,
+          "cssHeight": 320
+        }
+      ]
+    },
+    {
+      "name": "settings.no_removed_control_tokens",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "knowledge.hologram_renders_frames",
+      "ok": true,
+      "detail": 82
+    },
+    {
+      "name": "knowledge.drilldown_focuses_a_node",
+      "ok": true,
+      "detail": {
+        "probes": 233,
+        "title": "최연우"
+      }
+    },
+    {
+      "name": "knowledge.focus_meta_reports_hops",
+      "ok": true,
+      "detail": "2-hop · 4 nodes · 3 relations"
+    },
+    {
+      "name": "knowledge.relations_listed",
+      "ok": true,
+      "detail": 2
+    },
+    {
+      "name": "knowledge.retrieve_answered",
+      "ok": true,
+      "detail": "retrieve rrf · facts 2 · 알촀쿠 = 알리바바 클라우드 축약"
+    }
+  ],
+  "notes": [],
+  "status": "pass"
+}

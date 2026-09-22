@@ -1517,3 +1517,25 @@ receipt:
 
 - 이 검사는 마크업·스타일시트 문자열 계약이다. 화면에 실제로 픽셀이 그려지는지, 또는 런타임에 동적으로 생성되는 노드가 있는지는 검증하지 않는다. 설치본 앱 창의 시각 확인은 Computer Use 경로가 이번 턴에도 도구 표면에서 노출되지 않아 여전히 미수행이다.
 - 금지 토큰 목록은 지금 저장소에 없는 단어들을 열거한 것이다. 한국어 동의어를 새로 만들면(예: "심사") 목록에 추가해야 잡힌다.
+
+
+### 렌더된 화면 자체를 브라우저에서 교차 검증 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+`ui-removal-contract.test.ts` 는 마크업 **문자열**을 고정한다. "제품이 실제로 그리는 창에 조작 요소가 톱니바퀴 하나뿐인가", "코어가 실제 GPU 경로에서 프레임을 만드는가"는 다른 주장인데 지금까지 그 증거가 없었다. `scripts/jarvis_desktop_render_check.py` 를 추가해 빌드 산출물(`desktop/dist`)을 Chromium에 올리고 Tauri 브리지를 결정적 stub으로 대체한 뒤, 렌더된 DOM과 실제 WebGL 컨텍스트를 그대로 기록했다. 측정 시점 트리는 HEAD `c985c4b` 이고, 이 절이 추가하는 파일은 커밋 직전 상태였다.
+
+- 기대값은 TS 계약 파일에서 읽는다(`REMOVED_TOKENS`, `SETTINGS_SECTIONS`, `aria-label`). 영수증에 그 파일의 SHA-256을 함께 남기므로 두 검사가 같은 단일 출처를 공유한다. `desktop/src/ui.ts` 와 `desktop/src/styles.css` 의 h2 순서·금지 토큰을 파이썬에서 다시 확인하는 `tests/test_jarvis_desktop_render_check.py` (20 tests)도 붙였고, CI focused 목록에 추가했다.
+- 패널: 조작 요소가 정확히 1개(`button#gear`, `aria-label="설정 열기"`), `tabindex`/`contenteditable` 로 늘어난 포커스 대상 0개, `<main>` 1개(`jarvis-panel`), iframe 0개, 렌더된 텍스트(`⚙︎`)와 마크업 양쪽에 금지 토큰 0개. 톱니바퀴를 실제로 클릭하면 stub이 `open_settings` 호출을 기록했다.
+- 설정 창: `<h2>` 7개가 `대상 채팅방 / AI 모델 / Voice / 카카오 DB 동기화 · 색인 / DREAM-RSI / Knowledge / History` 순서로 정확히 일치했고 `<main>` 1개(`settings-shell`), iframe 0개, 금지 토큰 0개였다.
+- WebGL: `WebGL 2.0 (OpenGL ES 3.0 Chromium)`, unmasked renderer `ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)`, `gl.getError()` 0. 이 렌더는 소프트웨어 래스터가 아니라 이 호스트의 Metal 경로를 통과한다.
+- 프레임: 같은 페이지에서 유휴(작업 부하 0) 13.48 fps, 부하(`job_load 0.9` + 파이프라인 `model` 단계 + 긱뉴스 전송 + DB 동기화) 22.47 fps. 코드의 상한(15/30)과 `AnimationLoop.frameIntervalMs()` 경계가 그대로 관측됐고, 부하가 프레임 밀도를 올린다는 목표 동작이 수치로 확인됐다. `renderCount` 는 유휴 16 → 부하 106이었다.
+- 밝기 관찰(주장 아님): 밝은 테마 패널의 평균 휘도가 유휴 237.96 → 부하 234.14로 낮아졌다. 액센트 골드 입자·시냅스 불투명도가 부하에서 커지므로 방향은 일치하지만 링 회전 위상도 프레임마다 달라, 이 수치만으로 밀도 증가를 분리해 주장하지 않는다.
+- 지식 그래프 드릴다운: 홀로그램은 회전하고 빗나간 클릭은 `reset()` → `rebuildGraph()` 를 부르므로 좌표를 미리 잡아 두고 나중에 클릭하는 방식은 성립하지 않는다. 실제로 합성 `pointerdown` 으로 4px 격자 13,680개를 훑어도 첫 miss 뒤 새로 만들어진 mesh의 `matrixWorld` 가 렌더 없이는 갱신되지 않아 노드 하나만 맞았다. 그래서 스캔 자체를 실제 마우스 클릭으로 수행했다. 233번째 실제 클릭에서 `최연우` 가 선택됐고 `2-hop · 4 nodes · 3 relations`, 관계 행 2개, `+1 hop` 활성 상태가 됐다. `+1 hop` 도 실제 클릭으로 눌러 `3-hop · 5/24 nodes` 로 확장되고 버튼이 다시 비활성화됐다. 선택 시 `retrieve rrf · facts 2 · 알쫀쿠 = 알리바바 클라우드 축약` 이 표시돼 GraphRAG 검색 경로까지 이어졌다.
+- 홀로그램 렌더 루프도 따로 샘플했다: 1.502초에 20프레임(13.31 fps).
+- 캡처 7장(`jarvis-render-panel.{light,dark,idle,busy}.png`, `jarvis-render-settings.{light,dark,focus}.png`)과 영수증 `jarvis-desktop-render-check.json`. 영수증의 22개 검사는 전부 PASS다.
+
+이 절이 닫지 않는 것:
+
+- 이 화면은 설치된 `OpenKakao Jarvis.app` 창이 아니라 **같은 빌드 산출물을 Chromium에 올린 것**이다. Tauri webview와 Chromium for Testing은 렌더러가 다르고, 메뉴바 창의 276×260 배치·`alwaysOnTop`·hide-on-blur 같은 창 수명주기는 여기서 검증되지 않는다. 설치본 창의 시각 확인은 별도 항목으로 남는다.
+- Tauri 브리지는 stub이다. 실제 Rust 브리지가 돌려주는 스냅샷 형식(6키 작업 이벤트 등)은 기존 Rust 테스트가 담당한다.
+- DREAM-RSI·색인·모델 소유권 값은 stub payload이므로 실측이 아니다. `model-swap` 은 이 호스트의 실제 상태(외부 `mlx-serve` 가 11234 점유 → 27B 전환 차단)를 그대로 stub에 옮긴 것이고, 앱이 실제로 전환을 거부하는지는 이 절이 입증하지 않는다.
+- fps는 headless Chromium의 RAF 환경에서 측정한 값이다. 실제 webview의 합성 주기와 같다고 주장하지 않는다.
