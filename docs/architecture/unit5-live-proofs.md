@@ -1583,3 +1583,14 @@ receipt:
 - receipt의 `visualReview`는 계약대로 `pending`이다. 이 세션은 1440x900 light/dark와 2048x1320 light 캡처 3장을 판독해 노드·라벨·관계선의 겹침과 잘림, 빈 하단 띠가 없음을 확인했지만 사람 리뷰를 대신하지 않는다.
 - 이 다이어그램은 검사 경로의 구조 증거다. 브라우저에서 실제로 통과했다는 주장은 위 24/24 수치와 [jarvis-desktop-render-check.json](jarvis-desktop-render-check.json) 영수증이 담당한다.
 - 카드 항목을 줄인 것은 세로 예산 때문이며, 줄어든 세 항목이 담고 있던 내용(무계정·무네트워크 조건, Rust 쪽 스냅샷 검증 위치, exit 2 폐쇄)은 영수증과 위 절에 그대로 남아 있다.
+
+### 죽은 코드·미사용 항목 감사와 Rust clippy 정리 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+"죽은 코드와 미사용 변수·함수, 네이밍과 타입 오류를 리팩터링"은 종전까지 테스트 통과로만 주장됐다. 정적 감사를 실제로 돌려 결과를 남긴다. CI는 `cargo test`·`cargo check`·`tsc -p tsconfig.json`·`vite build`를 돌리지만 clippy는 게이트하지 않으므로, 데스크톱 크레이트에 `cargo clippy --all-targets`를 실행했다.
+
+- 감사 결과 전체 경고는 **3건**이고 모두 같은 부류다: `too_many_arguments (8/7)` 3곳(`python_bridge.rs:358` 의 `fetch_settings_action`, `python_bridge.rs:650` 의 `run_python_with_output_limit`, `main.rs:26` 의 Tauri 커맨드). 미사용 import·미사용 함수·죽은 코드 경고는 0건이다. Rust 쪽에는 리팩터링 대상으로 남은 죽은 항목이 없다.
+- 그중 사설 함수 `run_python_with_output_limit` 만 수정 대상이었다. 인자 7개를 `PythonRun` 구조체로 묶고 `Default` 를 종전 공통 경로가 위치 인자로 넘기던 값(`OUTPUT_LIMIT_BYTES`, `stdin_payload: None`, `global_abort_grace: None`)으로 정의해, 평범한 호출에서 꼬리의 `None, None` 이 사라졌다. 브라우저 도구 호출부는 `cooperative_cancel: false` 와 `output_limit: BROWSER_TOOL_OUTPUT_LIMIT_BYTES`·`stdin_payload`·`global_abort_grace` 를 그대로 명시한다.
+- 나머지 2곳은 계약 형태라 이름을 바꾸거나 묶으면 프런트엔드 호출이 바뀐다. Tauri 커맨드와 브리지 메서드는 settings-action invoke payload의 필드를 하나씩 그대로 받으므로, 두 곳에 사유를 적은 `#[allow(clippy::too_many_arguments)]` 를 달았다(은폐가 아니라 계약 유지의 명시적 선택).
+- 검증: 같은 리비전에서 `cargo clippy --all-targets -- -D warnings` 가 경고 0으로 `Finished` 이고, `cargo test` 는 **59 passed; 0 failed** 다. 종전 호출부와 대조해 `cooperative_cancel`·output limit·stdin payload·abort grace 값이 호출자별로 보존됨을 확인했다.
+- 남는 한계: clippy는 CI 게이트가 아니므로 이 청정 상태는 로컬 측정이다. CI에 clippy를 추가하는 변경은 이번 패스에서 하지 않았다.
+- TypeScript 쪽은 `npm run build` 가 `tsc -p tsconfig.json` 을 먼저 돌리므로 타입 오류는 이미 게이트된다. Python 쪽은 핀 인터프리터에 pyflakes/ruff/vulture가 없어 같은 감사를 실행하지 못했고, 도구를 임의로 설치하지 않았다.
