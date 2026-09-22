@@ -2202,3 +2202,11 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 반응형 자동 답변의 지배적 종결 사유는 여전히 `conversation_advanced` 다(room 437 187건, room 417 31건, 2026-09-22 18:57 KST 시작). AHP 채점 대상 정책이라 이번에도 바꾸지 않았다.
 - 첫 종단 간 검증 지점은 호스트 GeekNews 슬롯이며, 오늘(09-23) 슬롯 창은 지터 때문에 08:57~09:27 / 12:23~12:53 / 19:38~20:08 KST 다. 슬롯은 `NIMDA 인수인계 임원방 ⚠` AX 창이 열려 있어야 한다. `ax-probe --chat "NIMDA 인수인계 임원방 ⚠"` 가 그 저렴한 사전 점검이다.
 - 이번 차수도 웹 위임은 AHP 점수를 산출하지 않았으므로 98점 달성을 주장하지 않는다.
+
+
+### 9. 사용자 신고 1·2항(설정 진입)의 검증 — 2026-09-23 KST
+
+- 1항(기어 제거): 이미 반영되어 있었다. `desktop/src` 전체에 `gear` · `⚙` · `설정 확인 불가` 문자열이 없고, 저장소 어디에도 `id="gear"` 를 가진 HTML 이 없다(테스트와 문서에 "있으면 안 된다"로만 등장). `scripts/jarvis_desktop_render_check.py` 를 Playwright(Chromium)로 실행한 24개 검사가 전부 통과했고, 그중 `panel.zero_interactive_elements` 는 패널의 상호작용 요소가 **0개**임을 실시간 DOM 에서 확인한다. WebGL 은 `ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max)` 로 살아 있고, 프레임 루프는 idle 13.49fps / busy 21.98fps 로 상한 안이다. 갱신된 렌더 증거: `docs/architecture/jarvis-render-panel.idle.png` (샴페인 골드 구형 시냅스 코어와 짐벌 링만 보이고 아이콘은 없다).
+- 2항(우클릭 설정): `tray_source.right_click_opens_settings_and_left_up_toggles_panel` 이 통과한다. 좌클릭 up 은 패널 토글, 우클릭 up 은 `open_settings`(설정 창 표시)이다. 설정 창은 7개 섹션(`대상 채팅방, AI 모델, Voice, 카카오 DB 동기화 · 색인, DREAM-RSI, Knowledge, History`)이 순서대로 하나의 셸에 있고 iframe 이 없다. `panel.no_panel_side_open_settings_invocation` 은 패널이 스스로 설정 창을 열지 않음을 확인한다(설정 경로가 트레이 우클릭으로만 존재).
+- 한계: Chromium 은 macOS 메뉴바 `TrayIconEvent` 를 발생시킬 수 없으므로 이 항목의 런타임 증거는 소스 수준이고, 영수증에도 `browser_exercised: false` 로 기록된다. NSStatusItem 자체는 Computer Use 로 클릭할 수 없다.
+- 사용자가 신고한 `http://127.0.0.1:8765/index.html` 의 기어(`button#gear`, `div > main > button`)는 현재 소스·빌드·설치본 어디에도 없다. 당시 8765 정적 서버는 이후 죽었고(연결 거부), 사용자가 본 페이지는 더 이상 존재하지 않는 오래된 산출물이다.
