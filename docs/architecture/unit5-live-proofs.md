@@ -1960,3 +1960,65 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 ### 5. CI
 
 - 커밋 `3e198e8`의 CI run [35712115257](https://github.com/twoimo/openkakao-bot/actions/runs/35712115257)이 3개 job 모두 success다(2 m 34 s). 직전 `6413835`의 run 35710797187은 `Tauri desktop and focused Python tests`만 실패했고, 그 실패는 옛 계약 `test_panel_source_keeps_the_single_gear`(`AssertionError: 0 != 1`, `Ran 665 tests / FAILED (failures=1, skipped=60)`)이며 `3e198e8`이 닫았다.
+
+## 자동답변 무응답 원인 분리와 GeekNews 슬롯 복구 — 2026-09-22 KST (2차)
+
+### 1. 사용자 보고 3건과 이 호스트의 실제 상태
+
+- 보고: (a) 메뉴바 패널 우상단의 "설정 확인 불가" 버튼 제거, (b) 메뉴바 우클릭으로 설정 진입, (c) 카카오톡 자동 답변과 GeekNews 자동 전송 복구.
+- 사용자가 보고한 화면은 `http://127.0.0.1:8765/index.html`이고, 이 절을 작성한 시점에 8765에는 리스너가 없다(정지된 dev 프리뷰). 설치본 `/Applications/OpenKakao Jarvis.app`(실행 파일 2026-09-22 19:01 KST)의 Resources에는 `설정 확인 불가` 문자열이 없고, 제품 소스에는 `gear`/`⚙` 참조가 0건이다(남은 1건은 제거를 고정하는 계약 테스트 `desktop/src/__tests__/ui-removal-contract.test.ts`). 따라서 보고된 버튼은 설치본의 UI가 아니라 정지된 프리뷰의 잔상이다.
+- 우클릭 설정 경로는 `desktop/src-tauri/src/main.rs:246-251`(`MouseButton::Right` + `MouseButtonState::Up` → `open_settings`)이며 커밋 `2f88b59`와 그 계약 테스트 `3e198e8`에 포함된다.
+
+### 2. 커밋 481fc65: rc=0 미파싱 출력을 버리지 않고 유계 재시도
+
+- 기전: 로컬 MLX가 rc=0으로 응답했지만 그 본문이 decision JSON이 아니면 `generate_reply`가 `reason="unparsed_model_decision"`, `category="uncertain"`, `model_invoked=True`만 기록하고 `model_failure_class`를 남기지 않았다. 그래서 `_model_defer_due_at()`이 `None`을 반환해 그 턴은 회복 불가로 끝났다.
+- 실측(room `417780809780519`, 2026-09-22 KST): `reply-evidence.jsonl` 마지막 행이 event `db:417780809780519:3935464744318957569`("아아", author 현준), `recorded_at 2026-09-22T12:48:10Z`, `generation_seconds 42.5`, `prompt_sha256 30e79145fbc550d3`, `status skipped`, `reason unparsed_model_decision`이다. `reply-worker.log`는 `[reply-gen] unparsed_output head=b'{\\n  "result": "fail", ...'`를 남겼다.
+- 같은 방에서 모델 타임아웃도 같은 경로로 소실됐다: `[reply-gen] prompt_bytes=20621 gen_elapsed=150.62s rc=1 ...` 뒤 `runner_failed rc=1 stderr='timed out'` → `delivery_unknown` → `reconcile_gave_up`.
+- 수정(`scripts/auto-reply-worker.py`): `MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES`를 신설하고(`call_in_flight`, `circuit_unavailable`, `runner_untrusted`, `unparsed_output`), 종전에 세 곳에 인라인으로 흩어져 있던 같은 집합을 이 상수로 통일했다. rc=0 salvage 반환에 `model_failure_class="unparsed_output"`과 `model_defer_until`을 추가했다. `unparsed_output`은 계정 단위 회로(`MODEL_CIRCUIT_FAILURE_CLASSES`)에 넣지 않았다.
+- 함께 넣은 것: `_run_opencodex_generation`이 `local_mlx` 응답 본문의 `model`이 요청 target과 다르면 그 응답을 `mlx_serve_response_model_mismatch`로 거부한다(필드가 없으면 fail-open).
+- 테스트: `tests/test_auto_reply_retry_policy.py` +2, `tests/test_auto_reply_worker_mlx.py` +3. 두 파일 실행 결과 `Ran 26 tests in 0.121s / OK`.
+- CI: 커밋 `481fc65` run [35732454666](https://github.com/twoimo/openkakao-bot/actions/runs/35732454666) success.
+
+### 3. GeekNews 슬롯의 런타임 선택 실패와 전송 경로
+
+- 실패 슬롯(모두 `exit=1`): 2026-09-21 08:40·12:35·19:50, 2026-09-22 08:40·12:35가 `ModuleNotFoundError: No module named 'auto_reply_ondevice'`(runtime `20260920T225025Z-92735`의 `scripts/`는 12개뿐). 2026-09-22 19:50는 다른 오류로 `Error: could not find the message input field in the already-open chat "NIMDA 인수인계 임원방 ⚠"`.
+- 원인: `nimda-geeknews-slot.sh` 12행의 `RT=$(ls -td "$STATE"/runtime/*/ | head -1)`가 **mtime** 기준 최신을 골랐다. 런타임 디렉터리 이름은 `YYYYMMDDTHHMMSSZ-<pid>`이므로 mtime 순서와 시간 순서가 다를 수 있고, 실제로 09-20의 불완전 런타임이 선택됐다.
+- 수정(호스트 스크립트, 저장소 커밋 아님): 이름순 비교로 바꾸고 `auto-reply-worker.py`·`auto_reply_ondevice.py` 존재와 `--geeknews` 지원을 모두 만족하는 후보만 채택하며, 없으면 이름을 남기고 사전 점검에서 실패하며, 모든 로그 줄에 `runtime=<name>`을 남긴다. 원본은 `nimda-geeknews-slot.sh.bak-20260922T2210`로 백업했다(원본 sha256 `d37666f3807159c449efdeb2b041c3348e9b01a16ea44a59b47a77dee0625131`).
+- 선택기 검증: 같은 조건의 셸 루프를 `/bin/sh`로 실행하면 `selector_would_pick=20260922T134657Z-13152`를 고르고, 그 런타임의 `scripts/auto-reply-worker.py` sha256이 저장소 현재 파일과 `4a9293aed6b76d7726881e3b34d636846d9fc5da3ebae5119241409813258028`로 일치한다. (같은 루프를 zsh로 실행하면 `[ "$n" \> "$RT_NAME" ]`가 "condition expected: >"로 깨져 항목을 고르지 못한다. 스크립트는 `#!/bin/sh`이므로 이 함정은 저장소 밖 스크립트에만 해당한다.)
+- 전송 경로 정정: `--geeknews --send`는 답변 작업 큐를 거치지 않는다. `geeknews_operator_cli`(`scripts/auto-reply-worker.py:16971`)가 `<bin> local-send "<chat>" "<digest>" -y --json`을 직접 실행하고, 성공하면 `local-search "GeekNews TOP5"`로 자기 행(log_id)을 되읽어 확인한 뒤에만 `seen_ids`·`posted_slots`를 갱신한다. 즉 이 슬롯 경로는 방의 `delivery_enabled` fence를 통과하지 않으므로(별도의 설계 경계), room 325가 `context_sync_transient`로 fenced여도 08:40 슬롯은 나갈 수 있다.
+- 읽기 전용 실측: 새 런타임에서 `--geeknews --preview`가 exit 0으로 `ids=[34120,34119,34118,34116,34115]` 다이제스트를 만들었고, `rooms/325472527151234/geeknews-rss-cursor.json`의 sha256 `82948c473f75c69209982a8cad839556be503ca88de5f66b1003812bd4ec5db4`가 실행 전후로 동일했다(preview는 상태를 쓰지 않는다).
+- 실제 방 전송은 수행하지 않았다. 다음 자동 슬롯은 2026-09-23 08:40 KST이며 그것이 이 수정의 첫 실전 증거다.
+
+### 4. 커밋 4a7085d: 컨텍스트 최신성을 알 수 없을 때 종결 대신 유계 재시도
+
+- 기전: `conversation_advanced_past_event(event)`는 방 워터마크를 안정적으로 읽지 못하면 `None`을 반환한다. 분석 단계는 이 값을 회복 가능한 hold로 다룬다(`_reply_turn_hold_reason` → `context_freshness_unavailable`, `TURN_HOLD_REASONS`의 원소, `retrieval_bundle`의 `RetrievalError`). 반면 전송 직전의 두 지점은 같은 값에 `finish_delivery_unknown()`을 호출해 **종결**로 처리했다. 그 시점의 durable 행은 아직 `processing`이므로 AX 변경도 Return도 일어날 수 없는데 "전송 여부 불명"으로 기록한 것이다.
+- 실측(room 417, event `db:417780809780519:3935451706400995228`): 21:32:32 `model_call` → 21:35:03 `model_result`(150.62s, rc=1 `timed out`) → 21:35:08 `processing → delivery_unknown`. 21:36:07 `model_result`(6.47s, rc=0) → 21:36:12 `delivery_unknown`. 21:36:18 evidence `context_freshness_unavailable`. 21:36:38 `model_result`(7.14s, rc=0)에 정상 초안 `비율이 미쳤네`가 나왔고 21:36:39 다시 `delivery_unknown`, 21:37:40 `delivery_unknown → skipped`로 최종 `stale_backlog`가 되며 초안이 폐기됐다. 방의 db-watch 상태는 이 구간에 `context_sync_transient` fence로 요동쳤다.
+- 수정: `defer_scheduled_pre_send_unavailable()`에 허용 목록으로 검증하는 `error_class` 인자를 추가하고(기본값 `pre_send_unavailable`이라 기존 호출자 동작은 그대로), 두 `advanced is None` 지점을 이 유계 재시연으로 보냈다. 행은 응답 창 안에서 `scheduled` + `due_at`으로 다시 잡히고, 창+유예가 지나면 전송 없이 `stale_backlog`로 끝난다. 최신성이 불명한 동안 전송·작곡기 변경·Return은 여전히 전혀 일어나지 않는다.
+- 테스트: `tests/test_auto_reply_retry_policy.py`에 두 경계의 `scheduled` 전이와 no-send, 유예 만료 `stale_backlog`, 잘못된 창의 종결 fallback, `advanced=True/False` 회귀를 추가했다. `tests.test_auto_reply_retry_policy tests.test_auto_reply_worker_mlx`는 `Ran 30 tests in 0.231s / OK`.
+- CI: 커밋 `4a7085d` run [35735765880](https://github.com/twoimo/openkakao-bot/actions/runs/35735765880) success.
+
+### 5. 공유 context DB 잠금 — 원인 규명, 수정 보류
+
+- 잠긴 파일은 공유 컨텍스트 DB `~/Library/Application Support/openkakao/context.sqlite3`이다(1.394 GB, `-journal` 파일 존재 → rollback-journal/DELETE 모드, `-wal`/`-shm` 없음).
+- 이 절 작성 시점에 이 DB는 **읽기 전용 열기조차** `sqlite3.OperationalError: database is locked`로 실패했다. 즉 writer 하나가 배타 잠금을 쥐고 있는 동안 모든 독자가 막힌다.
+- `lsof`는 이 DB를 연 `auto-reply-worker.py --worker`(그 시점 pid 54933·54934)를 보였고, `sample` 스택은 두 프로세스 모두 `sqlite3LockAndPrepare → sqlite3Prepare → sqlite3ReadSchema → sqlite3Init → sqlite3PagerSharedLock → busy handler`에서 대기 중이었다.
+- 재현: `openkakao-cli context-sync-local --chat-id 417780809780519 --chat 부자멘토멘티 --queue <room>/reply-queue.sqlite3 --json`은 exit 1과 stderr `Error: database is locked` / `Caused by: Error code 5: The database file is locked`를 냈다.
+- `db-watch.log` 누적: room 417에서 `context_sync_transient` 218행(그중 `SqliteBusyTransient` 158, `context-sync-local` TimeoutExpired 42, `context_sync_writer_lock_timeout` 5). room 437 200/165, room 325 226/179.
+- 수정하지 않은 이유: 안전한 근본 수정은 컨텍스트 DB의 잠금 처리(예: `src/context/mod.rs`의 writer 경로 busy 처리 또는 저널 모드 변경)에 있고, 이번 단위의 쓰기 범위는 Python 워커/감시자로 제한했다. `scripts/auto-reply-db-watch.py`의 fail-closed fence 정책은 **변경하지 않았다**. 컨텍스트 색인이 권위적이지 않다고 판단될 때 전송을 막는 규칙은 그대로다.
+- 이 fence는 영구적이지 않다. 같은 날 22:55:40 KST에 room 417과 437이 `fence=ready`/`delivery_enabled=true`로 스스로 복구됐고, room 325(GeekNews 방)만 `context_sync_transient`로 남았다. 즉 이 결함의 실제 영향은 "전송 불가"가 아니라 "수십 초~수 분 단위로 전송이 막히는 요동"이며, 4절의 수정이 그 요동에서 초안을 잃지 않게 만든다.
+
+### 6. 배포와 실측
+
+- `cargo build --release --bin openkakao-cli`: 디스크 바이너리가 최신이라 0.70 s에 종료(no-op).
+- `sh scripts/rebake-and-restart.sh`: 새 런타임 `20260922T134657Z-13152`(scripts 18개, `binary check: ok`)를 bake하고 plist를 교체한 뒤 `launchctl bootout → bootstrap → kickstart -k`를 수행했다. 스크립트 자체의 10×10 s 건강 확인 루프는 `healthy=false`로 끝났다(콜드 스타트 중).
+- 교체 후 프로세스 소유권: `auto-reply-service.py --mode session`은 pid 13434 하나뿐이고 같은 런타임의 `--mode session-guardian`이 pid 13933이며, 방별 `auto-reply-db-watch.py`·`auto-reply-worker.py --worker`가 22:49:03에 새로 시작됐다. `--mode session` 문자열은 `--mode session-guardian`에도 부분 일치하므로 개수 세기로 중복 소유자를 판정하면 안 된다.
+- 워커가 실제로 실행하는 코드: 세 워커의 `cwd`가 `/Users/twoimo/Documents/projects/openkakao-bot`이고 명령은 상대 경로 `scripts/auto-reply-worker.py --worker`이므로, 저장소 파일이 곧 라이브 코드다. 즉 이 커밋들은 슈퍼바이저/워커 재시작만으로 운영 경로에 반영된다.
+- 교체 직후 세 방이 모두 `fence=starting`/`delivery=false`였다가 22:55:40 KST에 417·437이 `ready`로 올라왔다.
+
+### 7. 검증하지 못한 것
+
+- 실제 카카오톡 AX 전송은 이번 단위에서 수행하지 않았다(제품 규칙: 테스트는 fake 어댑터로). GeekNews의 첫 실전 전송은 2026-09-23 08:40 KST 슬롯이고, 자동 답변은 실제 수신 메시지에 반응해야 관측된다.
+- 트레이 아이콘 우클릭은 사용 가능한 Computer Use 표면으로 실행할 수 없다(NSStatusItem을 클릭하는 도구가 없다). 근거는 소스(`main.rs:246-251`)와 설치본 바이너리 시각(2026-09-22 19:01 KST)에 한정된다.
+- 사용자가 보고한 `http://127.0.0.1:8765/index.html` 탭은 죽은 프리뷰이므로 그 탭에서 "제거됨"을 확인하는 것은 이 단위의 증거로 쓰지 않았다.
+- 전체 CI 파이썬 목록을 로컬에서 실행하면 `Ran 693 tests in 396.175s / FAILED (failures=2, skipped=9)`이고, 실패 2건은 모두 `tests.test_auto_reply_knowledge_graph.BackgroundReindexTests`(`wait_for_background_reindex`가 in-flight 재색인을 본 경우)다. 같은 모듈을 단독 실행하면 `Ran 82 tests in 35.046s / OK`이므로 모듈 간 간섭/부하에 따른 순서 의존 실패로 판단하며, 이번 변경과 공유 상태가 없다. HEAD 기준 재현 비교는 하지 않았으므로 "선재 실패"라고 단정하지 않는다.
+
