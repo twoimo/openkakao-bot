@@ -56,6 +56,15 @@ DENSE_STATUS_MAX_LENGTH = 400
 RRF_K = 60
 ANN_BANDS = 8
 ANN_BITS_PER_BAND = 8
+# LSH 하이퍼플레인의 부호는 (비트, 차원) 두 좌표만으로 결정된다. 예전에는
+# 투영 루프 안에서 매번 blake2b를 다시 계산해서 2560차원 질의 벡터 하나에
+# 64x2560 = 163,840회 해시가 필요했고, 같은 호스트 실측에서 순수 해시 비용만
+# 71.139ms였다. 모양별 행렬을 한 번 만들면(콜드 63.41ms, 웜 2.4us) 같은
+# 질의가 6.032ms이고, 50개 벡터는 3,560.9ms에서 320.9ms가 된다. 부호가
+# 그대로라 버킷 키도 그대로이고, 이미 만들어진 ann_buckets 테이블과도
+# 호환된다(2026-09-22).
+_ANN_SIGN_MATRIX_CACHE: dict[tuple[int, int], tuple[bytes, ...]] = {}
+_ANN_SIGN_MATRIX_CACHE_MAX_SHAPES = 8
 ALIAS_DICTIONARY_VERSION = "2026-09-20.1"
 KST = ZoneInfo("Asia/Seoul")
 
@@ -2485,6 +2494,34 @@ ALIZONKU_CONTEXT_TERMS = (
     "인프라",
 )
 
+
+def _build_synonym_index(
+    dictionary: dict[str, list[str]],
+) -> dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]]:
+    """동의어 사전을 casefold 조회표로 한 번만 접는다.
+
+    `_alias_matches`는 호출마다 사전 전체를 훑으면서 항목마다
+    `[v.casefold() for v in syn_vals]`를 새로 만들었다. 답변 생성 경로에서
+    (낱말, 바늘더미) 한 쌍당 실측 4.34us가 그 비용이었고, 조회표를 쓰면
+    1.10us다. 접힌 항목은 원래 키를 그대로 들고 있어서 문맥 게이트
+    (`CONTEXT_GATED_SYNONYM_KEYS`)는 예전과 같은 원문 키로 비교한다
+    (2026-09-22).
+    """
+
+    index: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {}
+    for syn_key, syn_vals in dictionary.items():
+        key_folded = syn_key.casefold()
+        vals_folded = tuple(str(value).casefold() for value in syn_vals)
+        entry = (syn_key, key_folded, vals_folded)
+        for term in (key_folded, *vals_folded):
+            bucket = index.setdefault(term, [])
+            if entry not in bucket:
+                bucket.append(entry)
+    return {term: tuple(entries) for term, entries in index.items()}
+
+
+_SYNONYM_INDEX = _build_synonym_index(SYNONYM_DICTIONARY)
+
 KOREAN_PARTICLES_PATTERN = (
     r"(?:$|[\s.,!?~/_\-()\[\]]|은|는|이|가|을|를|도|에|과|의|와|으로|로"
     r"|등|만|밖|부터|까지|처럼|보다|께)"
@@ -2617,15 +2654,14 @@ def _alias_matches(
     haystack_folded = haystack.casefold()
     expanded_terms = [folded]
     context_values = list(context_haystacks or (haystack,))
-    for syn_key, syn_vals in SYNONYM_DICTIONARY.items():
-        if folded == syn_key.casefold() or folded in [v.casefold() for v in syn_vals]:
-            if (
-                syn_key in CONTEXT_GATED_SYNONYM_KEYS
-                and not _alizonku_context_confirmed(context_values)
-            ):
-                continue
-            expanded_terms.append(syn_key.casefold())
-            expanded_terms.extend([v.casefold() for v in syn_vals])
+    for syn_key, key_folded, vals_folded in _SYNONYM_INDEX.get(folded, ()):
+        if (
+            syn_key in CONTEXT_GATED_SYNONYM_KEYS
+            and not _alizonku_context_confirmed(context_values)
+        ):
+            continue
+        expanded_terms.append(key_folded)
+        expanded_terms.extend(vals_folded)
     for term in set(expanded_terms):
         if len(term) <= 2:
             if re.search(
@@ -2820,22 +2856,45 @@ def _local_dense_embeddings_adaptive(
     return vectors
 
 
+def _ann_sign_matrix(bits_total: int, dim: int) -> tuple[bytes, ...]:
+    """Return the hyperplane sign rows for one (bits, dim) shape, built once."""
+    shape = (bits_total, dim)
+    cached = _ANN_SIGN_MATRIX_CACHE.get(shape)
+    if cached is not None:
+        return cached
+    rows = tuple(
+        bytes(
+            1
+            if hashlib.blake2b(
+                f"{bit_index}:{dim_index}".encode("ascii"),
+                digest_size=1,
+                person=b"kg-ann-v1",
+            ).digest()[0]
+            & 1
+            else 0
+            for dim_index in range(dim)
+        )
+        for bit_index in range(bits_total)
+    )
+    if len(_ANN_SIGN_MATRIX_CACHE) >= _ANN_SIGN_MATRIX_CACHE_MAX_SHAPES:
+        _ANN_SIGN_MATRIX_CACHE.clear()
+    _ANN_SIGN_MATRIX_CACHE[shape] = rows
+    return rows
+
+
 def _ann_band_keys(vector: tuple[float, ...]) -> list[tuple[int, str]]:
     """Return deterministic random-hyperplane LSH buckets for one vector."""
     keys: list[tuple[int, str]] = []
     bits_total = ANN_BANDS * ANN_BITS_PER_BAND
+    rows = _ann_sign_matrix(bits_total, len(vector))
     bits: list[int] = []
     for bit_index in range(bits_total):
         projection = 0.0
         # The sign matrix is generated deterministically from coordinates, so
         # the ANN index needs no external random-state file.
+        row = rows[bit_index]
         for dim_index, value in enumerate(vector):
-            digest = hashlib.blake2b(
-                f"{bit_index}:{dim_index}".encode("ascii"),
-                digest_size=1,
-                person=b"kg-ann-v1",
-            ).digest()[0]
-            projection += value if digest & 1 else -value
+            projection += value if row[dim_index] else -value
         bits.append(1 if projection >= 0.0 else 0)
     for band in range(ANN_BANDS):
         start = band * ANN_BITS_PER_BAND

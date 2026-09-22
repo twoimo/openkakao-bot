@@ -10,6 +10,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 import subprocess
@@ -1628,6 +1629,140 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
         partial = KG._keyword_match_score(['코인'], ['코인 시세'])
         self.assertGreater(exact, partial)
 
+
+
+class AnnSignMatrixTests(unittest.TestCase):
+    """The LSH sign matrix is memoized. The bucket keys must not move.
+
+    `_ann_band_keys` used to re-derive 64 x dim blake2b signs inside the
+    projection loop: 64 x 2560 = 163,840 hashes, measured at 71.139ms of pure
+    hashing for one 2560-dim query vector and 3,560.9ms for 50 vectors. The
+    signs now come from a matrix built once
+    per shape. An already-built ann_buckets table is only valid while the keys
+    are unchanged, so the keys below are frozen against the earlier
+    implementation (measured 2026-09-22).
+    """
+
+    # vector = (((index * 37) % 101) - 50) / 101 for index in range(dim)
+    FROZEN_KEYS = {
+        8: [(0, "00"), (1, "46"), (2, "4a"), (3, "88"), (4, "20"), (5, "ba"), (6, "de"), (7, "9a")],
+        64: [(0, "22"), (1, "f0"), (2, "0b"), (3, "44"), (4, "38"), (5, "ea"), (6, "0f"), (7, "76")],
+        2560: [(0, "ba"), (1, "36"), (2, "46"), (3, "e3"), (4, "fb"), (5, "1b"), (6, "18"), (7, "51")],
+    }
+
+    def tearDown(self):
+        KG._ANN_SIGN_MATRIX_CACHE.clear()
+
+    @staticmethod
+    def _vector(dim: int) -> tuple:
+        return tuple(((index * 37) % 101 - 50) / 101.0 for index in range(dim))
+
+    def test_band_keys_are_frozen_for_every_shape(self):
+        for dim, expected in self.FROZEN_KEYS.items():
+            self.assertEqual(KG._ann_band_keys(self._vector(dim)), expected, f"dim={dim}")
+
+    def test_the_matrix_is_built_once_per_shape_and_padded_to_the_dimension(self):
+        first = KG._ann_sign_matrix(4, 16)
+        second = KG._ann_sign_matrix(4, 16)
+        self.assertIs(first, second)
+        self.assertEqual(len(KG._ANN_SIGN_MATRIX_CACHE), 1)
+        self.assertEqual([len(row) for row in first], [16, 16, 16, 16])
+        self.assertTrue(all(set(row) <= {0, 1} for row in first))
+        # A different bit count is a different shape and must not reuse rows.
+        self.assertIsNot(KG._ann_sign_matrix(6, 16), first)
+
+    def test_the_matrix_cache_stays_bounded(self):
+        for dim in range(1, KG._ANN_SIGN_MATRIX_CACHE_MAX_SHAPES + 3):
+            KG._ann_sign_matrix(2, dim)
+        self.assertLessEqual(
+            len(KG._ANN_SIGN_MATRIX_CACHE), KG._ANN_SIGN_MATRIX_CACHE_MAX_SHAPES
+        )
+
+    def test_degenerate_vectors_keep_eight_bands(self):
+        nan = float("nan")
+        for vector in ((), (0.0,), (nan, 1.0, -1.0), (float("inf"), float("-inf"), 0.0)):
+            keys = KG._ann_band_keys(vector)
+            self.assertEqual([band for band, _ in keys], list(range(KG.ANN_BANDS)), repr(vector))
+            self.assertTrue(all(len(bucket) == 2 for _band, bucket in keys), repr(vector))
+
+
+class SynonymIndexTests(unittest.TestCase):
+    """The synonym lookup table must reproduce the dictionary scan exactly.
+
+    `_alias_matches` folded every dictionary value on every call (4.34us per
+    (term, haystack) pair on the reply path). It now reads a folded index built
+    once at import. This test keeps the folded table honest against a literal
+    copy of the scan it replaced (2026-09-22).
+    """
+
+    @staticmethod
+    def _scan(alias, haystack, context_haystacks=None) -> bool:
+        # 2026-09-22 이전 구현 그대로.
+        folded = alias.casefold().strip()
+        if not folded:
+            return False
+        haystack_folded = haystack.casefold()
+        expanded_terms = [folded]
+        context_values = list(context_haystacks or (haystack,))
+        for syn_key, syn_vals in KG.SYNONYM_DICTIONARY.items():
+            if folded == syn_key.casefold() or folded in [v.casefold() for v in syn_vals]:
+                if (
+                    syn_key in KG.CONTEXT_GATED_SYNONYM_KEYS
+                    and not KG._alizonku_context_confirmed(context_values)
+                ):
+                    continue
+                expanded_terms.append(syn_key.casefold())
+                expanded_terms.extend([v.casefold() for v in syn_vals])
+        for term in set(expanded_terms):
+            if len(term) <= 2:
+                if re.search(
+                    KG.KOREAN_PREFIX_PATTERN + re.escape(term) + KG.KOREAN_PARTICLES_PATTERN,
+                    haystack_folded,
+                ) is not None:
+                    return True
+            elif term in haystack_folded:
+                return True
+        return False
+
+    def test_the_folded_index_reproduces_the_dictionary_scan(self):
+        terms = [
+            "알쫀쿠", "알리바바쿠폰", "러닝박에", "러닝", "쿠폰", "Anthropic Claude",
+            "claude", "CLAUDE", "", "  ", "컴유", "알리바바 클라우드", "지피티",
+        ]
+        haystacks = [
+            "오늘 알쫀쿠 쿠폰 받았어",
+            "러닝박에 갔는데 사람 많더라",
+            "알리바바 클라우드 쿠폰 만료일 확인해줘",
+            "Anthropic Claude 클로드 비교",
+            "",
+        ]
+        contexts = [None, ("쿠폰",), ("알리바바",), ("",), haystacks[:2]]
+        checked = 0
+        for term in terms:
+            for haystack in haystacks:
+                for context in contexts:
+                    expected = self._scan(term, haystack, context_haystacks=context)
+                    self.assertEqual(
+                        KG._alias_matches(term, haystack, context_haystacks=context),
+                        expected,
+                        f"alias={term!r} haystack={haystack!r} context={context!r}",
+                    )
+                    checked += 1
+        self.assertEqual(checked, len(terms) * len(haystacks) * len(contexts))
+
+    def test_the_context_gate_still_blocks_a_bare_abbreviation(self):
+        # "알쫀쿠"는 문맥이 없으면 알리바바 클라우드 쿠폰으로 확장하지 않는다.
+        self.assertFalse(KG._alias_matches("알쫀쿠", "알리바바 클라우드 쿠폰", context_haystacks=("",)))
+        self.assertTrue(
+            KG._alias_matches("알쫀쿠", "알리바바 클라우드 쿠폰", context_haystacks=("알리바바",))
+        )
+
+    def test_every_dictionary_term_is_folded_into_the_index(self):
+        for syn_key, syn_vals in KG.SYNONYM_DICTIONARY.items():
+            for term in (syn_key, *syn_vals):
+                entries = KG._SYNONYM_INDEX.get(term.casefold())
+                self.assertIsNotNone(entries, term)
+                self.assertIn(syn_key, [raw for raw, _folded, _vals in entries], term)
 
 
 class RoomIsolationTests(unittest.TestCase):
