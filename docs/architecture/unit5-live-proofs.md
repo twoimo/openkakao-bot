@@ -1660,3 +1660,63 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 - 위임 리뷰는 이번 턴에도 성립하지 않았다. `multi_agent_v1__spawn_agent`의 model override 목록은 여전히 `gpt-6-astra`, `gpt-5.6-sol`, `chatgpt-web/{medium,high,extra-high}` 뿐이고 사용자가 지정한 `GPT-5.6 Luna`는 없다. `chatgpt-web/extra-high`(xhigh) 새 스레드 3개(Fermat `01a0c7fe…`, Sartre `01a0c804…`, Bohr `01a0c80a…`)가 3회 모두 `stream disconnected before completion: page.goto: Timeout 60000ms exceeded`(navigating to `https://chatgpt.com/?temporary-chat=true`)로 끝났고, 같은 시각 `curl https://chatgpt.com/`은 http=403, `curl https://api.github.com/repos/twoimo/openkakao-bot`은 http=200이었다. 누적 실패는 23회(abort 19 · timeout 4)다. 따라서 AHP 점수를 얻지 못했으므로 98점 달성을 주장하지 않는다.
 
 - 러너에서도 같은 수치를 확인했다. run 35699214811의 `Tauri desktop and focused Python tests` job에서 `Run focused local AI tests` step은 `Ran 644 tests in 63.562s` / `OK (skipped=60)`을 보고했다(로컬은 같은 644건에 skip 9건; 러너에는 없는 인터프리터·하드웨어 때문에 skip 수가 다르다). 이 기록을 담은 docs 커밋 `52319d8`의 run 35700981610도 3/3 success다.
+
+## 렌더 프레임·질의 경로 병목 실측과 창 숨김 렌더 정지 신호 — 2026-09-22 KST
+
+부모 에이전트가 로컬에서 수행했다. 위임 경로는 이번 턴에도 성립하지 않아 4절에 상태를 남긴다.
+
+### 1. 질의 경로: LSH 부호 행렬 캐시와 동의어 조회표
+
+`scripts/auto_reply_knowledge_graph.py`의 `_ann_band_keys`는 8밴드 x 8비트 = 64개 하이퍼플레인의 부호를 투영 루프 안에서 매번 `blake2b`로 다시 계산했다. 부호는 `"{bit}:{dim}"` 두 좌표와 salt `kg-ann-v1`로만 결정되므로 2560차원 질의 벡터 하나에 64 x 2560 = 163,840회 해시가 필요했다. 이제 (비트, 차원) 모양별로 서명 행렬을 한 번 만들어 재사용한다(`_ann_sign_matrix` + `_ANN_SIGN_MATRIX_CACHE`, 최대 8개 모양).
+
+측정 방법: 고정 인터프리터 `/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11`에서 HEAD 리비전(`66c104b`)의 모듈 사본(`/private/tmp/okb-kghead-17631/scripts/auto_reply_knowledge_graph.py`)과 작업 트리 모듈을 같은 프로세스에 로드해 같은 입력으로 재었다. 입력 벡터는 `random.seed(7)`의 표준정규 2560차원이다.
+
+| 측정 | 수정 전 (HEAD `66c104b`) | 수정 후 |
+| --- | --- | --- |
+| `_ann_band_keys` 2560차원 1회, 중위값(60회) | 71.139 ms | 6.032 ms |
+| 같은 연산 50개 벡터, 중위값(3회) | 3,560.9 ms | 320.9 ms |
+| `_ann_sign_matrix(64, 2560)` | 매 질의 재계산 | 콜드 63.41 ms(64행 x 2560바이트) · 웜 2.4 µs |
+| `_alias_matches` (낱말, 바늘더미) 1쌍, 중위값(400회 x 5낱말) | 4.34 µs | 1.10 µs |
+| 모듈 import(접힌 사전 빌드 포함) | — | 1.35 ms |
+
+`_alias_matches`는 호출마다 사전 전체를 훑으면서 항목마다 `[v.casefold() for v in syn_vals]`를 새로 만들었다. 이제 casefold 조회표 `_SYNONYM_INDEX`(사전 16개 키 → 접힌 낱말 33개)를 모듈 로드 때 한 번 만들고 `_SYNONYM_INDEX.get(folded, ())`만 본다. 접힌 항목이 원래 키를 그대로 들고 있어 문맥 게이트(`CONTEXT_GATED_SYNONYM_KEYS`)는 예전과 같은 원문 키로 비교한다.
+
+동등성은 같은 입력 집합에서 확인했다. 불일치 0건이다.
+
+- `_ann_band_keys`: 합성 25개 벡터(차원 1·3·8·64·128·2560, 빈 벡터, 부호 혼합 3차원, NaN 포함 3차원, 난수 16개).
+- 앱 자신의 ANN 저장소(`~/Library/Application Support/openkakao/bujamentor/knowledge-dense-ann.sqlite3`, `index_version` `bge-m3-lsh-v1`·watermark `1790005898`·`dense_vectors` 50행·`ann_buckets` 400행·8밴드)에서 복제한 2560차원 벡터 5개. **이미 만들어진 버킷 테이블과의 호환은 이 비교가 근거다.** 복제본은 SQLite backup 후 `mode=ro`·`query_only`로만 읽었고 원본은 바꾸지 않았다.
+- `_alias_matches`: 낱말 7 x 바늘더미 5 x 문맥 3 = 105조합.
+
+회귀 검출력은 변이로 확인했다(각 변이를 물린 뒤 복원까지 확인, 세 모양 8·64·2560 모두 동일한 결과). 같은 모듈 사본으로 잰 기준선은 고정 키와 일치했고, 부호 극성 반전 변이는 세 모양 모두 검출됐고 salt를 `kg-ann-v9`로 바꾼 변이도 세 모양 모두 검출됐으며, `CONTEXT_GATED_SYNONYM_KEYS`를 비운 변이는 문맥 게이트 테스트의 기대를 뒤집었다.
+
+남는 한계: 서명 행렬은 프로세스 단위 캐시다. 답변 생성 경로는 짧게 사는 CLI 프로세스라 실행마다 콜드 63.41 ms를 한 번 지불하고, 그 대신 질의마다 65 ms를 되돌려받는다. 색인 루프처럼 프로세스가 오래 사는 경로에서는 그 비용이 한 번뿐이다.
+
+### 2. 렌더 프레임: 프레임당 할당 0회와 실측
+
+프레임 신호 계산을 `desktop/src/core/render-state.ts`의 `CoreRenderState`로 옮기면서 15-30fps 루프가 프레임마다 만들던 네 개의 힙 객체가 사라졌다: `[reply, geeknews, dbSync]` 배열, `base.map` 결과 배열, `forEach` 클로저, `latticePulse` 객체 리터럴. `desktop/src/core/load-mapping.ts`의 `writeRingTargetVelocities`·`writeLatticePulse`가 호출자가 소유한 버퍼에 직접 쓰고, `step`은 새 객체를 만들지 않고 자기 자신을 프레임 결과로 돌려준다.
+
+측정은 `desktop/src/perf/render-path-node.ts`를 esbuild로 번들해 plain node로 돌리는 `cd desktop && npm run bench:render`다(2,000,000회 x 5라운드, 중위값). vitest bench는 SSR interop 때문에 같은 함수를 3.8-4.0 M ops/s로 재서 실제 V8 동작을 반영하지 못했으므로 쓰지 않았다.
+
+| 케이스(프레임당) | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| 링 목표 각속도 | `base.map` + 클로저 44.1-47.2 ns | 재사용 배열 8.5-12.3 ns |
+| 격자 펄스 | 객체 리터럴 5.1-7.0 ns | 재사용 객체 6.1-7.0 ns |
+| 프레임 전체 신호 계산 | 인라인 렌더 본문 253.0-269.2 ns | `CoreRenderState.step` 218.6-233.2 ns |
+
+프레임 전체는 5회 실행 중위값 263.5 ns → 224.8 ns(−38.7 ns, −14.7%)이고 다섯 번의 실행 모두 같은 방향이었다. 정직하게 남길 두 가지가 있다.
+
+1. 이 벤치마크로 처음 얻은 결론은 "프레임 전체가 21% 느려졌다"였다. 그 측정의 수정 전 복사본이 실제 옛 본문에 있던 음향 펄스 항(`1 + smoothVoiceRms * (0.07 + 0.025 * sin(nowMs * 0.012))`)을 빠뜨려 수정 전을 실제보다 싸게 재고 있었다. 그 항을 복원한 뒤에는 위처럼 수정 후가 빠르다. 즉 수정 전후 비교는 양쪽이 같은 계산을 할 때만 유효하고, 이번 수치는 그 조건을 맞춘 값이다.
+2. 격자 펄스는 재사용 객체 쪽이 0.5-1.5 ns 느리게 나온 실행이 더 많다. 이 항목의 이득을 주장하지 않는다. 실제 이득은 할당 제거이며, 해제된 프레임당 할당은 네 개다. 같은 성질을 테스트로도 못 박았다: `desktop/src/__tests__/render-state.test.ts`가 `Array.prototype.map`·`slice`·`concat`을 0회 호출로 고정한다.
+
+### 3. 창 숨김 시 렌더 정지: 이제 셸이 상태를 알린다
+
+종전에는 숨김을 `blur`·`visibilitychange`·`pagehide` 같은 DOM 이벤트로만 추론했다. AppKit이 창을 order out 하는 방식에 따라 그 이벤트가 아예 오지 않을 수 있고, 그러면 3D 루프가 숨은 창 뒤에서 계속 돈다. 이제 셸이 `show()`/`hide()`가 돌아온 뒤 `jarvis://visibility`(`{"visible": <bool>}` 한 값만)를 그 창에 보내고, 프런트엔드는 그 신호를 권위 있는 값으로 쓴다.
+
+- Rust(`desktop/src-tauri/src/main.rs`): `set_window_visible`이 `show`/`hide`를 호출하고 OS 호출이 성공한 뒤에만 알린다(실패하면 알리지 않고 웹뷰는 이미 가진 상태를 유지한다). `toggle_panel`, `open_settings`(표시), `Focused(false)`(jarvis 숨김), `CloseRequested`(jarvis·settings 숨김) 네 경로가 모두 이 함수를 지난다.
+- TS(`desktop/src/core/lifecycle-wiring.ts`): `wireRenderLifecycle`가 blur/focus/visibilitychange/pagehide와 Rust 이벤트를 한 곳에서 처리하고, 이벤트 핸들러 밖으로 예외가 새지 않도록 `transition`을 감싼다. 브리지가 없는 일반 브라우저에서도 DOM 기반 동작이 그대로 남고, detach는 멱등이다.
+- `desktop/src/core/lifecycle.ts`: `RenderLifecycle.transition`이 `startTimers`·`loop.start`·`stopTimers`·`loop.stop`을 각각 감싼다. 종전에는 `stopTimers`가 던지면 `loop.stop()`이 건너뛰어져 숨은 창 뒤에 렌더 루프가 남을 수 있었다.
+
+검증: 신규 `desktop/src/__tests__/lifecycle-wiring.test.ts` 10건이 blur→정지, focus→재개(RAF 정확히 1회), `document.visibilityState`가 visible인데도 명시적 hidden이 오면 정지, pagehide 1회 close와 멱등 detach, 브리지 실패 시 DOM 경로 유지, 종료 시 구독 해제를 확인한다. Rust의 `#[cfg(test)]` 3건은 payload에 불리언 하나만 있는지, `include_str!`로 읽은 프런트엔드 파일이 같은 이벤트 이름을 쓰는지(두 언어에 걸친 계약), 트레이 아이콘이 18x18 RGBA인지 검사한다.
+
+남는 한계: 이번 턴에 설치본을 다시 띄워 숨김 상태의 렌더 호출 0회를 재지는 않았다. 숨김 창의 렌더 호출 0회는 기존 실기기 기록(`jarvis-three-render-lifecycle`)이고, 이번 변경이 바꾼 것은 그 정지를 DOM 추론이 아니라 셸 신호로 확정한 점이다.
+
