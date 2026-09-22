@@ -106,6 +106,33 @@ struct ProcessControl<'a> {
     recovery_timeout: Duration,
 }
 
+/// One python invocation. Callers name only the fields they differ on and take
+/// the rest from PythonRun::default, so the common path no longer passes a
+/// positional run of constants.
+struct PythonRun<'a> {
+    extra: &'a [String],
+    timeout: Duration,
+    token_id: Option<&'a str>,
+    cooperative_cancel: bool,
+    output_limit: usize,
+    stdin_payload: Option<&'a [u8]>,
+    global_abort_grace: Option<Duration>,
+}
+
+impl Default for PythonRun<'_> {
+    fn default() -> Self {
+        PythonRun {
+            extra: &[],
+            timeout: DEFAULT_TIMEOUT,
+            token_id: None,
+            cooperative_cancel: false,
+            output_limit: OUTPUT_LIMIT_BYTES,
+            stdin_payload: None,
+            global_abort_grace: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct BridgeConfig {
     python: PathBuf,
@@ -355,6 +382,9 @@ impl PythonBridge {
         Ok(snapshot)
     }
 
+    // Every argument is a settings-action payload field the frontend sends, so
+    // the length is the invoke contract rather than an accidental signature.
+    #[allow(clippy::too_many_arguments)]
     pub fn fetch_settings_action(
         &self,
         action: &str,
@@ -431,13 +461,15 @@ impl PythonBridge {
         self.begin_job(job_id, "browser", "running", 0.7);
         let result: Result<SafeBrowserToolResult, BridgeError> = (|| {
             let bytes = self.run_python_with_output_limit(
-                &args,
-                BROWSER_TOOL_TIMEOUT,
-                Some(cancellation_token),
-                false,
-                BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
-                Some(task.as_bytes()),
-                Some(BROWSER_TOOL_ABORT_GRACE),
+                PythonRun {
+                    extra: &args,
+                    timeout: BROWSER_TOOL_TIMEOUT,
+                    token_id: Some(cancellation_token),
+                    output_limit: BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
+                    stdin_payload: Some(task.as_bytes()),
+                    global_abort_grace: Some(BROWSER_TOOL_ABORT_GRACE),
+                    ..PythonRun::default()
+                },
             )?;
             let value = parse_json_output(&bytes)?;
             Ok(sanitize_browser_tool_result(&value))
@@ -636,27 +668,25 @@ impl PythonBridge {
         token_id: Option<&str>,
         cooperative_cancel: bool,
     ) -> Result<Vec<u8>, BridgeError> {
-        self.run_python_with_output_limit(
+        self.run_python_with_output_limit(PythonRun {
             extra,
             timeout,
             token_id,
             cooperative_cancel,
-            OUTPUT_LIMIT_BYTES,
-            None,
-            None,
-        )
+            ..PythonRun::default()
+        })
     }
 
-    fn run_python_with_output_limit(
-        &self,
-        extra: &[String],
-        timeout: Duration,
-        token_id: Option<&str>,
-        cooperative_cancel: bool,
-        output_limit: usize,
-        stdin_payload: Option<&[u8]>,
-        global_abort_grace: Option<Duration>,
-    ) -> Result<Vec<u8>, BridgeError> {
+    fn run_python_with_output_limit(&self, run: PythonRun<'_>) -> Result<Vec<u8>, BridgeError> {
+        let PythonRun {
+            extra,
+            timeout,
+            token_id,
+            cooperative_cancel,
+            output_limit,
+            stdin_payload,
+            global_abort_grace,
+        } = run;
         let resources = self.config.resources()?;
         resources.validate().map_err(BridgeError::from)?;
         let python = if !resources.installed && self.config.python == Path::new("python3") {

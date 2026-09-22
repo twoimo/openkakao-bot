@@ -22,6 +22,9 @@ async fn fetch_runtime_snapshot(
         .map_err(|error| error.to_string())
 }
 
+// These parameters mirror the invoke payload keys one for one; grouping or
+// renaming them would change the Tauri command contract the frontend calls.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn fetch_settings_action(
     bridge: tauri::State<'_, PythonBridge>,
