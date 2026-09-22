@@ -3,9 +3,9 @@
 
 The desktop contract test (desktop/src/__tests__/ui-removal-contract.test.ts)
 pins the panel and the settings window as *strings*. That is a different claim
-from "the window the product ships draws one gear and one gear only, and the
-core actually produces frames on a real GPU path". It cannot see the Three.js
-core or the knowledge hologram at all.
+from "the window the product ships draws only the core and the core actually
+produces frames on a real GPU path". It cannot see the Three.js core or the
+knowledge hologram at all.
 
 This script loads the built bundle in Chromium, answers the Tauri bridge with a
 deterministic stub, and records what the rendered document and the WebGL context
@@ -16,6 +16,8 @@ really are:
 * banned-token scan over the rendered text and markup
 * gl.getParameter version/renderer strings and the unmasked renderer
 * frame counts sampled while idle and while a background job is reported
+* source-level tray routing: left click toggles the panel, right click opens
+  settings (Chromium cannot exercise a macOS menu-bar TrayIconEvent)
 * the knowledge-graph drilldown, driven with real pointer events and a real
   +1 hop click
 
@@ -42,6 +44,7 @@ from typing import Any, Callable, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIST = ROOT / "desktop" / "dist"
 DEFAULT_CONTRACT = ROOT / "desktop" / "src" / "__tests__" / "ui-removal-contract.test.ts"
+DEFAULT_TAURI_MAIN = ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
 DEFAULT_OUT = ROOT / "docs" / "architecture"
 DEFAULT_PORT = 8712
 
@@ -73,7 +76,6 @@ STUB_ONDEVICE_STATUS_DETAIL = " · ".join(bit for bit in STUB_ONDEVICE_DETAIL_BI
 
 PANEL_SIZE = (276, 260)
 SETTINGS_SIZE = (760, 760)
-PANEL_LABEL = "\uc124\uc815 \uc5f4\uae30"
 CONTRACT_INTERACTIVE_TAGS = "button,select,input,textarea,a,details,summary"
 
 
@@ -97,13 +99,48 @@ def parse_contract(path: Path) -> dict[str, Any]:
     source = path.read_text(encoding="utf-8")
     banned = _array_literals(source, "REMOVED_TOKENS")
     sections = _array_literals(source, "SETTINGS_SECTIONS")
-    label_match = re.search(r'aria-label=\\"([^"\\]+)\\"', source)
     return {
         "path": str(path),
         "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "banned_tokens": banned,
         "settings_sections": sections,
-        "panel_label": label_match.group(1) if label_match else PANEL_LABEL,
+    }
+
+
+def tray_click_routes(source: str) -> dict[str, bool]:
+    """Detect the two menu-bar click routes in the Rust tray event match."""
+    left_up = re.search(
+        r"TrayIconEvent::Click\s*\{\s*"
+        r"button:\s*MouseButton::Left,\s*"
+        r"button_state:\s*MouseButtonState::Up,\s*"
+        r"position,\s*\.\.\s*\}\s*=>\s*toggle_panel\s*\(",
+        source,
+        re.S,
+    )
+    right_up = re.search(
+        r"TrayIconEvent::Click\s*\{\s*"
+        r"button:\s*MouseButton::Right,\s*"
+        r"button_state:\s*MouseButtonState::Up,\s*"
+        r"\.\.\s*\}\s*=>\s*\{(?P<body>.*?)\n\s*\}",
+        source,
+        re.S,
+    )
+    right_body = right_up.group("body") if right_up else ""
+    return {
+        "left_up_toggles_panel": left_up is not None,
+        "right_up_opens_settings": bool(right_up and re.search(r"\bopen_settings\s*\(", right_body)),
+    }
+
+
+def inspect_tray_source(path: Path) -> dict[str, Any]:
+    """Read and fingerprint the Rust tray routing used for source-only checks."""
+    source = path.read_text(encoding="utf-8")
+    routes = tray_click_routes(source)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        **routes,
+        "browser_exercised": False,
     }
 
 
@@ -511,14 +548,12 @@ def drive_drilldown(page: Any, log: Callable[[str], None]) -> dict[str, Any]:
 def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     panel = receipt["panel"]
+    tray_source = receipt["tray_source"]
     settings = receipt["settings"]
     knowledge = receipt["knowledge"]
 
     checks.append(check("panel.view_state_ready", panel["view_state"] == "ready", panel["view_state"]))
-    one_control = len(panel["interactive"]) == 1
-    checks.append(check("panel.single_interactive_element", one_control, panel["interactive"]))
-    labelled = one_control and panel["interactive"][0]["id"] == "gear" and panel["interactive"][0]["label"] == contract["panel_label"]
-    checks.append(check("panel.gear_is_the_only_control", labelled, panel["interactive"][0] if one_control else panel["interactive"]))
+    checks.append(check("panel.zero_interactive_elements", panel["interactive"] == [], panel["interactive"]))
     checks.append(check("panel.no_extra_focusable", panel["extra_focusable"] == [], panel["extra_focusable"]))
     checks.append(check("panel.single_main_shell", panel["mains"] == 1, {"mains": panel["mains"], "classes": panel["main_classes"]}))
     checks.append(check("panel.no_iframe", panel["iframes"] == 0, panel["iframes"]))
@@ -530,8 +565,17 @@ def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[s
         panel["frames"]["idle"]["fps"] <= 17.5 and panel["frames"]["busy"]["fps"] <= 32.5,
         {"idle": panel["frames"]["idle"]["fps"], "busy": panel["frames"]["busy"]["fps"]},
     ))
-    checks.append(check("panel.gear_invokes_open_settings", panel["actions"]["open_settings_called"] is True, panel["actions"]))
+    checks.append(check(
+        "panel.no_panel_side_open_settings_invocation",
+        "open_settings" not in panel["actions"]["commands"],
+        panel["actions"],
+    ))
     checks.append(check("panel.no_removed_control_tokens", scan_banned_tokens([panel["text"], panel["html"]], contract["banned_tokens"]) == [], scan_banned_tokens([panel["text"], panel["html"]], contract["banned_tokens"])))
+    checks.append(check(
+        "tray_source.right_click_opens_settings_and_left_up_toggles_panel",
+        tray_source["right_up_opens_settings"] is True and tray_source["left_up_toggles_panel"] is True,
+        tray_source,
+    ))
 
     checks.append(check("settings.view_state_ready", settings["view_state"] == "ready", settings["view_state"]))
     checks.append(check("settings.sections_in_order", settings["headings"] == contract["settings_sections"], {"actual": settings["headings"], "expected": contract["settings_sections"]}))
@@ -563,6 +607,7 @@ def render_check(
     from playwright.sync_api import sync_playwright
 
     contract = parse_contract(contract_path)
+    tray_source = inspect_tray_source(DEFAULT_TAURI_MAIN)
     out_dir.mkdir(parents=True, exist_ok=True)
     receipt: dict[str, Any] = {
         "schema": "jarvis-desktop-render-check/1",
@@ -573,13 +618,14 @@ def render_check(
             "assets": sorted(item.name for item in (dist / "assets").glob("*")) if (dist / "assets").is_dir() else [],
         },
         "contract": {"path": str(contract_path), "sha256": contract["sha256"]},
+        "tray_source": tray_source,
         "expected": {"banned_tokens": contract["banned_tokens"], "settings_sections": contract["settings_sections"]},
         "browser": {},
         "panel": {},
         "settings": {},
         "knowledge": {},
         "checks": [],
-        "notes": [],
+        "notes": ["macOS tray routing is source-inspected only; Chromium does not exercise TrayIconEvent"],
     }
 
     httpd = _serve(dist, port)
@@ -622,9 +668,7 @@ def render_check(
             busy_capture = capture(panel, out_dir / "jarvis-render-panel.busy.png")
             busy_luminance = mean_luminance(panel, out_dir / "jarvis-render-panel.busy.png")
 
-            panel.click("#gear")
-            panel.wait_for_timeout(400)
-            gear_calls = panel.evaluate("() => window.__jarvisStub.calls.map((entry) => entry.command)")
+            panel_calls = panel.evaluate("() => window.__jarvisStub.calls.map((entry) => entry.command)")
 
             receipt["panel"] = {
                 "view_state": idle_probe["state"],
@@ -645,9 +689,8 @@ def render_check(
                 "luminance": {"idle": idle_luminance, "busy": busy_luminance},
                 "render_count": {"idle": idle_probe["renderCount"], "busy": busy_probe["renderCount"]},
                 "actions": {
-                    "open_settings_called": "open_settings" in gear_calls,
-                    "snapshot_calls": gear_calls.count("fetch_runtime_snapshot"),
-                    "commands": sorted(set(gear_calls)),
+                    "snapshot_calls": panel_calls.count("fetch_runtime_snapshot"),
+                    "commands": sorted(set(panel_calls)),
                 },
                 "captures": {"idle": idle_capture, "busy": busy_capture, "light": panel_light, "dark": panel_dark},
                 "text": idle_probe["text"],

@@ -33,6 +33,7 @@ UI_SOURCE = ROOT / "desktop" / "src" / "ui.ts"
 STYLES_SOURCE = ROOT / "desktop" / "src" / "styles.css"
 RUNTIME_SOURCE = ROOT / "desktop" / "src" / "runtime.ts"
 CONTRACT_SOURCE = ROOT / "desktop" / "src" / "__tests__" / "ui-removal-contract.test.ts"
+TAURI_MAIN_SOURCE = ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
 BACKTICK = chr(96)
 
 
@@ -73,8 +74,8 @@ class SharedExpectations(unittest.TestCase):
         expected = hashlib.sha256(CONTRACT_SOURCE.read_bytes()).hexdigest()
         self.assertEqual(self.contract["sha256"], expected)
 
-    def test_panel_label_comes_from_the_contract_file(self) -> None:
-        self.assertEqual(self.contract["panel_label"], "\uc124\uc815 \uc5f4\uae30")
+    def test_contract_does_not_invent_a_panel_control_label(self) -> None:
+        self.assertNotIn("panel_label", self.contract)
 
     def test_contract_parse_fails_closed_on_a_missing_array(self) -> None:
         with self.assertRaises(check.ContractParseError):
@@ -90,11 +91,29 @@ class SharedExpectations(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertEqual(check.scan_banned_tokens([path.read_text(encoding="utf-8")], tokens), [])
 
-    def test_panel_source_keeps_the_single_gear(self) -> None:
+    def test_panel_source_has_zero_interactive_elements(self) -> None:
         panel = template_body(UI_SOURCE.read_text(encoding="utf-8"), "mainPanelMarkup")
-        self.assertEqual(check.count_contract_interactive(panel), 1)
-        self.assertIn('id="gear"', panel)
-        self.assertIn('aria-label="' + self.contract["panel_label"] + '"', panel)
+        self.assertEqual(check.count_contract_interactive(panel), 0)
+        self.assertNotIn('id="gear"', panel)
+
+
+class TraySourceContract(unittest.TestCase):
+    def test_tray_source_keeps_right_click_settings_and_left_up_toggle(self) -> None:
+        inspected = check.inspect_tray_source(TAURI_MAIN_SOURCE)
+        self.assertTrue(inspected["right_up_opens_settings"])
+        self.assertTrue(inspected["left_up_toggles_panel"])
+        self.assertFalse(inspected["browser_exercised"])
+
+    def test_tray_right_click_detector_fails_when_branch_is_missing(self) -> None:
+        source = TAURI_MAIN_SOURCE.read_text(encoding="utf-8")
+        without_right_click = source.replace(
+            "button: MouseButton::Right,",
+            "button: MouseButton::Middle,",
+            1,
+        )
+        routes = check.tray_click_routes(without_right_click)
+        self.assertFalse(routes["right_up_opens_settings"])
+        self.assertTrue(routes["left_up_toggles_panel"])
 
 
 class Helpers(unittest.TestCase):

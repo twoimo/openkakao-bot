@@ -19,7 +19,7 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 2. 새 메시지가 오면 답장 후보인지 판단합니다.
 3. 예전 대화와 내 말투를 참고해 답 초안을 만듭니다.
 4. 카카오톡 입력창에 대신 입력해 보냅니다. (접근성 API)
-5. Tauri 메뉴바 앱은 골드 코어와 우측 상단 gear만 두고, 제어는 그 gear로 여는 통합 설정에서 다룹니다.
+5. Tauri 메뉴바 패널은 골드 코어만 표시하고 인터랙티브 요소를 두지 않습니다. 통합 설정은 메뉴바 트레이 아이콘을 우클릭해서 엽니다.
 
 카카오 서버에 별도로 로그인해서 메시지를 빼 오는 봇이 **아닙니다.**
 **맥에 설치된 카카오톡 앱**이 있어야 하고, 그 앱이 만든 로컬 DB를 읽습니다.
@@ -229,7 +229,7 @@ sh scripts/install-jarvis-desktop.sh
 sh scripts/start-auto-reply-menubar.command
 ```
 
-`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 골드 코어와 우측 상단 gear만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 모두 그 gear의 통합 설정에서 다룹니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
+`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 패널에는 골드 코어만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 메뉴바 트레이 아이콘을 우클릭해 여는 통합 설정에서 다룹니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
 
 온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
@@ -239,7 +239,7 @@ sh scripts/start-auto-reply-menubar.command
 
 ## Jarvis Tauri와 지식 그래프
 
-Tauri 메뉴바 창은 골드 홀로그램 코어와 우측 상단 톱니바퀴만 둡니다. 대량 검증, 기능 점검, 권한 설정 UI는 없습니다. 제어는 gear를 눌러 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
+Tauri 메뉴바 창은 골드 홀로그램 코어만 두며 인터랙티브 요소는 없습니다. 대량 검증, 기능 점검, 권한 설정 UI도 없습니다. 제어는 메뉴바 트레이 아이콘을 우클릭해 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
 
 카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
 

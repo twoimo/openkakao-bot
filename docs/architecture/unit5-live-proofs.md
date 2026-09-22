@@ -1827,3 +1827,91 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 #### 4. 이번 절의 검증 범위와 CI
 
 이 절이 기록하는 것은 측정과 확인 결과뿐이고 제품 코드는 바뀌지 않았다. 커밋 `fff3bd3`의 CI run [35707345093](https://github.com/twoimo/openkakao-bot/actions/runs/35707345093)이 3개 job 모두 success이고, 러너 수치는 `Ran 651 tests in 60.343s / OK (skipped=60)`, `Test Files 9 passed (9)` / `Tests 121 passed (121)`, Rust 데스크톱 크레이트 `63 passed; 0 failed; 0 ignored`다. 하네스 정리: 합성용 scratch 탭 close, loopback 서버 중지(포트 8765 리스너 0 확인).
+
+## 패널 코어 전용 전환과 자동답변·GeekNews 중단 복구 — 2026-09-22 KST
+
+### 1. 요청과 계약 변경
+
+메뉴바 패널의 톱니바퀴 버튼을 없애고, 설정 창을 **메뉴바 트레이 아이콘 우클릭**으로 열도록 바꿨다. 이전에는 패널의 유일한 조작 요소가 `button#gear`였고 `open_settings`도 그 버튼에서만 호출됐다.
+
+- `desktop/src/ui.ts`: `MAIN_PANEL_CONTROLS`가 빈 frozen tuple이 되고 `mainPanelMarkup()`은 `<main class="jarvis-panel">` + 코어 캔버스만 렌더한다.
+- `desktop/src/main.ts`: 패널 DOM의 `open_settings` 경로와 그 부속 상태(`settingsPending`, `aria-busy`, `clearPanelUnavailable`)를 삭제했다. `RenderLifecycle`·스냅샷 폴러·`window.__jarvisRenderCount`는 그대로다.
+- `desktop/src-tauri/src/main.rs`: `on_tray_icon_event`에 좌클릭 `Up → toggle_panel`을 유지하고 `MouseButton::Right` + `Up → open_settings` 분기를 추가했다. `open_settings` 본문의 announce-before-`set_focus` 순서는 그대로다(테스트가 고정).
+- `desktop/src/tokens.ts`의 `gearSize`, `styles.css`의 `.gear` 규칙, `desktop/DESIGN.md`의 gear 서술도 함께 정리했다.
+
+### 2. 렌더 교차 검증 재실행 (24/24 checks pass)
+
+`desktop/dist`를 `npm run build`로 다시 만들고 `scripts/jarvis_desktop_render_check.py`를 실행했다. 이 환경의 고정 인터프리터들에는 `playwright`가 없어서(`browser unavailable: No module named 'playwright'`) 격리 venv `/private/tmp/okb-pw-venv`에 `playwright 1.63.0`만 설치해 돌렸고, 캐시된 Chromium 대신 시스템 Google Chrome(`chrome 153.0.8010.53`)을 썼다.
+
+| 항목 | 값 |
+| --- | --- |
+| verdict | `status: pass`, checks 24/24 |
+| 패널 interactive | `[]` (이전: gear 1개) |
+| 패널 extra focusable | `[]` |
+| 패널이 호출한 명령 | `fetch_runtime_snapshot`, `plugin:event|listen` — `open_settings` 없음 |
+| 패널 평문 텍스트 | `''` |
+| 트레이 라우팅 | 소스 검사: `left_up_toggles_panel true`, `right_up_opens_settings true`, `browser_exercised false` |
+| 설정 `<h2>` 순서 | `대상 채팅방 / AI 모델 / Voice / 카카오 DB 동기화 · 색인 / DREAM-RSI / Knowledge / History` |
+| WebGL | `WebGL 2.0 (OpenGL ES 3.0 Chromium)`, `gl.getError() == 0` |
+| FPS | 유휴 13.48 / 부하 22.99, renderCount 16 → 107 |
+| 드릴다운 | `최연우`, `2-hop · 4 nodes · 3 relations`, hop label `2-hop · 4/24 nodes`, retrieve `rrf · facts 2 · 알쫀쿠 = 알리바바 클라우드 축약` |
+
+한계를 명시한다. macOS 메뉴바 트레이 항목은 브라우저 페이지가 클릭할 수 없다. 그래서 하네스는 `desktop/src-tauri/src/main.rs`를 별도로 읽어 좌클릭/우클릭 분기가 있는지만 확인하고 receipt에 `browser_exercised: false`와 `notes: ['macOS tray routing is source-inspected only; Chromium does not exercise TrayIconEvent']`를 기록한다. **실제 트레이 우클릭 동작은 이 하네스로 검증되지 않았다.** 재생성물: [jarvis-desktop-render-check.json](jarvis-desktop-render-check.json) (`generated_at 2026-09-22T09:41:43Z`), 캡처 `jarvis-render-*.png`. 패널 캡처를 직접 판독해 우측 상단 버튼이 사라지고 골드 코어만 남은 것을 확인했다.
+
+로컬 검증 수치: `tests.test_jarvis_desktop_render_check` **26 tests OK**, 데스크톱 Vitest `Test Files 9 passed (9)` / `Tests 121 passed (121)`, `tsc -p tsconfig.json --noEmit` clean, `cargo test` **63 passed**.
+
+### 3. 이 변경이 만든 CI 실패와 그 정정
+
+`2f88b59`의 CI run [35709884829](https://github.com/twoimo/openkakao-bot/actions/runs/35709884829)은 `Tauri desktop and focused Python tests`에서 실패했다. `Ran 651 tests in 62.688s / FAILED (failures=1, skipped=60)`이고 유일한 실패는 정확히 옛 계약을 고정하던 `test_panel_source_keeps_the_single_gear`(`AssertionError: 0 != 1`)다. `macOS cargo test`와 `Launchd and Python harness`는 success였다. 위 하네스·테스트 정정이 그 실패를 닫는다.
+
+### 4. 자동답변·GeekNews 중단의 원인 두 가지
+
+사용자 보고는 "카카오톡 자동 답변과 긱뉴스 자동 전송이 안 된다"였다. 로그·상태·재현으로 원인 두 개를 분리했다.
+
+**원인 A — 배치된 런타임의 스크립트 복사 목록이 불완전했다.** `scripts/prepare-auto-reply-session-runtime.py`의 `RUNTIME_SCRIPT_NAMES`는 11개였는데 진입 스크립트의 로컬 import 폐포는 17개다. 누락은 `auto_reply_knowledge_graph`, `auto_reply_ondevice`, `auto_reply_reference_search`, `auto_reply_reference_store`, `jarvis_abort`, `local_mlx_gateway` 6개다. 재현:
+
+```text
+/opt/homebrew/opt/python@3.13/bin/python3.13 -E -B "<runtime>/scripts/auto-reply-worker.py" --help
+  File ".../auto-reply-worker.py", line 68, in <module>
+    from auto_reply_ondevice import (
+ModuleNotFoundError: No module named 'auto_reply_ondevice'
+```
+
+`~/Library/Application Support/openkakao/bujamentor/nimda-geeknews.log`의 마지막 성공 슬롯은 2026-09-20 19:50 KST(`status accepted_unconfirmed`, `confirmed log_id=3933957100273530883`)이고, 2026-09-21 08:40:01 KST 슬롯부터 같은 traceback으로 `exit=1`이 반복된다. launchd가 newest runtime을 고르는 `nimda-geeknews-slot.sh`의 선택(`ls -td runtime/*/ | head -1`)이 정확히 그 불완전한 런타임이었다.
+
+**원인 B — catalog preflight가 방마다 1개씩 호출돼 항상 실패했다.** `scripts/auto-reply-service.py`의 `_filter_catalog_selectors`는 후보를 하나씩 `auto-reply --check`로 검사했지만, CLI는 선택한 방 집합이 `[auto_reply.room_reply_authors]` 키 집합과 정확히 일치할 것을 요구한다. 그래서 단일 방 호출이 결정론적으로 실패한다. 실측:
+
+```text
+--chat bind:417780809780519:부자멘토멘티  ->  "error":"AutoReply room_reply_authors contains unselected chat ID 325472527151234"
+--chat (417..., 325...)                    ->  "error":"... unselected chat ID 437046948660911"
+--chat (417..., 325..., 437...)            ->  "valid":true
+```
+
+결과적으로 모든 방이 drop되고 `_perform_preflight`가 `auto-reply preflight failed for every catalog room`으로 끝나며, `session-watchdog-status.json`이 `attempt 392`, `consecutive_failures 392`, `reason preflight_failed`, `state circuit_open`에 머물렀다. `~/.config/openkakao/config.toml`(mtime 2026-09-21 07:34)에 3방 `room_reply_authors` 맵이 들어간 뒤 `07:41` bake가 그 config를 복사하면서 시작된 회귀다.
+
+한편 `preflight-skipped.json`(same day 18:13 KST)에는 `send bounded local MLX probe request … operation timed out`도 기록돼 있었다. `LOCAL_MLX_PROBE_TIMEOUT`은 15초다. 실측한 프로브 지연은 2.74s / 0.32s / 0.28s(`max_tokens 8`, 직접 curl)이고 `mlx-serve`(pid 38868)는 2026-09-18 21:15부터 상주 중이라, 그 타임아웃은 만성 원인이 아니라 일시적 이상치로 판단한다. **따라서 프로브 timeout 상수는 바꾸지 않았고, 이 항목은 잔여 위험으로 남긴다.**
+
+### 5. 수정과 검증
+
+커밋 `6413835`가 두 결함을 함께 고쳤다.
+
+- 런타임: 누락 6개를 명시 tuple에 추가하고, packager가 stdlib `ast`로 진입 스크립트의 import 폐포를 계산해 복사 목록이 폐포를 덮지 못하면 `PackagingError`로 **staging 자체를 거부**한다. 즉 새 모듈이 생기면 배포된 런타임이 아니라 bake가 먼저 깨진다.
+- service: catalog 후보 **전체를 한 번에** preflight하고, 통과하면 `skipped == []`로 전부 수용한다. 기존 방별 루프는 전체 호출이 실패했을 때만 도는 fallback으로 남겨 "나쁜 방 하나가 호스트 전체를 멈추지 않게" 하는 2026-09-12 보호를 유지했다.
+- `.github/workflows/ci.yml`의 focused 목록에 `tests.test_auto_reply_session_packager`를 등록했다. 이 CI는 테스트 모듈을 명시적으로 열거하므로 등록하지 않으면 새 packager 테스트가 게이트가 되지 않는다.
+
+검증(원문):
+
+- `tests.test_auto_reply_session_packager tests.test_auto_reply_service_entry` → `Ran 69 tests in 26.846s / OK` (수정 에이전트 실행은 `Ran 69 tests in 30.827s / OK`).
+- 사설 임시 state root(`/private/tmp/okb-bake-verify-2/state`, mode 700)로 bake한 새 런타임 `20260922T092900Z-14713`의 `scripts/`에 18개 asset(모듈 17 + `auto-reply-schema.json`)이 모두 있고, 세 진입 스크립트가 엄격 플래그에서 import된다:
+  - `python3.13 -E -B -S <runtime>/scripts/auto-reply-worker.py --geeknews --help` → `usage: auto-reply-worker.py --geeknews …` (ModuleNotFoundError 없음)
+  - `auto-reply-service.py --help`, `auto-reply-session-monitor.py --help` → 각각 정상 usage
+- 수정된 `_filter_catalog_selectors`를 실제 binary·실제 config로 직접 호출: `catalog=[417…, 325…, 437…]`, `accepted=[417…, 325…, 437…]`(전체 1회 호출), `skipped=[]`. 같은 함수를 두 번 더 직접 호출한 `_preflight_cli`는 `ok=True`(10.6s / 4.7s).
+
+### 6. 아직 배포되지 않았다 (남은 단계)
+
+이 절의 수정은 **저장소와 새로 bake한 사설 런타임에만** 반영됐다. 실제 `~/Library/Application Support/openkakao/bujamentor`의 운영 런타임은 `20260920T224139Z-69184`이고, LaunchAgent `com.openkakao.auto-reply.session-monitor`는 그 runtime의 `session-monitor-manifest.json`을 가리킨다. 또한 `start-auto-reply-session.command`(pid 71513)와 `auto-reply-service.py --mode session`(pid 71515)가 2026-09-21 07:42부터 `session-watchdog.owner.lock`을 쥔 채 circuit_open으로 재시도 중이라, 새 런타임을 설치해도 그 owner lock이 풀리기 전에는 새 watchdog이 시작되지 않는다. 따라서 운영 복구는 다음 순서를 요구하며, 이 문서는 그것을 실행했다고 주장하지 않는다.
+
+1. 실제 state root로 완전한 런타임 bake(운영 config의 `[auto_reply].chats`와 정확히 같은 순서의 `--chat` 3개).
+2. LaunchAgent 교체: `launchctl bootout gui/$(id -u)/com.openkakao.auto-reply.session-monitor` → 기존 plist 백업 → 새 plist bootstrap.
+3. owner lock을 쥔 pid 71513/71515 중단(진행 중 전송이 없음을 먼저 확인해야 한다. 상태는 `reason preflight_failed`로, 392회 연속 자식을 띄우지 못한 상태다).
+4. GeekNews는 `nimda-geeknews-slot.sh`가 newest runtime을 고르므로 1번만으로 다음 슬롯(08:40/12:35/19:50 KST)부터 복구된다. 다만 이는 실제 방으로 나가는 전송이므로 별도 확인 후 진행한다.

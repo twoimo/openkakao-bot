@@ -1,17 +1,24 @@
 {
   "schema": "jarvis-desktop-render-check/1",
-  "generated_at": "2026-09-22T06:23:06Z",
+  "generated_at": "2026-09-22T09:41:43Z",
   "dist": {
     "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/dist",
-    "index_sha256": "c989e88fb8121a193ac3e4b89f842cb16b645bc38bbd5e8b4a3bd18a56aa12b6",
+    "index_sha256": "82e37a118535069784265293de93ad677f7f423972cc397290a3d5b9a6bfefcb",
     "assets": [
-      "index-CEKtvzmx.css",
-      "index-Cd_I4qHa.js"
+      "index-BF0PVkH5.js",
+      "index-BLBtzPBm.css"
     ]
   },
   "contract": {
     "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/src/__tests__/ui-removal-contract.test.ts",
-    "sha256": "9f934ce756bd3acaa927164588c153f09b6781eaf5b2975f2a9a372334f9697e"
+    "sha256": "e601e8c8be90509e24f633d84669fcd2e08344606d5f1b4d8c062c191cfd7e6d"
+  },
+  "tray_source": {
+    "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/src-tauri/src/main.rs",
+    "sha256": "15f71c2aed923bbc4d7263beef29b9af11fe8c06821d2cf88449f7481d44ae0b",
+    "left_up_toggles_panel": true,
+    "right_up_opens_settings": true,
+    "browser_exercised": false
   },
   "expected": {
     "banned_tokens": [
@@ -48,14 +55,7 @@
   },
   "panel": {
     "view_state": "ready",
-    "interactive": [
-      {
-        "tag": "button",
-        "id": "gear",
-        "label": "설정 열기",
-        "disabled": false
-      }
-    ],
+    "interactive": [],
     "extra_focusable": [],
     "headings": [],
     "mains": 1,
@@ -83,27 +83,27 @@
       "idle": {
         "counter": "__jarvisRenderCount",
         "frames": 27,
-        "seconds": 2.003,
+        "seconds": 2.002,
         "fps": 13.48
       },
       "busy": {
         "counter": "__jarvisRenderCount",
-        "frames": 44,
-        "seconds": 2.002,
-        "fps": 21.97
+        "frames": 46,
+        "seconds": 2.001,
+        "fps": 22.99
       }
     },
     "luminance": {
       "idle": {
         "width": 552,
         "height": 520,
-        "meanLuminance": 237.97,
+        "meanLuminance": 238.02,
         "litRatio": 1
       },
       "busy": {
         "width": 552,
         "height": 520,
-        "meanLuminance": 234.15,
+        "meanLuminance": 234.31,
         "litRatio": 1
       }
     },
@@ -112,37 +112,36 @@
       "busy": 107
     },
     "actions": {
-      "open_settings_called": true,
       "snapshot_calls": 4,
       "commands": [
         "fetch_runtime_snapshot",
-        "open_settings"
+        "plugin:event|listen"
       ]
     },
     "captures": {
       "idle": {
         "file": "jarvis-render-panel.idle.png",
-        "bytes": 111259,
-        "sha256": "d25d3b1126957d3ade1a765232bf986bfd59a3c8eae04da23e09498fd07818df"
+        "bytes": 109623,
+        "sha256": "be8e13ac2a9911d692060eac63d1b76a2a068eee228f84c695a353ef96a1774b"
       },
       "busy": {
         "file": "jarvis-render-panel.busy.png",
-        "bytes": 122753,
-        "sha256": "5dca0bed08bd1cce9fc21e2e35a8d6825e1977028b1300a9b01291412293ff68"
+        "bytes": 117911,
+        "sha256": "2603925fce20ec23b9fbbbc4b2565f51a8e3aa9c490ddbf6e086765289f4597e"
       },
       "light": {
         "file": "jarvis-render-panel.light.png",
-        "bytes": 110949,
-        "sha256": "0b3967aab6a47ad932f4fb8c2c672e620f24eb09fb72fdb3f1ac89374ffbaf27"
+        "bytes": 108516,
+        "sha256": "996d54fbe29cac331b073a37cd6db69f1ec5cfd144ffcd1e6c2ad9c1b727d2d8"
       },
       "dark": {
         "file": "jarvis-render-panel.dark.png",
-        "bytes": 107832,
-        "sha256": "d93beac5586b931c0be6c0596e16133eebb298078dd6b9faceb0fa2e7de97bfe"
+        "bytes": 105714,
+        "sha256": "40a1332f12aa66d09270d7f4ac0708cd1d2965499b768d14492bcc135fdcac5e"
       }
     },
-    "text": "⚙︎",
-    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"jarvis-panel\" aria-label=\"Jarvis\">\n    <canvas class=\"jarvis-core\" width=\"472\" height=\"472\" aria-label=\"Jarvis core\" data-engine=\"three.js r180\"></canvas>\n    <button id=\"gear\" class=\"gear\" type=\"button\" aria-label=\"설정 열기\" title=\"설정\">⚙︎</button>\n  </main></div>\n  \n\n"
+    "text": "",
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"jarvis-panel\" aria-label=\"Jarvis\">\n    <canvas class=\"jarvis-core\" width=\"472\" height=\"472\" aria-label=\"Jarvis core\" data-engine=\"three.js r180\"></canvas>\n  </main></div>\n  \n\n"
   },
   "settings": {
     "view_state": "ready",
@@ -229,15 +228,15 @@
     "expand_disabled_after_expand": true,
     "frames_after_focus": {
       "counter": "__knowledgeRenderCount",
-      "frames": 19,
+      "frames": 21,
       "seconds": 1.502,
-      "fps": 12.65
+      "fps": 13.98
     },
     "render_count_after_focus": 88,
     "settings_focus_capture": {
       "file": "jarvis-render-settings.focus.png",
-      "bytes": 114979,
-      "sha256": "0f787b279d6e7d1cca50ffd0ff86e3f74ba6ae92e2ac1f16c3711a7a5a475623"
+      "bytes": 114978,
+      "sha256": "a7b4d334a3ffa0713eb3360745a5578ff86551ca297d060935ffc57ca9f2392d"
     }
   },
   "checks": [
@@ -247,26 +246,9 @@
       "detail": "ready"
     },
     {
-      "name": "panel.single_interactive_element",
+      "name": "panel.zero_interactive_elements",
       "ok": true,
-      "detail": [
-        {
-          "tag": "button",
-          "id": "gear",
-          "label": "설정 열기",
-          "disabled": false
-        }
-      ]
-    },
-    {
-      "name": "panel.gear_is_the_only_control",
-      "ok": true,
-      "detail": {
-        "tag": "button",
-        "id": "gear",
-        "label": "설정 열기",
-        "disabled": false
-      }
+      "detail": []
     },
     {
       "name": "panel.no_extra_focusable",
@@ -304,7 +286,7 @@
       "detail": {
         "counter": "__jarvisRenderCount",
         "frames": 27,
-        "seconds": 2.003,
+        "seconds": 2.002,
         "fps": 13.48
       }
     },
@@ -313,9 +295,9 @@
       "ok": true,
       "detail": {
         "counter": "__jarvisRenderCount",
-        "frames": 44,
-        "seconds": 2.002,
-        "fps": 21.97
+        "frames": 46,
+        "seconds": 2.001,
+        "fps": 22.99
       }
     },
     {
@@ -323,18 +305,17 @@
       "ok": true,
       "detail": {
         "idle": 13.48,
-        "busy": 21.97
+        "busy": 22.99
       }
     },
     {
-      "name": "panel.gear_invokes_open_settings",
+      "name": "panel.no_panel_side_open_settings_invocation",
       "ok": true,
       "detail": {
-        "open_settings_called": true,
         "snapshot_calls": 4,
         "commands": [
           "fetch_runtime_snapshot",
-          "open_settings"
+          "plugin:event|listen"
         ]
       }
     },
@@ -342,6 +323,17 @@
       "name": "panel.no_removed_control_tokens",
       "ok": true,
       "detail": []
+    },
+    {
+      "name": "tray_source.right_click_opens_settings_and_left_up_toggles_panel",
+      "ok": true,
+      "detail": {
+        "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/src-tauri/src/main.rs",
+        "sha256": "15f71c2aed923bbc4d7263beef29b9af11fe8c06821d2cf88449f7481d44ae0b",
+        "left_up_toggles_panel": true,
+        "right_up_opens_settings": true,
+        "browser_exercised": false
+      }
     },
     {
       "name": "settings.view_state_ready",
@@ -442,6 +434,8 @@
       "detail": "retrieve rrf · facts 2 · 알촀쿠 = 알리바바 클라우드 축약"
     }
   ],
-  "notes": [],
+  "notes": [
+    "macOS tray routing is source-inspected only; Chromium does not exercise TrayIconEvent"
+  ],
   "status": "pass"
 }
