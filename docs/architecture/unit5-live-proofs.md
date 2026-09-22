@@ -2102,3 +2102,47 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 실제 카카오톡 전송을 수행하지 않았다(프로젝트 규칙: 테스트는 fake 어댑터). 호스트 GeekNews 슬롯의 AX 축 첫 실전 검증은 2026-09-23 08:40 KST 슬롯이다.
 - 웹 위임 리뷰는 이번에도 AHP 점수를 산출하지 않았으므로 98점 달성을 주장하지 않는다. 이번 위임은 `chatgpt-web/high` 로 수행했고(요청에 있던 GPT-5.6 Luna 계열은 도구 카탈로그에 없고 `gpt-6-astra` · `gpt-5.6-sol` 은 사용량 한도로 차단) 결과는 코드 정확성 검토와 패치·테스트이며 순위 점수가 아니다.
 
+
+## 동기화된 GeekNews 예약 발송 차단의 근본 원인, CI 린트 회귀, 위임 검증 — 2026-09-22~23 KST (5차)
+
+### 1. CI 회귀: `474c6e7` 의 macOS cargo test 실패를 고쳤다
+
+- `61b2abb` 이 추가한 테스트가 패치 앵커를 `loco_write_disabled_by_default` 의 `#[test]` 줄에 잡는 바람에 그 테스트는 속성을 잃고 새 테스트는 `#[test]` 를 두 번 갖게 됐다. `cargo test --bins` 는 duplicate attribute 를 린트로만 보므로 통과했고(224 passed), CI 의 `cargo clippy --all-targets -- -D warnings` 만 `duplicate_macro_attributes` 와 `dead_code` 로 실패했다(run `35742250812`, job `macOS cargo test`).
+- 수정 `15934a7` 이후 CI run `35743644505` 는 세 job 모두 success 다.
+- 교훈: 새 테스트를 넣을 때 앵커를 기존 테스트의 `#[test]` 줄로 잡으면 그 테스트의 속성이 조용히 사라진다. `cargo test` 만으로는 잡히지 않으므로 clippy 를 함께 돌려야 한다.
+
+### 2. 새로 확정한 결함: 발송 경계의 반복 홀드가 예약 GeekNews 다이제스트를 영구 차단
+
+- 이전 차수는 프로액티브 슬롯의 창·지연 산술까지 규명하고 정책 변경을 보류했지만, 실제 종결 사유를 잘못 짚었다. room 325 의 `reply_jobs` 행 `db:325472527151234:1790075434` 는 `status=skipped`, `decision=skip`, `reason=similar_recent_self`, `category=policy`, `error_class=similar_recent_self`, `attempt_no=8` 이고 `event_json.proactive` 는 `true` 다. `stale_backlog` 가 아니라 **`similar_recent_self`** 였다.
+- 코드 경로: 발송 직전 경계가 모든 이벤트에 대해 `_send_time_repeat_hold()` 를 부르고(`scripts/auto-reply-worker.py:15118` 부근), 그 안의 `_outbound_similar_recent_self()`(`:9983`)가 초안 토큰과 최근 self 텍스트 3건을 비교해 공유 토큰 2개 이상 또는 Jaccard 0.45 이상이면 True 를 돌려준다. `GeekNews TOP5`, `KST`, `https://news.hada.io/topic?id=` 같은 템플릿 토큰은 연속 다이제스트가 항상 공유하므로 예약 다이제스트는 이전 다이제스트와 "같은 말"로 판정된다.
+- 같은 경계가 프로액티브 이벤트만 `conversation_advanced` 검사에서 면제하므로(`:15103` 부근) 두 게이트가 같은 작업에 대해 서로 다른 정책을 적용하고 있었다. `_pre_mutation_send_hold()`(`:10172` 부근)는 프로액티브면 None 을 돌려주는데 이 홀드에는 그 면제가 없었다.
+- 독립 재현: 모듈을 직접 로드해 `_outbound_similar_recent_self(새 다이제스트, [이전 다이제스트])` -> `True`, 관계없는 self 문장 -> `False`.
+
+### 3. 수정 `19aa098` 와 검증
+
+- `_is_constructed_geeknews_row()` 를 추가하고 `_recent_sent_self_rows()` 가 durable 큐의 `event_json` 에서 `proactive` · `proactive_query` · `reason` 을 보존하게 했다. `_send_time_repeat_hold()` 에서 현재 outbound 가 구성된 GeekNews 다이제스트일 때(`_constructed_geeknews_outbound`)만 GeekNews 로 생성된 self 행을 유사도 비교 집합에서 제거한다.
+- 보존: 반응형 답변의 `similar_recent_self` 가드, `already_commented`, `sent_history_unavailable`, 파트너 스트릭 홀드, 그리고 GeekNews 가 아닌 이벤트의 동작은 그대로다.
+- 뮤테이션 검증: 필터 한 줄(`combined = [row for row in combined if not _is_constructed_geeknews_row(row)]`)을 제거하면 새 테스트가 실패한다(`FAILED (failures=1)`). 복원 후 md5 동일.
+- 테스트 실측: `tests.test_auto_reply_turn_holds` OK, 그리고 복원 상태에서 `tests.test_auto_reply_worker_mlx`, `tests.test_auto_reply_menubar`, `tests.test_auto_reply_retry_policy`, `tests.test_auto_reply_db_watch_retry`, `tests.test_auto_reply_service_entry`, `tests.test_auto_reply_dw_starting_takeover` 모두 OK.
+- 첫 위임 산출물의 테스트는 **무효**였다. `_recent_sent_self_rows` 를 빈 리스트로 mock 해서 `_send_time_repeat_hold()` 의 조기 반환(`if not fresh: return None`)에 걸렸고, 수정을 되돌려도 통과했다. 위임 재작업으로 음성 대조(`_outbound_similar_recent_self` 가 True 임을 먼저 단언)와 비어 있지 않은 `fresh` 를 쓰도록 고쳤다. 위임 결과를 그대로 신뢰하지 않고 부모가 검증한 사례다.
+
+### 4. 세 방의 발송 실적 (읽기 전용 복사본 실측)
+
+- room 417: 최근 self 발송 2026-09-22 22:48:52 (`sent` 누적 `social_reply` 55, `geeknews_rss` 16, 마지막 `geeknews_rss` 2026-09-20 12:46). 최근 수신 2026-09-22 21:45:56 `현준`.
+- room 325: 최근 self 발송 2026-09-20 19:50:31 (GeekNews TOP5). 마지막 수신 2026-09-18. `sent` 는 `geeknews_rss` 1건뿐이다.
+- room 437: 최근 self 2026-09-22 22:31:35, 최근 수신 2026-09-22 22:15:11 `권준혁`. `GeekNews TOP5` 발송 이력 0건.
+- 현재 살아 있는 후보는 세 방 모두 `db-watch.log` 의 `skip_ack_unconfirmed:self_author` 로 드러난다. 즉 최근 관측분은 자기 메시지이고, 이는 올바른 거부다. 2026-09-22 22:32~22:55 의 `authorization_rejected` 전이도 `self_author` 다.
+
+### 5. 남은 축 (이번 단위에서 고치지 않음)
+
+- 자동 답변 미발송의 지배적 원인은 여전히 `conversation_advanced`(room 437 187건, room 417 31건, 둘 다 2026-09-22 18:57 KST 시작)와 로컬 추론 지연 42.5~150.62s 다. 응답 창은 사용자의 실제 박자를 학습한 분포(`RESPONSE_TIME_DISTRIBUTION_*`)로 정해지고 AHP 채점 대상이므로, 창을 넓히면 오래된 맥락에 답하는 동작이 생긴다. 정책 판단이 필요해 보류했다.
+- `db-watch.log` 의 `context_sync_transient:SqliteBusyTransient:Error code 5: The database file is locked` 가 room 417 168건, room 437 173건, room 325 다수다. room 325 워커 로그에는 `OperationalError: database is locked` 와 `RuntimeError: reply_queue_reconciliation_required` 가 있다.
+- `knowledge-graph dense_query_failed {"error": "RuntimeError"}` 가 반복된다. `scripts/auto_reply_knowledge_graph.py:3642` 의 광역 예외 처리로 BM25 단독 모드로 내려가므로, 하이브리드 RRF 가 실제로는 동작하지 않는 구간이 있다.
+- 호스트 GeekNews 슬롯 스크립트 `~/Library/Application Support/openkakao/nimda-geeknews-slot.sh` 는 저장소 밖 배포 산출물이다. 구 런타임 `20260920T225025Z-92735` 이 `auto_reply_ondevice` 를 갖지 않아 2026-09-21 08:40·12:35·19:50 과 2026-09-22 08:40·12:35 슬롯이 ModuleNotFound 로 죽었고, 22:00에 들어간 런타임 선택 로직은 저장소에 소스가 없다. 재발 방지를 위해 저장소로 옮기는 작업이 필요하다.
+
+### 6. 배포 상태와 다음 검증 지점
+
+- 소스는 커밋·푸시했다(`15934a7`, `19aa098`). 세 방 워커의 cwd 가 `/Users/twoimo/Documents/projects/openkakao-bot` 이고 `scripts/auto-reply-worker.py --worker` 를 실행하므로 이 수정은 워커가 다음에 재기동될 때 로드된다.
+- 자동 답변 세션은 재시작하지 않았다. 부하 평균 25.44, 스왑 사용 43833.81M/45056M 로 이전 재시작 사고(MLX 프리플라이트 타임아웃으로 전 워커 정지)와 같은 조건이었고, `auto-reply-supervisor.py` 에 리로드 명령이 없으며 워커 종료는 슈퍼바이저의 자식 생존 검사에 걸린다. 실행 중 큐와 세션 소유 대상을 보존하는 편을 택했다.
+- 최초 실전 검증 지점: 호스트 GeekNews 슬롯 **2026-09-23 08:40 KST**(`nimda-geeknews.log`), 그리고 room 437 의 다음 실제 수신 메시지. 실제 카카오톡 전송은 수행하지 않았다(제품 규칙: 테스트는 fake 어댑터).
+- 이번 차수도 웹 위임은 AHP 점수를 산출한 것이 아니므로 98점 달성을 주장하지 않는다. 위임에는 `chatgpt-web/extra-high` 를 썼고(요청의 `GPT-5.6 Luna` 계열은 도구 카탈로그에 없다), 결과는 결함 재현·패치·테스트이며 순위 점수가 아니다.
