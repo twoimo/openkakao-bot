@@ -32,7 +32,17 @@ UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-service.sh"
 SESSION_UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-session-monitor.sh"
 
 
+_TEST_PYTHON_CACHE: list[Path] = []
+
+
 def _test_python() -> Path:
+    # Probing spawns subprocesses, so resolve the interpreter once per run.
+    if not _TEST_PYTHON_CACHE:
+        _TEST_PYTHON_CACHE.append(_resolve_test_python())
+    return _TEST_PYTHON_CACHE[0]
+
+
+def _resolve_test_python() -> Path:
     # Presence is not enough. A Homebrew keg can exist while its
     # Python.framework binary is gone (every child then dies with
     # "dyld: Library not loaded"), and a framework build installed by a package
@@ -173,6 +183,17 @@ class AutoReplyServiceEntryTests(unittest.TestCase):
         # macOS exposes TemporaryDirectory through the `/var` compatibility
         # symlink while the service deliberately attests canonical paths.
         root = root.resolve()
+        # The service refuses any interpreter that is not a Homebrew opt keg or
+        # a user-owned file, so a host that offers neither cannot exercise this
+        # path. Skip instead of reporting a product failure that is really an
+        # environment gap.
+        python = _test_python()
+        if not _service_accepts_interpreter(python):
+            raise unittest.SkipTest(
+                "no interpreter the auto-reply service accepts on this host "
+                f"(needs a /opt/homebrew/opt/python@* keg or a user-owned "
+                f"python; got {python})"
+            )
         runtime = root / "runtime"
         runtime.mkdir(mode=0o700)
         module = load_entry(f"auto_reply_fixture_{id(root)}")
