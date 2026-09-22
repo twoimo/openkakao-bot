@@ -3092,6 +3092,11 @@ def _emit_with_ack_fence(*args: object, **kwargs: object) -> str:
                 flush=True,
             )
             return "skipped"
+        if _sqlite_busy_text(exc):
+            cause = str(exc).strip()[:200]
+            raise SqliteBusyTransient(
+                f"emit_sqlite_busy:{type(exc).__name__}:{cause}"
+            ) from exc
         raise DbFence("reconcile_required:delivery_ack_uncertain") from exc
     if ack in {"accepted", "duplicate", "skipped"}:
         return ack
@@ -4165,6 +4170,11 @@ def poll_once(
             continue
         if log_id <= int(state["acked_watermark"]) and log_id not in pending:
             continue
+        # SQLITE_BUSY from the local reply queue proves that this hook attempt
+        # never entered the reply pipeline. Preserve the exact clean cursor
+        # proof from before publishing the candidate so the existing bounded
+        # transient retry can fence delivery and retry safely.
+        pre_hook_state = dict(state)
         ordered_messages = _merge_recent_tail(
             state.get("recent_message_tail", []),
             [message],
@@ -4343,6 +4353,22 @@ def poll_once(
                     skip_reason="empty_message",
                     candidate=candidate,
                 )
+        except SqliteBusyTransient as exc:
+            state = pre_hook_state
+            state.update(
+                capability_state="fenced",
+                delivery_enabled=False,
+                fence_reason=_fixed_fence_reason(exc),
+                poll_retry_kind=TRANSIENT_POLL_RETRY_KIND,
+                heartbeat_at=time.time(),
+                fence="db_unavailable",
+            )
+            print(
+                f"[db-watch] {_fixed_fence_reason(exc)}:"
+                f"{type(exc).__name__}:{str(exc).strip()[:200]}",
+                flush=True,
+            )
+            return state, emitted
         finally:
             # Only an accepted queue insert transfers the path capability to
             # the reply worker. Every other ACK or exception releases it here.

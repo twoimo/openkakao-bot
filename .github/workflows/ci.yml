@@ -173,6 +173,7 @@ jobs:
           tests.test_auto_reply_session_packager
           tests.test_rag_eval
           tests.test_auto_reply_service_entry
+          tests.test_auto_reply_db_watch_retry
           tests.test_jarvis_browser_use
           tests.test_jarvis_wake_eval
           tests.test_jarvis_wake_evidence
