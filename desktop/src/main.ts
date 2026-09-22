@@ -9,6 +9,11 @@ import {
 import { JarvisCore } from "./core/jarvis-core";
 import type { SourceLoads } from "./core/load-mapping";
 import { RenderLifecycle } from "./core/lifecycle";
+import {
+  tauriVisibilitySubscriber,
+  wireRenderLifecycle,
+  type VisibilitySubscriber,
+} from "./core/lifecycle-wiring";
 import { KnowledgeHologram } from "./knowledge/hologram";
 import {
   MAX_FOCUS_HOPS,
@@ -434,6 +439,7 @@ interface SettingsBootDependencies {
   loadAction: typeof fetchSettingsAction;
   wireVoice: typeof wireVoiceStart;
   invokeCommand: typeof invoke;
+  subscribeVisibility: VisibilitySubscriber | null;
 }
 
 export async function bootSettings(
@@ -444,6 +450,7 @@ export async function bootSettings(
     loadAction: fetchSettingsAction,
     wireVoice: wireVoiceStart,
     invokeCommand: invoke,
+    subscribeVisibility: tauriVisibilitySubscriber,
     ...overrides,
   };
   app.innerHTML = settingsMarkup();
@@ -526,34 +533,16 @@ export async function bootSettings(
       const graph = hologram;
       Object.defineProperty(window, "__knowledgeRenderCount", { configurable: true, get: () => graph.renderCount });
       const lifecycle = new RenderLifecycle(graph, () => undefined, () => undefined);
-      let disposed = false;
-      const deactivate = (): void => {
-        if (!disposed) lifecycle.transition("hidden");
-      };
-      const visibilityChanged = (): void => {
-        if (!disposed) lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
-      };
-      const activate = (): void => {
-        if (!disposed && document.visibilityState === "visible") lifecycle.transition("visible");
-      };
-      const close = (): void => {
-        if (disposed) return;
-        disposed = true;
-        window.removeEventListener("blur", deactivate);
-        window.removeEventListener("focus", activate);
-        document.removeEventListener("visibilitychange", visibilityChanged);
-        lifecycle.transition("closed");
-        try {
-          graph.dispose();
-        } catch {
-          // The page is closing; disposal remains fail-closed and idempotent here.
-        }
-      };
-      window.addEventListener("blur", deactivate);
-      window.addEventListener("pagehide", close, { once: true });
-      document.addEventListener("visibilitychange", visibilityChanged);
-      window.addEventListener("focus", activate);
-      lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
+      wireRenderLifecycle(lifecycle, {
+        subscribeVisibility: dependencies.subscribeVisibility,
+        onClosed: () => {
+          try {
+            graph.dispose();
+          } catch {
+            // The page is closing; disposal remains fail-closed and idempotent here.
+          }
+        },
+      });
     }
   } catch {
     try {
@@ -574,6 +563,7 @@ interface PanelBootDependencies {
   makeToken: () => CancellationToken;
   pollScheduler: PollTimerScheduler;
   invokeCommand: CommandInvoker;
+  subscribeVisibility: VisibilitySubscriber | null;
 }
 
 export async function bootPanel(
@@ -586,6 +576,7 @@ export async function bootPanel(
     makeToken: createCancellationToken,
     pollScheduler: browserPollScheduler,
     invokeCommand: invoke,
+    subscribeVisibility: tauriVisibilitySubscriber,
     ...overrides,
   };
   app.innerHTML = mainPanelMarkup();
@@ -613,16 +604,8 @@ export async function bootPanel(
     const lifecycle = new RenderLifecycle(activeCore, () => polling.stop(), () => polling.start());
     let disposed = false;
     let settingsPending = false;
+    let detachLifecycle: (() => void) | null = null;
 
-    const deactivate = (): void => {
-      if (!disposed) lifecycle.transition("hidden");
-    };
-    const visibilityChanged = (): void => {
-      if (!disposed) lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
-    };
-    const activate = (): void => {
-      if (!disposed && document.visibilityState === "visible") lifecycle.transition("visible");
-    };
     const openSettings = (): void => {
       if (disposed || settingsPending) return;
       settingsPending = true;
@@ -649,30 +632,34 @@ export async function bootPanel(
     const close = (): void => {
       if (disposed) return;
       disposed = true;
-      window.removeEventListener("blur", deactivate);
-      window.removeEventListener("focus", activate);
-      window.removeEventListener("pagehide", close);
-      document.removeEventListener("visibilitychange", visibilityChanged);
       gear.removeEventListener("click", openSettings);
+      detachLifecycle?.();
+      // Stopping is idempotent, so this also stops the loop and the poller on
+      // the teardown path that never reaches the pagehide handler.
       try {
         lifecycle.transition("closed");
       } catch {
         polling.stop();
       }
-      try {
-        activeCore.dispose();
-      } catch {
-        // WebGL teardown must never surface an exception during page shutdown.
-      }
     };
     closePanel = close;
 
+    // One wiring owns blur/focus/visibilitychange/pagehide and the Rust
+    // window-visibility event, so hiding the panel stops the 3D loop and the
+    // snapshot poller even when the webview reports no DOM signal of its own.
+    detachLifecycle = wireRenderLifecycle(lifecycle, {
+      subscribeVisibility: dependencies.subscribeVisibility,
+      onClosed: () => {
+        close();
+        try {
+          activeCore.dispose();
+        } catch {
+          // WebGL teardown must never surface an exception during page shutdown.
+        }
+      },
+    });
+
     gear.addEventListener("click", openSettings);
-    window.addEventListener("blur", deactivate);
-    window.addEventListener("pagehide", close, { once: true });
-    document.addEventListener("visibilitychange", visibilityChanged);
-    window.addEventListener("focus", activate);
-    lifecycle.transition(document.visibilityState === "visible" ? "visible" : "hidden");
     app.dataset.state = "ready";
   } catch {
     if (closePanel) closePanel();

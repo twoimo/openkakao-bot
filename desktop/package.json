@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.json && vite build",
     "test": "vitest run",
+    "bench:render": "esbuild src/perf/render-path-node.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/render-path-bench.mjs --log-level=warning && node node_modules/.cache/render-path-bench.mjs",
     "tauri": "tauri",
     "smoke": "sh scripts/smoke.sh"
   },

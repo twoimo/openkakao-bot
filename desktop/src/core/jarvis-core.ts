@@ -1,14 +1,11 @@
 import * as THREE from "three";
 import { AnimationLoop } from "./animation-loop";
-import { latticePulse, ringTargetVelocities, type SourceLoads } from "./load-mapping";
+import type { SourceLoads } from "./load-mapping";
+import { CoreRenderState, ringTilt } from "./render-state";
 
 const NEURON_COUNT = 96;
 const SYNAPSES_PER_NEURON = 3;
 const PARTICLE_COUNT = 30;
-
-function damp(current: number, target: number, lambda: number, dt: number): number {
-  return THREE.MathUtils.lerp(current, target, 1 - Math.exp(-lambda * dt));
-}
 
 function spherePoint(index: number, count: number, radius: number): THREE.Vector3 {
   const offset = 2 / count;
@@ -24,9 +21,9 @@ export class JarvisCore {
   private readonly camera = new THREE.PerspectiveCamera(34, 1, 0.1, 20);
   private readonly root = new THREE.Group();
   private readonly rings: THREE.Mesh[] = [];
-  private readonly ringVelocity = [0, 0, 0];
   private readonly ringBaseVelocity = [0.17, -0.12, 0.09];
   private readonly ringGain = [1.4, 1.65, 1.9];
+  private readonly state = new CoreRenderState();
   private readonly neuronsMaterial: THREE.PointsMaterial;
   private readonly synapsesMaterial: THREE.LineBasicMaterial;
   private readonly particlesMaterial: THREE.PointsMaterial;
@@ -34,14 +31,6 @@ export class JarvisCore {
   private readonly latticeMaterial: THREE.LineBasicMaterial;
   private readonly nucleus: THREE.Mesh;
   private readonly loop: AnimationLoop;
-  private targetLoad = 0;
-  private smoothLoad = 0;
-  private targetSources: SourceLoads = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
-  private smoothSources: SourceLoads = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
-  private targetVoiceRms = 0;
-  private smoothVoiceRms = 0;
-  private nucleusScale = 1;
-  private nucleusVelocity = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "low-power" });
@@ -127,19 +116,8 @@ export class JarvisCore {
   }
 
   setSignals(jobLoad: number, voiceRms: number, sources?: SourceLoads): void {
-    const safeLoad = Number.isFinite(jobLoad) ? Math.min(1, Math.max(0, jobLoad)) : 0;
-    const safeSource = (value: number): number => Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
-    this.targetLoad = safeLoad;
-    this.targetVoiceRms = Number.isFinite(voiceRms) ? Math.min(1, Math.max(0, voiceRms)) : 0;
-    this.targetSources = sources
-      ? {
-          reply: safeSource(sources.reply),
-          geeknews: safeSource(sources.geeknews),
-          dbSync: safeSource(sources.dbSync),
-          total: safeSource(sources.total),
-        }
-      : { reply: safeLoad, geeknews: safeLoad, dbSync: safeLoad, total: safeLoad };
-    this.loop.setLoad(this.targetLoad);
+    this.state.setSignals(jobLoad, voiceRms, sources);
+    this.loop.setLoad(this.state.jobLoad);
   }
 
   get renderCount(): number {
@@ -159,37 +137,25 @@ export class JarvisCore {
   }
 
   private render(dt: number, nowMs: number): void {
-    this.smoothLoad = damp(this.smoothLoad, this.targetLoad, 4.2, dt);
-    this.smoothVoiceRms = damp(this.smoothVoiceRms, this.targetVoiceRms, 7.0, dt);
-    this.smoothSources.reply = damp(this.smoothSources.reply, this.targetSources.reply, 4.2, dt);
-    this.smoothSources.geeknews = damp(this.smoothSources.geeknews, this.targetSources.geeknews, 4.2, dt);
-    this.smoothSources.dbSync = damp(this.smoothSources.dbSync, this.targetSources.dbSync, 4.2, dt);
-    this.smoothSources.total = damp(this.smoothSources.total, this.targetSources.total, 4.2, dt);
+    // One reused frame object per tick: no array, closure or object is built
+    // inside the 15-30fps loop (2026-09-22).
+    const frame = this.state.step(dt, nowMs, this.ringBaseVelocity, this.ringGain);
+    const rings = this.rings;
+    const velocities = frame.ringVelocities;
+    for (let index = 0; index < rings.length; index += 1) {
+      const velocity = velocities[index] ?? 0;
+      const ring = rings[index];
+      ring.rotation.z += velocity * frame.dt;
+      ring.rotation.x += velocity * frame.dt * ringTilt(index);
+    }
 
-    const targetVelocities = ringTargetVelocities(this.ringBaseVelocity, this.smoothSources, this.ringGain);
-    this.rings.forEach((ring, index) => {
-      const targetVelocity = targetVelocities[index] ?? 0;
-      this.ringVelocity[index] = damp(this.ringVelocity[index], targetVelocity, 1.8 + index * 0.55, dt);
-      ring.rotation.z += this.ringVelocity[index] * dt;
-      ring.rotation.x += this.ringVelocity[index] * dt * (0.22 + index * 0.06);
-    });
-
-    const desiredScale = 1 + this.smoothLoad * 0.2 + this.smoothVoiceRms * 0.12;
-    const acceleration = (desiredScale - this.nucleusScale) * 18 - this.nucleusVelocity * 7.5;
-    this.nucleusVelocity += acceleration * dt;
-    this.nucleusScale += this.nucleusVelocity * dt;
-    this.nucleus.scale.setScalar(this.nucleusScale);
-
-    const seconds = nowMs / 1000;
-    const pulse = latticePulse(this.smoothSources.total, seconds);
-    const backgroundPulse = 1 + pulse.amplitude * Math.sin(seconds * pulse.frequency * Math.PI * 2);
-    const acousticPulse = 1 + this.smoothVoiceRms * (0.07 + 0.025 * Math.sin(nowMs * 0.012));
-    this.lattice.scale.setScalar(backgroundPulse * acousticPulse);
-    this.latticeMaterial.opacity = pulse.opacity;
-    this.neuronsMaterial.size = 0.036 + this.smoothLoad * 0.012;
-    this.synapsesMaterial.opacity = 0.09 + this.smoothLoad * 0.16;
-    this.particlesMaterial.opacity = 0.2 + this.smoothLoad * 0.45;
-    this.root.rotation.y += dt * (0.04 + this.smoothLoad * 0.11);
+    this.nucleus.scale.setScalar(frame.nucleusScale);
+    this.lattice.scale.setScalar(frame.latticeScale);
+    this.latticeMaterial.opacity = frame.latticeOpacity;
+    this.neuronsMaterial.size = 0.036 + frame.smoothLoad * 0.012;
+    this.synapsesMaterial.opacity = 0.09 + frame.smoothLoad * 0.16;
+    this.particlesMaterial.opacity = 0.2 + frame.smoothLoad * 0.45;
+    this.root.rotation.y += frame.dt * (0.04 + frame.smoothLoad * 0.11);
     this.renderer.render(this.scene, this.camera);
   }
 }

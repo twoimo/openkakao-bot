@@ -5,10 +5,47 @@ use python_bridge::{PythonBridge, SafeBrowserToolResult, SafeRuntimeSnapshot};
 use serde_json::Value;
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, PhysicalPosition, WindowEvent};
+use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_WIDTH: f64 = 276.0;
+const VISIBILITY_EVENT: &str = "jarvis://visibility";
+
+/// Payload for the window visibility event: one boolean, never content.
+fn visibility_payload(visible: bool) -> Value {
+    serde_json::json!({ "visible": visible })
+}
+
+fn announce_visibility(app: &tauri::AppHandle, label: &str, visible: bool) {
+    let _ = app.emit_to(
+        tauri::EventTarget::labeled(label),
+        VISIBILITY_EVENT,
+        visibility_payload(visible),
+    );
+}
+
+/// Show or hide a panel window and tell its webview what just happened.
+///
+/// The frontend has to stop the 3D render loop the moment the window goes
+/// away. Making that a guess from `document.visibilityState` and `blur` leaves
+/// the loop running whenever AppKit orders the window out without a matching
+/// DOM event, so the shell states the new state after the OS call returned.
+/// A failed show/hide is not announced: the webview keeps what it already has
+/// (2026-09-22).
+fn set_window_visible(window: &tauri::WebviewWindow, visible: bool) {
+    let applied = if visible {
+        window.show()
+    } else {
+        window.hide()
+    };
+    if applied.is_err() {
+        return;
+    }
+    if visible {
+        let _ = window.set_focus();
+    }
+    announce_visibility(window.app_handle(), window.label(), visible);
+}
 
 #[tauri::command]
 async fn fetch_runtime_snapshot(
@@ -96,7 +133,9 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "settings_show_failed".to_string())?;
     window
         .set_focus()
-        .map_err(|_| "settings_focus_failed".to_string())
+        .map_err(|_| "settings_focus_failed".to_string())?;
+    announce_visibility(&app, window.label(), true);
+    Ok(())
 }
 
 fn make_tray_icon() -> Image<'static> {
@@ -127,15 +166,14 @@ fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
         return;
     };
     if window.is_visible().unwrap_or(false) {
-        let _ = window.hide();
+        set_window_visible(&window, false);
         return;
     }
     let scale = window.scale_factor().unwrap_or(1.0);
     let x = (position.x - (PANEL_WIDTH * scale / 2.0)).round() as i32;
     let y = (position.y + 12.0 * scale).round() as i32;
     let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.show();
-    let _ = window.set_focus();
+    set_window_visible(&window, true);
 }
 
 fn ignore_terminal_hangup() {
@@ -199,15 +237,55 @@ fn main() {
         .on_window_event(|window, event| match event {
             WindowEvent::Focused(false) if window.label() == "jarvis" => {
                 let _ = window.hide();
+                announce_visibility(window.app_handle(), window.label(), false);
             }
             WindowEvent::CloseRequested { api, .. }
                 if window.label() == "jarvis" || window.label() == "settings" =>
             {
                 api.prevent_close();
                 let _ = window.hide();
+                announce_visibility(window.app_handle(), window.label(), false);
             }
             _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running OpenKakao Jarvis");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_visibility_payload_carries_only_the_boolean() {
+        assert_eq!(visibility_payload(true).to_string(), r#"{"visible":true}"#);
+        assert_eq!(
+            visibility_payload(false).to_string(),
+            r#"{"visible":false}"#
+        );
+        assert_eq!(
+            visibility_payload(true)
+                .as_object()
+                .map(|object| object.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn the_frontend_subscribes_to_the_same_event_name() {
+        // The pause-on-hide contract is one string shared across two languages.
+        // If the two sides drift apart, the panel silently keeps rendering
+        // behind a hidden window, which is exactly the waste this signal stops.
+        let wiring = include_str!("../../src/core/lifecycle-wiring.ts");
+        assert!(
+            wiring.contains(VISIBILITY_EVENT),
+            "the frontend event name drifted from VISIBILITY_EVENT"
+        );
+    }
+
+    #[test]
+    fn the_tray_icon_is_an_rgba_square() {
+        let icon = make_tray_icon();
+        assert_eq!(icon.rgba().len(), 18 * 18 * 4);
+    }
 }
