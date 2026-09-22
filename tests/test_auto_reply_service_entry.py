@@ -18,7 +18,14 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "scripts" / "auto-reply-service.py"
-PINNED_PYTHON = Path("/opt/homebrew/opt/python@3.11/bin/python3.11")
+# The service accepts these Homebrew opt kegs (plus a user-owned interpreter),
+# so the suite probes the same set instead of assuming one of them exists.
+PINNED_PYTHONS = (
+    Path("/opt/homebrew/opt/python@3.11/bin/python3.11"),
+    Path("/opt/homebrew/opt/python@3.12/bin/python3.12"),
+    Path("/opt/homebrew/opt/python@3.13/bin/python3.13"),
+)
+PINNED_PYTHON = PINNED_PYTHONS[0]
 INSTALLER = ROOT / "scripts" / "install-auto-reply-service.sh"
 STATUS = ROOT / "scripts" / "status-auto-reply-service.sh"
 UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-service.sh"
@@ -26,28 +33,62 @@ SESSION_UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-session-monitor.s
 
 
 def _test_python() -> Path:
-    # Presence is not enough: a Homebrew keg can exist while its
-    # Python.framework binary is gone, and every child then dies with
-    # "dyld: Library not loaded". Probe each candidate so the suite runs on the
-    # first interpreter that actually starts.
-    for candidate in (PINNED_PYTHON, Path(sys.executable)):
-        try:
-            probe = subprocess.run(
-                [str(candidate), "-c", "import sys; sys.exit(0)"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError):
+    # Presence is not enough. A Homebrew keg can exist while its
+    # Python.framework binary is gone (every child then dies with
+    # "dyld: Library not loaded"), and a framework build installed by a package
+    # manager is often root-owned, which the service refuses. Probe each
+    # candidate for both, so the suite runs on the first interpreter that starts
+    # *and* satisfies the service's own ownership rule.
+    runnable: list[Path] = []
+    for candidate in (*PINNED_PYTHONS, Path(sys.executable)):
+        if not _interpreter_runs(candidate):
             continue
-        if probe.returncode == 0:
-            # Homebrew opt kegs are symlinks the service deliberately keeps
-            # unresolved; anything else is resolved the way the service does.
-            if "/opt/homebrew/opt/python@" in str(candidate):
-                return candidate
-            return candidate.resolve()
+        runnable.append(candidate)
+        if not _service_accepts_interpreter(candidate):
+            continue
+        # Homebrew opt kegs are symlinks the service deliberately keeps
+        # unresolved; anything else is resolved the way the service does.
+        if "/opt/homebrew/opt/python@" in str(candidate):
+            return candidate
+        return candidate.resolve()
+    if runnable:
+        return runnable[0]
     return Path(sys.executable).resolve()
+
+
+def _interpreter_runs(path: Path) -> bool:
+    try:
+        probe = subprocess.run(
+            [str(path), "-c", "import sys; sys.exit(0)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
+
+
+def _service_accepts_interpreter(path: Path) -> bool:
+    # Mirrors _owned_file() in scripts/auto-reply-service.py.
+    text = str(path)
+    if "/Cellar/python@" in text:
+        return False
+    if path.is_symlink() and "/opt/homebrew/opt/python@" not in text:
+        return False
+    try:
+        resolved = path.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode):
+        return False
+    if not path.is_symlink() and metadata.st_uid != os.geteuid():
+        return False
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        return False
+    return True
 
 
 
