@@ -1559,6 +1559,7 @@ receipt:
 - `scripts/jarvis_desktop_render_check.py` 의 Tauri stub 은 이제 같은 함수를 호출해 `status_label` / `status_detail` 을 만든다. 새 check `settings.ondevice_status_is_product_formatted` 는 설정 창이 그 제품 문자열을 정말 렌더하는지 보므로, 토큰 스캔이 렌더되지 않은 문자열에 대해 공허하게 통과할 수 없다. `tests/test_jarvis_desktop_render_check.py` 에는 stub 라벨이 그 함수의 출력과 같은지, 금지 토큰이 없는지, busy 스냅샷도 같은 문자열을 쓰는지 확인하는 4개를 추가했다.
 
 검사에 이빨이 있는지는 주입으로 확인했다. stub 라벨을 종전 문자열(`설정 검증 통과` 포함)로 바꾼 별도 실행에서 렌더 검사는 `status fail` 이고 `settings.no_removed_control_tokens` 가 `['검증']` 로 떨어졌다. 같은 리비전의 수정 상태에서는 **24/24 checks pass** 이다. 영수증 [jarvis-desktop-render-check.json](jarvis-desktop-render-check.json) 과 캡처 7장을 이 실행으로 갱신했다.
+- 같은 리비전에서 CI는 3/3 green이다(run 35695406175, 2026-09-22 KST): `macOS cargo test` · `Tauri desktop and focused Python tests` · `Launchd and Python harness` 가 모두 success다. 로컬 focused 25개 모듈은 `Ran 635 tests in 133.711s` / `OK (skipped=9)` 였다.
 
 이 절이 닫지 않는 것:
 
