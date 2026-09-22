@@ -1,7 +1,7 @@
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import type { RuntimeSnapshot } from "./contracts";
 
-export const MAIN_PANEL_CONTROLS = Object.freeze(["gear"] as const);
+export const MAIN_PANEL_CONTROLS = Object.freeze([] as const);
 export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
   "model-owner-state",
@@ -32,7 +32,6 @@ export const SETTINGS_IDS = Object.freeze([
 export function mainPanelMarkup(): string {
   return `<main class="jarvis-panel" aria-label="Jarvis">
     <canvas class="jarvis-core" width="${LAYOUT.coreSize}" height="${LAYOUT.coreSize}" aria-label="Jarvis core"></canvas>
-    <button id="gear" class="gear" type="button" aria-label="설정 열기" title="설정">⚙︎</button>
   </main>`;
 }
 

@@ -3,7 +3,6 @@ export const LAYOUT = Object.freeze({
   panelHeight: 260,
   panelInset: 12,
   coreSize: 236,
-  gearSize: 28,
   settingsMaxWidth: 720,
 });
 

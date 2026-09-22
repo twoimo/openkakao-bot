@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The single-gear panel and the deletion of the bulk-verification, feature-check,
+// The core-only panel and the deletion of the bulk-verification, feature-check,
 // permission, and self-improvement surfaces are user requirements, not
 // conventions. Until now the deletion was only a property of the markup: nothing
 // failed if one of those panels came back. These checks pin all three surfaces.
@@ -58,11 +58,10 @@ describe("removed UI surfaces stay removed", () => {
     expect(offending("<canvas id=\"knowledge-graph-canvas\"></canvas>")).toEqual([]);
   });
 
-  it("keeps the main panel to the single gear", () => {
-    expect(MAIN_PANEL_CONTROLS).toEqual(["gear"]);
-    expect(interactiveCount(PANEL)).toBe(1);
-    expect(PANEL).toContain('id="gear"');
-    expect(PANEL).toContain('aria-label="설정 열기"');
+  it("keeps the main panel free of interactive elements", () => {
+    expect(MAIN_PANEL_CONTROLS).toHaveLength(0);
+    expect(interactiveCount(PANEL)).toBe(0);
+    expect(PANEL).not.toContain('id="gear"');
   });
 
   it("reintroduces no removed control in the panel markup", () => {

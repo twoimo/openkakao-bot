@@ -669,13 +669,12 @@ describe("background signal polling", () => {
 
 describe("layout and settings contract", () => {
   it("keeps live Extra geometry", () => {
-    expect(LAYOUT).toMatchObject({ panelWidth: 276, panelHeight: 260, panelInset: 12, coreSize: 236, gearSize: 28 });
+    expect(LAYOUT).toMatchObject({ panelWidth: 276, panelHeight: 260, panelInset: 12, coreSize: 236 });
   });
 
-  it("gear is the only main-panel control", () => {
-    expect(MAIN_PANEL_CONTROLS).toEqual(["gear"]);
-    expect((mainPanelMarkup().match(/<button\b/g) ?? []).length).toBe(1);
-    expect(mainPanelMarkup()).toContain('id="gear"');
+  it("main panel has zero interactive controls", () => {
+    expect(MAIN_PANEL_CONTROLS).toHaveLength(0);
+    expect((mainPanelMarkup().match(/<button\b/g) ?? []).length).toBe(0);
   });
 
   it("keeps sync card before DREAM-RSI and preserves AX ids", () => {

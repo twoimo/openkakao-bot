@@ -4,8 +4,8 @@
 
 | Constraint | Decision | Review check |
 | --- | --- | --- |
-| Live panel geometry | 276×260 panel, 12 inset, 236 core, 28 gear | Main panel constants are tested. |
-| Main-panel hierarchy | Spherical Jarvis core plus one top-right gear control | No health/jobs/bulk/permission chrome. |
+| Live panel geometry | 276×260 panel, 12 inset, 236 core | Main panel constants are tested. |
+| Main-panel hierarchy | Spherical Jarvis core only; settings open from a right-click on the menu-bar tray icon | No health/jobs/bulk/permission chrome. |
 | Settings | One unified, single-column window, max 720px | Rooms → AI model → voice → knowledge → history. |
 | Motion | Physical damping and capped rendering | Idle ≤15fps, busy ≤30fps, dt clamp, hidden/close/lock stop. |
 | Color | Warm neutral canvas/surface with restrained gold | Champagne/gold is reserved for core and selection; amber is warning. |
@@ -23,7 +23,7 @@ Spacing uses 4/8/12/16/24px steps. Settings cards use an 11px radius, a 1px warm
 
 ## Component contract
 
-- `JarvisPanel`: opaque 276×260 root. The Three.js canvas is transparent and exactly 236×236. `gear` is the only interactive control.
+- `JarvisPanel`: opaque 276×260 root. The Three.js canvas is transparent and exactly 236×236. The panel has no interactive controls; settings open from a right-click on the menu-bar tray icon.
 - `JarvisCore`: three independently damped gimbal rings, 96 neuron points, three synapses per neuron, 30 particles, a spring nucleus, and an acoustic wire lattice. GPU buffers are allocated once and updated in place.
 - `UnifiedSettings`: rooms, AI model, voice, knowledge, history. `settings-sync-card` precedes `settings-dream-rsi-card`. Existing AX ids are preserved as DOM ids.
 - AI models: Flash-Next is the default resident choice; the 27B model is shown as an on-demand swap target and is never prepared or loaded by this unit.

@@ -235,14 +235,21 @@ fn main() {
                 .icon_as_template(true)
                 .tooltip("OpenKakao Jarvis")
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        position,
-                        ..
-                    } = event
-                    {
-                        toggle_panel(tray.app_handle(), position);
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            position,
+                            ..
+                        } => toggle_panel(tray.app_handle(), position),
+                        TrayIconEvent::Click {
+                            button: MouseButton::Right,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            let _ = open_settings(tray.app_handle().clone());
+                        }
+                        _ => {}
                     }
                 })
                 .build(&handle)?;

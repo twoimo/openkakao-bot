@@ -66,15 +66,8 @@ function setText(id: string, value: string): void {
   if (element) element.textContent = value;
 }
 
-function showPanelUnavailable(message: string, disableGear: boolean): void {
+function showPanelUnavailable(message: string): void {
   app.dataset.state = "unavailable";
-  const gear = document.querySelector<HTMLButtonElement>("#gear");
-  if (gear) {
-    gear.disabled = disableGear;
-    gear.dataset.state = "unavailable";
-    gear.setAttribute("aria-label", "설정 확인 불가");
-    gear.title = message;
-  }
   const panel = document.querySelector<HTMLElement>(".jarvis-panel");
   if (!panel) return;
   let status = document.getElementById("panel-status");
@@ -89,22 +82,11 @@ function showPanelUnavailable(message: string, disableGear: boolean): void {
   status.textContent = message;
 }
 
-function clearPanelUnavailable(): void {
-  app.dataset.state = "ready";
-  document.getElementById("panel-status")?.remove();
-  const gear = document.querySelector<HTMLButtonElement>("#gear");
-  if (!gear) return;
-  gear.disabled = false;
-  delete gear.dataset.state;
-  gear.setAttribute("aria-label", "설정 열기");
-  gear.title = "설정";
-}
-
 function renderPanelUnavailable(): void {
   app.innerHTML = mainPanelMarkup();
   document.querySelector<HTMLCanvasElement>(".jarvis-core")
     ?.setAttribute("aria-label", "Jarvis core 확인 불가");
-  showPanelUnavailable("Jarvis 상태를 확인할 수 없습니다.", true);
+  showPanelUnavailable("Jarvis 상태를 확인할 수 없습니다.");
 }
 
 function renderRooms(snapshot: RuntimeSnapshot): void {
@@ -591,8 +573,7 @@ export async function bootPanel(
   app.innerHTML = mainPanelMarkup();
   app.dataset.state = "loading";
   const canvas = document.querySelector<HTMLCanvasElement>(".jarvis-core");
-  const gear = document.querySelector<HTMLButtonElement>("#gear");
-  if (!canvas || !gear) {
+  if (!canvas) {
     renderPanelUnavailable();
     return;
   }
@@ -612,36 +593,11 @@ export async function bootPanel(
     );
     const lifecycle = new RenderLifecycle(activeCore, () => polling.stop(), () => polling.start());
     let disposed = false;
-    let settingsPending = false;
     let detachLifecycle: (() => void) | null = null;
 
-    const openSettings = (): void => {
-      if (disposed || settingsPending) return;
-      settingsPending = true;
-      clearPanelUnavailable();
-      gear.disabled = true;
-      gear.setAttribute("aria-busy", "true");
-      void (async () => {
-        let failed = false;
-        try {
-          await dependencies.invokeCommand("open_settings");
-        } catch {
-          failed = true;
-          if (!disposed) showPanelUnavailable("설정을 확인할 수 없습니다.", false);
-        } finally {
-          settingsPending = false;
-          if (!disposed) {
-            gear.disabled = false;
-            gear.removeAttribute("aria-busy");
-            if (!failed) clearPanelUnavailable();
-          }
-        }
-      })();
-    };
     const close = (): void => {
       if (disposed) return;
       disposed = true;
-      gear.removeEventListener("click", openSettings);
       detachLifecycle?.();
       // Stopping is idempotent, so this also stops the loop and the poller on
       // the teardown path that never reaches the pagehide handler.
@@ -669,7 +625,6 @@ export async function bootPanel(
       },
     });
 
-    gear.addEventListener("click", openSettings);
     app.dataset.state = "ready";
   } catch {
     if (closePanel) closePanel();

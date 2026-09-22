@@ -51,25 +51,6 @@ button, select { font: inherit; }
   background: transparent;
 }
 
-.gear {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  color: var(--muted);
-  display: grid;
-  place-items: center;
-  padding: 0;
-  font-size: 15px;
-  line-height: 1;
-  cursor: default;
-}
-.gear:hover, .gear:focus-visible { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); outline: none; }
-
 body.settings-view { min-width: 600px; min-height: 700px; overflow-y: auto; }
 .settings-shell {
   width: min(720px, calc(100% - 32px));
