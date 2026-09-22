@@ -1720,3 +1720,29 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 
 남는 한계: 이번 턴에 설치본을 다시 띄워 숨김 상태의 렌더 호출 0회를 재지는 않았다. 숨김 창의 렌더 호출 0회는 기존 실기기 기록(`jarvis-three-render-lifecycle`)이고, 이번 변경이 바꾼 것은 그 정지를 DOM 추론이 아니라 셸 신호로 확정한 점이다.
 
+### 4. 검증 수치, CI, 위임 상태
+
+- Python: `tests.test_auto_reply_knowledge_graph`는 HEAD `66c104b`에서 75 tests(같은 사본 워크트리 `/private/tmp/okb-kghead-17631`로 측정)이고 이번 리비전은 **82 tests, OK**(19.331초)다. CI focused 25개 모듈은 로컬 **Ran 651 tests in 214.359s, OK (skipped=9)**이고, 러너에서는 같은 651건이 **Ran 651 tests in 60.629s / OK (skipped=60)**로 보고됐다(러너에 없는 인터프리터·하드웨어 때문에 skip 수가 다르며, 실행된 테스트 수는 같다).
+- 데스크톱: `npx vitest run` **113 tests / 9 files**(이전 93 tests / 7 files; 신규 `render-state.test.ts` 10 + `lifecycle-wiring.test.ts` 10), `npx tsc -p tsconfig.json --noEmit` clean. 러너 로그도 `Test Files 9 passed (9)` / `Tests 113 passed (113)`이다.
+- Rust: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked --offline` **62 passed**(이전 59). 러너의 `Test desktop Rust bridge offline` step도 `62 passed; 0 failed; 0 ignored`다. `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings`와 루트 크레이트의 같은 명령이 모두 경고 0으로 `Finished`였다.
+- 커밋 3개로 나눠 push했다: `7b8cb7b`(질의 경로), `c478907`(렌더 프레임·숨김 신호), `c304fe5`(문서). CI는 `c304fe5` run [35704737359](https://github.com/twoimo/openkakao-bot/actions/runs/35704737359) → 3개 job 모두 success이고, 직전 `66c104b` run 35701418189도 3/3 success다.
+- 이번 턴의 검증 범위: 소스 변경, 로컬 테스트, 러너 CI까지다. 설치된 앱을 다시 띄워 숨김 상태의 렌더 호출 0회나 실제 카카오톡 전송을 재지는 않았고 그 두 가지는 여전히 미검증으로 남는다.
+
+### 5. 서브에이전트 리뷰 반영: pause-on-hide 계약 4건 수정
+
+`multi_agent_v1__spawn_agent`로 `chatgpt-web/extra-high` 서브에이전트 1개(Carver, `01a0c838-9b4b-73c2-bc59-301a9c6d2701`)를 스폰해 HEAD `c304fe5`의 pause-on-hide 계약과 렌더 상태 수학을 독립 검토시켰다. 누적 24회 실패 뒤 25번째 시도에서 처음으로 결과가 돌아왔고, 결함 4건(P0 1·P1 2·P2 1)을 받았다. 네 건 모두 실제 도달 경로였으므로 수정하고 회귀 테스트로 고정했다.
+
+**P0 — initial/native 상태 동기화 부재.** `jarvis://visibility`는 변화 알림일 뿐 현재 상태 스냅샷이 아니다. 두 창은 `visible: false`로 생성되므로, 숨은 webview가 `document.visibilityState === "visible"`을 보고 부팅하면 셸의 `hidden` 이벤트를 받은 적 없이 `transition("visible")`로 시작해 숨은 창 뒤에서 렌더가 돈다. 리스너 등록 전에 발생한 show/hide도 같은 방식으로 유실된다. 수정: 셸에 `window_is_visible` 커맨드를 추가하고(현재 창의 `is_visible()`), `wireRenderLifecycle`이 `readVisibility`를 받으면 부팅 상태를 **hidden으로 시작**한 뒤 리스너가 살아난 다음에 읽은 스냅샷으로 확정한다. 순서가 핵심이다. 리스너 등록 → 스냅샷 읽기 순서이므로 그 이전의 모든 셸 상태는 스냅샷이 덮고, 그 이후의 변화는 이벤트로 도착한다. 읽기가 실패하면 DOM 판단으로 되돌아가고(셸이 답하지 못하는 것이 패널을 얼리지는 않는다), 스냅샷이 발행된 뒤 이벤트가 먼저 도착하면 스냅샷을 버린다(이벤트가 더 새롭다). `readVisibility`가 없으면 기존처럼 DOM에서 부팅 상태를 정하므로 일반 브라우저와 기존 테스트 동작은 그대로다.
+
+**P1 — hide/show 결과와 반대로 통보되는 경로.** `Focused(false)`와 `CloseRequested`는 `window.hide()`의 반환값을 버리고 무조건 `false`를 알렸다. hide가 실패하면 창은 보이는데 렌더러는 멈춰 그대로 얼 수 있다. 수정: 두 경로 모두 hide가 성공한 경우에만 알린다(`Focused(false) if ... && window.hide().is_ok()`). 반대 방향도 있었다. `open_settings`는 `set_focus`까지 성공해야 `true`를 알렸으므로 focus가 거부되면 보이는 설정 창이 멈춘 채 남았다. 수정: `show()` 성공 직후 알리고 focus는 그 뒤 best-effort로 처리한다(`settings_focus_failed` 반환 계약은 유지). 추가로 이미 보이는 창이 다시 focus를 받으면 `visible`을 다시 알린다: webview가 리스너를 등록하는 동안 도착한 tray 클릭의 알림이 유실되는 경우를 덮는다.
+
+**P1 — teardown이 late subscription을 무효화하지 않음.** `detach()`는 `closed`를 세우지 않았으므로 아직 pending인 `listen()`이 나중에 resolve하면 `release`를 다시 설치했고, 그 리스너는 `transition`을 계속 호출할 수 있었다(패널은 teardown에서 `detach()` → `transition("closed")` 순서를 쓴다). 수정: `detach()`가 `detached`를 세우고 `transition`이 그 플래그를 존중하며, 늦게 도착한 구독은 즉시 해제한다. 같은 이유로 늦은 스냅샷도 버린다. 리뷰가 제안한 `RenderLifecycle`의 `"closed"` terminal latch는 채택하지 않았다: 이 저장소의 기존 계약(`desktop/src/__tests__/desktop.test.ts`의 `it.each(["hidden","closed","locked"])`)이 closed를 정지로 정의하고 있고, 위 플래그로 재시작 경로가 이미 막히므로 계약을 불필요하게 바꾸지 않았다.
+
+**P2 — start 실패 후 `active` 잔류.** `transition("visible")`이 `active = true`를 `loop.start()`보다 먼저 기록했다. `start()`가 던지면 예외는 삼켜지지만 `active`는 남아 이후의 모든 visible 신호가 조기 반환하고, 다음 hide/show까지 아무것도 렌더되지 않는다. 수정: `loop.start()`가 성공한 뒤에만 `active`를 세우고, 실패하면 비활성으로 남겨 다음 신호가 재시도한다.
+
+리뷰가 이상 없음으로 확인한 부분도 기록한다: `jarvis://visibility` payload는 `{"visible": boolean}` 하나뿐이고, 반복 show/hide에서 RAF 체인이 둘로 늘지 않으며, `CoreRenderState.step`의 0.05초 dt clamp·비유한 입력 처리·링 배열 리사이즈는 건전하다. 리뷰가 남긴 선택 항목 하나는 받지 않았다: 극단적으로 큰 유한 base/gain의 곱이 `Infinity`로 넘칠 수 있으나, 프로덕션 호출자 `JarvisCore`는 고정 3개 base/gain만 쓰므로 도달 경로가 없고, 프레임마다 검사를 더하면 이미 측정한 프레임 비용을 늘린다.
+
+검출력은 되돌림 실험으로 확인했다. 수정한 4개 파일(`core/lifecycle-wiring.ts`·`core/lifecycle.ts`·`main.ts`·`src-tauri/src/main.rs`)을 `git checkout HEAD --`로 되돌리고 새 테스트만 남겨 돌리면 **8건이 실패**한다: 이벤트 이름 pin, boot handshake pin, open_settings 순서 pin, 부팅 시 hidden 유지, 셸이 visible이라고 답할 때 시작, 셸이 답하지 못할 때 DOM 유지, detach 후 late subscription 해제, start 실패 후 재시도. 복원 후에는 `npx vitest run` **121 tests / 9 files**가 통과한다(수정 전 113; 신규 8건 = wiring 7 + lifecycle 1).
+
+이 수정 뒤의 수치는 데스크톱 `npx vitest run` **121 tests / 9 files**, Rust 데스크톱 크레이트 **63 passed**, `npx tsc -p tsconfig.json --noEmit` clean, `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings` 경고 0, 편집한 `src-tauri/src/main.rs`의 `rustfmt --check` clean이다(같은 크레이트의 `python_bridge.rs`에는 이 호스트 rustfmt 버전이 요구하는 포맷 차이가 남아 있으나 이번 수정 대상이 아니며 건드리지 않았다. 루트 크레이트도 같은 이유로 `cargo fmt --check` 차이가 246건 있어 CI가 fmt를 게이트하지 않는다). Python focused 25개 모듈 651건은 이번 수정이 TS/Rust에만 닿았으므로 그대로다.
+

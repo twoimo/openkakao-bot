@@ -62,6 +62,29 @@ describe("render lifecycle", () => {
     expect(scheduler.callbacks.size).toBe(1);
   });
 
+  it("retries the next visible signal after a start that threw", () => {
+    const scheduler = new FakeScheduler();
+    const loop = new AnimationLoop(() => undefined, scheduler);
+    let attempts = 0;
+    const flaky = {
+      start: (): void => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("raf refused");
+        loop.start();
+      },
+      stop: (): void => loop.stop(),
+    };
+    const lifecycle = new RenderLifecycle(flaky, () => undefined, () => undefined);
+    lifecycle.transition("visible");
+    expect(attempts).toBe(1);
+    expect(scheduler.callbacks.size).toBe(0);
+    // A failed start must not latch the panel as active: the next visible
+    // signal has to try again instead of leaving the panel frozen.
+    lifecycle.transition("visible");
+    expect(attempts).toBe(2);
+    expect(scheduler.callbacks.size).toBe(1);
+  });
+
   it("clamps dt after a long resume gap", () => {
     const scheduler = new FakeScheduler();
     const dts: number[] = [];

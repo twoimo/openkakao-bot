@@ -47,6 +47,17 @@ fn set_window_visible(window: &tauri::WebviewWindow, visible: bool) {
     announce_visibility(window.app_handle(), window.label(), visible);
 }
 
+/// Report the calling window's current visibility.
+///
+/// The visibility event is a change notification, so a webview that boots
+/// while the window is hidden has no way to learn that from the event stream
+/// alone. The frontend asks once during wiring and keeps the render lifecycle
+/// hidden until this answers (2026-09-22).
+#[tauri::command]
+fn window_is_visible(window: tauri::WebviewWindow) -> bool {
+    window.is_visible().unwrap_or(false)
+}
+
 #[tauri::command]
 async fn fetch_runtime_snapshot(
     bridge: tauri::State<'_, PythonBridge>,
@@ -131,11 +142,13 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     window
         .show()
         .map_err(|_| "settings_show_failed".to_string())?;
+    // The window is on screen now, so the renderer may resume even if focusing
+    // it fails; announcing only after `set_focus` left a visible settings
+    // window frozen whenever focus was refused (2026-09-22).
+    announce_visibility(&app, window.label(), true);
     window
         .set_focus()
-        .map_err(|_| "settings_focus_failed".to_string())?;
-    announce_visibility(&app, window.label(), true);
-    Ok(())
+        .map_err(|_| "settings_focus_failed".to_string())
 }
 
 fn make_tray_icon() -> Image<'static> {
@@ -208,7 +221,8 @@ fn main() {
             cancel_python,
             cancel_model_swap,
             open_settings,
-            start_voice_session
+            start_voice_session,
+            window_is_visible
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -235,16 +249,26 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            WindowEvent::Focused(false) if window.label() == "jarvis" => {
-                let _ = window.hide();
+            // Only a hide the OS actually applied may pause the renderer:
+            // announcing hidden for a window that is still on screen would
+            // freeze the core while the user is looking at it.
+            WindowEvent::Focused(false) if window.label() == "jarvis" && window.hide().is_ok() => {
                 announce_visibility(window.app_handle(), window.label(), false);
             }
             WindowEvent::CloseRequested { api, .. }
                 if window.label() == "jarvis" || window.label() == "settings" =>
             {
                 api.prevent_close();
-                let _ = window.hide();
-                announce_visibility(window.app_handle(), window.label(), false);
+                if window.hide().is_ok() {
+                    announce_visibility(window.app_handle(), window.label(), false);
+                }
+            }
+            // Any focus of an already visible window re-states the visible
+            // state. A tray click that lands while the webview is still
+            // registering its listener would otherwise be the only announce of
+            // that show, and it would be lost.
+            WindowEvent::Focused(true) if window.is_visible().unwrap_or(false) => {
+                announce_visibility(window.app_handle(), window.label(), true);
             }
             _ => {}
         })
@@ -287,5 +311,20 @@ mod tests {
     fn the_tray_icon_is_an_rgba_square() {
         let icon = make_tray_icon();
         assert_eq!(icon.rgba().len(), 18 * 18 * 4);
+    }
+
+    #[test]
+    fn the_frontend_asks_for_the_boot_handshake_command() {
+        // The event stream carries changes only, so the webview has to be able
+        // to ask for the current visibility by name. Two languages, one string.
+        let wiring = include_str!("../../src/core/lifecycle-wiring.ts");
+        assert!(
+            wiring.contains("\"window_is_visible\""),
+            "the frontend no longer invokes the boot handshake command"
+        );
+        assert!(
+            wiring.contains(VISIBILITY_EVENT),
+            "the frontend event name drifted from VISIBILITY_EVENT"
+        );
     }
 }

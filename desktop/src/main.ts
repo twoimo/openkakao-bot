@@ -11,7 +11,9 @@ import type { SourceLoads } from "./core/load-mapping";
 import { RenderLifecycle } from "./core/lifecycle";
 import {
   tauriVisibilitySubscriber,
+  tauriVisibilityReader,
   wireRenderLifecycle,
+  type VisibilityReader,
   type VisibilitySubscriber,
 } from "./core/lifecycle-wiring";
 import { KnowledgeHologram } from "./knowledge/hologram";
@@ -440,6 +442,8 @@ interface SettingsBootDependencies {
   wireVoice: typeof wireVoiceStart;
   invokeCommand: typeof invoke;
   subscribeVisibility: VisibilitySubscriber | null;
+  /** Boot handshake: the shell's current visibility decides the first state. */
+  readVisibility: VisibilityReader | null;
 }
 
 export async function bootSettings(
@@ -451,6 +455,7 @@ export async function bootSettings(
     wireVoice: wireVoiceStart,
     invokeCommand: invoke,
     subscribeVisibility: tauriVisibilitySubscriber,
+    readVisibility: tauriVisibilityReader,
     ...overrides,
   };
   app.innerHTML = settingsMarkup();
@@ -535,6 +540,7 @@ export async function bootSettings(
       const lifecycle = new RenderLifecycle(graph, () => undefined, () => undefined);
       wireRenderLifecycle(lifecycle, {
         subscribeVisibility: dependencies.subscribeVisibility,
+        readVisibility: dependencies.readVisibility,
         onClosed: () => {
           try {
             graph.dispose();
@@ -564,6 +570,8 @@ interface PanelBootDependencies {
   pollScheduler: PollTimerScheduler;
   invokeCommand: CommandInvoker;
   subscribeVisibility: VisibilitySubscriber | null;
+  /** Boot handshake: the shell's current visibility decides the first state. */
+  readVisibility: VisibilityReader | null;
 }
 
 export async function bootPanel(
@@ -577,6 +585,7 @@ export async function bootPanel(
     pollScheduler: browserPollScheduler,
     invokeCommand: invoke,
     subscribeVisibility: tauriVisibilitySubscriber,
+    readVisibility: tauriVisibilityReader,
     ...overrides,
   };
   app.innerHTML = mainPanelMarkup();
@@ -649,6 +658,7 @@ export async function bootPanel(
     // snapshot poller even when the webview reports no DOM signal of its own.
     detachLifecycle = wireRenderLifecycle(lifecycle, {
       subscribeVisibility: dependencies.subscribeVisibility,
+      readVisibility: dependencies.readVisibility,
       onClosed: () => {
         close();
         try {
