@@ -1370,3 +1370,67 @@ TMPD=$(mktemp -d /tmp/finetune.XXXXXX)
 - 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다. `chatgpt-web/extra-high`(reasoning xhigh, 동시성 1) 새 스레드 3회가 모두 동일 오류 `stream disconnected before completion: page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`로 끝났다(agent `01a0c75b-780e-7972-882a-300f0ad547e9`, `01a0c75b-f311-7f02-8bcd-4d4e8bef67bb`, `01a0c75c-8f1c-7612-8f29-5838488bead0`, 모두 close). 규칙(동일 오류 3회 연속이면 blocked로 기록하고 다른 작업 진행)에 따라 이 항목을 blocked로 기록하고 웹 요청을 중단했으며, 구현·검증은 부모가 로컬에서 수행했다. 누적 12세션째 차단이다.
 - 사용자가 지정한 `gpt-5.6-luna`(Luna Max / Luan 최대)는 `spawn_agent` override 목록(`gpt-6-astra`, `gpt-5.6-sol`, `chatgpt-web/{medium,high,extra-high}`)에 없어 선택할 수 없었고, `gpt-5.6-sol`은 사용량 한도로 닫힌다. 그래서 단순 수정 폴백도 이 호스트에서 이행할 수 없었다.
 - 이번 단위는 순수 오프라인 artifact 증거이며 live KakaoTalk 전송·설치본 재배포·Developer ID 서명·notarization을 입증하지 않는다.
+
+### Browser-Use 전용 Chromium 결합·텍스트 전용 추론·오프라인 실측 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+이 절은 commit `58bd43a` 작업의 실측이다. 앱 운영 state root와 실행 중인 앱 pid 84125, 외부 `mlx-serve` pid 38868은 건드리지 않았고 재설치·카카오톡 전송도 하지 않았다. 검증용 의존성은 기존 Python 작업 환경과 분리한 격리 venv(`uv venv` + `uv pip install playwright browser_use` → `playwright 1.63.0`, `browser_use 0.13.10`)에만 설치했고, Playwright 브라우저는 이미 캐시된 `~/Library/Caches/ms-playwright`를 재사용했다(Chromium 153.0.8010.12).
+
+#### 1. 결함: 전용 컨텍스트가 조용히 버려졌다
+
+browser_use 0.13.10의 `Agent.__init__` 파라미터에는 `browser`와 `**kwargs`가 있고 `browser_context`는 없다. 종전 `scripts/jarvis_browser_use.py`는 `Agent(task=task, llm=llm, browser_context=context)`를 호출했다. 실측:
+
+```
+Agent(task=..., llm=..., browser_context=<playwright context>)  -> accepted, agent.browser is None
+Agent(task=..., llm=..., browser=<playwright context>)          -> AttributeError: 'BrowserContext' object has no attribute 'browser_profile'
+```
+
+즉 첫 호출은 `**kwargs`로 흡수돼 무시되고 에이전트는 전용 브라우저에 묶이지 않았다. 두 번째 호출은 0.13 계열이 자체 `BrowserSession`을 요구한다는 사실을 보여준다.
+
+수정 후 어댑터는 설치된 시그니처를 읽는다. `browser_context`가 선언되면 그대로 넘기고, `browser`가 선언되면 이 모듈이 띄운 Chromium의 loopback DevTools endpoint에 붙는 `BrowserSession(cdp_url=...) `을 만든다. 어느 쪽도 선언되지 않거나 endpoint가 없으면 `BrowserUseApiUnsupported`를 올려 `BrowserJobResult(False, "browser_job_failed")`로 닫는다. `**kwargs`만 있는 시그니처는 지원으로 세지 않는다.
+
+`DedicatedPlaywrightContext.start()`는 이제 `--remote-debugging-port=<free loopback port>`와 `--remote-debugging-address=127.0.0.1`로만 띄우고, endpoint를 `cdp_url`에 담아 Playwright 컨텍스트에 stamp한다. 종전 docstring이 적은 "never connects over CDP"는 우리 자신의 임시 브라우저에 한정된 설명으로 대체한다(사용자 Chrome/Safari와 외부 CDP endpoint에는 여전히 붙지 않는다).
+
+#### 2. 결함: 텍스트 전용 게이트웨이에 스크린샷을 보냈다
+
+수정한 기본 경로를 실제로 돌리자 매 스텝이 실패했다:
+
+```
+❌ Result failed 1/6 times: Error code: 400 - {'error': {'message':
+   'This model is serving without its vision tower (--no-vision or no vision weights);
+    image/video content is not supported', ...}}
+...
+ERROR [Agent] ❌ Stopping due to 5 consecutive failures
+```
+
+`Agent`의 `use_vision` 기본값이 True이고 11234의 Flash-Next는 vision tower 없이 서빙되기 때문이다. 수정 후 어댑터는 `use_vision=False`·`generate_gif=False`·`use_judge=False`를 릴리스가 **실제로 선언한** 파라미터에만 전달한다. 같은 이유로 텔레메트리와 기본 확장도 끈다: import 전에 `ANONYMIZED_TELEMETRY=False`를 강제하고, 이미 import된 패키지에는 `CONFIG.ANONYMIZED_TELEMETRY=False`를 적용하며, `BrowserProfile(enable_default_extensions=False, accept_downloads=False, headless=True)`를 쓴다. 종전 기본값은 네트워크에서 uBlock Origin Lite·I don't care about cookies·Force Background Tab 확장을 내려받고 쿠키 확장 데이터를 채웠다.
+
+#### 3. 실측 — 컨텍스트·취소·fail-closed
+
+격리 venv에서 실제 Chromium을 띄운 결과:
+
+| 단계 | 결과 |
+| --- | --- |
+| `DedicatedPlaywrightContext` 시작 | Chromium 153.0.8010.12, contexts 1, fresh context pages 0, cookies 0 |
+| 로컬 페이지 읽기 | `file://` 마커 일치, title "Jarvis probe" |
+| 컨텍스트 종료 | `is_connected false`, `cdp_url ""` |
+| `BrowserUseRunner` + Playwright 전용 agent | `ok true`, 모델 `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`, base_url `http://127.0.0.1:11234/v1`, 마커 반환, 소유 컨텍스트 해제 |
+| in-process 취소(중간) | `global_abort`, 0.641초, 소유 컨텍스트 해제 |
+| 파일 latch 취소(교차 프로세스, `AbortController.abort`) | `global_abort`, 0.646초, `latched true`, `epoch 1`, 소유 컨텍스트 해제 |
+| 미리 latch된 토큰 | `global_abort`, `browser_launches 0` (브라우저를 띄우지 않음) |
+| resume 이후 새 토큰 | `latched false`, 취소되지 않음 |
+| Chromium 프로세스 | 실행 전 0 / 실행 후 0 |
+
+#### 4. 실측 — 실제 기본 경로가 로컬 모델로 완주
+
+`agent_factory`를 주입하지 않은 실제 기본 경로를 로컬 Flash-Next로 돌렸다. 작업은 로컬 `http://127.0.0.1:18785/index.html`에서 h1 텍스트를 보고하는 것이고, 결과는 정답 `JARVIS_FIXED_ADAPTER_MARKER_a91c`였다(`ok true`, 69.62초). 실행 내내 Playwright가 보는 브라우저 context 수는 1로 유지됐고(샘플 최대 1), 종료 뒤 `cdp_url`은 `""`, `_owned_context`는 None이었다. 즉 Browser-Use는 이 모듈이 소유한 단일 Chromium을 구동했고 별도 브라우저를 띄우지 않았다. 종전 코드는 `use_vision` 기본값 때문에 6스텝 전부 HTTP 400으로 실패해 `final_result`가 None이었다.
+
+#### 5. 회귀 테스트와 CI
+
+`tests/test_jarvis_browser_use.py` **11 tests, OK**를 추가하고 CI focused 목록에 넣었다(20 → 21개 모듈). 고정 Python 3.11에서 같은 목록 전체는 **554 tests, OK**(108.444초)다. 테스트가 고정하는 경계값은 다음과 같다: `browser_context` 선언 시 그대로 사용, `browser` 선언 시 CDP endpoint에 묶인 세션 생성(`headless true`, `enable_default_extensions false`, `accept_downloads false`), `**kwargs`만 있는 시그니처 fail-closed, endpoint 없는 `browser` fail-closed, 텔레메트리 env·config 강제 off, `--user-data-dir` 없는 launch args, 기본 어댑터가 `use_vision/generate_gif/use_judge`를 전부 False로 전달하고 `browser`만 남기는지.
+
+#### 6. 이 절이 닫지 않는 것
+
+- 설치본 재배포·Developer ID 서명·notarization은 이번에도 검증하지 않았다. 이 실측은 격리 venv의 로컬 브라우저와 로컬 게이트웨이에 대한 것이며 설치된 `OpenKakao Jarvis.app`의 런타임을 입증하지 않는다.
+- `browser_use` 패키지는 앱 번들에 포함되어 있지 않다. 설치본에서 이 경로를 쓰려면 별도 provisioned 런타임에 `playwright`·`browser_use`를 고정해야 한다.
+- 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다(`chatgpt-web/extra-high` 3회 연속 `page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`). 누적 12세션째 차단이며 AHP 점수는 얻지 못했다.
+- live KakaoTalk 전송, 27B 전환(외부 소유 11234), 어댑터 학습·승격은 이번에도 검증하지 않았다.
