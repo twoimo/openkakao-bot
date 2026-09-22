@@ -52,13 +52,19 @@ reply worker
 KakaoTalk composer
 ```
 
-Interactive diagrams (authored node/card/label copy is Korean; Archify Viewer UI and `<html lang>` fall back to English):
+Interactive diagrams (the Archify Viewer UI and `<html lang>` fall back to English; authored node, card, and label copy is English or Korean depending on the diagram):
 
 - [Jarvis Tauri architecture after cutover](docs/architecture/jarvis-openkakao-units1-4.html)
 - [Jarvis Three.js render lifecycle](docs/architecture/jarvis-three-render-lifecycle.html)
+- [Jarvis core load mapping](docs/architecture/jarvis-core-load-mapping.html)
+- [Jarvis rendered cross-check](docs/architecture/jarvis-rendered-cross-check.html)
 - [GraphRAG drill-down sequence](docs/architecture/openkakao-graphrag.html)
+- [GraphRAG reindex and dense ANN refresh](docs/architecture/graphrag-reindex-dense-refresh.html)
+- [GraphRAG dense status exposure](docs/architecture/graphrag-dense-status-exposure.html)
 - [DREAM-RSI offline provenance and replay loop](docs/architecture/dream-rsi-provenance-loop.html)
 - [Jarvis Browser-Use dedicated-browser lifecycle](docs/architecture/jarvis-browser-use-lifecycle.html)
+- [Jarvis install cutover lifecycle](docs/architecture/jarvis-install-cutover-lifecycle.html)
+- [Jarvis 27B model swap lifecycle](docs/architecture/jarvis-model-swap-lifecycle.html)
 
 The diagrams are architectural references, not a live generation trace. On-device generation still fails closed when a probe times out.
 
