@@ -11727,7 +11727,6 @@ connection.close()
     }
 
     #[test]
-    #[test]
     fn require_allowed_send_chat_accepts_a_catalog_enabled_room_title() {
         let mut config = config::OpenKakaoConfig::default();
         config.safety.allowed_send_chats = vec!["부자멘토멘티".into()];
@@ -11751,6 +11750,7 @@ connection.close()
         assert!(require_allowed_send_chat(&config, "부자멘토").is_err());
     }
 
+    #[test]
     fn loco_write_disabled_by_default() {
         let config = crate::config::OpenKakaoConfig::default();
         assert!(!config.safety.allow_loco_write);
