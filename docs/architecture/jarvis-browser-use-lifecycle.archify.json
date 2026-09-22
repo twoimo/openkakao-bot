@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Jarvis Browser-Use 전용 브라우저·중단 수명주기",
+    "output": "docs/architecture/jarvis-browser-use-lifecycle.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1024,
+      620
+    ],
+    "views": [
+      {
+        "id": "own-and-run",
+        "label": "소유와 실행",
+        "focus": [
+          "request",
+          "launch",
+          "bind",
+          "run",
+          "settle"
+        ],
+        "note": "스스로 띄운 headless Chromium에만 묶고 선언된 인자만 씁니다."
+      },
+      {
+        "id": "abort-and-fail",
+        "label": "중단과 실패",
+        "focus": [
+          "watch",
+          "abort",
+          "failed"
+        ],
+        "note": "0.02초 폴링과 파일 래치가 취소를 감지하고 실패는 browser_job_failed로 닫습니다."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "웹 작업 단계"
+    },
+    {
+      "id": "guard",
+      "label": "취소 감시"
+    },
+    {
+      "id": "terminal",
+      "label": "결과"
+    }
+  ],
+  "states": [
+    {
+      "id": "request",
+      "type": "start",
+      "label": "웹 작업 요청",
+      "sublabel": "task · 컨텍스트 소유",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "job_request"
+    },
+    {
+      "id": "launch",
+      "type": "active",
+      "label": "전용 Chromium 기동",
+      "sublabel": "headless · 127.0.0.1",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "owned_browser"
+    },
+    {
+      "id": "bind",
+      "type": "decision",
+      "label": "에이전트 바인딩",
+      "sublabel": "선언된 signature만",
+      "lane": "main",
+      "col": 2,
+      "width": 150,
+      "step": "03",
+      "tag": "fail_closed"
+    },
+    {
+      "id": "run",
+      "type": "active",
+      "label": "텍스트 전용 실행",
+      "sublabel": "use_vision=False · MLX",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "text_only"
+    },
+    {
+      "id": "settle",
+      "type": "waiting",
+      "label": "결과 확정",
+      "sublabel": "final_result 문자열",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "final_result"
+    },
+    {
+      "id": "watch",
+      "type": "waiting",
+      "label": "취소 감시",
+      "sublabel": "0.02s 폴링 · 파일 래치",
+      "lane": "guard",
+      "col": 1,
+      "tag": "abort_poll"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "작업 실패",
+      "sublabel": "browser_job_failed",
+      "lane": "terminal",
+      "col": 0,
+      "width": 118,
+      "tag": "fail_closed",
+      "yOffset": -24
+    },
+    {
+      "id": "abort",
+      "type": "failure",
+      "label": "전역 중단",
+      "sublabel": "global_abort",
+      "lane": "terminal",
+      "col": 1,
+      "width": 118,
+      "tag": "global_abort",
+      "yOffset": -24
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "label": "작업 완료",
+      "sublabel": "ok=true · 결과 반환",
+      "lane": "terminal",
+      "col": 2,
+      "step": "06",
+      "tag": "success",
+      "yOffset": -24
+    }
+  ],
+  "transitions": [
+    {
+      "id": "bind-failed",
+      "from": "bind",
+      "to": "failed",
+      "label": "미지원 signature",
+      "variant": "security",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        402,
+        205
+      ]
+    },
+    {
+      "id": "run-watch",
+      "from": "run",
+      "to": "watch",
+      "label": "실행과 동시 감시",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        556,
+        205
+      ]
+    },
+    {
+      "id": "watch-abort",
+      "from": "watch",
+      "to": "abort",
+      "label": "토큰 취소",
+      "variant": "security",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        556,
+        360
+      ]
+    },
+    {
+      "id": "run-failed",
+      "from": "run",
+      "to": "failed",
+      "label": "실행 예외",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "via": [
+        [
+          487,
+          157
+        ],
+        [
+          487,
+          505
+        ],
+        [
+          402,
+          505
+        ]
+      ],
+      "labelAt": [
+        487,
+        395
+      ]
+    },
+    {
+      "id": "settle-done",
+      "from": "settle",
+      "to": "done",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "소유권 경계",
+      "items": [
+        "전용 Chromium만 제어 · 사용자 세션 미접촉 · 선취소 토큰 기동 0회 · 전 경로 컨텍스트 반납"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "텍스트 전용 근거",
+      "items": [
+        "vision tower 없는 게이트웨이 · use_vision·generate_gif·use_judge 해제"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "실측 증거",
+      "items": [
+        "취소 0.641s 인프로세스 · 0.646s 래치 · 69.62s에 h1 마커 반환"
+      ]
+    }
+  ]
+}

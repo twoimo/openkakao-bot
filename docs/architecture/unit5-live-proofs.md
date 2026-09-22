@@ -1434,3 +1434,25 @@ ERROR [Agent] ❌ Stopping due to 5 consecutive failures
 - `browser_use` 패키지는 앱 번들에 포함되어 있지 않다. 설치본에서 이 경로를 쓰려면 별도 provisioned 런타임에 `playwright`·`browser_use`를 고정해야 한다.
 - 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다(`chatgpt-web/extra-high` 3회 연속 `page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`). 누적 12세션째 차단이며 AHP 점수는 얻지 못했다.
 - live KakaoTalk 전송, 27B 전환(외부 소유 11234), 어댑터 학습·승격은 이번에도 검증하지 않았다.
+
+
+### Browser-Use 전용 브라우저 수명주기 다이어그램 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+`scripts/jarvis_browser_use.py`의 소유권·바인딩·취소·해제 경로를 archify lifecycle로 시각화했다. Diagram: [jarvis-browser-use-lifecycle.html](jarvis-browser-use-lifecycle.html), source: [jarvis-browser-use-lifecycle.archify.json](jarvis-browser-use-lifecycle.archify.json).
+
+lane은 웹 작업 단계·취소 감시·결과 3개이고, main rail의 5단계(웹 작업 요청 → 전용 Chromium 기동 → 에이전트 바인딩 → 텍스트 전용 실행 → 결과 확정)는 열 순서로 연결된다. 분기 전이는 4개다.
+
+- `bind → failed` (미지원 signature): 설치된 릴리스가 `browser_context`도 `browser`도 선언하지 않으면 agent를 만들지 않고 `BrowserUseApiUnsupported` → `browser_job_failed`로 닫는다.
+- `run → watch` → `abort` (토큰 취소): 실행과 동시에 0.02초 폴링과 크로스 프로세스 파일 래치가 취소를 감지하고 `global_abort`로 끝난다.
+- `run → failed` (실행 예외): 명시적 `via`로 하단 채널을 돌아 `failed`의 아래쪽 포트로 들어가며, `watch`·`abort` 열과 8px 이상 떨어진다.
+- `settle → done`: 성공 경로.
+
+receipt:
+
+- `validate lifecycle --quality showcase`: 9/9 artifact checks, 0 errors / 0 warnings, composition profile `showcase` status `pass`
+- `deliver`: specification SHA-256 `985840202f4a3a29c311af410267621ac1d176dc2f3548d17b0e61d6f2063a91` (5,320 bytes), artifact SHA-256 `51fdc982539b32d2f63637e7850a7d84521723ec28c78b34d1573ad0b65d4e55` (810,324 bytes)
+- `visual-check`: exit 0, status `pass`, diagnostics 0; light containment at 1440x900 (reader 960 / diagram 930), 1600x1000, 1920x1080, 2048x1320에서 `scrollWidth/scrollHeight ≤ viewport`이고 최소 투영 node 텍스트는 6.36px(1440x900) → 6.55px(1600x1000) → 7.0px(1920 이상)이다. light/dark capture는 1440x900·2048x1320에 있다. Receipt: [jarvis-browser-use-lifecycle.visual-check.json](jarvis-browser-use-lifecycle.visual-check.json).
+
+레이아웃에서 확인한 제약 세 가지를 남긴다. 첫째, 이 Viewer는 viewBox 종횡비가 1.55 이상일 때만 높이에 맞춰 reader 폭을 줄이는 adaptive 레이아웃을 켠다. 자동 계산 viewBox는 980x660(비율 1.485)이었고 그 상태에서는 1440x900 문서 높이가 1207px로 넘쳤다. 둘째, viewBox 폭 1024는 node context 텍스트가 최소 6px로 투영되는 상한이다(폭 1085면 5.74px로 떨어진다). 셋째, 높이 620에서 terminal 행이 허용 밴드(y ≤ 498) 안에 있으려면 terminal 상태에 `yOffset: -24`가 필요하다. 최종 spec은 viewBox [1024, 620] + terminal `yOffset -24` + 카드 1항목씩으로 고정했다.
+
+지각(perceptual) 리뷰는 이 세션에서 이미지 판독으로 수행했다(receipt의 `visualReview`는 계약대로 `pending`이며 자동 판정 `status` `pass`를 덮어쓰지 않는다). 검사 대상은 artifact SHA-256 `51fdc982…`(810,324 bytes)의 1440x900 dark와 2048x1320 light 캡처다. 노드·라벨·관계선의 겹침이나 잘림이 없고, 실패 분기 3개가 점선 security 스타일로 구분되며 legend와 PATH/MAP/LENS dock이 stage와 교차하지 않는다. 관찰 하나: 1440x900에서 node context 텍스트가 6.36px로 하한(6px)에 근접해 작게 보이고 1920 이상에서 7px로 올라간다. 이 다이어그램은 실제 실행 추적이 아니라 코드 기준 구조 참조다.
