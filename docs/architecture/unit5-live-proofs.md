@@ -1303,3 +1303,70 @@ OK
 - 문서 커밋도 같은 러너에서 확인했다: run `35650777861`(`4fae17e`)도 3개 job 모두 success이고, 이 시점 HEAD가 green이다.
 - 감사 artifact의 PNG를 직접 판독해 크로스체크했다(`settings.png`·`settings-dark.png`, 둘 다 640×400). 내용은 실제로 다 그려져 있다: 대상 채팅방 카드, 카카오 DB 동기화·색인 카드, DREAM-RSI 카드, GeekNews 슬롯 카드, 4개 동작 버튼(`온디바이스 모델 설정`·`채팅방 관리`·`답변 기록`·`지식 그래프`). 따라서 25px 띠는 버튼 줄 아래의 창 여백이고 내용 누락이 아니다. 관찰 하나를 남긴다: 이 legacy Swift 감사 렌더링에서 동기화·DREAM-RSI·GeekNews 카드는 폭이 좁고 오른쪽 정렬이며 대상 채팅방 카드와 버튼 줄은 왼쪽 정렬이다. 감사는 정렬을 검사하지 않고(전폭 대상 카드가 모든 열에 잉크를 주므로 왼쪽 공백이 빈 열 띠로 잡히지 않는다), 의도 여부는 확인하지 않았다. 실제 제품 UI는 Tauri 앱이므로 이 관찰은 병행 중인 `5a1c` 작업트리 몫으로 기록하고 이 브랜치에서 `main.swift`를 다시 고치지 않았다.
 - 미해결(변동 없음): 독립 리뷰 AHP 점수는 여전히 미확인이고, 전환은 여전히 차단이다(설치본 pid 84125가 launchd 추적 밖이라 재설치 시 stray로 판정되어 rollback, 외부 `mlx-serve` pid 38868이 11234를 점유해 27B 전환 차단). live KakaoTalk 전송, Developer ID 서명·notarization, Qwen3.8 27B 생성은 이번에도 검증하지 않았다.
+
+### 오프라인 DREAM-RSI 수렴 루프·파인튜닝 분할·DPO fail-closed 실측 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+이 절은 commit `47bbad2`(HEAD, clean, origin과 동기)에서 수행한 오프라인 실측이다. 앱 운영 state root(`~/Library/Application Support/openkakao/bujamentor`)에는 아무것도 쓰지 않았고, 재설치·재색인·카카오톡 전송·프로세스 종료도 하지 않았다. 실행 중인 앱 pid 84125와 외부 `mlx-serve` pid 38868은 건드리지 않았다.
+
+#### 1. 오프라인 DREAM-RSI 수렴 루프 (임시 state root)
+
+```bash
+TMPD=$(mktemp -d /tmp/dreamrsi.XXXXXX)
+mkdir -p "$TMPD/golden"
+cp "$HOME/Library/Application Support/openkakao/bujamentor/golden/reply-golden.jsonl" "$TMPD/golden/reply-golden.jsonl"
+OPENKAKAO_STATE_ROOT="$TMPD" /Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 \
+  scripts/auto_reply_dream_rsi.py
+```
+
+- 입력 정답지는 400행이고, `state_root`는 `OPENKAKAO_STATE_ROOT`로만 임시 root를 가리켰다.
+- exit 0. checkpoint는 `$TMPD/dream-rsi-policy.json`에만 쓰였고 운영 root의 `dream-rsi-policy.json`(mtime `Sep 20 12:02`)은 변경되지 않았다.
+- 결과 요약: `replay_rows 400` · `gold_rows 400` · `excluded_model_gold 0` · `parse_errors 0` · `gold_source_policy "human_only"` · `status "evaluated"`.
+- 후보 점수(`objective_score`): `echo_last_message 0.048953`(avg 0.038953) · `mirror_prompt_tail 0.058419`(avg 0.048419) · `longest_window_message 0.046121`(avg 0.036121). 세 후보 모두 `evaluated_rows 400` · `answered_rows 400` · `room_spread 7` · `candidate_errors {}`.
+- `selected_policy "mirror_prompt_tail"`. `replay_guarantee`는 `incumbent_policy "echo_last_message"`(0.048953)를 포함해 `incumbent_included true` · `selected_score 0.058419` · `non_degradation_on_replay true` · `status "verified"` · `scope "fixed_replay_set_only"`다. scope note는 보증이 고정 replay 이력에만 적용되고 미래 온라인 성능으로 확장되지 않는다고 명시한다.
+- 지표 표기: `metric "character_bigram_cosine_replay"` · `string_similarity_used true` · `string_similarity_scope "replay_answer_distribution"` · `preference_evaluation "separate_dpo_logprob_path"`. 즉 이 점수는 문자열 유사도 기반 replay 랭킹이며 선호도 손실이 아니다.
+- 정답지 분포(`distribution_report`): `rows 400` · `length_p10 9` · `length_median 28` · `length_p90 136` · `mean_length 58.36` · `status "measured"`. 방별 분포는 Vision AI 경진대회 195, `그룹:325472527151234` 127, `그룹:301481831369871` 28, NIMDA 인수인계 임원방 24, `그룹:437046948660911` 18, `kakao-test` 7, `변우중` 1이다.
+
+#### 2. 파인튜닝 데이터 분할 (`--prepare-only`)
+
+```bash
+TMPD=$(mktemp -d /tmp/finetune.XXXXXX)
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/auto_reply_finetune.py \
+  --prepare-only --json \
+  --golden "$HOME/Library/Application Support/openkakao/bujamentor/golden/reply-golden.jsonl" \
+  --state-root "$TMPD"
+```
+
+- exit 0. 분할: `train 311` · `valid 39` · `test 28`(합 378) · `dropped 22`(`duplicate_prompts 22`).
+- 누출 방지: `groups 173`을 `train_groups 147` · `valid_groups 14` · `test_groups 12`로 세션 단위 분리(`valid_ratio 0.1`, `test_ratio 0.05`, `seed 42`, `session_gap 1800.0`).
+- 학습 계획: `mlx_lm.lora`, 모델 `mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit`, `iters 155`, `batch_size 4`, `learning_rate 1e-05`, `num_layers 16`, `max_seq_length 1024`, `fine_tune_type lora`, `--mask-prompt`.
+- 산출물: `$TMPD/finetune/data/{train,valid,test}.jsonl` · `split-summary.json` · `finetune-report.json`. 실제 학습(`--train`)과 어댑터 승격은 실행하지 않았다.
+
+#### 3. DPO fail-closed (합성 선호 쌍 + 실 게이트웨이)
+
+합성 3쌍은 골든 정답을 `preferred`로, 상투적 문장을 `dispreferred`로 두고 `--dpo-pairs`로 넣었다. 게이트웨이는 앱이 쓰는 것과 같은 `http://127.0.0.1:11234/v1`을 읽기 전용 추론으로만 호출했다.
+
+- 결과: `dpo.status "eval_unavailable"` · `string_similarity_used false`.
+- `scoring_probe`: `mode "completions_echo"` · `probe_executed true` · `status "ok"` · `reason "echo_unsupported"` · `supports_response_scoring false` · `echo_preview " epsilon"`. 즉 이 엔드포인트는 echo를 구현하지 않아 이미 저장된 임의 응답 문자열을 채점할 수 없다.
+- `capture`: `captured 0` · `unavailable 3` · `samples_per_prompt 2` · `sample_temperature 0.7`. 쌍마다 `capture_status "eval_unavailable"` · `capture_reason "unattributed_samples"` · `attributed_by "unattributed"`.
+- `evaluation`: `evaluated 0` · `mean_loss null` · `require_reference true` · `reference_free false` · `string_similarity_used false`.
+- 따라서 이 호스트의 생성 전용 게이트웨이에서는 표준 DPO 수치를 얻을 수 없고, 그 경로는 문자열 유사도로 대체하지 않고 평가 불가로 닫힌다. 앞서 기록한 `--dpo-ref-pairs` 동일 기준값 실측(`loss 0.6931471805599453`)은 기준 로그확률을 caller가 공급한 경우에만 성립한다.
+
+#### 4. alphaXiv provenance + 고정 예산 탐색 + DPO 통합 리포트
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 scripts/dream_rsi_alphaxiv.py \
+  --paper-source orx --timeout 20 --provenance-stdin < /tmp/ax-payload.json
+```
+
+- exit 0 · `status "ok"`.
+- `paper_analysis.status "ok"` · provider `/Users/twoimo/.cargo/bin/orx` · `reason "orx_report_verified"` · `selection_method "direct_paper_id"` · `evidence.kind "orx_alphaxiv_paper_report"` · summary 14,515자 · `argv ["paper","2609.14858","--source","alphaxiv","--no-telemetry"]` returncode 0.
+- `dream_rsi_exploration.status "stopped"` · `fixed_budget {initial 3, consumed 3, remaining 0}` · `stop {reason "budget_exhausted"}` · `candidate_order ["echo_last_message","mirror_prompt_tail","longest_window_message"]` · `promotion {allowed false, observed false}`. 4개 event는 후보 3건 `candidate_evaluated`(selection `continue / next_candidate`)와 `stop budget_exhausted`다.
+- `dpo_preference_evaluation.status "eval_unavailable"` · `string_similarity_used false`.
+- `model_policy {automatic_promotion false, automatic_replacement false}`.
+
+#### 5. 이 절이 닫지 않는 것
+
+- 어댑터 학습·승격, live model 생성 품질, 어댑터 AHP 비교는 이번에도 검증하지 않았다.
+- 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다. `chatgpt-web/extra-high`(reasoning xhigh, 동시성 1) 새 스레드 3회가 모두 동일 오류 `stream disconnected before completion: page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`로 끝났다(agent `01a0c75b-780e-7972-882a-300f0ad547e9`, `01a0c75b-f311-7f02-8bcd-4d4e8bef67bb`, `01a0c75c-8f1c-7612-8f29-5838488bead0`, 모두 close). 규칙(동일 오류 3회 연속이면 blocked로 기록하고 다른 작업 진행)에 따라 이 항목을 blocked로 기록하고 웹 요청을 중단했으며, 구현·검증은 부모가 로컬에서 수행했다. 누적 12세션째 차단이다.
+- 사용자가 지정한 `gpt-5.6-luna`(Luna Max / Luan 최대)는 `spawn_agent` override 목록(`gpt-6-astra`, `gpt-5.6-sol`, `chatgpt-web/{medium,high,extra-high}`)에 없어 선택할 수 없었고, `gpt-5.6-sol`은 사용량 한도로 닫힌다. 그래서 단순 수정 폴백도 이 호스트에서 이행할 수 없었다.
+- 이번 단위는 순수 오프라인 artifact 증거이며 live KakaoTalk 전송·설치본 재배포·Developer ID 서명·notarization을 입증하지 않는다.
