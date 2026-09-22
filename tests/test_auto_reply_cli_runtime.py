@@ -19559,5 +19559,88 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
         )
 
 
+    def test_restamped_updated_at_does_not_extend_the_release(self):
+        module = self._load_auto_reply_module("auto_reply_release_age")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); root.chmod(0o700)
+            room = root / "42"; room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            with mock.patch.dict(os.environ, {module.TARGET_CHAT_ID_ENV: "42"}, clear=False):
+                queue = self._worker_queue_connection(module)
+                now = time.time()
+                try:
+                    queue.execute("INSERT INTO reply_jobs(event_id,event_json,status,reason,error_class,reply,created_at,updated_at,attempt_no) VALUES(?,?,?,?,?,?,?,?,?)", ("db:42:120", "{}", "delivery_unknown", "reconcile_required", "reconcile_required", None, now - 120, now - 1, 1))
+                    queue.commit()
+                    self.assertEqual(module._auto_reconcile_give_up(queue, now), 1)
+                    self.assertEqual(tuple(queue.execute("SELECT status,reason FROM reply_jobs").fetchone()), ("skipped", "reconcile_gave_up"))
+                finally:
+                    queue.close()
+
+    def test_release_runs_even_when_recovery_raises_transient_busy(self):
+        module = self._load_auto_reply_module("auto_reply_recovery_busy")
+        calls = []
+        connection = mock.Mock()
+        health = mock.Mock()
+        def release(*args, **kwargs):
+            calls.append(True)
+        with (
+            mock.patch.object(module, "_queue_connection", return_value=connection),
+            mock.patch.object(module, "_WorkerHealth", return_value=health),
+            mock.patch.object(module, "recover_stale_jobs", side_effect=sqlite3.OperationalError("database is locked")),
+            mock.patch.object(module, "_auto_reconcile_give_up", side_effect=release),
+            mock.patch.object(module, "_refresh_model_status_from_circuit", return_value={}),
+            mock.patch.object(module, "_rearm_model_call_in_flight_jobs"),
+            mock.patch.object(module, "apply_operator_request"),
+            mock.patch.object(module, "_model_circuit_connection", return_value=mock.Mock()),
+            mock.patch.object(module, "_rerank_client", return_value=mock.Mock()),
+            mock.patch.object(module, "claim_job", side_effect=KeyboardInterrupt()),
+            mock.patch.object(module, "_queue_reconciliation_blockers", return_value=0),
+            mock.patch.object(module, "archive_terminal_jobs"),
+            mock.patch.object(
+                module,
+                "time",
+                wraps=module.time,
+            ) as patched_time,
+        ):
+            patched_time.sleep.side_effect = AssertionError(
+                "release pass did not run before the transient-busy retry"
+            )
+            self.assertEqual(module.worker_main(), 0)
+        self.assertTrue(calls)
+
+    def test_stale_proactive_empty_reply_terminates_exactly_once(self):
+        module = self._load_auto_reply_module("auto_reply_proactive_release")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); root.chmod(0o700)
+            room = root / "417780809780519"; room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            with mock.patch.dict(os.environ, {module.TARGET_CHAT_ID_ENV: "417780809780519"}, clear=False):
+                queue = self._worker_queue_connection(module)
+                try:
+                    queue.execute("INSERT INTO reply_jobs(event_id,event_json,status,decision,reason,reply,error_class,created_at,updated_at,attempt_no) VALUES(?,?,?,?,?,?,?,?,?,?)", ("db:417780809780519:1790076650", '{"proactive":true}', "delivery_unknown", "skip", "stale_backlog", None, "reconcile_required", time.time()-120, time.time()-1, 1))
+                    queue.commit()
+                    self.assertEqual(module._auto_reconcile_give_up(queue, time.time()), 1)
+                    self.assertEqual(tuple(queue.execute("SELECT status FROM reply_jobs").fetchone()), ("skipped",))
+                    self.assertEqual(module._auto_reconcile_give_up(queue, time.time()), 0)
+                finally:
+                    queue.close()
+
+    def test_non_empty_reply_is_never_auto_terminated(self):
+        module = self._load_auto_reply_module("auto_reply_non_empty_unknown")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); root.chmod(0o700)
+            room = root / "42"; room.mkdir(mode=0o700)
+            module.QUEUE = room / "reply-queue.sqlite3"
+            with mock.patch.dict(os.environ, {module.TARGET_CHAT_ID_ENV: "42"}, clear=False):
+                queue = self._worker_queue_connection(module)
+                try:
+                    queue.execute("INSERT INTO reply_jobs(event_id,event_json,status,reason,error_class,reply,created_at,updated_at,attempt_no) VALUES(?,?,?,?,?,?,?,?,?)", ("db:42:121", "{}", "delivery_unknown", "reconcile_required", "reconcile_required", "확인했습니다", 1, 1, 1))
+                    queue.commit()
+                    self.assertEqual(module._auto_reconcile_give_up(queue, 100), 0)
+                    self.assertEqual(queue.execute("SELECT status FROM reply_jobs").fetchone()[0], "delivery_unknown")
+                finally:
+                    queue.close()
+
+
 if __name__ == "__main__":
     unittest.main()

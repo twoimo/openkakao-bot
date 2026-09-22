@@ -3893,7 +3893,7 @@ def _auto_reconcile_give_up(connection: sqlite3.Connection, now: float) -> int:
     try:
         rows = connection.execute(
             """
-            SELECT event_id, updated_at FROM reply_jobs
+            SELECT event_id, updated_at, created_at FROM reply_jobs
             WHERE status='delivery_unknown'
               AND (reason='reconcile_required'
                    OR error_class='reconcile_required')
@@ -3909,8 +3909,11 @@ def _auto_reconcile_give_up(connection: sqlite3.Connection, now: float) -> int:
         if not event_id:
             continue
         updated_at = row[1]
+        created_at = row[2]
         if not isinstance(updated_at, (int, float)) or isinstance(updated_at, bool):
             continue
+        if not isinstance(created_at, (int, float)) or isinstance(created_at, bool):
+            created_at = updated_at
         inbound = ""
         try:
             event_row = connection.execute(
@@ -3923,7 +3926,11 @@ def _auto_reconcile_give_up(connection: sqlite3.Connection, now: float) -> int:
             inbound = ""
         if _inbound_asks_question(inbound) or _reply_asks_question(inbound):
             continue
-        if now - float(updated_at) < RECONCILE_GIVE_UP_SECONDS:
+        # Recovery retries can restamp updated_at while the row remains
+        # delivery_unknown. The older of updated_at and created_at measures
+        # age from the original queue record, so a restamp cannot extend the
+        # release bound forever.
+        if now - min(float(updated_at), float(created_at)) < RECONCILE_GIVE_UP_SECONDS:
             continue
         cursor = connection.execute(
             """
@@ -16738,7 +16745,11 @@ def worker_main() -> int:
                         "recovery",
                         ready=initialized and not reconciliation_retry_pending,
                     )
-                    recover_stale_jobs(connection)
+                    try:
+                        recover_stale_jobs(connection)
+                    except sqlite3.Error as error:
+                        if not _is_transient_sqlite_busy(error):
+                            raise
                     next_recovery_at = now + STALE_RECOVERY_INTERVAL_SECONDS
                     _auto_reconcile_give_up(connection, now)
                     if _queue_reconciliation_blockers(connection):
@@ -16780,7 +16791,11 @@ def worker_main() -> int:
                 # A send that lands in delivery_unknown must be healed before
                 # the blocker check, or leftover occupancy fences the next
                 # session and recover_stale_jobs never runs again.
-                recover_stale_jobs(connection)
+                try:
+                    recover_stale_jobs(connection)
+                except sqlite3.Error as error:
+                    if not _is_transient_sqlite_busy(error):
+                        raise
                 _auto_reconcile_give_up(connection, time.time())
                 if _queue_reconciliation_blockers(connection):
                     raise RuntimeError("reply_queue_reconciliation_required")
