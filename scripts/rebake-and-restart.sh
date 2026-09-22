@@ -20,6 +20,21 @@ PY=/usr/bin/python3
 
 cd "$REPO"
 echo "building a new runtime..."
+cargo build --release --bin openkakao-cli || {
+  echo "release build failed; refusing to bake a stale binary"; exit 1
+}
+
+BINARY="$REPO/target/release/openkakao-cli"
+if [ ! -x "$BINARY" ]; then
+  echo "release binary missing; refusing to bake"; exit 1
+fi
+for source_file in $(git ls-files src Cargo.toml); do
+  if [ "$REPO/$source_file" -nt "$BINARY" ]; then
+    echo "source is newer than release binary: $source_file"
+    exit 1
+  fi
+done
+
 ./target/release/openkakao-cli auto-reply-host --bake --json >/tmp/ok-bake.json 2>/tmp/ok-bake.err || {
   echo "bake failed:"; tail -3 /tmp/ok-bake.err; exit 1
 }
