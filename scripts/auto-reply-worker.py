@@ -14683,6 +14683,7 @@ def defer_scheduled_pre_send_unavailable(
     connection: sqlite3.Connection | None,
     *,
     now: float | None = None,
+    error_class: str = "pre_send_unavailable",
 ) -> None:
     """Retry a scheduled reply only while no AX send attempt is possible.
 
@@ -14696,6 +14697,8 @@ def defer_scheduled_pre_send_unavailable(
     without retransmission: the durable row is still processing, so no AX send
     started, and unbounded retries keep the worker in processing.
     """
+    if error_class not in {"pre_send_unavailable", "context_freshness_unavailable"}:
+        raise ValueError("unsupported pre-send deferral error class")
     current = time.time() if now is None else float(now)
     try:
         upper = event.get("response_window_upper_seconds")
@@ -14725,7 +14728,7 @@ def defer_scheduled_pre_send_unavailable(
         connection,
         status="scheduled",
         due_at=retry_at,
-        error_class="pre_send_unavailable",
+        error_class=error_class,
     )
 
 
@@ -14957,7 +14960,12 @@ def process_job(
         else:
             advanced = conversation_advanced_past_event(event)
         if advanced is None:
-            finish_delivery_unknown(event, event_id, connection)
+            defer_scheduled_pre_send_unavailable(
+                event,
+                event_id,
+                connection,
+                error_class="context_freshness_unavailable",
+            )
             return
         if advanced:
             finish_conversation_advanced(event, event_id, connection)
@@ -15090,7 +15098,12 @@ def process_job(
         else:
             advanced = conversation_advanced_past_event(event)
         if advanced is None:
-            finish_delivery_unknown(event, event_id, connection)
+            defer_scheduled_pre_send_unavailable(
+                event,
+                event_id,
+                connection,
+                error_class="context_freshness_unavailable",
+            )
             return
         if advanced:
             finish_conversation_advanced(event, event_id, connection)
