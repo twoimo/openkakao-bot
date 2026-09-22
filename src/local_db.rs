@@ -1620,6 +1620,56 @@ impl LocalDbReader {
         Ok(rows)
     }
 
+    /// Read one exact message row by log id from the same read-only snapshot.
+    ///
+    /// A bound scheduled send attests the source row's author, and the newest
+    /// page is not the only authority for that row: a scheduled reply fires after
+    /// a debounce window, so in an active room the source row is usually older
+    /// than the newest rows. Reading it by id keeps that attestation on the same
+    /// read-only snapshot without widening the tail page.
+    pub fn read_message_by_log_id(
+        &self,
+        chat_id: i64,
+        log_id: i64,
+    ) -> Result<Option<LocalMessage>> {
+        self.ensure_database_identity()?;
+        let mut stmt = self.conn.prepare(
+            "SELECT m.logId, m.chatId, m.authorId,
+                COALESCE(u.displayName, u.friendNickName, u.nickName, '') as senderName,
+                COALESCE(m.message, '') as message, m.attachment, m.type, m.sentAt
+             FROM NTChatMessage m
+             LEFT JOIN NTUser u ON m.authorId = u.userId AND u.linkId = 0
+             WHERE m.chatId = ? AND m.logId = ?
+             LIMIT 1",
+        )?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(chat_id), Box::new(log_id)];
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let account_user_id = self.account_user_id;
+        let mut rows = stmt.query(params_refs.as_slice())?;
+        let message = match rows.next()? {
+            Some(row) => {
+                let author_id: i64 = row.get(2).unwrap_or(0);
+                Some(LocalMessage {
+                    log_id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    author_id,
+                    is_self: is_self_author(author_id, account_user_id),
+                    sender_name: row.get(3).unwrap_or_default(),
+                    message: row.get(4).unwrap_or_default(),
+                    attachment: row.get(5).unwrap_or_default(),
+                    message_type: row.get(6).unwrap_or(0),
+                    sent_at: row.get(7).unwrap_or(0),
+                })
+            }
+            None => None,
+        };
+        drop(rows);
+        drop(stmt);
+        self.ensure_database_identity()?;
+        Ok(message)
+    }
     pub fn list_group_chats(&self, limit: usize) -> Result<Vec<LocalGroupChat>> {
         self.ensure_database_identity()?;
         let mut stmt = self.conn.prepare(

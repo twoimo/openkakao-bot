@@ -5956,6 +5956,34 @@ fn require_persisted_auto_reply_readiness(
     Ok(())
 }
 
+/// Resolve the scheduled send's source row for its author attestation.
+///
+/// The bound send attests that the row it answers has the expected author, and
+/// it used to look for that row only in the newest 20 messages. A scheduled
+/// reply fires after a debounce window, so in an active room the source row is
+/// usually older than those 20 rows; the preflight then failed with "scheduled
+/// reply source row is unavailable" and the job died as stale_backlog
+/// (2026-09-22, room 417: 70 of 202 preflight attempts). Prefer the page that
+/// was already read, then fall back to a direct log-id lookup on the same
+/// read-only reader. A row that is genuinely gone still fails closed.
+fn resolve_bound_source_message<F>(
+    windowed: &[local_db::LocalMessage],
+    expected_source_log_id: i64,
+    lookup: F,
+) -> Result<local_db::LocalMessage>
+where
+    F: FnOnce(i64) -> Result<Option<local_db::LocalMessage>>,
+{
+    if let Some(message) = windowed
+        .iter()
+        .find(|message| message.log_id == expected_source_log_id)
+    {
+        return Ok(message.clone());
+    }
+    lookup(expected_source_log_id)
+        .context("read the scheduled reply source row")?
+        .context("scheduled reply source row is unavailable")
+}
 fn require_expected_local_source_tail(
     target_chat_id: i64,
     expected_source_log_id: i64,
@@ -7509,10 +7537,11 @@ fn main() -> Result<()> {
                             expected_last_observed,
                             &source_fence,
                         )?;
-                        let source_message = messages
-                            .iter()
-                            .find(|message| message.log_id == expected_last_observed)
-                            .context("scheduled reply source row is unavailable")?;
+                        let source_message = resolve_bound_source_message(
+                            &messages,
+                            expected_last_observed,
+                            |log_id| reader.read_message_by_log_id(target_chat_id, log_id),
+                        )?;
                         if proactive_send {
                             if !source_message.is_self
                                 && (source_message.author_id != expected_author_id
@@ -11856,4 +11885,67 @@ connection.close()
         config.safety.allow_loco_write = true;
         assert!(require_loco_write(&config).is_ok());
     }
+    fn bound_source_message(log_id: i64, author_id: i64, sender_name: &str) -> local_db::LocalMessage {
+        local_db::LocalMessage {
+            log_id,
+            chat_id: 417_780_809_780_519,
+            author_id,
+            is_self: false,
+            sender_name: sender_name.to_string(),
+            message: "body".to_string(),
+            attachment: String::new(),
+            message_type: 1,
+            sent_at: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn bound_source_message_prefers_the_page_that_was_already_read() {
+        let windowed = vec![bound_source_message(7, 4242, "권준혁")];
+        let mut lookups = 0;
+        let resolved = resolve_bound_source_message(&windowed, 7, |_| {
+            lookups += 1;
+            Ok(None)
+        })
+        .expect("a row inside the page resolves without a second read");
+        assert_eq!(resolved.log_id, 7);
+        assert_eq!(resolved.sender_name, "권준혁");
+        assert_eq!(lookups, 0, "the window hit must not re-query the DB");
+    }
+
+    #[test]
+    fn bound_source_message_falls_back_to_a_log_id_lookup() {
+        // The newest page holds only later rows, which is the normal shape of a
+        // scheduled reply in an active room.
+        let windowed = vec![bound_source_message(9, 1, "다른 사람")];
+        let resolved = resolve_bound_source_message(&windowed, 7, |log_id| {
+            assert_eq!(log_id, 7);
+            Ok(Some(bound_source_message(7, 4242, "권준혁")))
+        })
+        .expect("the direct lookup resolves an older source row");
+        assert_eq!(resolved.log_id, 7);
+        assert_eq!(resolved.author_id, 4242);
+    }
+
+    #[test]
+    fn bound_source_message_fails_closed_when_the_row_is_gone() {
+        let windowed = vec![bound_source_message(9, 1, "다른 사람")];
+        let error = resolve_bound_source_message(&windowed, 7, |_| Ok(None))
+            .expect_err("a missing source row must not become a send");
+        assert!(error
+            .to_string()
+            .contains("scheduled reply source row is unavailable"));
+    }
+
+        #[test]
+        fn bound_source_message_reports_a_lookup_failure() {
+            let windowed: Vec<local_db::LocalMessage> = Vec::new();
+            let error = resolve_bound_source_message(&windowed, 7, |_| anyhow::bail!("database gone"))
+                .expect_err("a read failure must surface instead of a silent miss");
+            // The context wraps the read error, so the cause is on the chain
+            // rather than in the outermost message.
+            let chain = format!("{error:#}");
+            assert!(chain.contains("database gone"), "{chain}");
+            assert!(chain.contains("read the scheduled reply source row"), "{chain}");
+        }
 }

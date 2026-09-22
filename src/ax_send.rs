@@ -2659,6 +2659,18 @@ mod imp {
     const COMPOSER_AREA_TIMEOUT: Duration = Duration::from_millis(2000);
     /// Per-area probe budget for the `AXTable`/`AXTextArea` lookups.
     const COMPOSER_PROBE_TIMEOUT: Duration = Duration::from_millis(800);
+
+    /// Errors `live_walk` reports when its AX budget expires instead of when it
+    /// completed and found nothing.
+    const TRANSCRIPT_WALK_TRUNCATION_ERRORS: [&str; 2] = [
+        "could not inspect the chat window AX tree",
+        "could not inspect chat rows",
+    ];
+    /// Bounded retry budget for the transcript read the bound-send attestation
+    /// depends on. Only a truncated walk is retried, so a completed read that
+    /// proves the window has no message list still fails fast (2026-09-22).
+    const TRANSCRIPT_READ_TIMEOUT: Duration = Duration::from_secs(6);
+    const TRANSCRIPT_READ_POLL: Duration = Duration::from_millis(150);
     /// Poll interval while an already-open window's AX transcript settles.
     /// KakaoTalk repaints the message list after a room switch or raise, so the
     /// first read can legitimately return no rows.
@@ -3700,14 +3712,14 @@ mod imp {
     fn read_visible_messages(window: &AXUIElement) -> Vec<AxMessage> {
         // Never snapshot the whole chat window. KakaoTalk virtualizes a long
         // transcript; AXUIElementCopyMultipleAttributeValues on the window
-        // stalls local-send/--preflight for tens of seconds.
-        match visible_message_rows(window) {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|(text, _)| AxMessage { time: None, text })
-                .collect(),
-            Err(_) => Vec::new(),
-        }
+        // stalls local-send/--preflight for tens of seconds. A walk that expires
+        // for the same reason is retried rather than reported as an empty
+        // transcript, because the callers read absence as a failed attestation.
+        visible_message_rows_bounded(window)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(text, _)| AxMessage { time: None, text })
+            .collect()
     }
 
     /// Classify one message row into displayable text: the row's own
@@ -3723,6 +3735,40 @@ mod imp {
             .iter()
             .any(|button| button.description.as_deref() == Some("공유"));
         super::classify_ax_message_row(text_area, has_share, row.find_first("AXImage").is_some())
+    }
+    /// Retry the transcript read while it is failing for a bounded reason.
+    ///
+    /// `live_walk` reports `None` when its AX budget expires, which says nothing
+    /// about whether the window has rows, and the bound-send attestation reads
+    /// "no rows" as a failed match. Room 417 recorded 97 of 202 preflight
+    /// attempts as "matched 0 rows, 0 distinct values, 0 UTF-8 bytes" on a loaded
+    /// machine (2026-09-22). Only a truncated walk is retried; a completed read
+    /// that proves the window has no message list returns immediately.
+    fn visible_message_rows_bounded(
+        window: &AXUIElement,
+    ) -> Option<Vec<(String, AXUIElement)>> {
+        let deadline = Instant::now() + TRANSCRIPT_READ_TIMEOUT;
+        loop {
+            match visible_message_rows(window) {
+                Ok(rows) => return Some(rows),
+                Err(error) if transcript_read_is_retryable(&error) => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    sleep(TRANSCRIPT_READ_POLL);
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// True when a transcript read failed because its AX walk ran out of budget
+    /// rather than because the window has no message list.
+    fn transcript_read_is_retryable(error: &anyhow::Error) -> bool {
+        let text = error.to_string();
+        TRANSCRIPT_WALK_TRUNCATION_ERRORS
+            .iter()
+            .any(|marker| text.contains(marker))
     }
     fn visible_message_rows(window: &AXUIElement) -> Result<Vec<(String, AXUIElement)>> {
         let deadline = Instant::now() + Duration::from_millis(800);
@@ -4550,6 +4596,29 @@ mod imp {
                 strict_walk_result(Vec::new(), false).map(|matches| matches.len()),
                 Some(0)
             );
+        }
+
+        #[test]
+        fn transcript_retry_budget_is_bounded() {
+            // The retry must terminate, must poll instead of spinning, and must
+            // stay well inside the worker's 20s preflight subprocess timeout.
+            assert!(TRANSCRIPT_READ_POLL < TRANSCRIPT_READ_TIMEOUT);
+            assert!(TRANSCRIPT_READ_POLL >= Duration::from_millis(50));
+            assert!(TRANSCRIPT_READ_TIMEOUT >= Duration::from_secs(2));
+            assert!(TRANSCRIPT_READ_TIMEOUT <= Duration::from_secs(10));
+        }
+
+        #[test]
+        fn only_a_truncated_walk_is_retryable() {
+            // A completed walk that proves the window has no message list must
+            // fail fast: retrying it only delays the same verdict.
+            for marker in TRANSCRIPT_WALK_TRUNCATION_ERRORS {
+                assert!(transcript_read_is_retryable(&anyhow!(marker.to_string())));
+            }
+            assert!(!transcript_read_is_retryable(&anyhow!(
+                "could not find the message list in the chat window"
+            )));
+            assert!(!transcript_read_is_retryable(&anyhow!("AX permission denied")));
         }
 
         #[test]
