@@ -1456,3 +1456,24 @@ receipt:
 레이아웃에서 확인한 제약 세 가지를 남긴다. 첫째, 이 Viewer는 viewBox 종횡비가 1.55 이상일 때만 높이에 맞춰 reader 폭을 줄이는 adaptive 레이아웃을 켠다. 자동 계산 viewBox는 980x660(비율 1.485)이었고 그 상태에서는 1440x900 문서 높이가 1207px로 넘쳤다. 둘째, viewBox 폭 1024는 node context 텍스트가 최소 6px로 투영되는 상한이다(폭 1085면 5.74px로 떨어진다). 셋째, 높이 620에서 terminal 행이 허용 밴드(y ≤ 498) 안에 있으려면 terminal 상태에 `yOffset: -24`가 필요하다. 최종 spec은 viewBox [1024, 620] + terminal `yOffset -24` + 카드 1항목씩으로 고정했다.
 
 지각(perceptual) 리뷰는 이 세션에서 이미지 판독으로 수행했다(receipt의 `visualReview`는 계약대로 `pending`이며 자동 판정 `status` `pass`를 덮어쓰지 않는다). 검사 대상은 artifact SHA-256 `51fdc982…`(810,324 bytes)의 1440x900 dark와 2048x1320 light 캡처다. 노드·라벨·관계선의 겹침이나 잘림이 없고, 실패 분기 3개가 점선 security 스타일로 구분되며 legend와 PATH/MAP/LENS dock이 stage와 교차하지 않는다. 관찰 하나: 1440x900에서 node context 텍스트가 6.36px로 하한(6px)에 근접해 작게 보이고 1920 이상에서 7px로 올라간다. 이 다이어그램은 실제 실행 추적이 아니라 코드 기준 구조 참조다.
+
+
+### 한국어 wake 헤드 held-out 일반화 실측 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+`scripts/evaluate_jarvis_korean_wake.py` 를 추가해 번들 한국어 wake 헤드가 **학습에 쓰지 않은 합성 음성**에서 얼마나 버티는지 실측했고, 원본 수치를 [jarvis-wake-heldout-eval.json](jarvis-wake-heldout-eval.json) 으로 커밋했다. 프로덕트 계약은 건드리지 않았다. 임계값은 상수 `WAKE_THRESHOLD = 0.65` 그대로이고 `threshold_changed: false`, `human_speakers: false`, `microphones_or_rooms: false` 다. 측정 대상은 번들 헤드 `voice/models/hey_jarvis_ko_ridge.onnx` (6,406 bytes, SHA-256 `ada722ad83ff87538a43cfb2c9b774fa98ab6f1e79a7976dd83a90d5ce06e9ec`) 이고 평가기 리비전 SHA-256 도 함께 남겼다.
+
+세 런의 결과는 다음과 같다.
+
+- **Qwen3-TTS CustomVoice 9화자 · 36 클립**: `positive_accept_rate` 0.777778 (7/9). 통과는 `aiden` 0.89242 · `dylan` 0.833754 · `eric` 0.816246 · `ryan` 0.792483 · `serena` 0.792483 · `sohee` 0.879343 · `uncle_fu` 0.869058 이고, 미스는 `ono_anna` 0.64375 과 `vivian` 0.521097 로 둘 다 임계값 아래다. 부정 27개는 `negative_false_accept_rate` 0 이며 임계값에 가장 근접한 부정은 `serena` "자비스 봇이야" 0.642705 와 `vivian` "자비스 봇이야" 0.628359 다. stock openWakeWord 헤드는 같은 코퍼스에서 양성 0/9, 부정 오수락 0/27 이다.
+- **Qwen3-TTS 같은 두 화자 독립 재렌더 · 8 클립**: `dylan` "자비스 봇이야" 가 0.672780 으로 임계값을 넘어 **오수락 1건**이 재현됐다(9화자 런의 같은 문장은 0.547610 이었다). 같은 텍스트·화자라도 TTS 샘플링만으로 결정 경계를 넘을 수 있고, 그 여유가 얇다는 뜻이다. 이 런은 양성 2/2 통과이므로 이 값을 음성 일반화 실패가 아니라 렌더 분산의 하한으로 기록한다.
+- **macOS `say` 9보이스**: 한국어가 실제로 렌더되는 보이스는 Yuna 하나뿐이라 양성 3/3 통과(0.865792 / 0.826543 / 0.745961)와 최근접 부정 0.645362(`안녕하세요`)만 채점됐고, 나머지 8개 보이스는 0.016초 무음으로 `clip_shorter_than_one_frame` 사유로 **채점 없이 거부**됐다(33건). 합성 실패를 wake 미스로 세지 않는다는 스크립트 계약이 그대로 동작한 것이다.
+
+테스트는 두 겹이다. `tests/test_jarvis_wake_eval.py` (23 tests) 는 프레임 단위 경계(640 bytes = 1 프레임, 0 프레임 무크래시, 임계값 정확히 일치·미만), 임계값 불변, 헤드·백엔드·numpy 부재 시 fail-closed, 무음·단편·빈 클립 거부, 8 kHz → 16 kHz 리샘플, 스테레오 거부를 고정한다. `tests/test_jarvis_wake_evidence.py` (10 tests) 는 커밋된 증거 번들이 측정한 헤드와 같은 바이트인지 재해시하고, 모든 비율을 원본 클립 행에서 다시 계산하며, `accepted` 가 `custom_max >= 0.65` 로 유도되는지, 거부된 렌더가 채점되지 않았는지, 번들에 임시 경로가 남지 않았는지를 검사한다. 고정 Python 3.11 에서 CI focused 목록 22개 모듈 전체는 **Ran 589 tests in 110.460s, OK (skipped=9)** 다(9개 skip 은 numpy 부재 게이트 몫이다).
+
+이 절이 닫지 않는 것:
+
+- 사람 음성·마이크·방 잔향은 여전히 미검증이다. 여기 수치는 전부 합성 음성이고, 헤드 자체가 합성 양성 1개 + 명시적 부정으로 적합됐으므로 합성 일관 구간의 일반화만 한정한다.
+- `ono_anna`·`vivian` 미스와 두 번의 "자비스 봇이야" 근접값은 임계값을 낮춰 해결할 대상이 아니다. 다화자 양성 코퍼스가 쌓이기 전까지 이 헤드는 승격 대상이 아니라는 운영 메모로 남긴다.
+- `say` 백엔드는 한국어 실보이스가 Yuna뿐이라 독립 합성기로서의 증거력이 제한적이다.
+- 이 실측은 로컬 격리 venv와 로컬 합성기의 결과이며 설치된 `OpenKakao Jarvis.app` 런타임이나 실제 마이크 입력을 입증하지 않는다.
+- 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다(Codex Web 서브에이전트 3회 연속 `page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`, 이 호스트의 `curl https://chatgpt.com/` 도 403). 누적 14세션째 차단이며 AHP 점수는 얻지 못했다.

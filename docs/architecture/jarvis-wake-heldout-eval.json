@@ -1,0 +1,1116 @@
+{
+  "evaluator": "scripts/evaluate_jarvis_korean_wake.py",
+  "evaluator_sha256": "ca972bccaf37e07fdb56e3e2d87f970d174cd2e8ff1bc257c3642dada79576c2",
+  "generated_at_kst": "2026-09-22 14:32:28 KST",
+  "head": {
+    "bytes": 6406,
+    "path": "voice/models/hey_jarvis_ko_ridge.onnx",
+    "sha256": "ada722ad83ff87538a43cfb2c9b774fa98ab6f1e79a7976dd83a90d5ce06e9ec"
+  },
+  "host": "MacBook Pro (Apple silicon), macOS",
+  "human_speakers": false,
+  "microphones_or_rooms": false,
+  "runs": [
+    {
+      "backend": "qwen3tts",
+      "corpus": "held_out_synthetic_voices",
+      "declared_voices": [
+        "aiden",
+        "dylan",
+        "eric",
+        "ono_anna",
+        "ryan",
+        "serena",
+        "sohee",
+        "uncle_fu",
+        "vivian"
+      ],
+      "note": "All nine Qwen3-TTS CustomVoice speakers, one render each (36 clips). The product adapter always speaks with the first speaker, so every speaker here is held out.",
+      "report_label": "qwen3tts-nine-voice",
+      "rows": [
+        {
+          "accepted": true,
+          "custom_max": 0.89242,
+          "frames": 52,
+          "kind": "positive",
+          "name": "pos-aiden-default",
+          "rms": 4301.994,
+          "seconds": 1.04,
+          "stock_accepted": false,
+          "stock_max": 0.106438,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.833754,
+          "frames": 52,
+          "kind": "positive",
+          "name": "pos-dylan-default",
+          "rms": 2823.116,
+          "seconds": 1.04,
+          "stock_accepted": false,
+          "stock_max": 0.140606,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.816246,
+          "frames": 52,
+          "kind": "positive",
+          "name": "pos-eric-default",
+          "rms": 2325.736,
+          "seconds": 1.04,
+          "stock_accepted": false,
+          "stock_max": 0.140606,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "eric"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.64375,
+          "frames": 120,
+          "kind": "positive",
+          "name": "pos-ono_anna-default",
+          "rms": 581.481,
+          "seconds": 2.4,
+          "stock_accepted": false,
+          "stock_max": 0.431548,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "ono_anna"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.792483,
+          "frames": 48,
+          "kind": "positive",
+          "name": "pos-ryan-default",
+          "rms": 2613.698,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.319096,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "ryan"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.792483,
+          "frames": 64,
+          "kind": "positive",
+          "name": "pos-serena-default",
+          "rms": 1674.841,
+          "seconds": 1.28,
+          "stock_accepted": false,
+          "stock_max": 0.074228,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "serena"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.879343,
+          "frames": 48,
+          "kind": "positive",
+          "name": "pos-sohee-default",
+          "rms": 3338.624,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.078165,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "sohee"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.869058,
+          "frames": 248,
+          "kind": "positive",
+          "name": "pos-uncle_fu-default",
+          "rms": 979.57,
+          "seconds": 4.96,
+          "stock_accepted": false,
+          "stock_max": 0.089691,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "uncle_fu"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.521097,
+          "frames": 68,
+          "kind": "positive",
+          "name": "pos-vivian-default",
+          "rms": 1056.959,
+          "seconds": 1.36,
+          "stock_accepted": false,
+          "stock_max": 0.14224,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "vivian"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.219499,
+          "frames": 32,
+          "kind": "negative",
+          "name": "neg-aiden-0",
+          "rms": 5895.324,
+          "seconds": 0.64,
+          "stock_accepted": false,
+          "stock_max": 0.076157,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.456879,
+          "frames": 48,
+          "kind": "negative",
+          "name": "neg-aiden-1",
+          "rms": 4523.449,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.000153,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.262759,
+          "frames": 44,
+          "kind": "negative",
+          "name": "neg-aiden-2",
+          "rms": 5205.785,
+          "seconds": 0.88,
+          "stock_accepted": false,
+          "stock_max": 9.6e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.282462,
+          "frames": 48,
+          "kind": "negative",
+          "name": "neg-dylan-0",
+          "rms": 2432.998,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.000102,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.54761,
+          "frames": 60,
+          "kind": "negative",
+          "name": "neg-dylan-1",
+          "rms": 773.356,
+          "seconds": 1.2,
+          "stock_accepted": false,
+          "stock_max": 6.2e-05,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.140094,
+          "frames": 60,
+          "kind": "negative",
+          "name": "neg-dylan-2",
+          "rms": 968.307,
+          "seconds": 1.2,
+          "stock_accepted": false,
+          "stock_max": 7e-06,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.31573,
+          "frames": 60,
+          "kind": "negative",
+          "name": "neg-eric-0",
+          "rms": 3812.64,
+          "seconds": 1.2,
+          "stock_accepted": false,
+          "stock_max": 2.1e-05,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "eric"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.437394,
+          "frames": 64,
+          "kind": "negative",
+          "name": "neg-eric-1",
+          "rms": 2781.476,
+          "seconds": 1.28,
+          "stock_accepted": false,
+          "stock_max": 6.5e-05,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "eric"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.095666,
+          "frames": 56,
+          "kind": "negative",
+          "name": "neg-eric-2",
+          "rms": 3986.626,
+          "seconds": 1.12,
+          "stock_accepted": false,
+          "stock_max": 1.1e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "eric"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.342384,
+          "frames": 328,
+          "kind": "negative",
+          "name": "neg-ono_anna-0",
+          "rms": 1331.495,
+          "seconds": 6.56,
+          "stock_accepted": false,
+          "stock_max": 0.016976,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "ono_anna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.564098,
+          "frames": 68,
+          "kind": "negative",
+          "name": "neg-ono_anna-1",
+          "rms": 1307.436,
+          "seconds": 1.36,
+          "stock_accepted": false,
+          "stock_max": 0.000318,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "ono_anna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.311409,
+          "frames": 76,
+          "kind": "negative",
+          "name": "neg-ono_anna-2",
+          "rms": 978.159,
+          "seconds": 1.52,
+          "stock_accepted": false,
+          "stock_max": 6.6e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "ono_anna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.311409,
+          "frames": 36,
+          "kind": "negative",
+          "name": "neg-ryan-0",
+          "rms": 2295.431,
+          "seconds": 0.72,
+          "stock_accepted": false,
+          "stock_max": 3.4e-05,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "ryan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.553039,
+          "frames": 60,
+          "kind": "negative",
+          "name": "neg-ryan-1",
+          "rms": 1541.791,
+          "seconds": 1.2,
+          "stock_accepted": false,
+          "stock_max": 5.6e-05,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "ryan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.105722,
+          "frames": 96,
+          "kind": "negative",
+          "name": "neg-ryan-2",
+          "rms": 3188.104,
+          "seconds": 1.92,
+          "stock_accepted": false,
+          "stock_max": 4.8e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "ryan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.274442,
+          "frames": 40,
+          "kind": "negative",
+          "name": "neg-serena-0",
+          "rms": 3326.36,
+          "seconds": 0.8,
+          "stock_accepted": false,
+          "stock_max": 7.8e-05,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "serena"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.642705,
+          "frames": 152,
+          "kind": "negative",
+          "name": "neg-serena-1",
+          "rms": 1246.612,
+          "seconds": 3.04,
+          "stock_accepted": false,
+          "stock_max": 0.001698,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "serena"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.257036,
+          "frames": 64,
+          "kind": "negative",
+          "name": "neg-serena-2",
+          "rms": 1813.737,
+          "seconds": 1.28,
+          "stock_accepted": false,
+          "stock_max": 0.003374,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "serena"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.210307,
+          "frames": 44,
+          "kind": "negative",
+          "name": "neg-sohee-0",
+          "rms": 4591.166,
+          "seconds": 0.88,
+          "stock_accepted": false,
+          "stock_max": 0.000865,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "sohee"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.390155,
+          "frames": 72,
+          "kind": "negative",
+          "name": "neg-sohee-1",
+          "rms": 2208.228,
+          "seconds": 1.44,
+          "stock_accepted": false,
+          "stock_max": 8.7e-05,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "sohee"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.225552,
+          "frames": 96,
+          "kind": "negative",
+          "name": "neg-sohee-2",
+          "rms": 2643.095,
+          "seconds": 1.92,
+          "stock_accepted": false,
+          "stock_max": 0.000115,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "sohee"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.104555,
+          "frames": 72,
+          "kind": "negative",
+          "name": "neg-uncle_fu-0",
+          "rms": 1136.491,
+          "seconds": 1.44,
+          "stock_accepted": false,
+          "stock_max": 1.9e-05,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "uncle_fu"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.444637,
+          "frames": 96,
+          "kind": "negative",
+          "name": "neg-uncle_fu-1",
+          "rms": 1438.813,
+          "seconds": 1.92,
+          "stock_accepted": false,
+          "stock_max": 0.000846,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "uncle_fu"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.171196,
+          "frames": 80,
+          "kind": "negative",
+          "name": "neg-uncle_fu-2",
+          "rms": 3334.551,
+          "seconds": 1.6,
+          "stock_accepted": false,
+          "stock_max": 0.000846,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "uncle_fu"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.242879,
+          "frames": 64,
+          "kind": "negative",
+          "name": "neg-vivian-0",
+          "rms": 3657.868,
+          "seconds": 1.28,
+          "stock_accepted": false,
+          "stock_max": 0.000103,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "vivian"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.628359,
+          "frames": 92,
+          "kind": "negative",
+          "name": "neg-vivian-1",
+          "rms": 3146.528,
+          "seconds": 1.84,
+          "stock_accepted": false,
+          "stock_max": 0.002228,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "vivian"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.245359,
+          "frames": 76,
+          "kind": "negative",
+          "name": "neg-vivian-2",
+          "rms": 3519.451,
+          "seconds": 1.52,
+          "stock_accepted": false,
+          "stock_max": 0.004272,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "vivian"
+        }
+      ],
+      "scope": {
+        "corpus": "held_out_synthetic_voices",
+        "fit_reference": "single synthesized positive clip",
+        "human_speakers": false,
+        "microphones_or_rooms": false,
+        "threshold_changed": false
+      },
+      "summary": {
+        "accepted_voices": [
+          "aiden",
+          "dylan",
+          "eric",
+          "ryan",
+          "serena",
+          "sohee",
+          "uncle_fu"
+        ],
+        "borderline_negatives": [
+          {
+            "custom_max": 0.642705,
+            "text": "자비스 봇이야",
+            "voice": "serena"
+          },
+          {
+            "custom_max": 0.628359,
+            "text": "자비스 봇이야",
+            "voice": "vivian"
+          }
+        ],
+        "false_accept_voices": [],
+        "missed_voices": [
+          "ono_anna",
+          "vivian"
+        ],
+        "negative_false_accept_rate": 0.0,
+        "negative_false_accepts": 0,
+        "negative_total": 27,
+        "positive_accept_rate": 0.777778,
+        "positive_accepts": 7,
+        "positive_total": 9,
+        "stock_negative_false_accept_rate": 0.0,
+        "stock_negative_false_accepts": 0,
+        "stock_positive_accept_rate": 0.0,
+        "stock_positive_accepts": 0
+      },
+      "threshold": 0.65,
+      "threshold_changed": false,
+      "unusable_render_count": 0,
+      "unusable_renders": []
+    },
+    {
+      "backend": "qwen3tts",
+      "corpus": "held_out_synthetic_voices_independent_render",
+      "declared_voices": [
+        "aiden",
+        "dylan"
+      ],
+      "note": "Independent second render of two of the same speakers (8 clips). Its dylan '자비스 봇이야' render crossed the threshold, which bounds TTS sampling variance.",
+      "report_label": "qwen3tts-two-voice-rerender",
+      "rows": [
+        {
+          "accepted": true,
+          "custom_max": 0.845151,
+          "frames": 48,
+          "kind": "positive",
+          "name": "pos-aiden-default",
+          "rms": 3717.424,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.395487,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.787918,
+          "frames": 52,
+          "kind": "positive",
+          "name": "pos-dylan-default",
+          "rms": 1325.417,
+          "seconds": 1.04,
+          "stock_accepted": false,
+          "stock_max": 0.416293,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.376152,
+          "frames": 40,
+          "kind": "negative",
+          "name": "neg-aiden-0",
+          "rms": 6624.512,
+          "seconds": 0.8,
+          "stock_accepted": false,
+          "stock_max": 2.2e-05,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.506217,
+          "frames": 48,
+          "kind": "negative",
+          "name": "neg-aiden-1",
+          "rms": 5967.543,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 2.7e-05,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.261949,
+          "frames": 60,
+          "kind": "negative",
+          "name": "neg-aiden-2",
+          "rms": 4126.435,
+          "seconds": 1.2,
+          "stock_accepted": false,
+          "stock_max": 0.000116,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "aiden"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.418113,
+          "frames": 48,
+          "kind": "negative",
+          "name": "neg-dylan-0",
+          "rms": 3917.682,
+          "seconds": 0.96,
+          "stock_accepted": false,
+          "stock_max": 0.00279,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.67278,
+          "frames": 92,
+          "kind": "negative",
+          "name": "neg-dylan-1",
+          "rms": 2632.988,
+          "seconds": 1.84,
+          "stock_accepted": false,
+          "stock_max": 0.016461,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "dylan"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.166441,
+          "frames": 52,
+          "kind": "negative",
+          "name": "neg-dylan-2",
+          "rms": 2362.494,
+          "seconds": 1.04,
+          "stock_accepted": false,
+          "stock_max": 4e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "dylan"
+        }
+      ],
+      "scope": {
+        "corpus": "held_out_synthetic_voices",
+        "fit_reference": "single synthesized positive clip",
+        "human_speakers": false,
+        "microphones_or_rooms": false,
+        "threshold_changed": false
+      },
+      "summary": {
+        "accepted_voices": [
+          "aiden",
+          "dylan"
+        ],
+        "borderline_negatives": [
+          {
+            "custom_max": 0.67278,
+            "text": "자비스 봇이야",
+            "voice": "dylan"
+          }
+        ],
+        "false_accept_voices": [
+          "dylan"
+        ],
+        "missed_voices": [],
+        "negative_false_accept_rate": 0.166667,
+        "negative_false_accepts": 1,
+        "negative_total": 6,
+        "positive_accept_rate": 1.0,
+        "positive_accepts": 2,
+        "positive_total": 2,
+        "stock_negative_false_accept_rate": 0.0,
+        "stock_negative_false_accepts": 0,
+        "stock_positive_accept_rate": 0.0,
+        "stock_positive_accepts": 0
+      },
+      "threshold": 0.65,
+      "threshold_changed": false,
+      "unusable_render_count": 0,
+      "unusable_renders": []
+    },
+    {
+      "backend": "say",
+      "corpus": "held_out_synthetic_voices_macos_say",
+      "declared_voices": [
+        "Yuna",
+        "Eddy",
+        "Flo",
+        "Grandma",
+        "Grandpa",
+        "Reed",
+        "Rocko",
+        "Sandy",
+        "Shelley"
+      ],
+      "note": "macOS 'say' as a second, independent synthesizer. Only Yuna produces real Korean on this host; every other voice renders 0.016 s of silence and is refused as unusable.",
+      "report_label": "macos-say",
+      "rows": [
+        {
+          "accepted": true,
+          "custom_max": 0.865792,
+          "frames": 49,
+          "kind": "positive",
+          "name": "pos-Yuna-default",
+          "rms": 4515.069,
+          "seconds": 0.982,
+          "stock_accepted": false,
+          "stock_max": 0.135675,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "Yuna"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.826543,
+          "frames": 53,
+          "kind": "positive",
+          "name": "pos-Yuna-140",
+          "rms": 4527.485,
+          "seconds": 1.072,
+          "stock_accepted": false,
+          "stock_max": 0.157635,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "Yuna"
+        },
+        {
+          "accepted": true,
+          "custom_max": 0.745961,
+          "frames": 37,
+          "kind": "positive",
+          "name": "pos-Yuna-240",
+          "rms": 4527.939,
+          "seconds": 0.754,
+          "stock_accepted": false,
+          "stock_max": 0.005772,
+          "text": "헤이 자비스",
+          "usable": true,
+          "voice": "Yuna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.645362,
+          "frames": 45,
+          "kind": "negative",
+          "name": "neg-Yuna-0",
+          "rms": 4446.323,
+          "seconds": 0.915,
+          "stock_accepted": false,
+          "stock_max": 0.025779,
+          "text": "안녕하세요",
+          "usable": true,
+          "voice": "Yuna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.460939,
+          "frames": 51,
+          "kind": "negative",
+          "name": "neg-Yuna-1",
+          "rms": 4359.268,
+          "seconds": 1.021,
+          "stock_accepted": false,
+          "stock_max": 0.000223,
+          "text": "자비스 봇이야",
+          "usable": true,
+          "voice": "Yuna"
+        },
+        {
+          "accepted": false,
+          "custom_max": 0.247347,
+          "frames": 57,
+          "kind": "negative",
+          "name": "neg-Yuna-2",
+          "rms": 4898.57,
+          "seconds": 1.147,
+          "stock_accepted": false,
+          "stock_max": 4.2e-05,
+          "text": "오늘 날씨 어때",
+          "usable": true,
+          "voice": "Yuna"
+        }
+      ],
+      "scope": {
+        "corpus": "held_out_synthetic_voices",
+        "fit_reference": "single synthesized positive clip",
+        "human_speakers": false,
+        "microphones_or_rooms": false,
+        "threshold_changed": false
+      },
+      "summary": {
+        "accepted_voices": [
+          "Yuna"
+        ],
+        "borderline_negatives": [
+          {
+            "custom_max": 0.645362,
+            "text": "안녕하세요",
+            "voice": "Yuna"
+          }
+        ],
+        "false_accept_voices": [],
+        "missed_voices": [],
+        "negative_false_accept_rate": 0.0,
+        "negative_false_accepts": 0,
+        "negative_total": 3,
+        "positive_accept_rate": 1.0,
+        "positive_accepts": 3,
+        "positive_total": 3,
+        "stock_negative_false_accept_rate": 0.0,
+        "stock_negative_false_accepts": 0,
+        "stock_positive_accept_rate": 0.0,
+        "stock_positive_accepts": 0
+      },
+      "threshold": 0.65,
+      "threshold_changed": false,
+      "unusable_render_count": 32,
+      "unusable_renders": [
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Eddy"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Flo"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Grandma"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Grandpa"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Reed"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Rocko"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Sandy"
+        },
+        {
+          "kind": "positive",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "헤이 자비스",
+          "voice": "Shelley"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Eddy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Eddy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Eddy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Flo"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Flo"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Flo"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Grandma"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Grandma"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Grandma"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Grandpa"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Grandpa"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Grandpa"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Reed"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Reed"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Reed"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Rocko"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Rocko"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Rocko"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Sandy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Sandy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Sandy"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "안녕하세요",
+          "voice": "Shelley"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "자비스 봇이야",
+          "voice": "Shelley"
+        },
+        {
+          "kind": "negative",
+          "reason": "clip_shorter_than_one_frame",
+          "seconds": 0.016,
+          "text": "오늘 날씨 어때",
+          "voice": "Shelley"
+        }
+      ]
+    }
+  ],
+  "schema": "jarvis.wake.heldout-eval/1",
+  "scope_note": "Held-out synthesized voices only. The bundled head was fitted to a single synthesized positive clip plus explicit negatives, so these numbers bound synthesis-consistent generalization, not generalization to human speakers, microphones, or rooms. The threshold was never changed; 0.65 is the pinned production value.",
+  "threshold": 0.65,
+  "threshold_changed": false
+}
