@@ -2635,6 +2635,13 @@ mod imp {
     const CONTEXT_MENU_TITLES_REPLY: &[&str] = &["답장"];
     const CONTEXT_MENU_TITLES_DELETE_EVERYONE: &[&str] = &["모두에게서 삭제"];
     const OPEN_CHAT_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Retry budget for an exact already-open AX read. Every attempt walks the
+    /// window's table with an 800 ms budget, and KakaoTalk serializes AX work:
+    /// while the catalog preflight and three room workers read at once, an
+    /// attempt expires and the transcript looks empty. Waiting longer than the
+    /// window-open budget keeps that contention from being reported as an empty
+    /// chat (2026-09-22).
+    const EXACT_READ_TIMEOUT: Duration = Duration::from_secs(20);
     /// Bounded retry budget for the composer walk. `find_input_field_in` spends
     /// a fixed AX walk budget, so a loaded machine can expire that budget in a
     /// window that is actually the right one and report a missing composer.
@@ -3843,7 +3850,7 @@ mod imp {
         let pid = find_kakaotalk_pid()?;
         ensure_ax_permission()?;
         let app = AXUIElement::application(pid);
-        let deadline = Instant::now() + OPEN_CHAT_TIMEOUT;
+        let deadline = Instant::now() + EXACT_READ_TIMEOUT;
         let mut messages = loop {
             let window = find_chat_window(&app, chat_display_name)?.ok_or_else(|| {
                 anyhow!(
@@ -4267,6 +4274,16 @@ mod imp {
             assert!(COMPOSER_FIELD_TIMEOUT.as_secs() > 0);
             assert!(COMPOSER_FIELD_POLL.as_millis() > 0);
             assert!(COMPOSER_FIELD_POLL < COMPOSER_FIELD_TIMEOUT);
+        }
+
+        #[test]
+        fn exact_read_retry_outlasts_the_window_open_window() {
+            // Contention is transient: the exact-open read must keep retrying
+            // past the budget used to wait for a window to open, while staying
+            // bounded.
+            assert!(EXACT_READ_TIMEOUT.as_secs() > 0);
+            assert!(EXACT_READ_TIMEOUT > OPEN_CHAT_TIMEOUT);
+            assert!(EXACT_READ_TIMEOUT.as_secs() <= 60);
         }
 
         #[test]
