@@ -4290,6 +4290,17 @@ def poll_once(
             state["pending_log_ids"] = sorted(pending)
             state["in_flight_candidate"] = candidate
             state["candidate_phase"] = "hooking"
+            # One local-poll page can carry LOCAL_POLL_MAX_ROWS candidates and
+            # every hook costs a subprocess round trip, so a catch-up page runs
+            # for minutes. The liveness stamp used to be written once at the top
+            # of the poll, which left a genuinely busy room looking dead for the
+            # whole page: the supervisor fences a db heartbeat older than
+            # HEARTBEAT_MAX_AGE_SECONDS and the reply worker's send fence reads
+            # the same stamp, so a long page blocked its own delivery. Refresh
+            # it on every candidate transition this page durably persists; a
+            # hook that wedges still leaves the gap it deserves, because no
+            # transition is written while it runs.
+            state["heartbeat_at"] = time.time()
             if not save_state(
                 state,
                 _generation_lock_held=True,
@@ -4473,6 +4484,9 @@ def poll_once(
             ):
                 raise DbFence("reconcile_required")
             disk_state["candidate_phase"] = "acknowledging"
+            # Same liveness refresh as the hooking write: the hook just
+            # returned, so this candidate proved the watcher is alive.
+            disk_state["heartbeat_at"] = time.time()
             if not save_state(
                 disk_state,
                 _generation_lock_held=True,

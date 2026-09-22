@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import sqlite3
 import sys
 import unittest
@@ -13,6 +14,31 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+
+def liveness_window_seconds() -> float:
+    """Read the real db-heartbeat freshness window from the shipped fences.
+
+    The supervisor fences a room whose db heartbeat is older than its own
+    ``HEARTBEAT_MAX_AGE_SECONDS`` and the reply worker's pre-send fence uses
+    ``SEND_FENCE_MAX_AGE_SECONDS``. Both must agree, and the watcher must stamp
+    inside that window, so the test asserts against the shipped numbers instead
+    of a copy that could silently drift.
+    """
+
+    windows = {}
+    for name, pattern in (
+        ("auto-reply-supervisor.py", r"^HEARTBEAT_MAX_AGE_SECONDS = ([\d.]+)$"),
+        ("auto-reply-worker.py", r"^SEND_FENCE_MAX_AGE_SECONDS = ([\d.]+)$"),
+    ):
+        source = (SCRIPTS / name).read_text(encoding="utf-8")
+        match = re.search(pattern, source, re.MULTILINE)
+        if match is None:
+            raise AssertionError(f"liveness window not found in {name}")
+        windows[name] = float(match.group(1))
+    if len(set(windows.values())) != 1:
+        raise AssertionError(f"liveness windows disagree: {windows}")
+    return next(iter(windows.values()))
 
 
 def load_db_watch(name: str):
@@ -243,6 +269,184 @@ class AutoReplyDbWatchRetryTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertFalse(calls[1][0]["delivery_enabled"])
         self.assertEqual(calls[1][0]["fence_reason"], "database_timeout")
+
+    @staticmethod
+    def _page_envelope(module, log_ids):
+        messages = [
+            {
+                "log_id": log_id,
+                "chat_id": 42,
+                "author_id": 700,
+                "is_self": False,
+                "sender_name": "member",
+                "message": f"question {log_id}",
+                "attachment": "",
+                "message_type": 1,
+                "sent_at": 1000 + log_id,
+                "reply_authorized": True,
+            }
+            for log_id in log_ids
+        ]
+        return {
+            "schema_version": 3,
+            "chat": {
+                "chat_id": 42,
+                "chat_name": module.CHAT,
+                "last_log_id": log_ids[-1],
+            },
+            "messages": messages,
+            "completeness": {
+                "status": "complete",
+                "after_log_id": 123,
+                "first_log_id": log_ids[0],
+                "last_log_id": log_ids[-1],
+                "row_count": len(log_ids),
+                "returned_count": len(log_ids),
+                "available_max_log_id": log_ids[-1],
+                "chat_last_log_id": log_ids[-1],
+                "id_domain": "global_sparse",
+                "has_gap": False,
+                "has_more": False,
+                "proof": "sqlite_snapshot_rowset",
+            },
+        }
+
+    def _drive_one_page(self, module, log_ids, *, hook_seconds):
+        """Drive one bounded page with a fake clock and record every save.
+
+        ``hook_seconds`` is how long each hook round trip is made to take.
+        Every persisted room state is captured together with the clock reading
+        at the moment it was written, which is what the supervisor's freshness
+        check and the reply worker's pre-send fence actually observe.
+        """
+
+        enrollment = {
+            "chat_id": 42,
+            "chat_name": module.CHAT,
+            "identity": {
+                "kind": "local_name",
+                "local_name": module.CHAT,
+                "ax_name": module.CHAT,
+            },
+            "reply_author_bindings": [{"nickname": "member", "author_id": 700}],
+        }
+        environment = {
+            "OPENKAKAO_AUTO_REPLY_CLI": "1",
+            "OPENKAKAO_DB_MODE": "database_authoritative",
+            "OPENKAKAO_AUTO_REPLY_ENABLED": "1",
+            "OPENKAKAO_SUPERVISOR_OWNER": "owner",
+            "OPENKAKAO_DB_SOURCE_EPOCH": "7",
+        }
+        clock = {"now": 1000.0}
+        saves = []
+
+        def hook(*_args, **_kwargs):
+            clock["now"] += hook_seconds
+            return "skipped"
+
+        def save(state, **_kwargs):
+            saves.append((clock["now"], dict(state)))
+            return True
+
+        def load():
+            return dict(saves[-1][1]) if saves else {}
+
+        with (
+            mock.patch.dict(os.environ, environment, clear=False),
+            mock.patch.object(module.time, "time", side_effect=lambda: clock["now"]),
+            mock.patch.object(module, "_state", side_effect=lambda value: dict(value)),
+            mock.patch.object(module, "_reconcile_ingress_journal"),
+            mock.patch.object(module, "_owner_epoch_current", return_value=True),
+            mock.patch.object(module, "cleanup_orphan_media"),
+            mock.patch.object(module, "_start_poll_stream"),
+            mock.patch.object(module, "_stop_poll_stream"),
+            mock.patch.object(
+                module,
+                "_read_poll_envelope",
+                return_value=self._page_envelope(module, list(log_ids)),
+            ),
+            mock.patch.object(module, "_cli_enrollment_target", return_value=enrollment),
+            mock.patch.object(
+                module, "_generation_lock", side_effect=contextlib.nullcontext
+            ),
+            mock.patch.object(module, "load_state", side_effect=load),
+            mock.patch.object(module, "save_state", side_effect=save),
+            mock.patch.object(module, "_journal_candidate"),
+            mock.patch.object(module, "emit", side_effect=hook),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            state, emitted = module.poll_once(self._clean_state(module), 1.0)
+        return state, emitted, saves
+
+    def test_long_candidate_page_keeps_db_heartbeat_inside_the_liveness_window(self):
+        """A catch-up page must not look dead while it is answering.
+
+        One page can carry LOCAL_POLL_MAX_ROWS candidates and each hook is a
+        subprocess round trip, so a busy room's page runs for minutes. The
+        liveness stamp used to be written once at the top of the poll, so the
+        supervisor fenced the room as db_heartbeat_stale and the reply worker's
+        pre-send fence read the same stale stamp: the room could not deliver the
+        very turn it was working on.
+        """
+
+        window = liveness_window_seconds()
+        module = load_db_watch("auto_reply_db_watch_page_liveness_test")
+        hook_seconds = window + 5.0
+        log_ids = (124, 125, 126)
+        state, emitted, saves = self._drive_one_page(
+            module,
+            log_ids,
+            hook_seconds=hook_seconds,
+        )
+
+        self.assertEqual(emitted, len(log_ids))
+        self.assertEqual(state["candidate_phase"], "idle")
+        self.assertEqual(state["pending_log_ids"], [])
+        self.assertIsNone(state["in_flight_candidate"])
+        self.assertEqual(state["acked_watermark"], log_ids[-1])
+        self.assertGreaterEqual(len(saves), 2 * len(log_ids))
+
+        page_span = saves[-1][0] - saves[0][0]
+        self.assertGreater(page_span, window, "the page must outlast the window")
+        ages = [now - float(payload["heartbeat_at"]) for now, payload in saves]
+        self.assertLessEqual(
+            max(ages),
+            window,
+            "a page that is answering candidates must keep the db heartbeat fresh",
+        )
+        stamps = [float(payload["heartbeat_at"]) for _, payload in saves]
+        self.assertGreater(
+            len(set(stamps)),
+            1,
+            "the liveness stamp must advance with the page, not freeze at poll start",
+        )
+        self.assertGreaterEqual(max(stamps), saves[-1][0] - window)
+
+    def test_a_wedged_hook_still_outruns_the_liveness_window(self):
+        """Re-stamping must prove progress, not manufacture it.
+
+        A hook that never returns writes no transition, so the room must still
+        read as stale and stay fenced instead of inheriting liveness from the
+        candidate that preceded it.
+        """
+
+        window = liveness_window_seconds()
+        module = load_db_watch("auto_reply_db_watch_page_wedged_test")
+        state, emitted, saves = self._drive_one_page(
+            module,
+            (124,),
+            hook_seconds=window * 2.0,
+        )
+
+        self.assertEqual(emitted, 1)
+        self.assertEqual(state["candidate_phase"], "idle")
+        gaps = [later[0] - earlier[0] for earlier, later in zip(saves, saves[1:])]
+        self.assertTrue(gaps)
+        self.assertGreater(
+            max(gaps),
+            window,
+            "an unreturned hook must leave a real staleness gap",
+        )
 
 
 if __name__ == "__main__":
