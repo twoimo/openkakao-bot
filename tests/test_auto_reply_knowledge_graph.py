@@ -674,6 +674,91 @@ class IsolatedReadOnlyConnectionTests(unittest.TestCase):
 
             self.assertEqual(opened, [], "copy failure must not fall back to the live Kakao DB")
 
+    def test_isolated_copy_carries_the_wal_sidecar_and_sees_uncheckpointed_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "context.sqlite3"
+            writer = sqlite3.connect(db)
+            try:
+                writer.execute("PRAGMA journal_mode = WAL")
+                writer.execute("PRAGMA wal_autocheckpoint = 0")
+                writer.execute(
+                    "CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                writer.execute("INSERT INTO sample (value) VALUES ('wal only row')")
+                writer.commit()
+                self.assertTrue(
+                    db.with_name(db.name + "-wal").exists(),
+                    "the fixture must leave a WAL for the copy to carry",
+                )
+                with KG._open_isolated_ro_conn(db) as conn:
+                    copied = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+                    self.assertNotEqual(copied.resolve(), db.resolve())
+                    self.assertTrue((copied.parent / (copied.name + "-wal")).exists())
+                    self.assertEqual(
+                        conn.execute("SELECT value FROM sample").fetchone()[0],
+                        "wal only row",
+                    )
+            finally:
+                writer.close()
+
+    def test_the_copy_is_retried_when_the_wal_sidecar_moves_mid_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = self._write_source_db(root)
+            wal = db.with_name(db.name + "-wal")
+            wal.write_bytes(b"fixture" * 4)
+            real_copy2 = KG.shutil.copy2
+            calls = {"count": 0}
+
+            def moving_copy2(source, target, *args, **kwargs):
+                result = real_copy2(source, target, *args, **kwargs)
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    wal.write_bytes(b"fixture" * 8)
+                return result
+
+            destination = root / "copy"
+            destination.mkdir()
+            with mock.patch.object(KG.shutil, "copy2", side_effect=moving_copy2):
+                copied = KG._copy_consistent_sqlite_replica(db, destination)
+            self.assertEqual(copied, destination / db.name)
+            self.assertTrue(copied.exists())
+            self.assertGreaterEqual(
+                calls["count"], 4, "the mutated first copy must be rejected and redone"
+            )
+
+    def test_a_source_that_never_settles_fails_closed_at_the_public_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = self._write_source_db(root)
+            wal = db.with_name(db.name + "-wal")
+            wal.write_bytes(b"fixture")
+            real_copy2 = KG.shutil.copy2
+            real_connect = sqlite3.connect
+            opened: list[str] = []
+
+            def tracked_connect(target, *args, **kwargs):
+                opened.append(str(target))
+                return real_connect(target, *args, **kwargs)
+
+            def always_moving(source, target, *args, **kwargs):
+                result = real_copy2(source, target, *args, **kwargs)
+                if Path(source) == db:
+                    with open(wal, "ab") as handle:
+                        handle.write(b"x")
+                return result
+
+            with mock.patch.object(KG.shutil, "copy2", side_effect=always_moving):
+                with mock.patch.object(KG.sqlite3, "connect", side_effect=tracked_connect):
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError,
+                        "isolated read-only snapshot unavailable",
+                    ):
+                        with KG._open_isolated_ro_conn(db):
+                            self.fail("a mutating source must not yield a connection")
+
+            self.assertEqual(opened, [], "a mutating source must not open the live Kakao DB")
+
     def test_status_reports_fail_closed_empty_index_from_persisted_index_meta(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

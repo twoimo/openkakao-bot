@@ -1607,3 +1607,49 @@ receipt:
 - 남는 한계: 이 게이트는 Rust 두 크레이트만 덮는다. Python은 핀 인터프리터에 pyflakes/ruff/vulture가 없어 같은 정적 감사를 돌리지 않았고, 도구를 임의로 설치하지 않았다.
 - CI 확인: 이 게이트를 넣은 리비전은 run 35697623043에서 3/3 green이고, 새로 넣은 두 스텝 `Lint CLI crate (clippy)` 와 `Lint desktop Rust bridge offline` 이 각각 success다(데스크톱 job의 focused Python 테스트·Vitest·Vite build·Rust test/check도 함께 green).
 - 아티팩트 무결성: 커밋한 `jarvis-rendered-cross-check.html` 과 `.archify.json` 의 SHA-256이 deliver 영수증(`86d58081…`, `1456692d…`)과 바이트 단위로 일치하고, visual-check 영수증의 artifact 해시도 같다.
+
+## DPO 수치 안정성 guard와 WAL sidecar 복제 검증 — 2026-09-22 KST
+
+부모 에이전트가 로컬에서 수행했다. 같은 날 ChatGPT Web 서브에이전트 경로는 `https://chatgpt.com/`이 403을 돌려 닫혀 있었다.
+
+### 1. 발견한 결함과 수정 전후 측정
+
+`scripts/auto_reply_finetune.py`의 `dpo_loss_from_logprobs`는 softplus 형태(`log1p(exp(-|delta|)) + max(-delta, 0)`)를 써서 큰 |delta|에서도 안정적이지만 입력 검증이 비어 있었다. 수정 전 리비전은 `git show HEAD:scripts/auto_reply_finetune.py`로 임시 경로에 꺼내 같은 함수를 직접 호출해 측정했고, 작업 트리는 건드리지 않았다.
+
+| 입력 | 수정 전 (HEAD `a362de8`) | 수정 후 |
+| --- | --- | --- |
+| `beta=nan` | `status ok`, `loss nan` | `eval_unavailable`, `invalid_beta` |
+| `beta="abc"` | `ValueError: could not convert string to float: 'abc'` | `eval_unavailable`, `invalid_beta` |
+| `beta=None` | `TypeError: float() argument must be a string or a real number` | `eval_unavailable`, `invalid_beta` |
+| `chosen=[-1e308]`, `rejected=[1e308]` | `status ok`, `loss 0.0` | `eval_unavailable`, `non_finite_delta` |
+| 위 두 쌍을 `evaluate_preference_pairs`에 함께 투입 | `mean_loss 0.30359586242039094`, `evaluated 2`, `unavailable 0` | `mean_loss 0.6071917248407819`, `evaluated 1`, `unavailable 1` |
+
+`loss 0.0`이 특히 위험하다. 이 함수의 계약은 "로그확률이 없으면 수치를 만들지 않는다"인데, 넘친 차이값이 `softplus(inf) = 0.0`, 즉 "완벽한 응답"으로 둔갑해 `mean_loss`를 끌어내렸고 그 쌍을 `evaluated`로 셌다. `--dpo-pairs`로 들어오는 JSONL은 외부 입력이므로 이 경로는 실제로 도달 가능했다.
+
+가드는 세 곳이다. beta를 유한 실수로 검증(`invalid_beta`), delta를 유한값으로 검증(`non_finite_delta`), loss를 유한값으로 검증(`non_finite_loss`). 세 번째는 delta가 유한하면 도달하지 않는 방어 분기이며, 어떤 입력에도 비유한 수치를 `status="ok"`로 돌려주지 않는다는 계약을 코드에 남기기 위한 것이다.
+
+회귀 검출력은 대조 실행으로 확인했다. 신규 테스트가 요구하는 4개 단언을 수정 전 모듈에 그대로 물리면 `RESULT all-detected`로 네 개가 모두 실패했고, 수정 후 모듈에는 `RESULT no-defect-detected`로 모두 통과했다.
+
+### 2. WAL sidecar 복제 경로의 첫 직접 검증
+
+기존 격리 복제 테스트 4건은 모두 rollback journal 모드 소스(`sqlite3.connect(db)` 기본값)를 썼기 때문에 `-wal`/`-shm` sidecar 복사 루프가 실제 파일로 한 번도 실행되지 않았다. 세 건을 추가해 그 경로를 닫았다.
+
+측정값(고정 Python 3.11, 실제 `_snapshot_signature`):
+
+| 검증 | 관측 |
+| --- | --- |
+| WAL 모드 소스의 미체크포인트 행 | `journal_mode wal`, `wal exists True`, `shm exists True`, 복제본 `rows [('wal only row',)]`, `wal sidecar copied True` |
+| 복사 중 sidecar 이동 | `isolated_copy_mutated {"attempt": 1}` → `isolated_copy_retry_succeeded {"attempt": 2}` |
+| 매 복사마다 이동 | `isolated_copy_mutated` 1·2·3 → `OperationalError: consistent isolated snapshot unavailable` |
+
+### 3. 실행 기록과 문서 정정
+
+```bash
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 -m unittest tests.test_auto_reply_finetune.DpoNumericStabilityTests tests.test_auto_reply_knowledge_graph.IsolatedReadOnlyConnectionTests
+/Users/twoimo/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin/python3.11 -m unittest tests.test_auto_reply_finetune tests.test_jarvis_unit4
+# 그리고 CI focused 25개 모듈 전체(.github/workflows/ci.yml의 같은 목록)
+```
+
+결과: 두 클래스 **13 tests, OK**, 두 모듈 **90 tests, OK**, CI focused 25개 모듈 **Ran 644 tests in 113.283s / OK (skipped=9)**다. 같은 목록의 직전 측정은 635 tests(`c264535`)이므로 신규 9건이 그대로 더해졌다.
+
+README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같은 bullet 뒤쪽의 24/24와 어긋났다. "렌더 교차 검증은 23개 check로 처음 통과했고(이후 `status_label` 렌더 check가 더해져 24개가 된다)"로 정정해 두 수치의 관계를 명시했다.

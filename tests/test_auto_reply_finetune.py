@@ -616,6 +616,87 @@ class DpoReferenceContractTests(unittest.TestCase):
         self.assertEqual(result["pairs"][0]["objective"], "reference_free_preference")
 
 
+class DpoNumericStabilityTests(unittest.TestCase):
+    """A crafted preference-pair file must never yield a status ok non-finite loss."""
+
+    def _report(self, **kwargs):
+        return dpo_loss_from_logprobs(
+            tokenizer_id="tok", base_model="flash-next", **kwargs
+        )
+
+    def test_non_finite_beta_is_unavailable_not_a_nan_loss(self):
+        for beta in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(beta=beta):
+                report = self._report(
+                    chosen_logprobs=[-1.0], rejected_logprobs=[-2.0], beta=beta
+                )
+                self.assertEqual(report["status"], DPO_EVAL_UNAVAILABLE)
+                self.assertEqual(report["reason"], "invalid_beta")
+                self.assertIsNone(report["loss"])
+
+    def test_non_numeric_beta_is_a_report_not_an_exception(self):
+        for beta in ("abc", None, {}, []):
+            with self.subTest(beta=beta):
+                report = self._report(
+                    chosen_logprobs=[-1.0], rejected_logprobs=[-2.0], beta=beta
+                )
+                self.assertEqual(report["status"], DPO_EVAL_UNAVAILABLE)
+                self.assertEqual(report["reason"], "invalid_beta")
+                self.assertIsNone(report["loss"])
+
+    def test_an_overflowing_logprob_gap_is_unavailable_not_infinity(self):
+        report = self._report(chosen_logprobs=[-1e308], rejected_logprobs=[1e308])
+        self.assertEqual(report["status"], DPO_EVAL_UNAVAILABLE)
+        self.assertEqual(report["reason"], "non_finite_delta")
+        self.assertIsNone(report["loss"])
+
+    def test_a_zero_beta_still_gives_the_ln_two_boundary(self):
+        report = self._report(
+            chosen_logprobs=[-1.0], rejected_logprobs=[-2.0], beta=0.0
+        )
+        self.assertEqual(report["status"], "ok")
+        self.assertAlmostEqual(report["loss"], math.log(2.0))
+
+    def test_ordinary_inputs_keep_the_stable_softplus_value(self):
+        report = self._report(
+            chosen_logprobs=[-0.1, -0.1], rejected_logprobs=[-1.0, -1.0]
+        )
+        self.assertEqual(report["status"], "ok")
+        self.assertAlmostEqual(report["delta"], 1.8)
+        self.assertAlmostEqual(report["loss"], math.log1p(math.exp(-0.18)))
+
+    def test_one_non_finite_pair_cannot_poison_the_mean_loss(self):
+        result = evaluate_preference_pairs(
+            [
+                {
+                    "pair_id": "usable",
+                    "preferred": "가",
+                    "dispreferred": "나",
+                    "chosen_logprobs": [-0.1, -0.1],
+                    "rejected_logprobs": [-1.0, -1.0],
+                },
+                {
+                    "pair_id": "overflow",
+                    "preferred": "다",
+                    "dispreferred": "라",
+                    "chosen_logprobs": [1e308],
+                    "rejected_logprobs": [-1e308],
+                },
+            ],
+            tokenizer_id="tok",
+            base_model="flash-next",
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["evaluated"], 1)
+        self.assertEqual(result["unavailable"], 1)
+        self.assertTrue(math.isfinite(result["mean_loss"]))
+        self.assertAlmostEqual(result["mean_loss"], math.log1p(math.exp(-0.18)))
+        self.assertFalse(result["string_similarity_used"])
+        self.assertEqual(
+            [report["reason"] for report in result["pairs"]],
+            ["dpo_logprob", "non_finite_delta"],
+        )
+
 class DpoPairCaptureTests(unittest.TestCase):
     def test_single_usable_sample_is_insufficient(self):
         unavailable = {"status": DPO_EVAL_UNAVAILABLE, "reason": "gateway_TimeoutError"}

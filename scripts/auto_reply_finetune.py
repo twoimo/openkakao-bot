@@ -547,6 +547,22 @@ def dpo_loss_from_logprobs(
     없을 때 수치를 만들지 않고 missing_reference_logprobs로 닫는다.
     """
     chosen = _sum_response_logprobs(chosen_logprobs)
+    # beta가 nan/inf이면 delta와 loss가 비유한값이 되는데, 종전에는 그 값을
+    # status="ok"로 돌려주며 mean_loss를 조용히 오염시켰다.
+    beta_invalid = False
+    try:
+        beta_value = float(beta)
+    except (TypeError, ValueError):
+        beta_invalid = True
+        beta_value = 0.0
+    if beta_invalid or not math.isfinite(beta_value):
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "invalid_beta",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
     rejected = _sum_response_logprobs(rejected_logprobs)
     if chosen is None or rejected is None:
         return {
@@ -595,17 +611,38 @@ def dpo_loss_from_logprobs(
     if rejected_ref is None:
         rejected_ref = 0.0
     # L = -log σ(β [(log πθ(yw)-log πref(yw)) - (log πθ(yl)-log πref(yl))])
-    delta = float(beta) * ((chosen - chosen_ref) - (rejected - rejected_ref))
+    # logprob이 ±1e308 같은 극단값이면 β·(차이)나 softplus가 inf/nan이 되므로
+    # 값을 만들지 않고 fail-closed로 닫는다.
+    gap = (chosen - chosen_ref) - (rejected - rejected_ref)
+    delta = beta_value * gap
+    if not math.isfinite(delta):
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "non_finite_delta",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
     if delta >= 0:
         loss = math.log1p(math.exp(-delta))
     else:
         loss = -delta + math.log1p(math.exp(delta))
+    if not math.isfinite(loss):
+        # delta가 유한하면 softplus도 유한하지만, 이 함수는 어떤 입력에도
+        # 비유한 수치를 status="ok"로 돌려주지 않는 것을 계약으로 삼는다.
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "non_finite_loss",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
     return {
         "status": "ok",
         "reason": "dpo_logprob",
         "loss": loss,
-        "delta": (chosen - chosen_ref) - (rejected - rejected_ref),
-        "beta": float(beta),
+        "delta": gap,
+        "beta": beta_value,
         "tokenizer_id": tokenizer_id,
         "base_model": base_model,
         "require_reference": bool(require_reference),
