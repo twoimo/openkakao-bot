@@ -1781,3 +1781,49 @@ README의 렌더 교차 검증 bullet은 "23개 check"로만 적혀 있어 같�
 - **AppKit order-out 경로 자체는 이 하네스로 재현되지 않는다.** 이 Chromium은 창이 가려지거나 IAB에서 숨겨져도 rAF를 멈추지 않는다. 직접 확인한 두 가지: 브라우저 수준 `capabilities.get("visibility").set(false)` 뒤에도 카운터가 21프레임 / 12.9 fps로 계속 올랐고 그때 `document.visibilityState`는 `visible`이었다(탭 수준에는 이 capability가 아예 없다: `Capability is not available: visibility`). 따라서 여기서 증명한 것은 계약의 DOM/이벤트 절반이다. 셸 절반(`show()`/`hide()`가 성공한 뒤에만 `jarvis://visibility`를 보낸다는 부분)은 Rust `#[cfg(test)]` 4건과 이전 턴 설치본의 `ps` 표본(패널 열림 2.9-3.1, 닫힘 6회 모두 0.0)이 담당한다.
 - **설치본 재측정이 아니다.** 이번 하네스는 `desktop/dist`를 일반 브라우저에 띄운 것이고 설치된 앱 번들의 WKWebView에서 잰 값이 아니다. 설치본의 숨김 렌더 정지에 대한 실기기 근거는 여전히 이전 턴의 `ps` 표본 하나다.
 - 하네스 정리: 합성용 scratch 탭은 닫았고 loopback 서버는 중지했으며(포트 8765 리스너 0 확인) 패널 탭은 정상 가시 상태로 되돌렸다.
+### 7. 루프 wakeup 낭비·프레임당 힙 순증 실측과 레거시 메뉴바 표면 확인
+
+부모 에이전트가 로컬에서 수행했다. 측정과 확인만 하고 제품 코드는 바꾸지 않았다. 6절과 같은 하네스(`desktop/dist` + loopback + 앱 내 브라우저 main world CDP)를 다시 띄워 재었다.
+
+#### 1. 루프: rAF callback의 77%가 렌더 없이 끝난다
+
+`AnimationLoop.tick`은 매 vsync마다 `scheduler.request`를 다시 걸고, 목표 간격(유휴 15fps·부하 시 30fps)이 지났을 때만 렌더한다. 그래서 rAF callback 수가 곧 브라우저 vsync wakeup 수가 된다. main world에서 `window.requestAnimationFrame`을 계수 래퍼로 교체하고(`browserScheduler`가 호출 시점에 전역을 해석하므로 패치가 즉시 적용된다) 3초간 세었다.
+
+| 측정(가시·유휴, 3.00초) | 값 | 초당 |
+| --- | --- | --- |
+| rAF wakeup | 181 | 60.4/s |
+| 실제 렌더 | 41 | 13.7/s |
+| 렌더 없이 끝난 callback | 140 | **77.3%** |
+
+이 하네스의 표시 장치는 60Hz다. 120Hz ProMotion 기기라면 같은 코드가 wakeup만 두 배로 받아 낭비 비율이 약 87%가 될 것으로 추정되지만 **추정이며 이 호스트에서 120Hz 조건으로 재지는 않았다.** 이 항목은 개선 대상으로 확정했고 구현은 위임 경로로 넘긴다. 이 절은 측정만 한다.
+
+#### 2. 메모리: 렌더 중 프레임당 약 2.98 KB 순증, 정지 상태는 사실상 0
+
+같은 페이지에서 `performance.memory.usedJSHeapSize`를 두 구간으로 나눠 쟀다. 이 값은 마지막 GC 이후의 순증이므로 garbage와 retention의 합계다.
+
+| 구간 | 프레임 | 힙 변화 | 프레임당 |
+| --- | --- | --- | --- |
+| 렌더 중 8초 | 106 | +315,748 B | **+2,978.8 B/프레임** |
+| `blur` 정지 8초 | 1 | +156 B | +156 B/8초 |
+
+두 가지를 읽는다.
+
+1. 정지 상태의 순증이 8초에 156바이트다. 2.5초 주기 폴러를 포함해 배경 경로가 사실상 아무것도 할당하지 않는다는 뜻이고, 6절의 정지 계약을 메모리 쪽에서도 독립 확인한 셈이다.
+2. 렌더 중 순증은 프레임당 약 2.98 KB다. 이 값은 프레임 신호 계산 코드의 몫이 아니다. 그 코드는 `desktop/src/__tests__/render-state.test.ts`가 `Array.prototype.map`·`slice`·`concat` 0회 호출로 고정하고 있고, 매 프레임 실제로 도는 것은 `renderer.render(this.scene, this.camera)`(three.js 내부)다. `desktop/src/core/jarvis-core.ts`를 읽으면 지오메트리·머티리얼·조명은 전부 생성자에서 한 번만 만들고(20-103행) `dispose()`가 지오메트리·머티리얼·렌더러를 해제한다. 즉 이 순증은 three.js 렌더러 내부 할당으로 보인다.
+
+한계를 명시한다. 이 하네스에서는 GC를 강제할 수 없다. `window.gc`는 `undefined`이고 `HeapProfiler.collectGarbage`는 이 CDP 브리지에서 `This method is not supported through raw CDP`로 거부된다. 따라서 위 2.98 KB/프레임이 곧 회수될 garbage인지 실제로 보유되는 retention인지 **구분하지 못했다.** 8초 창에서 순증이 한 번도 떨어지지 않은 것은 그 사이 scavenge가 없었다는 뜻일 뿐 누수 증거가 아니다. 다만 유휴 15fps에서 2.98 KB/프레임은 약 45 KB/s, 부하 30fps에서는 약 89 KB/s의 순증 속도이므로 패널을 오래 열어두는 사용 패턴에서는 GC churn이 실제 비용이 될 수 있다. 이 항목도 개선 후보로 남긴다.
+
+#### 3. 레거시 Swift 메뉴바는 더 이상 설치되지 않는다(문자열 정리 보류의 근거)
+
+계획은 기능 점검·검증 표면의 전면 제거를 요구한다. `macos/AutoReplyMenu/main.swift`에는 같은 부류의 한국어 문자열 7건이 남아 있다(점검 5건: 답변 프로그램·서비스·감시 서비스·기록·연결 상태, 검증 통과 2건). 이번에 그 표면이 실제로 살아 있는지 확인했다.
+
+- `~/Library/LaunchAgents/`에서 레거시 `com.openkakao.auto-reply.menu.plist`는 `.bak-20260916T204935`로 옮겨져 있다(2026-09-16 20:49 KST).
+- `launchctl list`에 `com.openkakao.auto-reply.menu` 항목이 없다. 있는 것은 `com.openkakao.jarvis.desktop`(Tauri, 상태 `- 0`), `application.com.openkakao.jarvis.desktop.286915917.286915922`(pid 84125), `com.openkakao.auto-reply.session-monitor`뿐이다.
+- `macos/AutoReplyMenu/build/`는 git 추적 대상이 아니다(추적 파일 0건). 그 안의 `설정 검증 통과` 문자열은 빌드 산출물이다.
+- 추적되는 `macos/` 파일은 2건뿐이다(`main.swift`·`Info.plist`).
+
+따라서 그 7건은 사용자에게 도달하지 않는 죽은 표면의 문자열이다. 지금 고치면 사용자 가시 효과 없이 리뷰 비용만 늘어나므로, 의도적으로 보류하고 근거를 여기 남긴다. 레거시 앱을 되살리거나 다시 설치하는 변경이 생기면 그때 함께 정리해야 한다.
+
+#### 4. 이번 절의 검증 범위와 CI
+
+이 절이 기록하는 것은 측정과 확인 결과뿐이고 제품 코드는 바뀌지 않았다. 커밋 `fff3bd3`의 CI run [35707345093](https://github.com/twoimo/openkakao-bot/actions/runs/35707345093)이 3개 job 모두 success이고, 러너 수치는 `Ran 651 tests in 60.343s / OK (skipped=60)`, `Test Files 9 passed (9)` / `Tests 121 passed (121)`, Rust 데스크톱 크레이트 `63 passed; 0 failed; 0 ignored`다. 하네스 정리: 합성용 scratch 탭 close, loopback 서버 중지(포트 8765 리스너 0 확인).
