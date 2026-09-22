@@ -167,6 +167,7 @@ jobs:
           tests.test_auto_reply_session_monitor
           tests.test_rag_eval
           tests.test_auto_reply_service_entry
+          tests.test_jarvis_browser_use
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
