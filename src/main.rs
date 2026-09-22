@@ -6002,15 +6002,10 @@ fn require_ax_send(config: &config::OpenKakaoConfig) -> Result<()> {
 
 /// `local-send` has no chat-id to cross-check against (the local DB it would
 /// normally verify with is unreadable on current KakaoTalk builds), so an
-/// exact-match allowlist in config is the only guard against typos or
-/// substring collisions sending to the wrong chat.
+/// exact-match allowlist in config and the shared catalog guard are used to
+/// prevent typos or substring collisions sending to the wrong chat.
 fn require_allowed_send_chat(config: &config::OpenKakaoConfig, chat_name: &str) -> Result<()> {
-    if !config
-        .safety
-        .allowed_send_chats
-        .iter()
-        .any(|c| c == chat_name)
-    {
+    if !config::allowed_send_chat_targets(config, chat_name, None) {
         anyhow::bail!(
             "chat \"{chat_name}\" is not in the local-send allowlist.\n\n\
              local-send matches chats by display-name text scraped from the KakaoTalk UI,\n\
@@ -11732,6 +11727,30 @@ connection.close()
     }
 
     #[test]
+    #[test]
+    fn require_allowed_send_chat_accepts_a_catalog_enabled_room_title() {
+        let mut config = config::OpenKakaoConfig::default();
+        config.safety.allowed_send_chats = vec!["부자멘토멘티".into()];
+        assert!(require_allowed_send_chat(&config, "부자멘토멘티").is_ok());
+        // No substring, no surrounding whitespace, no case folding.
+        assert!(require_allowed_send_chat(&config, "부자멘토").is_err());
+        assert!(require_allowed_send_chat(&config, "부자멘토멘티 ").is_err());
+        assert!(require_allowed_send_chat(&config, "Vision AI 경진대회").is_err());
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            r#"{"rooms":[{"chat_id":437046948660911,"title":"Vision AI 경진대회","auto_reply":true,"geeknews":true}]}"#,
+        )
+        .expect("write catalog");
+        config.auto_reply.state_root = Some(dir.path().to_string_lossy().into_owned());
+        // The menubar catalog is the same trust level as the config allowlist,
+        // so enabling the room in the app must be enough to let local-send run.
+        assert!(require_allowed_send_chat(&config, "Vision AI 경진대회").is_ok());
+        assert!(require_allowed_send_chat(&config, "Vision AI").is_err());
+        assert!(require_allowed_send_chat(&config, "부자멘토").is_err());
+    }
+
     fn loco_write_disabled_by_default() {
         let config = crate::config::OpenKakaoConfig::default();
         assert!(!config.safety.allow_loco_write);
