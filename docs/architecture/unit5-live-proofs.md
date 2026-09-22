@@ -1605,3 +1605,5 @@ receipt:
 - `.github/workflows/ci.yml` 에 두 스텝을 넣었다: macOS job의 `Lint CLI crate (clippy)`(`cargo clippy --manifest-path $MANIFEST --all-targets -- -D warnings`, `Cargo test` 뒤)와 데스크톱 job의 `Lint desktop Rust bridge offline`(다른 Rust 스텝과 같이 `--locked --offline` 과 `OPENKAKAO_TAURI_SOURCE_CHECK=1`).
 - 로컬 검증: 두 명령이 모두 경고 0으로 `Finished` 였고(`cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings`, `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings`), 루트 크레이트 `cargo test` 는 42개 테스트 타깃에서 **1087 passed; 0 failed; 0 ignored** 다(데스크톱 크레이트는 같은 리비전 59 passed).
 - 남는 한계: 이 게이트는 Rust 두 크레이트만 덮는다. Python은 핀 인터프리터에 pyflakes/ruff/vulture가 없어 같은 정적 감사를 돌리지 않았고, 도구를 임의로 설치하지 않았다.
+- CI 확인: 이 게이트를 넣은 리비전은 run 35697623043에서 3/3 green이고, 새로 넣은 두 스텝 `Lint CLI crate (clippy)` 와 `Lint desktop Rust bridge offline` 이 각각 success다(데스크톱 job의 focused Python 테스트·Vitest·Vite build·Rust test/check도 함께 green).
+- 아티팩트 무결성: 커밋한 `jarvis-rendered-cross-check.html` 과 `.archify.json` 의 SHA-256이 deliver 영수증(`86d58081…`, `1456692d…`)과 바이트 단위로 일치하고, visual-check 영수증의 artifact 해시도 같다.
