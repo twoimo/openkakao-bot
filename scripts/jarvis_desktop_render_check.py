@@ -77,6 +77,10 @@ STUB_ONDEVICE_STATUS_DETAIL = " · ".join(bit for bit in STUB_ONDEVICE_DETAIL_BI
 PANEL_SIZE = (276, 260)
 SETTINGS_SIZE = (760, 760)
 CONTRACT_INTERACTIVE_TAGS = "button,select,input,textarea,a,details,summary"
+# The Rust shell's window-visibility event. desktop/src/core/lifecycle-wiring.ts
+# exports this as VISIBILITY_EVENT, and the contract tests pin the two together
+# so a rename fails there instead of silently never firing here.
+VISIBILITY_EVENT = "jarvis://visibility"
 
 
 class ContractParseError(RuntimeError):
@@ -281,7 +285,16 @@ SETTINGS_ACTIONS: dict[str, Any] = {
 
 STUB_SOURCE = r"""
 (() => {
-  window.__jarvisStub = { snapshot: null, actions: {}, calls: [], failSnapshot: false };
+  window.__jarvisStub = {
+    snapshot: null,
+    actions: {},
+    calls: [],
+    failSnapshot: false,
+    // Handler ids registered through plugin:event|listen, keyed by event name,
+    // plus the answer window_is_visible should give.
+    listeners: {},
+    visible: true
+  };
   window.__TAURI_INTERNALS__ = {
     transformCallback: function (callback, once) {
       const id = Math.floor(Math.random() * 1000000000);
@@ -308,8 +321,28 @@ STUB_SOURCE = r"""
       }
       if (command === "cancel_python" || command === "cancel_model_swap") return true;
       if (command === "open_settings" || command === "start_voice_session") return null;
+      // The visibility bridge is the authoritative pause path, so the stub
+      // answers it instead of failing into the document-derived fallback. That
+      // is what lets the check below drive a hide the way the Rust shell does.
+      if (command === "plugin:event|listen") {
+        window.__jarvisStub.listeners[(args && args.event) || ""] = args && args.handler;
+        return 1;
+      }
+      if (command === "plugin:event|unlisten") return 1;
+      if (command === "window_is_visible") return window.__jarvisStub.visible !== false;
       throw new Error("stub_command_unknown:" + String(command));
     }
+  };
+  // Deliver a buffered event the way the Rust shell would, through the handler
+  // id plugin:event|listen registered. Returns false when nothing is subscribed,
+  // so a caller can record "the bridge did not exist" instead of asserting on a
+  // stray dispatch.
+  window.__jarvisStub.emitEvent = function (eventName, payload) {
+    const handlerId = window.__jarvisStub.listeners[eventName];
+    const handler = handlerId === undefined ? undefined : window["_" + String(handlerId)];
+    if (typeof handler !== "function") return false;
+    handler({ event: eventName, id: 0, payload: payload });
+    return true;
   };
 })()
 """
@@ -545,6 +578,35 @@ def drive_drilldown(page: Any, log: Callable[[str], None]) -> dict[str, Any]:
     return result
 
 
+def pause_checks(pause: dict[str, Any]) -> list[dict[str, Any]]:
+    """Verdicts for the hide-pauses-rendering contract.
+
+    The acceptance criterion is the app's own render-call count, not
+    whole-machine GPU use: while the window is hidden a paused loop must produce
+    zero frames, and the runtime poller must stop asking for snapshots. The
+    blur/focus pair covers the DOM fallback a plain browser or a missed signal
+    reaches, and the bridge pair covers the authoritative Rust signal.
+    """
+    listeners = list(pause.get("listeners") or [])
+    hidden = pause.get("hidden") or {}
+    visible = pause.get("visible") or {}
+    blur = pause.get("blur") or {}
+    focus = pause.get("focus") or {}
+    return [
+        check("panel.visibility_bridge_subscribed", bool(listeners), listeners),
+        check("panel.visibility_bridge_emit_lands", bool(pause.get("hidden_emitted")), pause.get("hidden_emitted")),
+        check("panel.render_stops_when_hidden", int(hidden.get("frames") or 0) == 0, hidden),
+        check(
+            "panel.poller_stops_when_hidden",
+            int(pause.get("hidden_poll_delta") or 0) == 0,
+            pause.get("hidden_poll_delta"),
+        ),
+        check("panel.render_resumes_when_visible", int(visible.get("frames") or 0) > 0, visible),
+        check("panel.render_stops_on_blur", int(blur.get("frames") or 0) == 0, blur),
+        check("panel.render_resumes_on_focus", int(focus.get("frames") or 0) > 0, focus),
+    ]
+
+
 def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     panel = receipt["panel"]
@@ -571,6 +633,7 @@ def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[s
         panel["actions"],
     ))
     checks.append(check("panel.no_removed_control_tokens", scan_banned_tokens([panel["text"], panel["html"]], contract["banned_tokens"]) == [], scan_banned_tokens([panel["text"], panel["html"]], contract["banned_tokens"])))
+    checks.extend(pause_checks(panel.get("pause") or {}))
     checks.append(check(
         "tray_source.right_click_opens_settings_and_left_up_toggles_panel",
         tray_source["right_up_opens_settings"] is True and tray_source["left_up_toggles_panel"] is True,
@@ -696,6 +759,56 @@ def render_check(
                 "text": idle_probe["text"],
                 "html": idle_probe["html"],
             }
+
+            # Hide/stop proof. The stub answers the real visibility bridge, so
+            # the hide below travels the authoritative path the Rust shell uses
+            # (jarvis://visibility) before the blur/focus fallback is checked.
+            def snapshot_calls() -> int:
+                return int(
+                    panel.evaluate(
+                        "() => window.__jarvisStub.calls.filter("
+                        "function (entry) { return entry.command === "
+                        + json.dumps("fetch_runtime_snapshot")
+                        + "; }).length"
+                    )
+                )
+
+            hidden_emitted = panel.evaluate(
+                "() => window.__jarvisStub.emitEvent("
+                + json.dumps(VISIBILITY_EVENT)
+                + ", { visible: false })"
+            )
+            panel.wait_for_timeout(250)
+            hidden_polls_before = snapshot_calls()
+            hidden_frames = sample_frames(panel, 1.5)
+            hidden_poll_delta = snapshot_calls() - hidden_polls_before
+
+            visible_emitted = panel.evaluate(
+                "() => window.__jarvisStub.emitEvent("
+                + json.dumps(VISIBILITY_EVENT)
+                + ", { visible: true })"
+            )
+            panel.wait_for_timeout(250)
+            visible_frames = sample_frames(panel, 1.5)
+
+            panel.evaluate("() => window.dispatchEvent(new Event('blur'))")
+            panel.wait_for_timeout(250)
+            blur_frames = sample_frames(panel, 1.5)
+            panel.evaluate("() => window.dispatchEvent(new Event('focus'))")
+            panel.wait_for_timeout(250)
+            focus_frames = sample_frames(panel, 1.5)
+
+            receipt["panel"]["pause"] = {
+                "listeners": panel.evaluate("() => Object.keys(window.__jarvisStub.listeners)"),
+                "hidden_emitted": bool(hidden_emitted),
+                "visible_emitted": bool(visible_emitted),
+                "hidden": hidden_frames,
+                "visible": visible_frames,
+                "blur": blur_frames,
+                "focus": focus_frames,
+                "hidden_poll_delta": hidden_poll_delta,
+            }
+            log("pause: " + json.dumps(receipt["panel"]["pause"], ensure_ascii=False))
 
             settings = browser.new_page(viewport={"width": SETTINGS_SIZE[0], "height": SETTINGS_SIZE[1]}, device_scale_factor=2)
             settings.add_init_script(STUB_SOURCE)

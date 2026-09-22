@@ -206,8 +206,84 @@ class BridgeStub(unittest.TestCase):
         self.assertIn("jarvis-render-settings.focus.png", generated)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class PauseOnHideContract(unittest.TestCase):
+    """The panel must make zero render calls while it is hidden.
+
+    Acceptance is the app's own render-call count, not whole-machine GPU use, so
+    these assertions cover the same `pause` receipt the browser run records. The
+    event name is pinned to the TypeScript bridge, because a renamed event would
+    otherwise leave the hide proof asserting on a dispatch nobody subscribed to.
+    """
+
+    EVENT_SOURCE = ROOT / "desktop" / "src" / "core" / "lifecycle-wiring.ts"
+    BRIDGE_TOKENS = ("plugin:event|listen", "plugin:event|unlisten", "window_is_visible")
+
+    def passing(self) -> dict:
+        return {
+            "listeners": [check.VISIBILITY_EVENT],
+            "hidden_emitted": True,
+            "visible_emitted": True,
+            "hidden": {"frames": 0, "fps": 0.0},
+            "visible": {"frames": 33, "fps": 22.0},
+            "blur": {"frames": 0, "fps": 0.0},
+            "focus": {"frames": 34, "fps": 22.6},
+            "hidden_poll_delta": 0,
+        }
+
+    def results(self, pause: dict) -> dict:
+        return {entry["name"]: entry["ok"] for entry in check.pause_checks(pause)}
+
+    def test_event_name_matches_the_typescript_bridge(self) -> None:
+        source = self.EVENT_SOURCE.read_text(encoding="utf-8")
+        declared = re.search(r'VISIBILITY_EVENT = "([^"]+)"', source)
+        self.assertIsNotNone(declared, "lifecycle-wiring.ts must declare VISIBILITY_EVENT")
+        self.assertEqual(check.VISIBILITY_EVENT, declared.group(1))
+
+    def test_stub_models_the_visibility_bridge(self) -> None:
+        for token in self.BRIDGE_TOKENS + ("emitEvent",):
+            with self.subTest(token=token):
+                self.assertIn(token, check.STUB_SOURCE)
+
+    def test_full_receipt_passes(self) -> None:
+        pause = self.passing()
+        self.assertEqual(self.results(pause), {entry["name"]: True for entry in check.pause_checks(pause)})
+        self.assertEqual(check.verdict(check.pause_checks(pause)), "pass")
+
+    def test_a_frame_while_hidden_fails(self) -> None:
+        pause = self.passing()
+        pause["hidden"] = {"frames": 1, "fps": 0.4}
+        self.assertFalse(self.results(pause)["panel.render_stops_when_hidden"])
+        self.assertEqual(check.verdict(check.pause_checks(pause)), "fail")
+
+    def test_a_snapshot_poll_while_hidden_fails(self) -> None:
+        pause = self.passing()
+        pause["hidden_poll_delta"] = 2
+        self.assertFalse(self.results(pause)["panel.poller_stops_when_hidden"])
+
+    def test_no_resume_after_visible_fails(self) -> None:
+        pause = self.passing()
+        pause["visible"] = {"frames": 0, "fps": 0.0}
+        self.assertFalse(self.results(pause)["panel.render_resumes_when_visible"])
+
+    def test_missing_bridge_subscription_fails(self) -> None:
+        pause = self.passing()
+        pause["listeners"] = []
+        pause["hidden_emitted"] = False
+        results = self.results(pause)
+        self.assertFalse(results["panel.visibility_bridge_subscribed"])
+        self.assertFalse(results["panel.visibility_bridge_emit_lands"])
+
+    def test_blur_and_focus_are_checked_independently(self) -> None:
+        pause = self.passing()
+        pause["blur"] = {"frames": 2, "fps": 1.0}
+        pause["focus"] = {"frames": 0, "fps": 0.0}
+        results = self.results(pause)
+        self.assertFalse(results["panel.render_stops_on_blur"])
+        self.assertFalse(results["panel.render_resumes_on_focus"])
+
+    def test_an_empty_pause_receipt_fails_closed(self) -> None:
+        self.assertEqual(check.verdict(check.pause_checks({})), "fail")
+
 
 class ProductSuppliedStatusText(unittest.TestCase):
     """The stub must render the product's own on-device status text.
@@ -253,3 +329,7 @@ class ProductSuppliedStatusText(unittest.TestCase):
             check.BUSY_SNAPSHOT["onDevice"]["status_label"],
             check.STUB_ONDEVICE_STATUS_LABEL,
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

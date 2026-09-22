@@ -1,6 +1,6 @@
 {
   "schema": "jarvis-desktop-render-check/1",
-  "generated_at": "2026-09-22T15:52:39Z",
+  "generated_at": "2026-09-22T16:06:22Z",
   "dist": {
     "path": "/Users/twoimo/Documents/projects/openkakao-bot/desktop/dist",
     "index_sha256": "82e37a118535069784265293de93ad677f7f423972cc397290a3d5b9a6bfefcb",
@@ -89,59 +89,92 @@
       "busy": {
         "counter": "__jarvisRenderCount",
         "frames": 44,
-        "seconds": 2.002,
-        "fps": 21.98
+        "seconds": 2.001,
+        "fps": 21.99
       }
     },
     "luminance": {
       "idle": {
         "width": 552,
         "height": 520,
-        "meanLuminance": 238.03,
+        "meanLuminance": 238.02,
         "litRatio": 1
       },
       "busy": {
         "width": 552,
         "height": 520,
-        "meanLuminance": 234.52,
+        "meanLuminance": 234.16,
         "litRatio": 1
       }
     },
     "render_count": {
-      "idle": 13,
-      "busy": 106
+      "idle": 17,
+      "busy": 107
     },
     "actions": {
       "snapshot_calls": 4,
       "commands": [
         "fetch_runtime_snapshot",
-        "plugin:event|listen"
+        "plugin:event|listen",
+        "window_is_visible"
       ]
     },
     "captures": {
       "idle": {
         "file": "jarvis-render-panel.idle.png",
-        "bytes": 109358,
-        "sha256": "b4c8705f87c65320f1d7868f10f79908550d11e677d8d3f250e8a182f38ee488"
+        "bytes": 109396,
+        "sha256": "889129321019578e30c570b328b33d3ae663fc34de59fc0da3f323dd4664a235"
       },
       "busy": {
         "file": "jarvis-render-panel.busy.png",
-        "bytes": 114422,
-        "sha256": "16d8770102fc8e930cda8b2ad5199b4937ef739c8ef428c8e00603af1efb46c1"
+        "bytes": 122932,
+        "sha256": "73e21188211809b685f2401639bf38816c4e000f3d4aeabf5490b5bf9292a140"
       },
       "light": {
         "file": "jarvis-render-panel.light.png",
-        "bytes": 109665,
-        "sha256": "f3b441c08851f6ad9c73b96314fec1545618d168c5a5ec63f8bfaeae2e948129"
+        "bytes": 109818,
+        "sha256": "21b882f34491bcf174f4b880b1cda6565dcc77262a1aa0aa5b4c8187a1c01f0c"
       },
       "dark": {
         "file": "jarvis-render-panel.dark.png",
-        "bytes": 108492,
-        "sha256": "b7dd7962e0758605e71ac8cd770e41f66bc4e15cb6b658397a25edab32b9b75f"
+        "bytes": 106266,
+        "sha256": "2688b45efe08ab4b63045b80d764078ccce030a325e34b64097acac63976484e"
       }
     },
     "text": "",
-    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"jarvis-panel\" aria-label=\"Jarvis\">\n    <canvas class=\"jarvis-core\" width=\"472\" height=\"472\" aria-label=\"Jarvis core\" data-engine=\"three.js r180\"></canvas>\n  </main></div>\n  \n\n"
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"jarvis-panel\" aria-label=\"Jarvis\">\n    <canvas class=\"jarvis-core\" width=\"472\" height=\"472\" aria-label=\"Jarvis core\" data-engine=\"three.js r180\"></canvas>\n  </main></div>\n  \n\n",
+    "pause": {
+      "listeners": [
+        "jarvis://visibility"
+      ],
+      "hidden_emitted": true,
+      "visible_emitted": true,
+      "hidden": {
+        "counter": "__jarvisRenderCount",
+        "frames": 0,
+        "seconds": 1.502,
+        "fps": 0.0
+      },
+      "visible": {
+        "counter": "__jarvisRenderCount",
+        "frames": 34,
+        "seconds": 1.502,
+        "fps": 22.64
+      },
+      "blur": {
+        "counter": "__jarvisRenderCount",
+        "frames": 0,
+        "seconds": 1.502,
+        "fps": 0.0
+      },
+      "focus": {
+        "counter": "__jarvisRenderCount",
+        "frames": 32,
+        "seconds": 1.502,
+        "fps": 21.3
+      },
+      "hidden_poll_delta": 0
+    }
   },
   "settings": {
     "view_state": "ready",
@@ -198,27 +231,27 @@
       "width": 686,
       "height": 320
     },
-    "probes": 106,
+    "probes": 233,
     "focused": true,
     "overview_title": "노드를 선택하면 2-hop으로 집중합니다.",
     "overview_meta": "subject · relation · object / room · time · evidence",
     "locator": {
-      "probes": 106,
-      "title": "알촀쿠",
+      "probes": 233,
+      "title": "최연우",
       "start_title": "노드를 선택하면 2-hop으로 집중합니다.",
       "hit": {
-        "x": 305.0,
-        "y": 290.1
+        "x": 371.0,
+        "y": 378.1
       },
       "pitch": 22.0
     },
     "hit": {
-      "x": 305.0,
-      "y": 290.1
+      "x": 371.0,
+      "y": 378.1
     },
-    "focus_title": "알촀쿠",
-    "focus_meta": "2-hop · 5 nodes · 4 relations",
-    "hop_label": "2-hop · 5/24 nodes",
+    "focus_title": "최연우",
+    "focus_meta": "2-hop · 4 nodes · 3 relations",
+    "hop_label": "2-hop · 4/24 nodes",
     "relation_rows": 2,
     "retrieve": "retrieve rrf · facts 2 · 알촀쿠 = 알리바바 클라우드 축약",
     "expand_disabled": false,
@@ -229,14 +262,14 @@
     "frames_after_focus": {
       "counter": "__knowledgeRenderCount",
       "frames": 20,
-      "seconds": 1.504,
-      "fps": 13.3
+      "seconds": 1.501,
+      "fps": 13.32
     },
-    "render_count_after_focus": 81,
+    "render_count_after_focus": 83,
     "settings_focus_capture": {
       "file": "jarvis-render-settings.focus.png",
-      "bytes": 110803,
-      "sha256": "cc9c02793d3954d0af0e1888ed4eacc58382b640856d7cd08300e38e9cd4fd50"
+      "bytes": 114978,
+      "sha256": "a7b4d334a3ffa0713eb3360745a5578ff86551ca297d060935ffc57ca9f2392d"
     }
   },
   "checks": [
@@ -296,8 +329,8 @@
       "detail": {
         "counter": "__jarvisRenderCount",
         "frames": 44,
-        "seconds": 2.002,
-        "fps": 21.98
+        "seconds": 2.001,
+        "fps": 21.99
       }
     },
     {
@@ -305,7 +338,7 @@
       "ok": true,
       "detail": {
         "idle": 13.49,
-        "busy": 21.98
+        "busy": 21.99
       }
     },
     {
@@ -315,7 +348,8 @@
         "snapshot_calls": 4,
         "commands": [
           "fetch_runtime_snapshot",
-          "plugin:event|listen"
+          "plugin:event|listen",
+          "window_is_visible"
         ]
       }
     },
@@ -323,6 +357,63 @@
       "name": "panel.no_removed_control_tokens",
       "ok": true,
       "detail": []
+    },
+    {
+      "name": "panel.visibility_bridge_subscribed",
+      "ok": true,
+      "detail": [
+        "jarvis://visibility"
+      ]
+    },
+    {
+      "name": "panel.visibility_bridge_emit_lands",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "name": "panel.render_stops_when_hidden",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 0,
+        "seconds": 1.502,
+        "fps": 0.0
+      }
+    },
+    {
+      "name": "panel.poller_stops_when_hidden",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "panel.render_resumes_when_visible",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 34,
+        "seconds": 1.502,
+        "fps": 22.64
+      }
+    },
+    {
+      "name": "panel.render_stops_on_blur",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 0,
+        "seconds": 1.502,
+        "fps": 0.0
+      }
+    },
+    {
+      "name": "panel.render_resumes_on_focus",
+      "ok": true,
+      "detail": {
+        "counter": "__jarvisRenderCount",
+        "frames": 32,
+        "seconds": 1.502,
+        "fps": 21.3
+      }
     },
     {
       "name": "tray_source.right_click_opens_settings_and_left_up_toggles_panel",
@@ -408,20 +499,20 @@
     {
       "name": "knowledge.hologram_renders_frames",
       "ok": true,
-      "detail": 81
+      "detail": 83
     },
     {
       "name": "knowledge.drilldown_focuses_a_node",
       "ok": true,
       "detail": {
-        "probes": 106,
-        "title": "알촀쿠"
+        "probes": 233,
+        "title": "최연우"
       }
     },
     {
       "name": "knowledge.focus_meta_reports_hops",
       "ok": true,
-      "detail": "2-hop · 5 nodes · 4 relations"
+      "detail": "2-hop · 4 nodes · 3 relations"
     },
     {
       "name": "knowledge.relations_listed",
