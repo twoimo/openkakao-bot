@@ -2303,3 +2303,52 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 자식 시작 실패를 승격하는 재런치 경로는 구현하지 않았다(3항).
 - conversation_advanced·delivery_unknown·reconcile_gave_up 게이트는 그대로다.
 - 3D 셰이더·음성 파이프라인·MLX 27B 교체·Browser-Use 실동작·⌘⌥Esc 비상 중단은 여전히 미검증이다.
+
+## 바인드 프리플라이트 라이브 통과와 임베딩 엔드포인트 재측정 — 2026-09-23 KST (9차)
+
+### 1. 검증한 것
+
+- `local-send --preflight` 는 숨겨진 워커 전용 플래그로, 발송 전 체인 전체를 **읽기만** 수행한다(`preflight_bound_via_ax`): 창 발견 → `read_visible_messages` 트랜스크립트 attestation → 소스 행 해석 → `find_input_field_in` → `guarded_composer_preflight`. 타이핑도 Return 도 없고 `will_send=false` 로 보고한다.
+- 이 플래그는 `OPENKAKAO_AUTO_REPLY_WORKER=1` 워커 신원과 워커가 실제로 넘기는 환경 마커 전체를 요구한다. 그 마커를 살아 있는 상태 파일에서 그대로 구성했다: owner·source_epoch·target 은 방의 `supervisor-status.json`/`db-watch-state.json` 에서, 소스 로그 ID 는 db-watch 의 `last_observed_log_id`, 저자 바인딩은 `enrollment.json`(sha256 `a2428b790dcd6fb6d44e4c03c950ac7fdc06bdaf949b85ad925e79d3de5f634f`), 개인정보 digest 는 `config.toml` 의 sha256 과 같음을 확인했다(`2af2a0ce…`). 워커 신원 게이트를 통과하려면 `OPENKAKAO_DB_AUTHORITATIVE=1`, `OPENKAKAO_AUTO_REPLY_ENABLED=1`, `OPENKAKAO_DB_MODE=database_authoritative`, `OPENKAKAO_DB_READY=1`, `OPENKAKAO_AUTO_REPLY_CLI=1` 도 함께 필요하다.
+- 결과: 방 325(NIMDA 인수인계 임원방 ⚠) 와 방 417(부자멘토멘티) 둘 다 exit 0, `{"status": "preflight_ready", "preflight_ready": true, "will_send": false, "network": false}`.
+- 이 통과가 덮는 게이트는 7차 결함이 막던 지점들이다: persisted supervisor readiness(ready/running/healthy, 빈 fence, 신선한 heartbeat), DB readiness fence(capability ready·delivery enabled·fence ready·빈 pending·idle candidate), CLI enrollment authority 와 digest, `require_expected_local_source_tail`, `resolve_bound_source_message`(**결함 A**), 그리고 AX 바인드 프리플라이트의 트랜스크립트 attestation 과 작성기 탐색(**결함 B**).
+- 방 417 의 발송 직전 차단 202건이 `matched 0 rows` 97건 + `scheduled reply source row is unavailable` 70건이었고, 그 두 지점이 지금 라이브에서 통과한다. 긱뉴스 슬롯이 실행하는 모양(직전에 자기가 올린 digest 를 소스 행으로, `proactive=1`, 저자는 enrollment 의 reply author)과 같은 형태로 재현했다.
+
+### 2. 한계
+
+- 이것은 **발송이 아니다.** 타이핑·Return·전달 확인은 포함되지 않는다. 종단 증거는 다음 실제 인바운드 또는 08:40 KST 슬롯이다.
+- 프리플라이트를 워커 신원으로 실행했으므로 이 통과는 워커가 보는 환경에서의 통과다. 사람이 플래그 없이 실행하면 `local-send --preflight is only available to the database-authoritative AutoReply worker` 로 닫힌다(`require_auto_reply_worker_preflight`).
+- `--preflight` 는 `--dry-run` 과 배타적이다(`local_send_hidden_preflight_parses_and_conflicts_with_dry_run`).
+- 방 417·325 의 최신 행이 자기 메시지(최연우)라 반응형(비-proactive) 저자 대조 분기는 이번 재현에 포함되지 않았다. 그 분기는 유닛 테스트로 고정돼 있다.
+
+### 3. 임베딩 엔드포인트 재측정: dense 는 여전히 불가다
+
+- `http://127.0.0.1:11234/v1/embeddings` 에 `BAAI/bge-m3`(코드 기본 모델)로 요청하면 60.01초 후 `timeout('timed out')` 이다. 같은 서버의 `/v1/models` 는 Flash-Next 와 Krea-2-Turbo 만 `loaded=true` 로 보고하고 임베딩 모델을 광고하지 않는다. 즉 지금은 dense 색인·질의가 불가능하고 검색은 `bm25_only` 다.
+- 이 호스트의 MLX 서버는 외부 소유 프로세스(pid 38868)라 임베딩 모델을 임의로 올리거나 내릴 수 없다. 따라서 이번 단위에서 dense/RRF 를 복구하지 않았고, 하이브리드 검색이 정상 동작한다고 주장하지 않는다.
+
+### 4. 재현 명령
+
+```sh
+ROOM="$HOME/Library/Application Support/openkakao/bujamentor/rooms/325472527151234"
+STATE="$HOME/Library/Application Support/openkakao/bujamentor"
+BIN="$HOME/Library/Application Support/openkakao/bin/openkakao-cli"
+OPENKAKAO_AUTO_REPLY_WORKER=1 OPENKAKAO_AUTO_REPLY_CLI=1 \
+OPENKAKAO_DB_AUTHORITATIVE=1 OPENKAKAO_AUTO_REPLY_ENABLED=1 \
+OPENKAKAO_DB_MODE=database_authoritative OPENKAKAO_DB_READY=1 \
+OPENKAKAO_SUPERVISOR_OWNER=<owner> OPENKAKAO_DB_SOURCE_EPOCH=<epoch> \
+OPENKAKAO_TARGET_CHAT_ID=325472527151234 \
+OPENKAKAO_EXPECTED_SOURCE_LOG_ID=<db-watch last_observed_log_id> \
+OPENKAKAO_EXPECTED_SOURCE_AUTHOR_ID=235338180 \
+OPENKAKAO_EXPECTED_SOURCE_AUTHOR_NICKNAME=문승현 OPENKAKAO_PROACTIVE_SEND=1 \
+OPENKAKAO_SUPERVISOR_STATUS="$ROOM/supervisor-status.json" \
+OPENKAKAO_DB_WATCH_STATE="$ROOM/db-watch-state.json" \
+OPENKAKAO_ENROLLMENT_PATH="$STATE/enrollment.json" \
+OPENKAKAO_ENROLLMENT_SHA256=<enrollment sha256> OPENKAKAO_ATTEST_MANUAL=1 \
+"$BIN" local-send 'NIMDA 인수인계 임원방 ⚠' 'preflight-only' --preflight --json
+```
+
+### 5. 이번 단위에서 하지 않은 것
+
+- 실제 카카오톡 발송 없음. 프리플라이트는 창·트랜스크립트·작성기를 읽기만 한다.
+- dense 임베딩 복구 없음(3항). 외부 소유 MLX 서버를 건드리지 않았다.
+- 세션·워커를 재시작하지 않았다. 바이너리도 이번 단위에서 교체하지 않았다(7차 스테이징본 그대로).
