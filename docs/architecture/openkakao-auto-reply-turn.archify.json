@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Auto Reply Turn — 실시간 응답·복구 수명주기",
+    "output": "/Users/twoimo/Documents/projects/openkakao-bot/docs/architecture/openkakao-auto-reply-turn.html",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1080,
+      580
+    ],
+    "views": [
+      {
+        "id": "observe-and-fence",
+        "label": "Observe + durable fence",
+        "focus": [
+          "roomdb",
+          "watch",
+          "queue",
+          "worker"
+        ],
+        "note": "새 log 관찰 · durable row · freshness gate"
+      },
+      {
+        "id": "generate-and-retry",
+        "label": "Generate + bounded retry",
+        "focus": [
+          "queue",
+          "worker",
+          "mlx"
+        ],
+        "note": "burst 병합 · 150s 예산 · bounded defer"
+      },
+      {
+        "id": "send-and-confirm",
+        "label": "Send + readback",
+        "focus": [
+          "queue",
+          "worker",
+          "ax"
+        ],
+        "note": "sending 선커밋 · own log_id readback · stale_backlog"
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "roomdb",
+      "type": "database",
+      "label": "KakaoTalk room DB",
+      "sublabel": "SQLCipher read-only"
+    },
+    {
+      "id": "watch",
+      "type": "backend",
+      "label": "auto-reply-db-watch",
+      "sublabel": "durable fence + writer lock"
+    },
+    {
+      "id": "queue",
+      "type": "database",
+      "label": "reply-queue.sqlite3",
+      "sublabel": "processing → sending → skipped"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "auto-reply-worker.py",
+      "sublabel": "turn analysis + policy"
+    },
+    {
+      "id": "mlx",
+      "type": "backend",
+      "label": "MLX Serve",
+      "sublabel": "Qwen3.8-Flash-Next resident"
+    },
+    {
+      "id": "ax",
+      "type": "external",
+      "label": "AX local-send",
+      "sublabel": "local-search readback"
+    }
+  ],
+  "segments": [
+    {
+      "from": 156,
+      "to": 232,
+      "label": "Observe · filter · fence"
+    },
+    {
+      "from": 240,
+      "to": 340,
+      "label": "Coalesce · generate · retry"
+    },
+    {
+      "from": 348,
+      "to": 480,
+      "label": "Freshness · send · readback"
+    }
+  ],
+  "messages": [
+    {
+      "id": "observe-log",
+      "from": "roomdb",
+      "to": "watch",
+      "y": 160,
+      "label": "new log rows observed",
+      "variant": "emphasis",
+      "note": "Self messages, already-acked rows and non-allowlisted authors are filtered before any generation starts."
+    },
+    {
+      "id": "processing-row",
+      "from": "watch",
+      "to": "queue",
+      "y": 188,
+      "label": "insert durable turn row: processing",
+      "variant": "emphasis"
+    },
+    {
+      "id": "freshness-gate",
+      "from": "queue",
+      "to": "worker",
+      "y": 216,
+      "label": "conversation_advanced_past_event()",
+      "variant": "default"
+    },
+    {
+      "id": "unknown-hold",
+      "from": "worker",
+      "to": "queue",
+      "y": 244,
+      "label": "unknown watermark → context_freshness_unavailable hold",
+      "variant": "dashed"
+    },
+    {
+      "id": "coalesce",
+      "from": "queue",
+      "to": "worker",
+      "y": 272,
+      "label": "coalesce same-author burst",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-request",
+      "from": "worker",
+      "to": "mlx",
+      "y": 300,
+      "label": "generate under 150s budget",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-output",
+      "from": "mlx",
+      "to": "worker",
+      "y": 328,
+      "label": "decision JSON or raw body",
+      "variant": "return"
+    },
+    {
+      "id": "unparsed-defer",
+      "from": "worker",
+      "to": "queue",
+      "y": 356,
+      "label": "rc=0 unparsed body → unparsed_output + bounded defer",
+      "variant": "dashed",
+      "note": "Fix 481fc65: a rc=0 completion whose body is not a decision JSON is retried instead of losing the turn."
+    },
+    {
+      "id": "preax-freshness-defer",
+      "from": "worker",
+      "to": "queue",
+      "y": 384,
+      "label": "processing CAS proves no send; unknown freshness defers +120s grace",
+      "variant": "security",
+      "note": "Fix 4a7085d: while the durable row is still processing, unknown freshness defers instead of completing delivery_unknown. A writer-lock or SqliteBusyTransient failure stays a transient fence state."
+    },
+    {
+      "id": "stale-drop",
+      "from": "worker",
+      "to": "queue",
+      "y": 412,
+      "label": "window + grace passed → stale_backlog",
+      "variant": "security"
+    },
+    {
+      "id": "sending-then-send",
+      "from": "worker",
+      "to": "ax",
+      "y": 440,
+      "label": "CAS processing → sending, then local-send",
+      "variant": "emphasis"
+    },
+    {
+      "id": "readback-own",
+      "from": "ax",
+      "to": "queue",
+      "y": 468,
+      "label": "readback own log_id → sent | delivery_unknown",
+      "variant": "return",
+      "note": "An unconfirmed delivery stays durable delivery_unknown and is never auto-resent."
+    }
+  ],
+  "activations": [
+    {
+      "participant": "watch",
+      "from": 156,
+      "to": 232,
+      "type": "backend"
+    },
+    {
+      "participant": "queue",
+      "from": 178,
+      "to": 480,
+      "type": "database"
+    },
+    {
+      "participant": "worker",
+      "from": 200,
+      "to": 470,
+      "type": "backend"
+    },
+    {
+      "participant": "mlx",
+      "from": 292,
+      "to": 336,
+      "type": "backend"
+    },
+    {
+      "participant": "ax",
+      "from": 432,
+      "to": 478,
+      "type": "external"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Freshness is a retryable fence",
+      "items": [
+        "unknown watermark → context_freshness_unavailable, not a terminal skip",
+        "pre-AX processing CAS keeps the row retryable through +120s grace"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "481fc65 · 4a7085d repaired lapses",
+      "items": [
+        "481fc65: rc=0 unparsed body → unparsed_output + bounded defer",
+        "4a7085d: unknown pre-AX freshness defers while the row is processing"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Delivery is commit-then-confirm",
+      "items": [
+        "sending is committed before the AX mutation",
+        "own log_id read back by local-search; delivery_unknown is never resent"
+      ]
+    }
+  ]
+}

@@ -2022,3 +2022,83 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 사용자가 보고한 `http://127.0.0.1:8765/index.html` 탭은 죽은 프리뷰이므로 그 탭에서 "제거됨"을 확인하는 것은 이 단위의 증거로 쓰지 않았다.
 - 전체 CI 파이썬 목록을 로컬에서 실행하면 `Ran 693 tests in 396.175s / FAILED (failures=2, skipped=9)`이고, 실패 2건은 모두 `tests.test_auto_reply_knowledge_graph.BackgroundReindexTests`(`wait_for_background_reindex`가 in-flight 재색인을 본 경우)다. 같은 모듈을 단독 실행하면 `Ran 82 tests in 35.046s / OK`이므로 모듈 간 간섭/부하에 따른 순서 의존 실패로 판단하며, 이번 변경과 공유 상태가 없다. HEAD 기준 재현 비교는 하지 않았으므로 "선재 실패"라고 단정하지 않는다.
 
+
+## GeekNews 호스트 슬롯의 두 번째 실패 축과 방 워커 프로액티브 슬롯 — 2026-09-22 KST (3차)
+
+### 1. 호스트 슬롯 로그 전량 분류
+
+- `~/Library/Application Support/openkakao/bujamentor/nimda-geeknews.log` 227행을 전부 분류했다. 이 로그가 NIMDA 인수인계 임원방(room `325472527151234`) 슬롯의 유일한 자동 판정 기록이다.
+- 2026-09-21 08:40 / 12:35 / 19:50, 2026-09-22 08:40 / 12:35는 `ModuleNotFoundError: No module named 'auto_reply_ondevice'`, `exit=1`이었다(2차 절의 런타임 선택 결함).
+- 2026-09-22 19:50는 런타임 선택을 통과했지만 `Error: could not find the message input field in the already-open chat "NIMDA 인수인계 임원방 ⚠"`, `exit=1`이었다. 즉 호스트 슬롯에는 런타임 선택과 **AX 전송**이라는 서로 다른 두 실패 축이 있다.
+- 그 AX 실패는 반복 계열이다: 2026-09-14 19:50 `Accessibility permission is not granted to this terminal app.`, 2026-09-15 12:35 같은 composer 오류, 2026-09-19 08:40·12:35 `chat window did not open in time`, 2026-09-19 19:50 `exit=3`, 2026-09-20 08:40 같은 composer 오류. 반대로 2026-09-15 08:40부터 2026-09-18 19:50까지 9개 슬롯은 `exit=0`이었다.
+- 이 계열을 다루는 커밋은 2026-09-22 20:03 `97a39ad`(`fix(ax-send): retry the composer walk before reporting it missing`)와 20:10 `53d72f6`(`fix(ax-send): let an exact open-window read outlast AX contention`)이다. 19:50 슬롯은 두 커밋보다 먼저 실행됐다. 슬롯이 호출하는 `bin/openkakao-cli`는 22:46에 재빌드되어 두 수정을 포함한다.
+- 2026-09-22 22:00:17의 `--preview` 실행은 `runtime=20260922T123949Z-50443`으로 `exit=0`이고 `ids=[34120, 34119, 34118, 34116, 34115]` 다이제스트를 만들었다. preview는 방 상태를 쓰지 않는다.
+
+### 2. 방 워커의 프로액티브 슬롯은 별개 경로이며 417·437이 계속 비어 있다
+
+- 각 방 큐(`rooms/<chat>/reply-queue.sqlite3`)의 프로액티브 행 전량(`created_at >= 1789900000` = 2026-09-20 19:46 KST):
+  - room `417780809780519`(부자멘토멘티): 3건 — `similar_recent_self` 1, `stale_backlog` 2
+  - room `437046948660911`(Vision AI 경진대회): 5건 — 전부 `stale_backlog`
+  - room `325472527151234`(NIMDA): 2건 — 전부 `similar_recent_self`(호스트 슬롯이 같은 슬롯을 먼저 보내므로 정상 중복 제거)
+- DB 실측: `openkakao-cli local-search "GeekNews TOP5"`가 돌려준 20행 중 가장 최근 발송은 room 325의 2026-09-20 19:50 KST다. room 437은 최근 400개 메시지에 `GeekNews` 문자열이 0건이고, room 417의 마지막 발송은 2026-09-20 12:43 KST다. 즉 09-21·09-22의 방 워커 슬롯은 하나도 발송되지 않았다.
+- 이 경로는 호스트 스크립트와 무관하다. 프로액티브 이벤트의 분석은 모델을 호출하지 않는다(`scripts/auto-reply-worker.py:15304-15312`: `event["message"]`를 그대로 `reply`로 쓰고 `reason="geeknews_rss"`, `category="proactive"`). 다이제스트 텍스트는 네이티브이며 로컬 모델 가용성과 무관하다.
+- room 437 저녁 슬롯 durable 행 실측: `sent_at=1790075434`(20:10:34), `response_window_upper_seconds=600.0`, `operator_forced` 없음, `created_at=1790075434.87`, `updated_at=1790076649.53`(20:30:49), 최종 `skipped` / `stale_backlog` / `error_class` NULL / `reply` 빈 값. 같은 슬롯의 다음 행은 20:30:50에 생성되어 21:09:24에 또 `stale_backlog`가 됐다. `_geeknews_slot_has_attempt()`는 `skipped/stale_backlog` 행을 창 점유로 세지 않으므로(15652-15671) 창이 닫힐 때까지 재생성된다.
+- `error_class IS NULL`로 끝나는 `stale_backlog` 종결 지점은 두 갈래다. (a) `finish_scheduled_stale_backlog()`(14640) — 호출자는 14720(`PRE_SEND_RETRY_GRACE_SECONDS` 만료)와 14956(stale 분기). (b) delivery_unknown 회복 분류기 `leftover_pre_send_unknown_skip_fields()`(3025-3100)의 `_proactive_unix_leftover_job` 분기와 `BLANK_UNKNOWN_MAX_ATTEMPTS` 분기.
+- 437 행의 숫자는 (a)의 만료 산술과 맞지 않는다: `sent_at + upper + grace = 20:10:34 + 600 + 120 = 20:40:34`인데 관측된 종결은 20:30:49다. 그래서 (b) 쪽으로 보이지만, 어느 분기가 실제로 발화했는지는 재현 계측 없이 확정하지 못했다. 이번 단위는 여기까지 규명하고 정책 변경은 보류했다.
+- 두 경로가 공유하는 정책 자체는 코드 주석에 명시돼 있다: "Closed-slot formed digests must skip, not sit in delivery_unknown and occupy the next GeekNews window". 문제는 창과 지연의 산술이다. 슬롯 창은 `anchor`부터 30분인데(`_geeknews_slot_window()`), 프로액티브 방 조용 시간 `GEEKNEWS_ROOM_QUIET_SECONDS`가 10분이다. 슬롯 창 안에서 만들어진 잡이 10분 뒤에 발송을 시도하므로, 그 시도가 2분만 늦어도 창 끝을 넘겨 폐기된다. 실제로 room 437 저녁 잡은 20:10:34에 생성되어 20:30:49에 폐기됐다.
+
+### 3. 이번 단위에서 하지 않은 것
+
+- 프로액티브 슬롯 정책(창 길이, 조용 시간, 닫힌 슬롯 건너뛰기)은 바꾸지 않았다. 2절의 미확정 종결 경로를 재현으로 확정하기 전에 창을 넓히면 "오래된 다이제스트를 늦게 보내는" 동작이 생길 수 있다.
+- 실제 방 전송은 수행하지 않았다(제품 규칙: 테스트는 fake 어댑터). 호스트 슬롯의 AX 축 수정은 2026-09-23 08:40 KST 슬롯이 첫 실전 검증이고, 자동 답변은 실제 수신 메시지가 있어야 관측된다.
+
+
+## 사용자 보고 3건의 판정, local-send 게이트 드리프트, archify 재검증 — 2026-09-22 KST (4차)
+
+### 1. 사용자가 인앱 브라우저에서 남긴 3건의 판정
+
+- 톱니바퀴 설정 버튼 제거: **반영됨**. 저장소 `desktop/` 아래 `gear` / `⚙` 참조는 `desktop/src/__tests__/ui-removal-contract.test.ts:64` 의 부재 단언 하나뿐이고, 사용자가 본 문자열 `설정 확인 불가` 는 구현과 마크업에 없다. 설치된 `/Applications/OpenKakao Jarvis.app/Contents/MacOS/openkakao-jarvis-desktop` (2026-09-22 19:01 KST, `2f88b59` 18:21보다 최신)의 문자열에도 0건이고 `open_settings` 는 남아 있다.
+- 메뉴바 우클릭으로 설정 열기: **구현됨, 실클릭 미검증**. `desktop/src-tauri/src/main.rs:246-251` 이 `TrayIconEvent::Click { button: MouseButton::Right, button_state: MouseButtonState::Up }` 에서 `open_settings(tray.app_handle().clone())` 를 호출한다. NSStatusItem 우클릭을 조작할 수 있는 Computer Use 표면이 없어 이번 단위에서 실행 검증하지 못했다.
+- 사용자가 본 `http://127.0.0.1:8765/index.html` 탭은 **죽은 프리뷰**다. 8765에 LISTEN 중인 프로세스가 없다. 따라서 그 탭에서 제거를 확인하는 것은 증거로 쓰지 않았고, 판정은 저장소 소스와 설치 번들 문자열로만 했다.
+
+### 2. 결함: 발송 직전 게이트와 파이프라인 게이트의 판정 불일치
+
+- 같은 정책을 판정하는 두 함수가 다르게 동작했다.
+  - `src/config.rs:448 validate_auto_reply_startup`: `safety.allowed_send_chats` (이름 완전 일치 또는 `id:<n>` · `bind:<n>:` 형태) **또는** `<auto_reply.state_root>/menubar-room-catalog.json` 에서 `chat_id` 나 `title` 이 대상과 같고 `auto_reply` 나 `geeknews` 가 `true` 인 방이면 허용한다.
+  - `src/main.rs:6007 require_allowed_send_chat`: `safety.allowed_send_chats` 만 이름 완전 일치로 검사한다(호출자 `:7478` LocalSend, `:7585` LocalDelete). 카탈로그를 보지 않는다.
+- 그 결과 room `437046948660911` (Vision AI 경진대회, `[bujamentor] chats` 와 카탈로그에 `auto_reply=true, geeknews=true`)는 파이프라인 검증과 워커 기동을 통과한 뒤 매 발송이 막혔다.
+- 실측: `rooms/437046948660911/reply-worker.log` 4194행 중 `preflight_unavailable` 3639행, 그중 마지막은 3900행이며 본문은 `Error: chat "Vision AI 경진대회" is not in the local-send allowlist` 다. 사용자가 본 자동 답변·긱뉴스 미발송의 room 437 원인이 이 게이트다.
+- room 417(부자멘토멘티)과 room 325(NIMDA 인수인계 임원방)는 이름이 `allowed_send_chats` 에 있어 이 결함의 대상이 아니다. room 417의 프리플라이트 오류는 원인이 다르다(`scheduled reply source row is unavailable`).
+
+### 3. 수정과 테스트
+
+- 카탈로그 판정을 `src/config.rs::allowed_send_chat_targets(config, chat_name, chat_id) -> bool` 하나로 추출하고 `validate_auto_reply_startup` 과 `require_allowed_send_chat` 이 같은 함수를 쓰게 했다. `require_allowed_send_chat` 은 chat id를 모르므로 `None` 을 넘겨 이름 경로만 쓴다.
+- 보존한 성질: 이름 완전 일치(부분 일치·앞뒤 공백·대소문자 무시 없음), `auto_reply` · `geeknews` 가 JSON 불리언 `true` 인 방만, `title` 이 빈 문자열인 항목은 불일치, `state_root` 미설정·카탈로그 파일 없음·읽기 실패·JSON 오류·`rooms` 비배열·개별 항목 비객체는 전부 거부. 실패 문구와 `config.toml` 안내 문구는 그대로다.
+- 테스트: `cargo test --lib` -> `626 passed; 0 failed`, `cargo test --bins` -> `224 passed; 0 failed`. 추가한 테스트는 `config::tests::allowed_send_chat_targets_matches_allowlist_and_catalog_policy` (allowlist 일치, 카탈로그 활성 제목 일치, 같은 id의 비활성 방 거부, JSON 오류 거부), `config::tests::allowed_send_chat_targets_fails_closed_without_a_catalog` (`state_root` 미설정, 파일 없음, 빈 `title` 이 빈 이름과 일치하지 않음), `tests::require_allowed_send_chat_accepts_a_catalog_enabled_room_title` (직접 호출 경로)이다.
+- 하위 에이전트가 처음 넣은 단언 `!allowed_send_chat_targets(&config, "Vision AI 경진대회 extra", Some(437046948660911))` 은 잘못이었다. id가 같으면 제목이 달라도 허용되는 것이 기존 설계(`bind:<id>:<name>` 선택자)이며, 이 단언을 `None` (이름 경로)으로 바꾸고 id 경로 허용 단언을 추가해 바로잡았다. 이 오류는 `cargo test --bins` 에서 `1 failed` 로 드러났다.
+- 사용자의 `~/.config/openkakao/config.toml` 은 수정하지 않았고 MLX Serve와 자동 답변 세션은 재시작하지 않았다. 따라서 이 수정은 아직 실행 중인 `bin/openkakao-cli` 에 반영되지 않았다.
+
+### 4. archify 다이어그램 재검증
+
+- `docs/architecture/openkakao-auto-reply-turn.archify.json` (viewBox `[1080, 580]`, `column_fit "spread"`, participants 6, messages 12, segments 3, views 3, cards 3)에서 `deliver sequence ... --quality showcase --json` 이 exit 0, `ok=true`, `errors` 0 · `warnings` 0, 산출물 813571 bytes sha256 `3596e3756a8545b926afd6d773ea5299fadd5aae1062a5623bb97c72ef585dff` 다. `archify check` 도 모든 항목 ok다.
+- `visual-check` 는 1440×900 · 1600×1000 · 1920×1080 · 2048×1320에서 `ok=true`, `containment` · `readability` · `viewerChrome` 모두 `pass`, 진단 0건이다. `captures.screenshots` 4건(1440×900과 2048×1320의 light/dark)도 모두 `ok=true`, `scrollHeight == innerHeight`, `overflowY=false` 이며 PNG 사이드카가 저장소에 함께 있다.
+- 실패했던 상태를 원인까지 확정했다. 뷰어의 `Archify.readerLayout` 은 `ratio = viewBox.width/viewBox.height`, `fixedHeight = chrome + header + guided-views + cards`, `availableSvgHeight = innerHeight - fixedHeight`, `desiredWidth = availableSvgHeight*ratio` 로 폭을 정하고 하한 `MIN_READER_WIDTH = 960` px로 클램프한다. 클램프가 걸리면 높이가 남아 `viewer/viewport-overflow` 가 된다. 변형 렌더 실측: cards 4 + views 3 -> `scrollHeight 1247`, cards 3 + views 3(원문) -> 1037, cards 0 + views 3 -> 900(pass, reader 1324), cards 4 + views 0 -> 1186, cards 3(짧은 문구) + views 3 -> 900(pass, reader 1034, 최소 투영 텍스트 6.51px). 카드 1장 추가는 그리드 2행을 만들어 약 210px를 더 쓰고 views는 약 61px이며 예산은 약 390px다.
+- 통과한 형제 산출물 11종은 모두 `scrollHeight == innerHeight` 로 보고되므로 뷰어는 항상 화면에 맞춰 축소한다. 이번 산출물의 `viewBox` 높이 580은 형제들과 같은 계열(548~1085)이며 문제는 고정 크롬 높이였다.
+
+### 5. 발송 실적 실측
+
+- 큐는 읽기 전용 복사본으로 열었다(원본은 writer가 잠금을 쥘 수 있어 직접 열지 않았다).
+- 최근 24시간 생성 행과 종결 사유: room 417 41건(`conversation_advanced` 31, `stale_backlog` 5 + error_class `stale_backlog` 1, `burst_superseded` 3, `reconcile_gave_up` 1), room 437 212건(`conversation_advanced` 187, `burst_superseded` 14, `stale_backlog` 6+1, `reconcile_gave_up` 4), room 325 1건(`similar_recent_self`). 세 방 모두 최근 24시간 `sent` 0건이다.
+- room 417의 마지막 정상 발송은 2026-09-20 15:12:46 KST(`media_reaction`)이고 누적 `sent` 는 `social_reply` 55, `geeknews_rss` 16 등이다. room 437은 큐에 `sent` 행이 0건이며 `geeknews-rss-cursor.json` 자체가 없다. room 325는 `geeknews_rss` 1건(2026-09-16 08:50)만 있다.
+- GeekNews 실측: `openkakao-cli local-search "GeekNews TOP5"` 20행의 최신은 room 325의 2026-09-20 19:50 KST, room 417은 2026-09-20 12:46 KST다. room 417의 `posted_slots` 는 `2026-09-20:lunch` 까지, room 325는 `2026-09-16:morning` 까지로 기록돼 있어 09-21·09-22 슬롯이 발송 없이 지나갔음이 커서와 일치한다.
+- room 437의 `composer-allowlist.json` 에 남은 후보 8개 중 하나(`까먹을까봐 다 적어둠`)를 `local-search` 로 찾으면 0건이다. 이 파일은 발송 직전에 쓰이므로 시도는 있었지만 전달은 없었다는 근거다.
+- room 417의 `scheduled reply source row is unavailable` 202건은 로컬 모델 전환 이전 구간에 몰려 있다(마지막이 11083행 중 10964행). 로컬 모델 구간의 마지막 호출은 `gen_elapsed=150.62s rc=1` 과 `runner_failed stderr=timed out` (150s 예산 초과), 그리고 `[reply-gen] unparsed_output` 이며 후자의 본문은 `result` 가 `fail` 인 자기 검열 문장이다. 같은 `prompt_sha256` 으로 재시도해도 같은 결과가 나온다.
+
+### 6. 이번 단위에서 하지 않은 것
+
+- 자동 답변 미발송의 지배적 원인인 `conversation_advanced` 정책(초안 취소 조건), 모델 생성 예산 150s, `reply_model` 선택은 바꾸지 않았다. 최근 24시간 종결 사유 1위가 room 437 187건·room 417 31건으로 이 정책이고, 로컬 추론이 42.5~150.62s 걸리는 부하에서 방의 간격보다 느리다는 것이 직접 원인이지만 취소 조건을 느슨하게 하면 오래된 맥락에 답하는 위험이 생기므로 별도 판단이 필요하다.
+- 모델이 결정 JSON 대신 `result: fail` 문장을 돌려주는 문제를 프롬프트 수정으로 덮지 않았다. 재현 근거만 남겼다.
+- 실행 중 바이너리 재배포(rebake)와 자동 답변 세션 재시작을 하지 않았다. 따라서 이 수정의 런타임 효과는 아직 미검증이다.
+- 실제 카카오톡 전송을 수행하지 않았다(프로젝트 규칙: 테스트는 fake 어댑터). 호스트 GeekNews 슬롯의 AX 축 첫 실전 검증은 2026-09-23 08:40 KST 슬롯이다.
+- 웹 위임 리뷰는 이번에도 AHP 점수를 산출하지 않았으므로 98점 달성을 주장하지 않는다. 이번 위임은 `chatgpt-web/high` 로 수행했고(요청에 있던 GPT-5.6 Luna 계열은 도구 카탈로그에 없고 `gpt-6-astra` · `gpt-5.6-sol` 은 사용량 한도로 차단) 결과는 코드 정확성 검토와 패치·테스트이며 순위 점수가 아니다.
+
