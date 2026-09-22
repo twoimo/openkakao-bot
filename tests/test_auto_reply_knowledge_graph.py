@@ -1039,6 +1039,18 @@ class PruneTests(unittest.TestCase):
 
 
 class DenseRefreshBatchingTests(unittest.TestCase):
+    def setUp(self):
+        self._original_probe = KG._dense_embedding_probe
+        self._probe_patch = mock.patch.object(
+            KG,
+            "_dense_embedding_probe",
+            return_value=(True, "probe_ok"),
+        )
+        self._probe_patch.start()
+
+    def tearDown(self):
+        self._probe_patch.stop()
+
     def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENKAKAO_LOCAL_EMBEDDING_URL", None)
@@ -1220,7 +1232,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             self.assertEqual(result["status"], "indexed")
             self.assertEqual(result["indexed"], 8)
 
-    def test_dense_refresh_splits_timeout_batch_and_indexes_all_rows(self):
+    def test_dense_refresh_aborts_timeout_batch_and_never_splits_to_one(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 8)
@@ -1246,15 +1258,11 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
             self.assertEqual(
                 calls,
-                [
-                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
-                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
-                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
-                ],
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
             )
-            self.assertEqual(result["status"], "indexed")
-            self.assertEqual(result["indexed"], 8)
-            self.assertEqual(self._dense_counts(root)[0], 8)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("RuntimeError", result["reason"])
+            self.assertEqual(self._dense_counts(root), (0, 0))
 
     def test_dense_refresh_single_item_timeout_preserves_previous_dense_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1278,6 +1286,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 texts,
                 *,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
             ):
                 calls.append((len(texts), timeout_seconds))
                 raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
@@ -1291,12 +1300,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
             self.assertEqual(
                 calls,
-                [
-                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
-                    (4, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
-                    (2, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
-                    (1, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
-                ],
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
             )
             self.assertEqual(result["status"], "unavailable")
             self.assertTrue(dense_status.startswith("unavailable:"))
@@ -1330,6 +1334,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 _texts,
                 *,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
             ):
                 nonlocal calls
                 calls += 1
@@ -1372,12 +1377,66 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             self.assertEqual(dense_status, "empty")
             self.assertFalse((root / KG.DENSE_INDEX_DB_NAME).exists())
 
+    def test_unavailable_probe_aborts_before_batch_requests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            try:
+                with mock.patch.object(
+                    KG,
+                    "_dense_embedding_probe",
+                    return_value=(False, "probe_unavailable"),
+                ), mock.patch.object(KG.urllib.request, "urlopen") as urlopen:
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            urlopen.assert_not_called()
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("probe_unavailable", status)
+
+    def test_request_cap_and_cycle_deadline_abort_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            try:
+                with mock.patch.object(KG, "DENSE_EMBEDDING_CYCLE_REQUEST_CAP", 0):
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("request_cap", status)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            try:
+                with mock.patch.object(KG, "DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS", -1):
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("cycle_deadline", status)
+
     def test_non_loopback_local_embedding_url_is_rejected_before_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 1)
             try:
+                # The probe cache is module level, so drop any result an
+                # earlier test already memoized before exercising the guard.
                 with mock.patch.object(
+                    KG,
+                    "_DENSE_PROBE_CACHE",
+                    None,
+                ), mock.patch.object(
+                    KG,
+                    "_dense_embedding_probe",
+                    self._original_probe,
+                ), mock.patch.object(
                     KG,
                     "DENSE_EMBEDDING_URL",
                     "https://example.com/v1/embeddings",
@@ -1400,6 +1459,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 texts,
                 *,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
             ):
                 return [(1.0, 0.0)] * len(texts)
 

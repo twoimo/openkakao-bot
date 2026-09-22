@@ -52,6 +52,10 @@ DENSE_EMBEDDING_URL = os.environ.get(
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
 DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 30.0
+DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS = DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS
+DENSE_EMBEDDING_PROBE_TTL_SECONDS = 300.0
+DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS = 60.0
+DENSE_EMBEDDING_CYCLE_REQUEST_CAP = 64
 DENSE_STATUS_MAX_LENGTH = 400
 RRF_K = 60
 ANN_BANDS = 8
@@ -84,6 +88,27 @@ class _DenseEmbeddingTimeoutError(RuntimeError):
 
 class _DenseEmbeddingPermanentError(RuntimeError):
     """A local embedding failure that must not be retried by batch splitting."""
+
+
+class _DenseCycleAbortError(RuntimeError):
+    """The current dense rebuild exceeded its safety budget."""
+
+
+class _DenseCycleBudget:
+    def __init__(self) -> None:
+        self.deadline = time.monotonic() + DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS
+        self.requests = 0
+
+    def before_request(self) -> None:
+        if time.monotonic() >= self.deadline:
+            raise _DenseCycleAbortError("cycle_deadline")
+        if self.requests >= DENSE_EMBEDDING_CYCLE_REQUEST_CAP:
+            raise _DenseCycleAbortError("request_cap")
+        self.requests += 1
+
+
+_DENSE_PROBE_CACHE_LOCK = threading.Lock()
+_DENSE_PROBE_CACHE: tuple[float, str] | None = None
 
 
 def _trace_graph(event: str, **fields: Any) -> None:
@@ -2748,6 +2773,7 @@ def _local_dense_embeddings(
     texts: list[str],
     *,
     timeout_seconds: float | None = None,
+    _budget: _DenseCycleBudget | None = None,
 ) -> list[tuple[float, ...]]:
     """Embed text through a loopback-only multilingual embedding endpoint.
 
@@ -2774,6 +2800,8 @@ def _local_dense_embeddings(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    if _budget is not None:
+        _budget.before_request()
     request_timeout = (
         DENSE_EMBEDDING_TIMEOUT_SECONDS
         if timeout_seconds is None
@@ -2820,40 +2848,60 @@ def _local_dense_embeddings_adaptive(
     texts: list[str],
     *,
     first_attempt_timeout_seconds: float | None = None,
+    budget: _DenseCycleBudget | None = None,
 ) -> list[tuple[float, ...]]:
-    """Retry timeout-only failures by splitting batches while preserving row order."""
+    """Embed one batch without retrying it into an even slower shape.
+
+    This used to split a timed-out batch in half and retry the halves.  On a
+    shared on-device gateway that is the wrong direction: a timeout means the
+    gateway could not serve the request inside its budget, so splitting turns
+    one abandoned request into a storm of even smaller ones, each of which the
+    server keeps holding after the client has given up (measured 2026-09-23
+    KST: six 1-input POSTs with no completion, while three chat completions
+    for reply generation queued and two were cancelled at 90 s).  A timeout
+    therefore aborts the cycle, and a permanent failure - a property of the
+    endpoint or the response shape, not of the row count - propagates as is.
+    """
     if not texts:
         return []
-    pending = [texts]
-    vectors: list[tuple[float, ...]] = []
-    attempts_remaining = 2 * len(texts) - 1
-    first_attempt = True
-    while pending:
-        if attempts_remaining <= 0:
-            raise _DenseEmbeddingTimeoutError("local dense embedding unavailable")
-        batch = pending.pop()
-        attempts_remaining -= 1
-        attempt_timeout = first_attempt_timeout_seconds if first_attempt else None
-        first_attempt = False
-        try:
-            if attempt_timeout is None:
-                batch_vectors = _local_dense_embeddings(batch)
-            else:
-                batch_vectors = _local_dense_embeddings(
-                    batch,
-                    timeout_seconds=attempt_timeout,
-                )
-        except _DenseEmbeddingTimeoutError:
-            if len(batch) == 1:
-                raise
-            split_at = len(batch) // 2
-            pending.append(batch[split_at:])
-            pending.append(batch[:split_at])
-            continue
-        if len(batch_vectors) != len(batch):
-            raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
-        vectors.extend(batch_vectors)
-    return vectors
+    if first_attempt_timeout_seconds is None:
+        batch_vectors = _local_dense_embeddings(texts, _budget=budget)
+    else:
+        batch_vectors = _local_dense_embeddings(
+            texts,
+            timeout_seconds=first_attempt_timeout_seconds,
+            _budget=budget,
+        )
+    if len(batch_vectors) != len(texts):
+        raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
+    return batch_vectors
+
+
+def _dense_embedding_probe(budget: _DenseCycleBudget) -> tuple[bool, str]:
+    global _DENSE_PROBE_CACHE
+    now = time.monotonic()
+    with _DENSE_PROBE_CACHE_LOCK:
+        if (
+            _DENSE_PROBE_CACHE is not None
+            and now - _DENSE_PROBE_CACHE[0] <= DENSE_EMBEDDING_PROBE_TTL_SECONDS
+        ):
+            # Only successes are memoized: a cached failure would keep dense
+            # disabled for the whole TTL and would also hide a later, real
+            # configuration error behind a stale availability verdict.
+            return True, _DENSE_PROBE_CACHE[1]
+    try:
+        _local_dense_embeddings(
+            ["knowledge graph dense probe"],
+            timeout_seconds=DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS,
+            _budget=budget,
+        )
+    except Exception as error:  # noqa: BLE001 - probe failure keeps dense disabled
+        # Carry the original message: it is what tells an operator whether the
+        # endpoint was slow, rejected as non-loopback, or out of budget.
+        return False, f"probe_unavailable:{error}"
+    with _DENSE_PROBE_CACHE_LOCK:
+        _DENSE_PROBE_CACHE = (time.monotonic(), "probe_ok")
+    return True, "probe_ok"
 
 
 def _ann_sign_matrix(bits_total: int, dim: int) -> tuple[bytes, ...]:
@@ -2979,6 +3027,10 @@ def refresh_dense_index(
             return {"status": "empty", "indexed": 0, "watermark": watermark}
 
         dense = _connect_dense_index(state_root)
+        budget = _DenseCycleBudget()
+        probe_ok, probe_reason = _dense_embedding_probe(budget)
+        if not probe_ok:
+            raise _DenseCycleAbortError(probe_reason)
         dense.execute("BEGIN")
         dense.execute("DELETE FROM ann_buckets")
         dense.execute("DELETE FROM dense_vectors")
@@ -2991,6 +3043,7 @@ def refresh_dense_index(
             vectors = _local_dense_embeddings_adaptive(
                 [_entity_dense_text(row) for row in batch],
                 first_attempt_timeout_seconds=first_attempt_timeout_seconds,
+                budget=budget,
             )
             first_attempt_timeout_seconds = None
             if len(vectors) != len(batch):
@@ -3038,12 +3091,15 @@ def refresh_dense_index(
                 dense.rollback()
             except sqlite3.Error:
                 pass
-        error_type = (
-            "RuntimeError"
-            if isinstance(error, (_DenseEmbeddingTimeoutError, _DenseEmbeddingPermanentError))
-            else type(error).__name__
-        )
-        status = _bounded_dense_status(f"unavailable:{error_type}:{error}")
+        if isinstance(error, _DenseCycleAbortError):
+            status = _bounded_dense_status(f"unavailable:{error}")
+        else:
+            error_type = (
+                "RuntimeError"
+                if isinstance(error, (_DenseEmbeddingTimeoutError, _DenseEmbeddingPermanentError))
+                else type(error).__name__
+            )
+            status = _bounded_dense_status(f"unavailable:{error_type}:{error}")
         write_meta(kg_conn, "last_dense_status", status)
         return {
             "status": "unavailable",
