@@ -11,6 +11,7 @@ credentials.json
 
 # Dedicated Jarvis voice interpreter; never Extra's runtime.
 .venv-voice/
+browser/.venv/
 target/
 .claude.md
 CLAUDE.md

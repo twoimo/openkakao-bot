@@ -1477,3 +1477,27 @@ receipt:
 - `say` 백엔드는 한국어 실보이스가 Yuna뿐이라 독립 합성기로서의 증거력이 제한적이다.
 - 이 실측은 로컬 격리 venv와 로컬 합성기의 결과이며 설치된 `OpenKakao Jarvis.app` 런타임이나 실제 마이크 입력을 입증하지 않는다.
 - 독립 리뷰(AHP ≥98)는 이번 턴에도 차단됐다(Codex Web 서브에이전트 3회 연속 `page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true`, 이 호스트의 `curl https://chatgpt.com/` 도 403). 누적 14세션째 차단이며 AHP 점수는 얻지 못했다.
+
+
+### Browser-Use 전용 런타임 고정과 준비 프로브 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+종전 한계 기록이 "`playwright` 와 `browser_use` 는 저장소 어디에도 버전이 고정되어 있지 않다"고 적었던 상태를 닫았다. `browser/pyproject.toml` 에 실측에 쓴 쌍을 정확히 고정하고(`browser-use==0.13.10`, `playwright==1.63.0`, `requires-python = ">=3.11,<4"`), `scripts/run-jarvis-browser.sh` 가 uv로 그 전용 환경을 실행하며, `scripts/jarvis_browser_runtime.py` 가 웹 작업 전에 세 가지를 확인한다.
+
+1. 두 배포판이 정확히 고정 버전으로 설치되어 있는지(`missing_distribution:<name>` / `version_mismatch:<name>:<found>`)
+2. 어댑터 자신의 `browser_agent_kwargs` 가 여전히 바인딩을 만들어내는지. 설치되어 있어도 시그니처가 바뀐 릴리스는 작업 도중이 아니라 시작 전에 닫는다(`binding:unsupported:...`, `binding:session_construction_failed`, `binding:no_browser_argument`, `binding:adapter_import_failed`, `binding:browser_use_import_failed`).
+3. Playwright Chromium이 실제로 있는지. 3상태다(`true` / `chromium_not_installed` / `chromium_unknown`). 프로브가 돌지 못한 경우는 미설치가 아니라 불확실로 기록하고, 둘 다 준비되지 않은 상태로 취급한다.
+
+`uv run --project browser --python 3.11 python scripts/jarvis_browser_runtime.py --json` 실측(2026-09-22 KST, CPython 3.11.9):
+
+- provisioned 환경: `{"binding": "ok", "binding_arguments": ["browser"], "chromium_installed": true, "installed": {"browser-use": "0.13.10", "playwright": "1.63.0"}, "pinned": {...동일...}, "ready": true, "reasons": []}`, exit 0. `binding_arguments` 가 `browser` 인 것은 이 릴리스가 modern 바인딩을 쓴다는 종전 실측과 일치한다.
+- provision되지 않은 고정 Python 3.11: `ready=false`, `reasons=["missing_distribution:browser-use", "missing_distribution:playwright", "binding:browser_use_import_failed", "chromium_unknown"]`, exit 1.
+
+`tests/test_jarvis_browser_runtime.py` 17 tests는 (1) `PINNED_DISTRIBUTIONS` 가 `browser/pyproject.toml` 과 정확히 같은지, (2) 핀 형식이 3단 정확 버전인지, (3) 실 어댑터의 legacy(`browser_context`)·`**kwargs`·modern 경로 판정이 각각 `ok`·`unsupported:...`·`session_construction_failed` 로 닫히는지, (4) 모든 reason 코드, (5) Chromium 3상태와 프로브 예외 → `chromium_unknown`, (6) CLI의 exit code와 crash guard를 고정한다. 고정 Python 3.11에서 CI focused 24개 모듈 전체는 **Ran 606 tests in 99.697s, OK (skipped=9)** 다.
+
+재현성은 잠금 파일로 한 겹 더 조였다. `browser/uv.lock` (890,452 bytes)을 커밋하고 `scripts/run-jarvis-browser.sh` 가 `uv run --project browser --python 3.11 --frozen ...` 으로 실행한다. 실측 두 가지: 잠금 파일이 있는 provisioned 환경에서는 같은 `ready: true` JSON과 exit 0이 나오고, 잠금 파일 없이 pyproject만 복사한 임시 디렉터리에서는 `error: Unable to find lockfile at uv.lock, but --frozen was provided` 메시지로 즉시 닫혀 재해석으로 새 의존성을 끌어오지 않는다. 따라서 고정 버전과 해석된 전이 의존 트리가 함께 커밋되며, 핀을 올릴 때는 `uv lock` 을 다시 돌려야 한다.
+
+이 절이 닫지 않는 것:
+
+- 이 환경은 앱 번들에 포함되지 않는다. 설치본에서 Browser-Use를 쓰려면 배포 시 `browser` 프로젝트로 환경을 provision해야 하고, 설치된 `OpenKakao Jarvis.app` 자체의 이 경로는 아직 실측하지 않았다.
+- Chromium 존재 확인은 Playwright의 `chromium.executable_path` 를 읽는다. 실제 launch와 웹 탐색의 end-to-end 검증은 종전 격리 venv 실측(2026-09-22, 위 Browser-Use 절)이 담당한다.
+- 핀은 지금 최신 릴리스(`playwright 1.63.0`, `browser-use 0.13.10`)이고 PyPI 메타데이터로 존재를 확인했지만, 그 버전이 나중에 yank되면 설치는 실패한다. 그때는 핀을 올리고 프로브를 다시 통과시켜야 한다.
