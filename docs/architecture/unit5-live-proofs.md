@@ -2210,3 +2210,48 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 2항(우클릭 설정): `tray_source.right_click_opens_settings_and_left_up_toggles_panel` 이 통과한다. 좌클릭 up 은 패널 토글, 우클릭 up 은 `open_settings`(설정 창 표시)이다. 설정 창은 7개 섹션(`대상 채팅방, AI 모델, Voice, 카카오 DB 동기화 · 색인, DREAM-RSI, Knowledge, History`)이 순서대로 하나의 셸에 있고 iframe 이 없다. `panel.no_panel_side_open_settings_invocation` 은 패널이 스스로 설정 창을 열지 않음을 확인한다(설정 경로가 트레이 우클릭으로만 존재).
 - 한계: Chromium 은 macOS 메뉴바 `TrayIconEvent` 를 발생시킬 수 없으므로 이 항목의 런타임 증거는 소스 수준이고, 영수증에도 `browser_exercised: false` 로 기록된다. NSStatusItem 자체는 Computer Use 로 클릭할 수 없다.
 - 사용자가 신고한 `http://127.0.0.1:8765/index.html` 의 기어(`button#gear`, `div > main > button`)는 현재 소스·빌드·설치본 어디에도 없다. 당시 8765 정적 서버는 이후 죽었고(연결 거부), 사용자가 본 페이지는 더 이상 존재하지 않는 오래된 산출물이다.
+
+## 숨김 상태 렌더 0회 실측, 발송 차단의 실제 분포, 예약 발송 소스 행과 잘린 트랜스크립트 보행 — 2026-09-23 KST (7차)
+
+### 1. 숨김 상태 렌더 0회의 실측 (신규 합격 기준)
+
+- 목표의 합격 기준은 OS 전체 GPU 사용량이 아니라 **앱 렌더 호출 0회**다. 종전 렌더 검사에는 숨김 상태 검사가 아예 없었다. `scripts/jarvis_desktop_render_check.py` 의 Tauri 브리지 스텁이 이제 `plugin:event|listen` · `plugin:event|unlisten` · `window_is_visible` 를 실제로 응답하고, `window.__jarvisStub.emitEvent(name, payload)` 로 Rust 셸이 보내는 것과 같은 방식으로 등록된 핸들러를 호출한다.
+- 새 검사 7개(`panel.visibility_bridge_subscribed`, `panel.visibility_bridge_emit_lands`, `panel.render_stops_when_hidden`, `panel.poller_stops_when_hidden`, `panel.render_resumes_when_visible`, `panel.render_stops_on_blur`, `panel.render_resumes_on_focus`)를 추가했다. Playwright(Chromium) 실측 결과는 `jarvis://visibility` 구독 1건, 숨김 1.5초 동안 **frames 0 / fps 0.0**, 같은 구간 스냅샷 폴링 증가 **0회**, 다시 보임 34 frames(22.64fps), blur 0 frames, focus 32 frames(21.3fps)다. 전체 33개 검사가 pass이고 영수증은 `docs/architecture/jarvis-desktop-render-check.json` 이다.
+- 이벤트 이름은 파이썬 스크립트 상수 `VISIBILITY_EVENT` 한 곳에서 나오고, 계약 테스트가 `desktop/src/core/lifecycle-wiring.ts` 의 `export const VISIBILITY_EVENT` 와 문자열이 같은지 고정한다. 이벤트 이름이 바뀌면 숨김 증명이 아무도 구독하지 않은 dispatch 를 검사하는 상태로 조용히 무력화되지 않고 실패한다.
+- 계약 테스트를 `tests/test_jarvis_desktop_render_check.py` 의 `PauseOnHideContract` 9개로 추가했다(정상 영수증, 숨김 중 1프레임, 숨김 중 폴링, 재개 없음, 브리지 미구독, blur/focus 독립 판정, 빈 영수증 fail-closed, 이벤트 이름 일치, 스텁 브리지 토큰). 이 파일의 `unittest.main()` 이 파일 중간에 있어 직접 실행하면 뒤쪽 10개 테스트가 조용히 빠지던 문제도 함께 고쳤다. 같은 파일 35개가 통과한다.
+
+### 2. 사용자 신고 3항(자동 답변·긱뉴스 미발송)의 실제 차단 분포
+
+- 방 417 `reply-worker.log` 를 전량 분류했다. 발송 직전 단계 차단 202건의 사유는 `bound preflight transcript attestation failed ... matched 0 rows, 0 distinct values, 0 UTF-8 bytes` **97건**, `scheduled reply source row is unavailable` **70건**, `persisted supervisor readiness is fenced` 14건, stderr 없음 11건, `persisted DB readiness is fenced` 6건, 경미한 attestation 불일치 4건이다. 즉 신고 증상의 지배적 원인은 작성기(composer)가 아니라 **트랜스크립트 attestation** 과 **예약 발송 소스 행 조회** 두 축이다.
+- 큐 실적도 같은 방향이다. 방 417 `reply_jobs` 는 `stale_backlog` **1,919건**, `already_commented` 221건, `reconcile_gave_up` 33건, `conversation_advanced` 31건이고 마지막 실제 발송(`status=sent`, `decision=reply`, `social_reply`)은 **2026-09-19 20:03:31** 이다. 방 437 은 `conversation_advanced` 187건, `stale_backlog` 121건, `burst_superseded` 17건, `reconcile_gave_up` 8건이다.
+- 긱뉴스 호스트 슬롯은 별개다. 마지막 실제 슬롯 2026-09-22 19:50 은 `Error: could not find the message input field in the already-open chat "NIMDA 인수인계 임원방 ⚠"` 로 `exit=1` 이었고(6차에서 고친 작성기 결함), 그 이전 2026-09-21 08:40·12:35·19:50 과 2026-09-22 08:40·12:35 는 불완전 런타임의 `ModuleNotFoundError: No module named 'auto_reply_ondevice'` 였다. 22:00 이후의 `--preview` 실행은 모두 `exit=0` 이며 다음 실측 지점은 2026-09-23 08:40 KST 다.
+- 읽기 전용 작성기 진단은 세 방 모두 정상이다. 새 바이너리로 `ax-probe --chat` 을 실행하면 부자멘토멘티 112ms, NIMDA 인수인계 임원방 117ms, Vision AI 경진대회 116ms 로 `window_found=true` · `composer_found=true` · label `메시지 입력` 이다. `probe_ax` 는 발송 경로와 **같은** `find_input_field_in` 을 재시도 예산으로 감싼 것이라(`find_input_field_in_bounded`), 이 통과는 발송 경로가 작성기를 찾을 수 있다는 증거다.
+
+### 3. 결함 A — 예약 발송의 소스 행이 최신 20행 밖으로 밀려나면 발송이 취소된다
+
+- 워커바운드 `local-send` 는 발송 전에 원본 행의 작성자를 대조한다. 그 행을 `reader.read_messages(target_chat_id, 20, None)` 결과 안에서만 찾고, 없으면 `scheduled reply source row is unavailable` 로 닫았다.
+- 예약 발송은 디바운스 지연 뒤에 실행되므로 활발한 방에서는 원본 행이 최신 20행보다 오래된 것이 **정상**이다. 그래서 이 게이트는 활발한 방의 예약 발송을 체계적으로 취소하고, 그 작업은 창이 닫히며 `stale_backlog` 로 죽는다(방 417: 70건 + `stale_backlog` 1,919건).
+- 수정: `LocalDbReader::read_message_by_log_id` 를 추가하고(같은 읽기 전용 스냅샷에서 `chatId`+`logId` 로 1행 조회, inode identity 검사 유지), `resolve_bound_source_message` 가 이미 읽은 페이지를 먼저 보고 없으면 log-id 직접 조회로 폴백한다. **행이 실제로 사라졌으면 그대로 fail-closed** 이며, attestation 테일과 `require_expected_local_source_tail` 펜스는 변경하지 않았다.
+
+### 4. 결함 B — 잘린 AX 보행이 "빈 트랜스크립트"로 보고된다
+
+- `visible_message_rows` 는 `live_walk` 가 예산을 소진하면 `None` 을 돌려주고, 호출부의 `?` 가 그것을 오류로 만든다. 그런데 `read_visible_messages` 가 **모든 오류를 빈 목록으로 축약**했고, attestation 은 "행 0개"를 불일치로 읽는다. 즉 부하가 큰 기계에서 한 번의 보행이 만료되면 화면에 글이 있는데도 `matched 0 rows` 로 발송이 막힌다(방 417: 97건). 6차에서 고친 작성기 결함과 같은 부류다.
+- 수정: `visible_message_rows_bounded` 가 **잘림 오류에 대해서만**(`could not inspect the chat window AX tree`, `could not inspect chat rows`) 상한 6초·150ms 간격으로 재시도한다. 완료된 보행이 메시지 목록 없음을 증명한 경우(`could not find the message list in the chat window`)와 그 밖의 오류는 즉시 반환하므로, 종전에 빠르게 실패하던 경우에 지연을 새로 만들지 않는다. 재시도는 **읽기만** 반복하며 attestation 임계값(`is_acceptable`)을 낮추지 않는다.
+
+### 5. 검증
+
+- `cargo clippy --all-targets -- -D warnings` clean, `cargo test` **1102 passed / 0 failed**(종전 1096 + 신규 6: `resolve_bound_source_message` 4개, `ax_send` 상수·재시도 판정 2개).
+- 신규 테스트: `bound_source_message_prefers_the_page_that_was_already_read`, `bound_source_message_falls_back_to_a_log_id_lookup`, `bound_source_message_fails_closed_when_the_row_is_gone`, `bound_source_message_reports_a_lookup_failure`, `transcript_retry_budget_is_bounded`, `only_a_truncated_walk_is_retryable`.
+- 렌더 검사 33개 pass(1항), 계약 테스트 35개 pass.
+
+### 6. 배포와 무중단 검증
+
+- `cargo build --release` 로 만든 바이너리를 워커가 shell-out 하는 고정 경로에 스테이징했다. 이전 바이너리는 `openkakao-cli.bak-20260923T012149` 로 보존했다. 새 바이너리 SHA-256 은 `6efa67fab3d3122fc20df7c16f0c957388bbb991f4eeb0b89363a815a1b7a873` 이고 `com.openkakao.cli` 로 재서명했다.
+- 세션은 재시작하지 않았다. 스테이징 후 읽기 전용 readback 에서 `aggregate-status.json` 은 `running/ready`, 3/3 방 ready, `fence_reason` 전부 빈 문자열이고 heartbeat 는 0.5~1.3초였다. 워커의 `require_persisted_auto_reply_readiness` 는 owner·epoch·target·privacy digest·config digest 만 검사하고 **바이너리 digest 는 검사하지 않으며**, 세션 가디언은 시작 시 1회만 spec 을 검증하므로 바이너리 교체가 세션을 펜스하지 않는다.
+
+### 7. 이번 단위에서 하지 않은 것
+
+- **실제 카카오톡 발송을 수행하지 않았다.** 결함 A·B 의 종단 증거는 다음 실제 인바운드 또는 2026-09-23 08:40 KST 긱뉴스 슬롯이다.
+- 결함 A 의 라이브 전제(원본 행이 최신 20행 밖)는 현재 세 방이 22:16 이후 조용해 재현하지 못했다. 근거는 로그의 70건 기록과 메커니즘이며, 유닛 테스트는 폴백 경로를 고정한다.
+- `conversation_advanced`(AHP 정책)와 `delivery_unknown`/`reconcile_gave_up` 게이트는 사용자 판단 없이 완화하지 않았다. 자문자답·중복 발송을 막는 장치이며, 이번 단위는 그 게이트가 정상 판단할 수 있도록 **입력**(트랜스크립트·소스 행)을 고쳤다.
+- 3D 셰이더·음성 파이프라인·MLX 27B 교체·Browser-Use 실동작·⌘⌥Esc 비상 중단은 이번에도 미검증이다.
