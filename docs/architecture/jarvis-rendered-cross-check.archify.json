@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Jarvis rendered cross-check",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1068, 556]
+  },
+  "stages": [
+    { "label": "Built bundle" },
+    { "label": "Loopback serve" },
+    { "label": "Browser render" },
+    { "label": "Page probes" },
+    { "label": "Compare and record" }
+  ],
+  "nodes": [
+    { "id": "dist", "type": "frontend", "label": "desktop/dist", "tag": "vite build", "stage": 0, "row": 1 },
+    { "id": "server", "type": "backend", "label": "static server", "sublabel": "127.0.0.1:8712", "tag": "loopback", "stage": 1, "row": 1 },
+    { "id": "stub", "type": "backend", "label": "Tauri stub", "sublabel": "__TAURI_INTERNALS__", "tag": "no account", "stage": 2, "row": 0 },
+    { "id": "chromium", "type": "external", "label": "Playwright Chromium", "sublabel": "channel=chrome", "tag": "real renderer", "stage": 2, "row": 1 },
+    { "id": "probes", "type": "backend", "label": "page probes", "sublabel": "DOM / WebGL / RAF / click", "tag": "observed", "stage": 3, "row": 1 },
+    { "id": "contract", "type": "external", "label": "ui-removal-contract", "sublabel": "test.ts", "tag": "one source", "stage": 4, "row": 0 },
+    { "id": "checks", "type": "security", "label": "check set", "tag": "fail closed", "stage": 4, "row": 1 },
+    { "id": "receipt", "type": "database", "label": "receipt + captures", "tag": "SHA-256", "stage": 4, "row": 2 }
+  ],
+  "flows": [
+    { "id": "dist-server", "from": "dist", "to": "server", "label": "index.html + assets", "classification": "static files", "variant": "emphasis", "route": "straight" },
+    { "id": "server-chromium", "from": "server", "to": "chromium", "label": "GET bundle", "classification": "http", "route": "straight" },
+    { "id": "stub-chromium", "from": "stub", "to": "chromium", "label": "snapshot", "classification": "deterministic payload", "variant": "dashed", "route": "straight", "labelDy": 24 },
+    { "id": "chromium-probes", "from": "chromium", "to": "probes", "label": "live document", "classification": "rendered state", "route": "straight" },
+    { "id": "probes-checks", "from": "probes", "to": "checks", "label": "observed values", "classification": "comparison", "route": "straight" },
+    { "id": "contract-checks", "from": "contract", "to": "checks", "label": "expectations", "classification": "banned tokens, sections", "variant": "emphasis", "route": "straight", "labelDy": 24 },
+    { "id": "checks-receipt", "from": "checks", "to": "receipt", "label": "24/24 pass", "classification": "evidence", "variant": "emphasis", "route": "straight", "labelDy": 24 }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "What the browser proves",
+      "items": [
+        "Panel: one interactive element (the settings gear) and zero extra focusable nodes once a real gear click records open_settings",
+        "Settings: the seven h2 sections in order, one main shell, zero iframes",
+        "WebGL 2.0 via unmasked ANGLE Metal (gl.getError() == 0); sampled 13.48 fps idle at job_load 0 and 22.47 fps at 0.9, renderCount 16 to 106"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Single source of truth",
+      "items": [
+        "Banned tokens, settings section order, and the panel aria-label come from desktop/src/__tests__/ui-removal-contract.test.ts",
+        "That file SHA-256 is recorded in the receipt, and tests/test_jarvis_desktop_render_check.py re-derives the same expectations",
+        "A missing or unparsable contract ends the run with exit 2, and restoring the pre-fix status label failed the run"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Where the evidence stops",
+      "items": [
+        "Chromium for Testing is not the installed WebKit webview, so this is bundle evidence, not installed-app evidence",
+        "The Tauri bridge is a deterministic stub; Rust-side snapshot shaping is covered by the cargo tests instead",
+        "Sampled fps is headless-RAF only and is not claimed to equal the webview; no account, no network, and no live KakaoTalk send is involved"
+      ]
+    }
+  ]
+}

@@ -1566,3 +1566,20 @@ receipt:
 - 설치는 수정 전 번들 그대로다. pid 84125는 여전히 `설정 검증 통과` 를 렌더하므로, 이 수정은 다음 재빌드·재설치(전환) 때 화면에 반영된다. `docs/architecture/jarvis-live-settings.png` 는 수정 전 설치본을 담은 그대로 둔다.
 - 이 셸에서 `screencapture` 는 신뢰할 수 없다: `-R` 은 15–20초 뒤에야 파일을 쓰고 그동안 화면이 바뀌면 다른 창을 담았으며(실제로 Spark 창을 담아 되돌렸다), `-l <windowID>` 는 25초를 넘겨도 끝나지 않아 스스로 종료해야 했다. 창 ID 조회는 `CGWindowListCopyWindowInfo` 를 쓰는 `/tmp/jarvis_win <pid> [title]` 로 됐다. CUA 스크린샷은 대화에만 남고 파일로 저장할 수 없다(`nodeRepl` 에 파일 API가 없고 `nodeRepl.rpc` 는 service 식별자를 요구한다).
 - `macos/AutoReplyMenu/main.swift` 에는 같은 부류의 문자열이 아직 7개 있다(`점검 중` 5개, `검증 통과` 계열 2개). 그 앱은 아직 CI에서 빌드되지만 제품 런타임은 Tauri이고, 전환 시 함께 사라질 대상이라 이번 패스에서는 건드리지 않았다.
+
+### 렌더 교차 검증 경로 시각화 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+`scripts/jarvis_desktop_render_check.py`가 무엇을 검사하는지는 README 문장으로만 남아 있었다. 그 경로 자체를 dataflow로 그려 [jarvis-rendered-cross-check.html](jarvis-rendered-cross-check.html) / [source](jarvis-rendered-cross-check.archify.json)로 남겼다. stage는 `Built bundle → Loopback serve → Browser render → Page probes → Compare and record` 다섯 단계이고, 주 경로는 `desktop/dist → static server → Playwright Chromium → page probes → check set` 이다. `Tauri stub → Chromium`(결정적 스냅샷 주입)과 `ui-removal-contract → check set`(기대값 주입)이 각각 행 0에서 내려와 붙고, 마지막 행에서 `check set → receipt + captures`가 증거를 닫는다.
+
+- 첫 후보(8노드·카드 항목 12개·viewBox `[1068, 580]`)는 `validate`에서 4건의 오류를 냈다: 같은 stage 수직 흐름 3개의 라벨이 각각 `stub`·`contract`·`checks`를 덮었고, `contract-checks`가 같은 행의 `stub`을 2px 여유로 관통했다.
+- 수리는 단계적이었다. 먼저 주 경로를 행 1에 모으고 `stub`·`contract`·`receipt`를 같은 stage의 위·아래에 두어 모든 흐름을 인접 구간으로 바꿨고(diagnostic이 지시한 `labelDy: 24` 적용), 그 리비전에서 9/9 checks·0 errors/0 warnings가 됐다.
+- 그 후보의 `deliver`는 artifact SHA-256 `c604f65c8cac81689269d169a63055e0427496828b1633f92a230c68b618985b` (810,770 bytes)로 성공했지만 `visual-check`는 `viewer/viewport-overflow` 3건으로 `status fail`이었다(1440x900 light/dark 981px, 1600x1000 1057px). 원인은 카드 항목 수였다: 항목 한 줄이 약 23px이고, 같은 viewBox·같은 카드 3개에 항목 9개인 `jarvis-core-load-mapping`은 네 viewport를 모두 통과한다.
+- 그래서 카드마다 항목을 3개로 줄이고(측정값 `gl.getError() == 0`·유휴 13.48fps·`renderCount 16 to 106`·계약 SHA-256은 그대로 남겼다) viewBox를 `[1068, 556]`로 20px 압축해 1440x900 환산 약 24px을 확보했다. 최종 리비전: `validate` 9/9·0/0, `deliver` success(artifact `86d5808101ad37619a99dc1174cdc7d736e443d439d6ab6dfcf5b5e1622e7f73`, 810,487 bytes, spec `1456692d94377a73578fcef88e6491f3929f31c232d7343970cf961b810a8789`), `visual-check` exit 0·`status pass`·diagnostics 0.
+- containment: 1440x900 light scroll 1440x900 · 1600x1000 light scroll 1600x1000 · 1920x1080 light scroll 1920x1080 · 2048x1320 light scroll 2048x1320. readability(투영 노드 텍스트 ≥ 6px): 1440x900 light 6.18px · 1600x1000 light 6.48px · 1920x1080 light 6.90px · 2048x1320 light 6.90px. viewer chrome(dock↔stage gap)도 네 viewport 모두 통과했고 캡처 4장과 contact sheet가 함께 갱신됐다.
+- 같은 리비전에서 `scripts/jarvis_desktop_render_check.py`를 다시 실행해 **24/24 checks pass**를, `tests.test_jarvis_desktop_render_check`를 실행해 **24 tests, OK**를 재확인했다. README의 종전 "23개 check"는 `c264535`가 `settings.ondevice_status_is_product_formatted`를 더하기 전 수치이며 현재 검사 수는 24개다.
+
+이 절이 닫지 않는 것:
+
+- receipt의 `visualReview`는 계약대로 `pending`이다. 이 세션은 1440x900 light/dark와 2048x1320 light 캡처 3장을 판독해 노드·라벨·관계선의 겹침과 잘림, 빈 하단 띠가 없음을 확인했지만 사람 리뷰를 대신하지 않는다.
+- 이 다이어그램은 검사 경로의 구조 증거다. 브라우저에서 실제로 통과했다는 주장은 위 24/24 수치와 [jarvis-desktop-render-check.json](jarvis-desktop-render-check.json) 영수증이 담당한다.
+- 카드 항목을 줄인 것은 세로 예산 때문이며, 줄어든 세 항목이 담고 있던 내용(무계정·무네트워크 조건, Rust 쪽 스냅샷 검증 위치, exit 2 폐쇄)은 영수증과 위 절에 그대로 남아 있다.
