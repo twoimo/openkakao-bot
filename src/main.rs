@@ -1034,6 +1034,21 @@ enum Commands {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: usize,
     },
+    /// Read-only AX diagnostic: report whether an already-open chat window's
+    /// message composer is discoverable. Performs no mutation and never opens
+    /// a chat window, so it is safe to run against a live session.
+    AxProbe {
+        #[arg(long)]
+        chat: String,
+        /// Print the bounded AX subtree of the chat window instead of the
+        /// composer summary. Read-only diagnostic; never mutates or opens a chat.
+        #[arg(long)]
+        dump: bool,
+        /// Node budget for --dump. Bounds the walk so a virtualized transcript
+        /// cannot stall the caller.
+        #[arg(long, default_value_t = 400)]
+        max_nodes: usize,
+    },
     /// Watch for incoming KakaoTalk messages via AX (no server contact,
     /// background) and fire hooks/webhooks on unread-count increases
     AxWatch {
@@ -1181,6 +1196,7 @@ fn is_local_only_command(command: &Commands) -> bool {
             | Commands::LocalSend { .. }
             | Commands::LocalDelete { .. }
             | Commands::AxRead { .. }
+            | Commands::AxProbe { .. }
             | Commands::AxWatch { .. }
             | Commands::AutoReply { .. }
             | Commands::AutoReplyHost { .. }
@@ -7586,6 +7602,31 @@ fn main() -> Result<()> {
                 count,
                 json,
             })?
+        }
+        Commands::AxProbe {
+            chat,
+            dump,
+            max_nodes,
+        } => {
+            if dump {
+                for line in ax_send::dump_ax(&chat, max_nodes)? {
+                    println!("{line}");
+                }
+            } else {
+                let report = ax_send::probe_ax(&chat)?;
+                if json {
+                    crate::util::output_json(&report)?;
+                } else {
+                    println!(
+                        "chat={:?} window_found={} composer_found={} elapsed_ms={} label={:?}",
+                        report.chat_name,
+                        report.window_found,
+                        report.composer_found,
+                        report.elapsed_ms,
+                        report.label
+                    );
+                }
+            }
         }
         Commands::AxWatch {
             interval,

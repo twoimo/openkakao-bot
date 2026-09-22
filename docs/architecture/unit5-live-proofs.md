@@ -2146,3 +2146,59 @@ ModuleNotFoundError: No module named 'auto_reply_ondevice'
 - 자동 답변 세션은 재시작하지 않았다. 부하 평균 25.44, 스왑 사용 43833.81M/45056M 로 이전 재시작 사고(MLX 프리플라이트 타임아웃으로 전 워커 정지)와 같은 조건이었고, `auto-reply-supervisor.py` 에 리로드 명령이 없으며 워커 종료는 슈퍼바이저의 자식 생존 검사에 걸린다. 실행 중 큐와 세션 소유 대상을 보존하는 편을 택했다.
 - 최초 실전 검증 지점: 호스트 GeekNews 슬롯 **2026-09-23 08:40 KST**(`nimda-geeknews.log`), 그리고 room 437 의 다음 실제 수신 메시지. 실제 카카오톡 전송은 수행하지 않았다(제품 규칙: 테스트는 fake 어댑터).
 - 이번 차수도 웹 위임은 AHP 점수를 산출한 것이 아니므로 98점 달성을 주장하지 않는다. 위임에는 `chatgpt-web/extra-high` 를 썼고(요청의 `GPT-5.6 Luna` 계열은 도구 카탈로그에 없다), 결과는 결함 재현·패치·테스트이며 순위 점수가 아니다.
+
+
+## AX 작성기 탐색 실패의 두 결함과 실기 검증 — 2026-09-23 KST (6차)
+
+### 1. 신고 증상의 두 번째 독립 원인
+
+사용자 신고는 "카카오톡 자동 답변과 긱뉴스 자동 전송이 안 된다"였다. 5차에서 GeekNews 반복 홀드를 고쳤지만, 그것과 독립적으로 **모든 발송이 AX 작성기(composer) 탐색 단계에서 실패**하고 있었다.
+
+- 워커 로그 근거: `Error: could not find the message input field in the already-open chat "NIMDA 인수인계 임원방 ⚠"` (2026-09-22 19:50, 2026-09-20 08:40), `Error: chat window did not open in time` (2026-09-19 08:40 / 12:35).
+- 코드 경로: `src/ax_send.rs` 의 `find_input_field_in_bounded` -> `find_input_field_in` 가 `None` 을 돌려주고, 호출자는 이를 "입력 필드 없음" 오류로 바꾼다.
+
+### 2. 실기 진단 도구 `ax-probe` 추가와 수정 전 측정
+
+읽기 전용 진단 명령 `openkakao-cli ax-probe --chat <name> --json` 을 추가했다(변경 없음, 채팅을 열지 않음). 수정 전 측정값:
+
+- 이미 열려 있는 창 4개(`NIMDA 인수인계 임원방 ⚠`, `부자멘토멘티`, `최연우`, `Vision AI 경진대회`)에서 모두 `composer_found=false`, `elapsed_ms` 약 15,400 (COMPOSER_FIELD_TIMEOUT 15s 를 전부 소진).
+- 대조군: 없는 방 이름은 `window_found=false`, 58ms 로 즉시 반환. 즉 창 탐색은 정상이고 작성기 탐색만 실패했다.
+- `OPENKAKAO_CLI_DEBUG_AX=1` 로 보면 `live_walk budget failed: "visited=~135, node_limit=4096"` 가 15회. 노드 제한(4096)이 아니라 **deadline 만료**다. 실측 약 14.8ms/node 로, 당시 부하에서 2,000ms 예산으로는 135개 노드밖에 못 읽는다.
+
+### 3. AX 트리 실측 — 작성기는 실제로 존재하고 라벨도 있다
+
+`ax-probe --dump` (batched `AXUIElementCopyMultipleAttributeValues` 로 depth|role|id|desc|help|value 출력)로 `NIMDA 인수인계 임원방 ⚠` 창을 덤프한 결과:
+
+- 창의 직계 자식 중 `AXScrollArea|_NS:29` (전사 영역, 자식에 `AXTable|_NS:33`) 와 `AXScrollArea|_NS:47` (작성기 영역, 자식에 `AXTextArea|_NS:51`).
+- 그 `AXTextArea` 의 `AXDescription` 이 곧 `메시지 입력` 이다. 즉 작성기는 명확히 라벨링되어 있고, 이전 차수의 "AXDescription 으로는 못 찾고 unlabeled fallback 만 찾는다"는 관측은 틀렸다.
+
+### 4. 두 결함 (서로 상쇄되어 "찾지 못함"으로 나타났다)
+
+- 결함 1 — 잘린 walk 를 "완료된 빈 결과"로 취급: `live_walk` 는 deadline/노드한도에 걸리면 **이미 모은 matches 를 버리고** `None` 을 돌려줬다. `find_input_field_in` 의 바깥 `AXScrollArea` 열거는 `stop_after_first=false` 라 큐를 전부 비워야 `Some` 을 돌려주므로, 이 창 크기에서는 항상 `None` 이고 `?` 로 함수 전체가 종료됐다.
+- 결함 2 — 후보 판정 극성 반전: 호출부가 `tables.is_empty()` 를 `composer_area_candidate` 에 넘겼는데 이 함수의 인자는 `table_found` 다. 따라서 표가 **있는** 전사 영역이 후보가 되고, 그 안의 말풍선 `AXTextArea` 가 작성기 후보로 잡힐 수 있었다. 헬퍼 계약과 호출부가 어긋나 두 결함이 겹쳐 결과적으로 아무것도 찾지 못했다.
+
+### 5. 수정과 안전성
+
+- `live_walk_inner` 가 `WalkOutcome { matches, exhausted }` 를 돌려주고, strict `live_walk` 는 `strict_walk_result` 로 `exhausted` 이면 여전히 `None` 을 돌려준다. 다른 호출자(전사 읽기, 채팅 행 탐색)의 계약은 **바뀌지 않는다**: 잘린 walk 를 "아무것도 없음"의 증거로 쓰면 안 되기 때문이다.
+- 새 `live_walk_partial` 은 잘려도 모은 matches 를 돌려준다. 작성기 경로에서만 쓴다. BFS 라 창의 모든 직계 자식을 먼저 방문하므로 두 `AXScrollArea` 는 첫 몇 노드에서 이미 수집된다.
+- 호출부는 이제 `table_found` 를 넘긴다. 실패 방향은 모두 "작성기 없음" 오류로 수렴하고 오발송으로 이어지지 않는다. 작성기는 표가 없는 영역에서만, 그리고 `메시지 입력` 라벨로 우선 선택된다.
+
+### 6. 검증
+
+- `cargo clippy --all-targets -- -D warnings` 클린.
+- `cargo test`: 42개 타깃 전부 ok, **1096 passed / 0 failed / EXIT=0**.
+- 새 순수 테스트 `truncated_walk_is_not_a_completed_empty_result`: `strict_walk_result(vec![], true)` 는 `None`, `(vec![], false)` 는 `Some(0)`. 잘린 탐침이 "표 없음"의 증거가 되지 않음을 고정한다.
+- 수정 후 실기 `ax-probe`: 열린 창 4개 모두 `composer_found=true`, `label="메시지 입력"`, **73~187ms**. 같은 창에서 약 15,400ms/실패에서 73~187ms/성공으로 바뀌었다.
+- 미검증: 실제 카카오톡 전송은 수행하지 않았다(제품 규칙: 테스트는 fake 어댑터).
+
+### 7. 배포와 적용 경로
+
+- 런타임 재베이크: `auto-reply-host --bake` -> `20260922T154213Z-39212`. 저장소 워커와 sha256 동일 확인.
+- 고정 경로 `~/Library/Application Support/openkakao/bin/openkakao-cli` 를 재배치했고, 워커의 `_find_cli_bin()` 이 이 경로를 우선하며, 발송은 `local-send` 로 이 바이너리를 호출한다(`scripts/auto-reply-worker.py:13293`). 따라서 **이미 돌고 있는 워커가 재시작 없이** 이 수정을 쓴다. 고정 경로와 신규 런타임 바이너리 모두에서 `ax-probe` 가 `composer_found=true` 를 반환하는 것을 확인했다.
+- 자동 답변 세션은 재시작하지 않았다(부하 평균 22.37, 스왑 42517/44032M — 5차와 같은 조건). GeekNews 슬롯 스크립트는 호출 시점에 최신 런타임을 고르므로 다음 슬롯은 신규 런타임을 쓴다.
+
+### 8. 남은 축과 다음 검증 지점
+
+- 반응형 자동 답변의 지배적 종결 사유는 여전히 `conversation_advanced` 다(room 437 187건, room 417 31건, 2026-09-22 18:57 KST 시작). AHP 채점 대상 정책이라 이번에도 바꾸지 않았다.
+- 첫 종단 간 검증 지점은 호스트 GeekNews 슬롯이며, 오늘(09-23) 슬롯 창은 지터 때문에 08:57~09:27 / 12:23~12:53 / 19:38~20:08 KST 다. 슬롯은 `NIMDA 인수인계 임원방 ⚠` AX 창이 열려 있어야 한다. `ax-probe --chat "NIMDA 인수인계 임원방 ⚠"` 가 그 저렴한 사전 점검이다.
+- 이번 차수도 웹 위임은 AHP 점수를 산출하지 않았으므로 98점 달성을 주장하지 않는다.

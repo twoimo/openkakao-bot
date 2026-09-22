@@ -2634,7 +2634,13 @@ mod imp {
     const CONTEXT_MENU_TIMEOUT: Duration = Duration::from_secs(6);
     const CONTEXT_MENU_TITLES_REPLY: &[&str] = &["답장"];
     const CONTEXT_MENU_TITLES_DELETE_EVERYONE: &[&str] = &["모두에게서 삭제"];
-    const OPEN_CHAT_TIMEOUT: Duration = Duration::from_secs(5);
+    // A loaded MacBook Pro (observed load average 16-30) delays AX tree reads
+    // enough that the old 5 s budgets produced false negatives. The observed
+    // failures were "chat window did not open in time" (2026-09-19 08:40 and
+    // 12:35) and "could not find the message input field in the already-open
+    // chat" (2026-09-20 08:40, 2026-09-22 19:50), which cost those GeekNews
+    // slots. Keep the budgets bounded while allowing the UI to settle.
+    const OPEN_CHAT_TIMEOUT: Duration = Duration::from_secs(15);
     /// Retry budget for an exact already-open AX read. Every attempt walks the
     /// window's table with an 800 ms budget, and KakaoTalk serializes AX work:
     /// while the catalog preflight and three room workers read at once, an
@@ -2647,8 +2653,12 @@ mod imp {
     /// window that is actually the right one and report a missing composer.
     /// Retrying keeps the window identity check before any mutation unchanged
     /// while removing that false negative (2026-09-22).
-    const COMPOSER_FIELD_TIMEOUT: Duration = Duration::from_secs(5);
+    const COMPOSER_FIELD_TIMEOUT: Duration = Duration::from_secs(15);
     const COMPOSER_FIELD_POLL: Duration = Duration::from_millis(150);
+    /// Budget for enumerating a window's own `AXScrollArea` children.
+    const COMPOSER_AREA_TIMEOUT: Duration = Duration::from_millis(2000);
+    /// Per-area probe budget for the `AXTable`/`AXTextArea` lookups.
+    const COMPOSER_PROBE_TIMEOUT: Duration = Duration::from_millis(800);
     /// Poll interval while an already-open window's AX transcript settles.
     /// KakaoTalk repaints the message list after a room switch or raise, so the
     /// first read can legitimately return no rows.
@@ -3192,6 +3202,77 @@ mod imp {
         skip_matching_subtrees: bool,
         stop_after_first_match: bool,
     ) -> Option<Vec<AXUIElement>> {
+        live_walk_inner(
+            root,
+            deadline,
+            target_role,
+            skip_matching_subtrees,
+            stop_after_first_match,
+        )
+        .and_then(|outcome| strict_walk_result(outcome.matches, outcome.exhausted))
+    }
+
+    /// One bounded AX walk: the matches collected so far, plus whether the walk
+    /// ran out of its time/node budget before the queue drained. `None` from
+    /// this function means a hard AX read failure, never a budget exhaustion.
+    struct WalkOutcome {
+        matches: Vec<AXUIElement>,
+        exhausted: bool,
+    }
+
+    /// Project a walk outcome onto the strict `live_walk` contract.
+    ///
+    /// A walk that ran out of budget before draining its queue must not be
+    /// reported as a completed "found nothing": `find_input_field_in` reads
+    /// that as proof the scroll area holds no `AXTable`, which is exactly how a
+    /// truncated transcript probe let a bubble text area be recorded as the
+    /// message composer. Only a walk that finished may claim an empty result.
+    fn strict_walk_result(
+        matches: Vec<AXUIElement>,
+        exhausted: bool,
+    ) -> Option<Vec<AXUIElement>> {
+        if exhausted {
+            None
+        } else {
+            Some(matches)
+        }
+    }
+
+    /// Same bounded walk, but a budget exhaustion returns the matches collected
+    /// so far instead of `None`. Use only where a partial result is safe.
+    ///
+    /// The composer lookup is the intended caller: breadth-first order visits
+    /// every window child before descending, so the two `AXScrollArea` children
+    /// (transcript and composer) are collected in the first handful of nodes
+    /// even though the walk then spends its remaining budget inside unrelated
+    /// subtrees and is reported as exhausted. Truncating that list can only
+    /// shorten the candidate set; it can never make one element be mistaken for
+    /// a different one, because the caller still requires a matching role and
+    /// label.
+    fn live_walk_partial(
+        root: &AXUIElement,
+        deadline: Instant,
+        target_role: &str,
+        skip_matching_subtrees: bool,
+        stop_after_first_match: bool,
+    ) -> Option<Vec<AXUIElement>> {
+        live_walk_inner(
+            root,
+            deadline,
+            target_role,
+            skip_matching_subtrees,
+            stop_after_first_match,
+        )
+        .map(|outcome| outcome.matches)
+    }
+
+    fn live_walk_inner(
+        root: &AXUIElement,
+        deadline: Instant,
+        target_role: &str,
+        skip_matching_subtrees: bool,
+        stop_after_first_match: bool,
+    ) -> Option<WalkOutcome> {
         let mut queue = VecDeque::from([root.clone()]);
         let mut matches = Vec::new();
         let mut visited = 0;
@@ -3202,7 +3283,10 @@ mod imp {
                     "live_walk budget",
                     format!("visited={visited}, node_limit={CHAT_ROW_LOOKUP_NODE_LIMIT}"),
                 );
-                return None;
+                return Some(WalkOutcome {
+                    matches,
+                    exhausted: true,
+                });
             }
             visited += 1;
             if let Err(error) =
@@ -3214,7 +3298,10 @@ mod imp {
             if role(&element) == target_role {
                 matches.push(element.clone());
                 if stop_after_first_match {
-                    return Some(matches);
+                    return Some(WalkOutcome {
+                        matches,
+                        exhausted: false,
+                    });
                 }
                 if skip_matching_subtrees {
                     continue;
@@ -3228,7 +3315,10 @@ mod imp {
                 queue.push_back(child);
             }
         }
-        Some(matches)
+        Some(WalkOutcome {
+            matches,
+            exhausted: false,
+        })
     }
     fn find_chat_table_live(main_window: &AXUIElement) -> Result<AXUIElement> {
         let deadline = Instant::now() + CHAT_ROW_LOOKUP_TIMEOUT;
@@ -3357,29 +3447,40 @@ mod imp {
         // stalls for tens of seconds. The composer is an AXTextArea inside a
         // scroll area without an AXTable (the transcript scroll area owns the
         // table), which also excludes transcript bubble text areas.
-        let areas = live_walk(
+        // Partial enumeration on purpose: the two `AXScrollArea` children are
+        // collected before the walk descends into unrelated subtrees, and the
+        // window is large enough that a strict walk spends its whole budget and
+        // reports nothing. See `live_walk_partial`.
+        let areas = live_walk_partial(
             root,
-            Instant::now() + Duration::from_millis(900),
+            Instant::now() + COMPOSER_AREA_TIMEOUT,
             "AXScrollArea",
             true,
             false,
         )?;
         let mut composer = None;
         for area in areas {
-            let has_table = live_walk(
+            // KakaoTalk virtualizes long transcripts, so the AXTable probe can
+            // expire before it reaches the table. `live_walk` returns `None`
+            // for that timeout and `Some([])` only when the walk completed and
+            // found nothing. Treating the timeout as "no table" let a transcript
+            // scroll area be classified as the composer container, so a bubble
+            // text area could be recorded as the composer. Only a completed,
+            // table-free probe may nominate a composer candidate.
+            let table_found = live_walk(
                 &area,
-                Instant::now() + Duration::from_millis(300),
+                Instant::now() + COMPOSER_PROBE_TIMEOUT,
                 "AXTable",
                 true,
                 true,
             )
-            .is_some_and(|tables| !tables.is_empty());
-            if has_table {
+            .map(|tables| !tables.is_empty());
+            if !composer_area_candidate(table_found) {
                 continue;
             }
-            let Some(fields) = live_walk(
+            let Some(fields) = live_walk_partial(
                 &area,
-                Instant::now() + Duration::from_millis(300),
+                Instant::now() + COMPOSER_PROBE_TIMEOUT,
                 "AXTextArea",
                 true,
                 false,
@@ -3400,6 +3501,152 @@ mod imp {
             }
         }
         composer
+    }
+
+    /// Decide whether one scroll area may nominate a composer candidate, given
+    /// the result of its `AXTable` probe.
+    ///
+    /// `None` means the probe never finished, which is uncertainty about
+    /// whether the area is the transcript, so it must not nominate anything.
+    /// `Some(true)` means a table was found, so the area is the transcript.
+    /// Only `Some(false)` (the probe completed and proved the area table-free)
+    /// permits the unlabeled fallback below.
+    ///
+    /// The argument is `table_found`, not `tables.is_empty()`: passing the
+    /// emptiness test here inverts the decision and hands the transcript's
+    /// bubble text areas to the composer lookup.
+    fn composer_area_candidate(table_found: Option<bool>) -> bool {
+        matches!(table_found, Some(false))
+    }
+
+    /// Read-only AX diagnostic: report whether an already-open chat window's
+    /// composer is discoverable, without mutating anything or opening a chat.
+    ///
+    /// Reuses the same bounded discovery as the send path, so a successful
+    /// probe is evidence that the send path can find the composer.
+    #[derive(Debug, serde::Serialize)]
+    pub struct AxProbeReport {
+        pub chat_name: String,
+        pub window_found: bool,
+        pub composer_found: bool,
+        pub elapsed_ms: u64,
+        pub label: Option<String>,
+    }
+
+    pub fn probe_ax(chat_name: &str) -> Result<AxProbeReport> {
+        let started = Instant::now();
+        ensure_ax_permission()?;
+        let pid = find_kakaotalk_pid()?;
+        let app = AXUIElement::application(pid);
+        let window = find_chat_window(&app, chat_name)?;
+        let Some(window) = window else {
+            return Ok(AxProbeReport {
+                chat_name: chat_name.to_string(),
+                window_found: false,
+                composer_found: false,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                label: None,
+            });
+        };
+        let field = find_input_field_in_bounded(&window);
+        let label = field.as_ref().and_then(|field| {
+            attr_as_string(field, "AXDescription").or_else(|| attr_as_string(field, "AXHelp"))
+        });
+        Ok(AxProbeReport {
+            chat_name: chat_name.to_string(),
+            window_found: true,
+            composer_found: field.is_some(),
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            label,
+        })
+    }
+
+    /// Read-only bounded AX tree dump for diagnosing composer discovery.
+    ///
+    /// Breadth-first from `root`, fetching role/identifier/description/help/
+    /// value in one batched `AXUIElementCopyMultipleAttributeValues` call per
+    /// node (~4ms/node instead of five separate IPC round-trips), and emitting
+    /// one `depth|role|id|desc|help|value` line per node. `max_nodes` bounds
+    /// the walk so a virtualized transcript cannot stall the caller. Never
+    /// mutates anything and never opens a chat.
+    pub fn dump_ax_tree(root: &AXUIElement, max_nodes: usize) -> Vec<String> {
+        let names = CFArray::from_CFTypes(&[
+            CFString::new("AXRole").as_CFType(),
+            CFString::new("AXIdentifier").as_CFType(),
+            CFString::new("AXDescription").as_CFType(),
+            CFString::new("AXHelp").as_CFType(),
+            CFString::new("AXValue").as_CFType(),
+            CFString::new("AXChildren").as_CFType(),
+        ]);
+        fn clip(value: Option<String>) -> String {
+            let flat = value.unwrap_or_default().replace(['\n', '\r'], " ");
+            if flat.chars().count() > 60 {
+                flat.chars().take(60).collect::<String>() + "..."
+            } else {
+                flat
+            }
+        }
+        let mut lines = Vec::new();
+        let mut queue = VecDeque::from([(root.clone(), 0usize)]);
+        let mut visited = 0usize;
+        while let Some((element, depth)) = queue.pop_front() {
+            if visited >= max_nodes {
+                lines.push(format!("... truncated at {max_nodes} nodes"));
+                break;
+            }
+            visited += 1;
+            let mut values_ref: CFArrayRef = std::ptr::null();
+            let err = unsafe {
+                AXUIElementCopyMultipleAttributeValues(
+                    element.as_concrete_TypeRef(),
+                    names.as_concrete_TypeRef(),
+                    0,
+                    &mut values_ref,
+                )
+            };
+            if err != 0 || values_ref.is_null() {
+                lines.push(format!("{depth}|<unreadable err={err}>"));
+                continue;
+            }
+            let values = unsafe { CFArray::<CFType>::wrap_under_create_rule(values_ref) };
+            let string_at = |i: isize| -> Option<String> {
+                values
+                    .get(i)
+                    .and_then(|v| v.downcast::<CFString>())
+                    .and_then(|value| cf_string_lossy(&value))
+            };
+            lines.push(format!(
+                "{depth}|{}|{}|{}|{}|{}",
+                string_at(0).unwrap_or_default(),
+                clip(string_at(1)),
+                clip(string_at(2)),
+                clip(string_at(3)),
+                clip(string_at(4)),
+            ));
+            if let Some(children) = values
+                .get(5)
+                .and_then(|v| v.downcast::<CFArray<*const std::ffi::c_void>>())
+            {
+                for child_ref in children.iter() {
+                    let child =
+                        unsafe { AXUIElement::wrap_under_get_rule(*child_ref as AXUIElementRef) };
+                    queue.push_back((child, depth + 1));
+                }
+            }
+        }
+        lines
+    }
+
+    /// Read-only: locate the exact chat window and dump its AX subtree.
+    pub fn dump_ax(chat_name: &str, max_nodes: usize) -> Result<Vec<String>> {
+        ensure_ax_permission()?;
+        let pid = find_kakaotalk_pid()?;
+        let app = AXUIElement::application(pid);
+        let window = find_chat_window(&app, chat_name)?;
+        let Some(window) = window else {
+            return Ok(vec![format!("window not found for {chat_name:?}")]);
+        };
+        Ok(dump_ax_tree(&window, max_nodes))
     }
 
     /// Retry [`find_input_field_in`] until its bounded deadline.
@@ -4274,6 +4521,45 @@ mod imp {
             assert!(COMPOSER_FIELD_TIMEOUT.as_secs() > 0);
             assert!(COMPOSER_FIELD_POLL.as_millis() > 0);
             assert!(COMPOSER_FIELD_POLL < COMPOSER_FIELD_TIMEOUT);
+            // The budget has to outlast a loaded machine's AX stall while
+            // staying bounded, or a failed send would block the worker.
+            assert!(COMPOSER_FIELD_TIMEOUT > Duration::from_secs(5));
+            assert!(COMPOSER_FIELD_TIMEOUT <= Duration::from_secs(30));
+            assert!(COMPOSER_AREA_TIMEOUT > Duration::from_millis(900));
+            assert!(COMPOSER_AREA_TIMEOUT < COMPOSER_FIELD_TIMEOUT);
+            assert!(COMPOSER_PROBE_TIMEOUT > Duration::from_millis(300));
+        }
+
+        #[test]
+        fn timed_out_table_probe_is_not_a_composer_candidate() {
+            // A timed-out AXTable walk is uncertainty, not proof of absence.
+            // Reverting to `is_some_and` here would let a transcript scroll
+            // area nominate a bubble text area as the composer.
+            assert!(!composer_area_candidate(None));
+        }
+
+        #[test]
+        fn truncated_walk_is_not_a_completed_empty_result() {
+            // The composer lookup reads an empty, *completed* AXTable probe as
+            // proof that a scroll area is table-free. A walk that merely ran out
+            // of budget must therefore report `None`, not an empty list, or a
+            // truncated transcript probe would nominate a bubble text area as
+            // the message composer.
+            assert!(strict_walk_result(Vec::new(), true).is_none());
+            assert_eq!(
+                strict_walk_result(Vec::new(), false).map(|matches| matches.len()),
+                Some(0)
+            );
+        }
+
+        #[test]
+        fn table_probe_with_transcript_is_not_a_composer_candidate() {
+            assert!(!composer_area_candidate(Some(true)));
+        }
+
+        #[test]
+        fn completed_table_free_probe_is_a_composer_candidate() {
+            assert!(composer_area_candidate(Some(false)));
         }
 
         #[test]
@@ -4318,9 +4604,10 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 pub use imp::{
-    delete_via_ax, preflight_bound_via_ax, read_open_exact_via_ax, read_via_ax, reply_via_ax,
-    scrape_chat_list, scrape_chat_list_for_service, scrape_chat_list_for_service_isolated,
-    send_bound_via_ax, send_via_ax, ChatListRow,
+    delete_via_ax, dump_ax, preflight_bound_via_ax, probe_ax, read_open_exact_via_ax, read_via_ax,
+    reply_via_ax, scrape_chat_list, scrape_chat_list_for_service,
+    scrape_chat_list_for_service_isolated, send_bound_via_ax, send_via_ax, AxProbeReport,
+    ChatListRow,
 };
 #[cfg(not(target_os = "macos"))]
 mod stub {
@@ -4384,6 +4671,33 @@ mod stub {
         Err(anyhow!("AX exact-open reads are only supported on macOS"))
     }
 
+    /// Mirrors `imp::AxProbeReport` so the CLI surface compiles off macOS.
+    #[derive(Debug, serde::Serialize)]
+    pub struct AxProbeReport {
+        pub chat_name: String,
+        pub window_found: bool,
+        pub composer_found: bool,
+        pub elapsed_ms: u64,
+        pub label: Option<String>,
+    }
+
+    pub fn probe_ax(chat_name: &str) -> Result<AxProbeReport> {
+        Ok(AxProbeReport {
+            chat_name: chat_name.to_string(),
+            window_found: false,
+            composer_found: false,
+            elapsed_ms: 0,
+            label: None,
+        })
+    }
+
+    /// Mirrors `imp::dump_ax` so the CLI surface compiles off macOS.
+    pub fn dump_ax(chat_name: &str, _max_nodes: usize) -> Result<Vec<String>> {
+        Ok(vec![format!(
+            "AX tree dumps are only supported on macOS (requested {chat_name:?})"
+        )])
+    }
+
     /// Mirrors `imp::ChatListRow`. Never constructed off macOS (the fn below
     /// always errors), so its fields would otherwise trip `dead_code`.
     #[allow(dead_code)]
@@ -4411,9 +4725,9 @@ mod stub {
 
 #[cfg(not(target_os = "macos"))]
 pub use stub::{
-    preflight_bound_via_ax, read_open_exact_via_ax, read_via_ax, scrape_chat_list,
-    scrape_chat_list_for_service, scrape_chat_list_for_service_isolated, send_bound_via_ax,
-    send_via_ax, ChatListRow,
+    dump_ax, preflight_bound_via_ax, probe_ax, read_open_exact_via_ax, read_via_ax,
+    scrape_chat_list, scrape_chat_list_for_service, scrape_chat_list_for_service_isolated,
+    send_bound_via_ax, send_via_ax, AxProbeReport, ChatListRow,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
