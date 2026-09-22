@@ -346,6 +346,15 @@ MODEL_CIRCUIT_FAILURE_CLASSES = {
     "runner_timeout",
     "usage_limit",
 }
+# These failures can retry inside the current message's response window without
+# opening the account-wide model circuit. In particular, rc=0 unparsed output
+# is a per-turn schema failure, not evidence that the provider is unavailable.
+MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES = frozenset({
+    "call_in_flight",
+    "circuit_unavailable",
+    "runner_untrusted",
+    "unparsed_output",
+})
 DUE_SCHEDULED_BURST_LIMIT = 4
 BURST_MAX_GAP_SECONDS = 2
 PARTNER_STREAK_MAX_GAP_SECONDS = 15
@@ -1364,9 +1373,7 @@ class _WorkerHealth:
             raise ValueError("invalid model state")
         if failure_class and (
             failure_class not in MODEL_CIRCUIT_FAILURE_CLASSES
-            and failure_class not in {
-                "call_in_flight", "circuit_unavailable", "runner_untrusted"
-            }
+            and failure_class not in MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES
         ):
             raise ValueError("invalid model failure class")
         if retry_at is not None and (
@@ -11555,6 +11562,13 @@ def _run_opencodex_generation(
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
         body = json.loads(raw.decode("utf-8"))
+        if local_mlx:
+            response_model = body.get("model")
+            if isinstance(response_model, str) and response_model.strip() and (
+                auto_reply_ondevice._canonical_managed_model_id(response_model)
+                != auto_reply_ondevice._canonical_managed_model_id(target_model)
+            ):
+                return 1, b"", b"mlx_serve_response_model_mismatch"
         content = str(body["choices"][0]["message"]["content"])
         return 0, content.encode("utf-8"), b""
     except urllib.error.HTTPError as exc:
@@ -12504,9 +12518,9 @@ def generate_reply(
             _publish_model_status("available")
             return with_prompt_receipt(parsed)
     if returncode == 0 and not _capacity_probe:
-        # rc=0 output that failed schema salvage is a skip. Never open
-        # account-wide invalid_output because Gemini/Qwen omitted keys,
-        # truncated JSON, or a lease CAS lost the race.
+        # rc=0 output that failed schema salvage gets one bounded per-turn retry.
+        # Never open account-wide invalid_output because Gemini/Qwen omitted
+        # keys, truncated JSON, or a lease CAS lost the race.
         print(
             "[reply-gen] unparsed_output head=%r" % (stdout_bytes[:400],),
             file=sys.stderr,
@@ -12540,6 +12554,8 @@ def generate_reply(
             ),
             "category": "uncertain",
             "evidence_ids": [],
+            "model_failure_class": "unparsed_output",
+            "model_defer_until": time.time() + MODEL_MIN_DEFER_SECONDS,
             "model_invoked": True,
         })
     failure_class, retry_after = _classify_model_failure(
@@ -14256,7 +14272,7 @@ def analyze_event(event: dict) -> dict:
             retry_at = model.get("model_defer_until")
             if failure_class in (
                 MODEL_CIRCUIT_FAILURE_CLASSES
-                | {"call_in_flight", "circuit_unavailable", "runner_untrusted"}
+                | MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES
             ):
                 try:
                     retry_at_value = float(retry_at)
@@ -14744,7 +14760,7 @@ def _model_defer_due_at(
     failure_class = str(analysis.get("model_failure_class") or "")
     if failure_class not in (
         MODEL_CIRCUIT_FAILURE_CLASSES
-        | {"call_in_flight", "circuit_unavailable", "runner_untrusted"}
+        | MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES
     ):
         return None
     current = time.time() if now is None else float(now)

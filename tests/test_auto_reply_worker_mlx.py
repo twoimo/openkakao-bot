@@ -99,6 +99,49 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 self.assertTrue(all("/load" not in url for url, _data, _timeout in calls))
                 direct_urlopen.assert_not_called()
 
+    def _run_mlx_completion_response(self, payload):
+        module = self.module
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            if request.full_url == "http://127.0.0.1:11234/v1/models":
+                return _Response(self._advertised_models())
+            if request.full_url == "http://127.0.0.1:11234/v1/chat/completions":
+                return _Response(payload)
+            raise AssertionError(f"unexpected URL: {request.full_url}")
+
+        with (
+            mock.patch("auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen),
+            mock.patch("urllib.request.urlopen") as direct_urlopen,
+        ):
+            result = module._run_opencodex_generation(
+                "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                "system",
+                b'{"inbound":"hello"}',
+                timeout=90.0,
+            )
+        direct_urlopen.assert_not_called()
+        return result
+
+    def test_mlx_generation_accepts_matching_canonical_response_model(self):
+        result = self._run_mlx_completion_response({
+            "model": "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+            "choices": [{"message": {"content": "ok"}}],
+        })
+        self.assertEqual(result, (0, b"ok", b""))
+
+    def test_mlx_generation_rejects_mismatched_response_model_before_choices(self):
+        result = self._run_mlx_completion_response({
+            "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+        })
+        self.assertEqual(result, (1, b"", b"mlx_serve_response_model_mismatch"))
+
+    def test_mlx_generation_without_response_model_stays_fail_open(self):
+        result = self._run_mlx_completion_response({
+            "choices": [{"message": {"content": "ok"}}],
+        })
+        self.assertEqual(result, (0, b"ok", b""))
+
     def test_mlx_generation_rejects_oversized_completion_response(self):
         module = self.module
         oversized = mock.MagicMock()

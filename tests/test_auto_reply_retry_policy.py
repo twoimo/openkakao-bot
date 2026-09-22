@@ -246,6 +246,99 @@ class ModelRetryPolicyTests(unittest.TestCase):
                 self.assertEqual(refused["retry_at"], now + 9562)
                 self.assertIsNotNone(m._open_fallback_lease("mlx/local"))
 
+    def test_unparsed_success_is_bounded_deferral_without_circuit_failure(self):
+        m = self.module
+        now = 1800000000.0
+
+        def runner(_model, *_args, **_kwargs):
+            return 0, b"not a decision", b""
+
+        with self.isolated_generation("opencodex", runner), \
+             mock.patch.object(m.time, "time", return_value=now), \
+             mock.patch.object(m.time, "monotonic", return_value=1000.0):
+            model_result = m.generate_reply("확인했어요", [], [], [], [])
+            self.assertEqual(model_result["reason"], "unparsed_model_decision")
+            self.assertEqual(model_result["category"], "uncertain")
+            self.assertFalse(model_result["should_reply"])
+            self.assertEqual(model_result["model_failure_class"], "unparsed_output")
+            self.assertTrue(m.math.isfinite(model_result["model_defer_until"]))
+            self.assertGreater(model_result["model_defer_until"], 0.0)
+            self.assertNotIn("unparsed_output", m.MODEL_CIRCUIT_FAILURE_CLASSES)
+            self.assertIn(
+                "unparsed_output",
+                m.MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES,
+            )
+            m._publish_model_status.assert_called_with("available")
+
+            event = {
+                "event_id": "retry-policy-unparsed",
+                "message": "확인했어요",
+                "sent_at": int(now),
+                "response_window_upper_seconds": m.MIN_REPLY_DELAY_SECONDS,
+            }
+            bundle = {
+                "context": [{"evidence_id": "context:1", "message": "bounded"}],
+                "styles": [],
+                "prior_decisions": [],
+                "style_profile": {},
+                "recipient_style_profile": {},
+                "response_time": {},
+            }
+            with mock.patch.object(m, "_reply_turn_hold_reason", return_value=None), \
+                 mock.patch.object(m, "_event_recent_conversation", return_value=[]), \
+                 mock.patch.object(m, "capture_visible_image", return_value=None), \
+                 mock.patch.object(m, "fetch_link_previews", return_value=[]), \
+                 mock.patch.object(m, "run_context_reply_bundle", return_value=bundle), \
+                 mock.patch.object(m, "event_exceeds_response_window", return_value=False), \
+                 mock.patch.object(m, "_conversation_target", return_value={}), \
+                 mock.patch.object(m, "_partner_streak_hold_reason", return_value=None), \
+                 mock.patch.object(m, "generate_reply", return_value=model_result):
+                analysis = m.analyze_event(event)
+
+        self.assertEqual(analysis["model_failure_class"], "unparsed_output")
+        self.assertEqual(analysis["reason"], "unparsed_model_decision")
+        due_at = m._model_defer_due_at(event, analysis, now=now)
+        self.assertIsInstance(due_at, float)
+        self.assertTrue(m.math.isfinite(due_at))
+        response_deadline = m.response_due_at(
+            event["sent_at"],
+            event["response_window_upper_seconds"],
+            now=now,
+        )
+        self.assertLessEqual(due_at, response_deadline)
+
+        expired_now = (
+            response_deadline
+            + m.PRE_SEND_RETRY_GRACE_SECONDS
+            + m.MODEL_MIN_DEFER_SECONDS
+        )
+        self.assertTrue(
+            m._past_send_grace(
+                event,
+                event["response_window_upper_seconds"],
+                now=expired_now,
+            )
+        )
+        self.assertLessEqual(
+            m._model_defer_due_at(event, analysis, now=expired_now),
+            expired_now,
+        )
+
+    def test_legitimate_non_reply_without_failure_class_is_not_deferred(self):
+        m = self.module
+        now = 1800000000.0
+        event = {
+            "sent_at": int(now),
+            "response_window_upper_seconds": m.MIN_REPLY_DELAY_SECONDS,
+        }
+        analysis = {
+            "should_reply": False,
+            "reply": "",
+            "reason": "low_information",
+            "category": "uncertain",
+        }
+        self.assertIsNone(m._model_defer_due_at(event, analysis, now=now))
+
     def test_completed_cooldown_fallback_survives_elapsed_budget(self):
         m = self.module
         for kind in ("opencodex", "gjc"):
