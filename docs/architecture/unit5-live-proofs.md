@@ -1501,3 +1501,19 @@ receipt:
 - 이 환경은 앱 번들에 포함되지 않는다. 설치본에서 Browser-Use를 쓰려면 배포 시 `browser` 프로젝트로 환경을 provision해야 하고, 설치된 `OpenKakao Jarvis.app` 자체의 이 경로는 아직 실측하지 않았다.
 - Chromium 존재 확인은 Playwright의 `chromium.executable_path` 를 읽는다. 실제 launch와 웹 탐색의 end-to-end 검증은 종전 격리 venv 실측(2026-09-22, 위 Browser-Use 절)이 담당한다.
 - 핀은 지금 최신 릴리스(`playwright 1.63.0`, `browser-use 0.13.10`)이고 PyPI 메타데이터로 존재를 확인했지만, 그 버전이 나중에 yank되면 설치는 실패한다. 그때는 핀을 올리고 프로브를 다시 통과시켜야 한다.
+
+
+### 삭제된 UI 표면을 테스트로 고정 — 2026-09-22 KST (세션 01a0b7f6 계속)
+
+"대량 검증·기능 점검·권한 설정·자기개선 항목을 전면 삭제"는 이번 목표의 핵심 요구인데, 지금까지는 그 삭제가 **마크업의 성질**일 뿐이었다. `desktop/src/ui.ts` 에 그런 섹션이 다시 들어와도 실패하는 검사가 없었고, `design-contract.test.ts` 는 팔레트와 금지 표현만 막았다. `desktop/src/__tests__/ui-removal-contract.test.ts` (7 tests)를 추가해 세 표면을 함께 고정했다.
+
+- 메인 패널: 인터랙티브 요소가 `<button>`·`<select>`·`<input>`·`<textarea>`·`<a>`·`<details>`·`<summary>` 전체에서 정확히 1개이고, 그 하나가 `aria-label="설정 열기"` 인 `gear` 다(`MAIN_PANEL_CONTROLS` 는 `["gear"]`).
+- 설정 창: `<h2>` 섹션이 `대상 채팅방 · AI 모델 · Voice · 카카오 DB 동기화 · 색인 · DREAM-RSI · Knowledge · History` 일곱 개와 **순서까지** 정확히 일치하고, `<main>` 셸은 `settings-shell` 하나뿐이며 `<iframe>` 이 없다.
+- 금지 토큰: `검증·점검·권한·자기개선·자가개선·자동개선·일괄·대량·permission·verify·self-improv·selfimprov·bulk·approve·audit` 를 메인 패널 마크업·설정 마크업·`desktop/src/styles.css` 에서 대소문자 무시로 검사한다. 탐지기가 비어 있으면 계약이 영원히 통과하므로, 금지 토큰이 실제로 걸리는지 먼저 확인하는 테스트를 둔다(`"<section>일괄 검증</section>"` → `["검증", "일괄"]`).
+
+회귀 검증은 주입으로 했다. `ui.ts` 의 `settingsMarkup()` 이 돌려주는 마크업에 `대량 검증 · 권한` 섹션과 `점검 실행` 버튼을 임시로 넣고 이 모듈만 실행하면 **7개 중 2개가 실패**한다(설정 마크업 토큰 검사, 섹션 순서 검사). 백업에서 바이트 단위로 복원한 뒤 SHA-256이 주입 전과 동일함(`79a051ace4ef7c48…`)을 확인했고, 전체 desktop 스위트는 **93 tests**(7 files)로 다시 통과했다.
+
+이 절이 닫지 않는 것:
+
+- 이 검사는 마크업·스타일시트 문자열 계약이다. 화면에 실제로 픽셀이 그려지는지, 또는 런타임에 동적으로 생성되는 노드가 있는지는 검증하지 않는다. 설치본 앱 창의 시각 확인은 Computer Use 경로가 이번 턴에도 도구 표면에서 노출되지 않아 여전히 미수행이다.
+- 금지 토큰 목록은 지금 저장소에 없는 단어들을 열거한 것이다. 한국어 동의어를 새로 만들면(예: "심사") 목록에 추가해야 잡힌다.
