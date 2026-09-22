@@ -1426,7 +1426,7 @@ ERROR [Agent] ❌ Stopping due to 5 consecutive failures
 
 #### 5. 회귀 테스트와 CI
 
-`tests/test_jarvis_browser_use.py` **11 tests, OK**를 추가하고 CI focused 목록에 넣었다(20 → 21개 모듈). 고정 Python 3.11에서 같은 목록 전체는 **554 tests, OK**(108.444초)다. 테스트가 고정하는 경계값은 다음과 같다: `browser_context` 선언 시 그대로 사용, `browser` 선언 시 CDP endpoint에 묶인 세션 생성(`headless true`, `enable_default_extensions false`, `accept_downloads false`), `**kwargs`만 있는 시그니처 fail-closed, endpoint 없는 `browser` fail-closed, 텔레메트리 env·config 강제 off, `--user-data-dir` 없는 launch args, 기본 어댑터가 `use_vision/generate_gif/use_judge`를 전부 False로 전달하고 `browser`만 남기는지.
+`tests/test_jarvis_browser_use.py` **11 tests, OK**를 추가하고 CI focused 목록에 넣었다(20 → 21개 모듈). 고정 Python 3.11에서 같은 목록 전체는 **Ran 556 tests in 102.802s, OK**이고, 이 브랜치 CI(run `35688129823` / `2fbf703`)는 3개 job 모두 success이며 focused step 로그는 **Ran 556 tests in 61.046s, OK (skipped=51)**다(51개 skip은 전부 `test_auto_reply_service_entry` 몫이고 나머지 20개 모듈은 러너에서 전부 실행된다). 앞선 커밋 `58bd43a`의 run `35688032379`는 같은 브랜치의 뒤 커밋 push로 concurrency에 의해 cancelled됐고(그 시점 `Launchd and Python harness` job은 success), 최신 커밋의 run이 권위 있는 게이트다. 테스트가 고정하는 경계값은 다음과 같다: `browser_context` 선언 시 그대로 사용, `browser` 선언 시 CDP endpoint에 묶인 세션 생성(`headless true`, `enable_default_extensions false`, `accept_downloads false`), `**kwargs`만 있는 시그니처 fail-closed, endpoint 없는 `browser` fail-closed, 텔레메트리 env·config 강제 off, `--user-data-dir` 없는 launch args, 기본 어댑터가 `use_vision/generate_gif/use_judge`를 전부 False로 전달하고 `browser`만 남기는지.
 
 #### 6. 이 절이 닫지 않는 것
 
