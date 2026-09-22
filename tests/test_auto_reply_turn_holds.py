@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -1126,6 +1127,190 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             self.assertNotIn("send_allowlist_rejected", logged)
         finally:
             connection.close()
+
+    def test_context_store_busy_preserves_its_source(self):
+        module = self._load_auto_reply_module("auto_reply_context_store_busy_test")
+
+        error = module.ContextStoreBusy("database is locked", "/tmp/context.sqlite3")
+
+        self.assertIsInstance(error, sqlite3.OperationalError)
+        self.assertEqual(str(error), "database is locked")
+        self.assertEqual(error.store, "/tmp/context.sqlite3")
+
+    def test_context_store_busy_only_keeps_queue_connection_for_classified_error(self):
+        module = self._load_auto_reply_module("auto_reply_context_store_predicate_test")
+
+        self.assertTrue(
+            module._sqlite_error_keeps_queue_connection(
+                module.ContextStoreBusy("database is locked", module.CONTEXT_DB)
+            )
+        )
+        self.assertFalse(
+            module._sqlite_error_keeps_queue_connection(
+                sqlite3.OperationalError("database is locked")
+            )
+        )
+
+    def test_context_terminal_decision_translates_only_busy_reads(self):
+        module = self._load_auto_reply_module("auto_reply_context_terminal_busy_test")
+
+        with mock.patch.object(
+            module,
+            "_private_context_connection",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            with self.assertRaises(module.ContextStoreBusy) as opening:
+                module._context_terminal_decision("event")
+        self.assertEqual(opening.exception.store, str(module.CONTEXT_DB))
+
+        connection = mock.Mock()
+        connection.execute.side_effect = sqlite3.OperationalError("database is locked")
+        with mock.patch.object(module, "_private_context_connection", return_value=connection):
+            with self.assertRaises(module.ContextStoreBusy):
+                module._context_terminal_decision("event")
+        connection.close.assert_called_once()
+
+        connection.execute.side_effect = sqlite3.OperationalError("no such table: x")
+        with mock.patch.object(module, "_private_context_connection", return_value=connection):
+            with self.assertRaisesRegex(sqlite3.OperationalError, "no such table: x"):
+                module._context_terminal_decision("event")
+        connection.close.assert_called()
+
+        class Row:
+            def __init__(self):
+                self.values = {
+                    "event_id": "event",
+                    "status": "sent",
+                    "reply": "ok",
+                }
+
+            def keys(self):
+                return self.values.keys()
+
+            def __getitem__(self, key):
+                return self.values[key]
+
+        success_connection = mock.Mock()
+        success_connection.execute.return_value.fetchone.return_value = Row()
+        with mock.patch.object(
+                module,
+                "_private_context_connection",
+                return_value=success_connection,
+        ):
+            self.assertEqual(
+                module._context_terminal_decision("event"),
+                {"event_id": "event", "status": "sent", "reply": "ok"},
+            )
+
+    def test_worker_main_keeps_queue_connection_for_context_store_busy(self):
+        module = self._load_auto_reply_module("auto_reply_context_worker_busy_test")
+        calls = {"process": 0}
+
+        class Connection:
+            def __init__(self):
+                self.closed = 0
+                self.rollbacks = 0
+                self.record_close = True
+
+            def close(self):
+                if self.record_close:
+                    self.closed += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        connection = Connection()
+
+        class Health:
+            def start(self):
+                return None
+
+            def phase(self, *args, **kwargs):
+                return None
+
+            def fence(self, *args, **kwargs):
+                return None
+
+            def ensure_writable(self):
+                return None
+
+            def close(self):
+                return None
+
+        def process_job(*_args):
+            calls["process"] += 1
+            if calls["process"] == 1:
+                raise module.ContextStoreBusy("database is locked", module.CONTEXT_DB)
+            connection.record_close = False
+            raise KeyboardInterrupt
+
+        with (
+            mock.patch.object(module, "_queue_connection", return_value=connection),
+            mock.patch.object(module, "_model_circuit_connection", return_value=mock.Mock()),
+            mock.patch.object(
+                module,
+                "_refresh_model_status_from_circuit",
+                return_value={},
+            ),
+            mock.patch.object(module, "_WorkerHealth", return_value=Health()),
+            mock.patch.object(module, "_IdleContextSampler", return_value=mock.Mock()),
+            mock.patch.object(
+                module,
+                "claim_job",
+                side_effect=[(({}, "pending")), (({}, "pending"))],
+            ),
+            mock.patch.object(module, "process_job", side_effect=process_job),
+            mock.patch.object(module, "recover_stale_jobs"),
+            mock.patch.object(module, "archive_terminal_jobs"),
+            mock.patch.object(module, "_auto_reconcile_give_up"),
+            mock.patch.object(module, "_queue_reconciliation_blockers", return_value=False),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            self.assertEqual(module.worker_main(), 0)
+
+        self.assertEqual(connection.closed, 0)
+        self.assertGreaterEqual(connection.rollbacks, 1)
+
+    def test_worker_main_closes_queue_connection_for_plain_busy(self):
+        module = self._load_auto_reply_module("auto_reply_plain_worker_busy_test")
+        connection = mock.Mock()
+
+        with (
+            mock.patch.object(module, "_queue_connection", return_value=connection),
+            mock.patch.object(module, "_model_circuit_connection", return_value=mock.Mock()),
+            mock.patch.object(
+                module,
+                "_refresh_model_status_from_circuit",
+                return_value={},
+            ),
+            mock.patch.object(
+                module,
+                "_WorkerHealth",
+                return_value=mock.Mock(
+                    start=mock.Mock(),
+                    phase=mock.Mock(),
+                    fence=mock.Mock(),
+                    close=mock.Mock(),
+                ),
+            ),
+            mock.patch.object(module, "_IdleContextSampler", return_value=mock.Mock()),
+            mock.patch.object(
+                module,
+                "claim_job",
+                side_effect=[
+                    sqlite3.OperationalError("database is locked"),
+                    KeyboardInterrupt,
+                ],
+            ),
+            mock.patch.object(module, "recover_stale_jobs"),
+            mock.patch.object(module, "archive_terminal_jobs"),
+            mock.patch.object(module, "_auto_reconcile_give_up"),
+            mock.patch.object(module, "_queue_reconciliation_blockers", return_value=False),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            self.assertEqual(module.worker_main(), 0)
+
+        connection.close.assert_called()
 
 
 if __name__ == "__main__":

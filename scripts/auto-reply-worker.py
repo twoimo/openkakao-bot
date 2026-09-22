@@ -1054,17 +1054,45 @@ def _is_transient_sqlite_busy(error: sqlite3.Error) -> bool:
     return any(marker in message for marker in SQLITE_BUSY_OPERATIONAL_MESSAGES)
 
 
+class ContextStoreBusy(sqlite3.OperationalError):
+    """Represent a bounded decision-store read that exhausted its busy bound.
+
+    The decision store is one large shared DELETE-journal database. A bounded
+    read can exhaust its whole busy bound while the sync writer holds the
+    store, and that is not a queue fault, so the queue connection and its claim
+    remain valid.
+    """
+
+    def __init__(self, message: str, store: Path) -> None:
+        super().__init__(message)
+        self.store = str(store)
+
+
+def _sqlite_error_keeps_queue_connection(error: sqlite3.Error) -> bool:
+    return isinstance(error, ContextStoreBusy)
+
+
 def _context_terminal_decision(event_id: str) -> dict | None:
     """Return only the bounded terminal projection needed for crash recovery."""
-    connection = _private_context_connection()
     try:
-        row = connection.execute(
-            """
-            SELECT event_id, status, decision, reason, category, reply, sent_at
-            FROM reply_decisions WHERE event_id = ? LIMIT 1
-            """,
-            (event_id,),
-        ).fetchone()
+        connection = _private_context_connection()
+    except sqlite3.Error as error:
+        if _is_transient_sqlite_busy(error):
+            raise ContextStoreBusy(str(error), CONTEXT_DB) from error
+        raise
+    try:
+        try:
+            row = connection.execute(
+                """
+                SELECT event_id, status, decision, reason, category, reply, sent_at
+                FROM reply_decisions WHERE event_id = ? LIMIT 1
+                """,
+                (event_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            if _is_transient_sqlite_busy(error):
+                raise ContextStoreBusy(str(error), CONTEXT_DB) from error
+            raise
     finally:
         connection.close()
     if row is None or str(row["status"]) not in {
@@ -16881,15 +16909,20 @@ def worker_main() -> int:
             except KeyboardInterrupt:
                 return 0
             except sqlite3.Error as error:
-                # A failed queue connection must never be reused: doing so
-                # could repeat a claim whose commit outcome is unknown.
-                try:
+                if _sqlite_error_keeps_queue_connection(error):
                     if connection is not None:
-                        connection.close()
-                finally:
-                    connection = None
+                        _rollback_queue_transaction(connection)
+                else:
+                    # A failed queue connection must never be reused: doing so
+                    # could repeat a claim whose commit outcome is unknown.
+                    try:
+                        if connection is not None:
+                            connection.close()
+                    finally:
+                        connection = None
                 print(
-                    f"[reply-worker] {type(error).__name__}: {error}",
+                    f"[reply-worker] {type(error).__name__}: {error}"
+                    + (f" store={error.store}" if isinstance(error, ContextStoreBusy) else ""),
                     file=sys.stderr,
                     flush=True,
                 )
