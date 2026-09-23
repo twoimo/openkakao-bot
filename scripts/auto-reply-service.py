@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 MAX_OUTPUT_BYTES = 64 * 1024
+PREFLIGHT_TIMEOUT_SECONDS = 240
+MAX_CATALOG_PREFLIGHT_TIMEOUT_SECONDS = 15 * 60
 RECEIPT_SCHEMA = 3
 RECEIPT_MAX_AGE_SECONDS = 120.0
 SESSION_STATUS_SCHEMA = 1
@@ -546,6 +548,8 @@ def _preflight_cli(
     binary: Path,
     config: Path,
     chat_selectors: list[str],
+    *,
+    timeout_seconds: int = PREFLIGHT_TIMEOUT_SECONDS,
 ) -> tuple[bool, dict[str, Any], str]:
     """Run one auto-reply --check call; return (ok, payload, diagnostics)."""
     result = subprocess.run(
@@ -560,7 +564,7 @@ def _preflight_cli(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_runtime_env(config),
-        timeout=240,
+        timeout=timeout_seconds,
         check=False,
     )
     if len(result.stderr) > MAX_OUTPUT_BYTES:
@@ -579,27 +583,48 @@ def _preflight_cli(
         return False, {}, str(exc)
 
 
-def _filter_catalog_selectors(
+class _CatalogPreflightError(RuntimeError):
+    def __init__(self, diagnostics: list[str]):
+        self.diagnostics = tuple(diagnostics)
+        detail = "\n".join(
+            f"aggregate attempt {index}: {diagnostic}"
+            for index, diagnostic in enumerate(self.diagnostics, start=1)
+        )
+        super().__init__(
+            "auto-reply catalog preflight failed after aggregate retry"
+            + (f"\n{detail}" if detail else "")
+        )
+
+
+def _preflight_catalog_selectors(
     binary: Path,
     config: Path,
     candidates: list[str],
-) -> tuple[list[str], list[dict[str, str]]]:
-    """Keep catalog rooms that pass their own preflight, report the rest.
+) -> list[str]:
+    """카탈로그 전체 집합을 검사하고 일시 실패면 같은 집합을 한 번 재시도한다.
 
-    One catalog room outside safety.allowed_send_chats used to fail the whole
-    host preflight and stop every room (2026-09-12 outage). A room that cannot
-    attest itself is dropped instead, and the reason is recorded so the menu can
-    show it.
+    room_reply_authors는 선택 집합이 설정된 모든 방을 포함해야 하므로 방 하나씩
+    재검사하는 경로는 유효한 fallback이 아니다. 2026-09-22 이 규칙 때문에 단일
+    방 호출이 결정론적으로 거부되는 것을 확인했다.
     """
-    accepted: list[str] = []
-    skipped: list[dict[str, str]] = []
-    for selector in candidates:
-        ok, _payload, diagnostics = _preflight_cli(binary, config, [selector])
+    if not candidates:
+        return []
+
+    # 전체 1회 + 재시도 1회 + 아래 _perform_preflight의 최종 check까지 최악 3회다.
+    if PREFLIGHT_TIMEOUT_SECONDS * 3 > MAX_CATALOG_PREFLIGHT_TIMEOUT_SECONDS:
+        raise SystemExit("catalog preflight timeout budget is invalid")
+    diagnostics: list[str] = []
+    for _attempt in range(2):
+        ok, _payload, detail = _preflight_cli(
+            binary,
+            config,
+            candidates,
+            timeout_seconds=PREFLIGHT_TIMEOUT_SECONDS,
+        )
         if ok:
-            accepted.append(selector)
-        else:
-            skipped.append({"selector": selector, "reason": diagnostics[-300:]})
-    return accepted, skipped
+            return list(candidates)
+        diagnostics.append(detail or "auto-reply preflight failed without diagnostics")
+    raise _CatalogPreflightError(diagnostics)
 
 
 def _perform_preflight(
@@ -617,30 +642,24 @@ def _perform_preflight(
     if not chat_selectors:
         candidates = _catalog_selectors(state_root)
         if candidates:
-            chat_selectors, skipped_rooms = _filter_catalog_selectors(
-                binary, config, candidates
-            )
-            if skipped_rooms:
-                # 일부만 빠진 경우에도 사유를 남긴다. 조용히 빠지면 원인을 찾을 수 없다.
+            try:
+                chat_selectors = _preflight_catalog_selectors(binary, config, candidates)
+            except _CatalogPreflightError as exc:
+                # 방별 fallback은 config 계약상 성립하지 않는다. 전체 집합 실패라는
+                # 사실과 두 시도의 진단을 그대로 남겨 다음 진단이 잘못된 방을 찍지 않게 한다.
+                aggregate_failure = {
+                    "scope": "aggregate",
+                    "selectors": list(candidates),
+                    "reason": str(exc),
+                }
                 try:
                     (state_root / "preflight-skipped.json").write_text(
-                        json.dumps(skipped_rooms, ensure_ascii=False, indent=2),
+                        json.dumps(aggregate_failure, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
                 except OSError:
                     pass
-            if not chat_selectors:
-                # 왜 모든 방이 떨어졌는지 남긴다. 사유가 사라지면 원인을 찾을 수 없다.
-                try:
-                    (state_root / "preflight-skipped.json").write_text(
-                        json.dumps(skipped_rooms, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                except OSError:
-                    pass
-                raise SystemExit(
-                    "auto-reply preflight failed for every catalog room"
-                )
+                raise SystemExit(str(exc)) from None
     if invalidate:
         _invalidate_receipt(state_root)
     identity_before = _identity(

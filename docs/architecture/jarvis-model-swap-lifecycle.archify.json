@@ -1,0 +1,528 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Jarvis 27B 모델 교체 수명주기",
+    "output": "docs/architecture/jarvis-model-swap-lifecycle.html",
+    "viewBox": [
+      1085,
+      700
+    ],
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "guarded-entry",
+        "label": "진입 게이트",
+        "focus": [
+          "requested",
+          "opt_in",
+          "attest",
+          "cancelled"
+        ],
+        "note": "사용자 opt-in과 ownership attestation이 mutation 전에 실행됩니다."
+      },
+      {
+        "id": "mutation-rail",
+        "label": "교체 단계",
+        "focus": [
+          "drain",
+          "unload",
+          "memory",
+          "load",
+          "probe"
+        ],
+        "note": "요청 배출, 소유 모델 unload, 메모리 admission, load, probe 순서입니다."
+      },
+      {
+        "id": "recovery-rail",
+        "label": "복구 결과",
+        "focus": [
+          "probe",
+          "rollback",
+          "ready",
+          "failed"
+        ],
+        "note": "실패나 취소는 target을 정리한 뒤 이전 모델 복구를 검증합니다."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Jarvis 제어 게이트"
+    },
+    {
+      "id": "mutation",
+      "label": "MLX gateway mutation"
+    },
+    {
+      "id": "recovery",
+      "label": "rollback controller"
+    },
+    {
+      "id": "terminal",
+      "label": "결과"
+    }
+  ],
+  "states": [
+    {
+      "id": "requested",
+      "type": "start",
+      "label": "사용자 요청",
+      "sublabel": "27B 버튼 + UUID",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "explicit"
+    },
+    {
+      "id": "opt_in",
+      "type": "decision",
+      "label": "Opt-in 확인",
+      "sublabel": "고정 모델 allowlist",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "gate"
+    },
+    {
+      "id": "attest",
+      "type": "decision",
+      "label": "Ownership attestation",
+      "sublabel": "PID · gateway · residency",
+      "lane": "main",
+      "col": 2,
+      "width": 140,
+      "step": "03",
+      "tag": "fail-closed"
+    },
+    {
+      "id": "drain",
+      "type": "waiting",
+      "label": "요청 배출",
+      "sublabel": "in-flight = 0",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "bounded"
+    },
+    {
+      "id": "memory",
+      "type": "decision",
+      "label": "메모리 admission",
+      "sublabel": "free − KV − voice ≥ 40 GiB",
+      "lane": "main",
+      "col": 4,
+      "step": "06",
+      "tag": "guard"
+    },
+    {
+      "id": "unload",
+      "type": "active",
+      "label": "Owned unload",
+      "sublabel": "Flash-Next만",
+      "lane": "mutation",
+      "col": 1,
+      "step": "05",
+      "tag": "owned-only"
+    },
+    {
+      "id": "load",
+      "type": "active",
+      "label": "27B load",
+      "sublabel": "localhost MLX",
+      "lane": "mutation",
+      "col": 2,
+      "step": "07",
+      "tag": "local"
+    },
+    {
+      "id": "probe",
+      "type": "decision",
+      "label": "Local probe",
+      "sublabel": "bounded generation",
+      "lane": "mutation",
+      "col": 2,
+      "yOffset": 78,
+      "step": "08",
+      "tag": "verified"
+    },
+    {
+      "id": "ready",
+      "type": "success",
+      "label": "전환 완료",
+      "sublabel": "저장 + 27B ready",
+      "lane": "terminal",
+      "col": 2,
+      "step": "09",
+      "tag": "success"
+    },
+    {
+      "id": "rollback",
+      "type": "active",
+      "label": "Rollback",
+      "sublabel": "이전 모델 load + probe",
+      "lane": "recovery",
+      "col": 0,
+      "yOffset": 78,
+      "step": "R1",
+      "tag": "recovery"
+    },
+    {
+      "id": "cancelled",
+      "type": "failure",
+      "label": "취소됨",
+      "sublabel": "cooperative marker",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "terminal"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "복구 불확실",
+      "sublabel": "rollback_failed",
+      "lane": "terminal",
+      "col": 0,
+      "yOffset": 70,
+      "tag": "terminal"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "requested",
+      "to": "opt_in",
+      "label": "model-swap token",
+      "variant": "emphasis",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96,
+      "labelAt": [
+        171,
+        80
+      ]
+    },
+    {
+      "from": "opt_in",
+      "to": "attest",
+      "label": "allowlist",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96,
+      "labelAt": [
+        320,
+        80
+      ]
+    },
+    {
+      "from": "opt_in",
+      "to": "cancelled",
+      "label": "opt-in/token 없음",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          248,
+          230
+        ],
+        [
+          150,
+          230
+        ],
+        [
+          150,
+          620
+        ],
+        [
+          556,
+          620
+        ]
+      ],
+      "labelAt": [
+        240,
+        608
+      ]
+    },
+    {
+      "from": "attest",
+      "to": "drain",
+      "label": "owner · residency",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 96,
+      "labelAt": [
+        485,
+        80
+      ]
+    },
+    {
+      "from": "attest",
+      "to": "failed",
+      "label": "owner 불명",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          402,
+          250
+        ],
+        [
+          220,
+          250
+        ],
+        [
+          220,
+          549
+        ]
+      ],
+      "labelAt": [
+        335,
+        238
+      ]
+    },
+    {
+      "from": "drain",
+      "to": "unload",
+      "label": "in-flight = 0",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        555,
+        233
+      ]
+    },
+    {
+      "from": "drain",
+      "to": "cancelled",
+      "label": "cancel / timeout",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          556,
+          40
+        ],
+        [
+          900,
+          40
+        ],
+        [
+          900,
+          650
+        ],
+        [
+          556,
+          650
+        ]
+      ],
+      "labelAt": [
+        760,
+        638
+      ]
+    },
+    {
+      "from": "unload",
+      "to": "memory",
+      "label": "unload 확인",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          630,
+          307
+        ],
+        [
+          630,
+          220
+        ],
+        [
+          710,
+          220
+        ]
+      ],
+      "labelAt": [
+        665,
+        208
+      ]
+    },
+    {
+      "from": "memory",
+      "to": "load",
+      "label": "admission 통과",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        790,
+        233
+      ]
+    },
+    {
+      "from": "memory",
+      "to": "rollback",
+      "label": "memory 부족",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "top",
+      "via": [
+        [
+          628,
+          157
+        ],
+        [
+          628,
+          342
+        ],
+        [
+          402,
+          342
+        ]
+      ],
+      "labelAt": [
+        580,
+        360
+      ]
+    },
+    {
+      "from": "load",
+      "to": "probe",
+      "label": "load OK",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          790,
+          307
+        ],
+        [
+          790,
+          385
+        ]
+      ],
+      "labelAt": [
+        835,
+        346
+      ]
+    },
+    {
+      "from": "load",
+      "to": "rollback",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right",
+      "via": [
+        [
+          630,
+          307
+        ],
+        [
+          630,
+          385
+        ]
+      ]
+    },
+    {
+      "from": "probe",
+      "to": "ready",
+      "label": "probe 성공",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        800,
+        432
+      ]
+    },
+    {
+      "from": "probe",
+      "to": "rollback",
+      "variant": "security",
+      "route": "straight",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "from": "rollback",
+      "to": "ready",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          630,
+          385
+        ],
+        [
+          630,
+          520
+        ],
+        [
+          790,
+          520
+        ],
+        [
+          790,
+          479
+        ]
+      ]
+    },
+    {
+      "from": "rollback",
+      "to": "failed",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          402,
+          340
+        ],
+        [
+          240,
+          340
+        ],
+        [
+          240,
+          540
+        ],
+        [
+          402,
+          540
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Mutation Guard",
+      "items": [
+        "UI opt-in · 외부 MLX · 본문/secret 보호"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Recovery Contract",
+      "items": [
+        "target 정리 → 이전 모델 검증 · 실패 기록"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Current Evidence",
+      "items": [
+        "외부 Flash-Next · 27B 미실행 · 경계 검증"
+      ]
+    }
+  ]
+}

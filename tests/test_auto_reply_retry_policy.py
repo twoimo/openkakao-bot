@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -46,7 +47,9 @@ class ModelRetryPolicyTests(unittest.TestCase):
     def isolated_generation(self, runner_kind, runner):
         """Use the real generation and circuit paths with fake external adapters."""
         m = self.module
-        primary = "opencode-test/primary"
+        # Product generation is local-only. Keep the synthetic primary local
+        # while retaining "opencode" in its id for the quota-reset branch.
+        primary = "mlx/opencode-test-primary"
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, {
                 "OPENKAKAO_MODEL_CIRCUIT_DB": str(self.root / f"{runner_kind}.sqlite3"),
@@ -244,6 +247,99 @@ class ModelRetryPolicyTests(unittest.TestCase):
                 self.assertEqual(refused["retry_at"], now + 9562)
                 self.assertIsNotNone(m._open_fallback_lease("mlx/local"))
 
+    def test_unparsed_success_is_bounded_deferral_without_circuit_failure(self):
+        m = self.module
+        now = 1800000000.0
+
+        def runner(_model, *_args, **_kwargs):
+            return 0, b"not a decision", b""
+
+        with self.isolated_generation("opencodex", runner), \
+             mock.patch.object(m.time, "time", return_value=now), \
+             mock.patch.object(m.time, "monotonic", return_value=1000.0):
+            model_result = m.generate_reply("확인했어요", [], [], [], [])
+            self.assertEqual(model_result["reason"], "unparsed_model_decision")
+            self.assertEqual(model_result["category"], "uncertain")
+            self.assertFalse(model_result["should_reply"])
+            self.assertEqual(model_result["model_failure_class"], "unparsed_output")
+            self.assertTrue(m.math.isfinite(model_result["model_defer_until"]))
+            self.assertGreater(model_result["model_defer_until"], 0.0)
+            self.assertNotIn("unparsed_output", m.MODEL_CIRCUIT_FAILURE_CLASSES)
+            self.assertIn(
+                "unparsed_output",
+                m.MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES,
+            )
+            m._publish_model_status.assert_called_with("available")
+
+            event = {
+                "event_id": "retry-policy-unparsed",
+                "message": "확인했어요",
+                "sent_at": int(now),
+                "response_window_upper_seconds": m.MIN_REPLY_DELAY_SECONDS,
+            }
+            bundle = {
+                "context": [{"evidence_id": "context:1", "message": "bounded"}],
+                "styles": [],
+                "prior_decisions": [],
+                "style_profile": {},
+                "recipient_style_profile": {},
+                "response_time": {},
+            }
+            with mock.patch.object(m, "_reply_turn_hold_reason", return_value=None), \
+                 mock.patch.object(m, "_event_recent_conversation", return_value=[]), \
+                 mock.patch.object(m, "capture_visible_image", return_value=None), \
+                 mock.patch.object(m, "fetch_link_previews", return_value=[]), \
+                 mock.patch.object(m, "run_context_reply_bundle", return_value=bundle), \
+                 mock.patch.object(m, "event_exceeds_response_window", return_value=False), \
+                 mock.patch.object(m, "_conversation_target", return_value={}), \
+                 mock.patch.object(m, "_partner_streak_hold_reason", return_value=None), \
+                 mock.patch.object(m, "generate_reply", return_value=model_result):
+                analysis = m.analyze_event(event)
+
+        self.assertEqual(analysis["model_failure_class"], "unparsed_output")
+        self.assertEqual(analysis["reason"], "unparsed_model_decision")
+        due_at = m._model_defer_due_at(event, analysis, now=now)
+        self.assertIsInstance(due_at, float)
+        self.assertTrue(m.math.isfinite(due_at))
+        response_deadline = m.response_due_at(
+            event["sent_at"],
+            event["response_window_upper_seconds"],
+            now=now,
+        )
+        self.assertLessEqual(due_at, response_deadline)
+
+        expired_now = (
+            response_deadline
+            + m.PRE_SEND_RETRY_GRACE_SECONDS
+            + m.MODEL_MIN_DEFER_SECONDS
+        )
+        self.assertTrue(
+            m._past_send_grace(
+                event,
+                event["response_window_upper_seconds"],
+                now=expired_now,
+            )
+        )
+        self.assertLessEqual(
+            m._model_defer_due_at(event, analysis, now=expired_now),
+            expired_now,
+        )
+
+    def test_legitimate_non_reply_without_failure_class_is_not_deferred(self):
+        m = self.module
+        now = 1800000000.0
+        event = {
+            "sent_at": int(now),
+            "response_window_upper_seconds": m.MIN_REPLY_DELAY_SECONDS,
+        }
+        analysis = {
+            "should_reply": False,
+            "reply": "",
+            "reason": "low_information",
+            "category": "uncertain",
+        }
+        self.assertIsNone(m._model_defer_due_at(event, analysis, now=now))
+
     def test_completed_cooldown_fallback_survives_elapsed_budget(self):
         m = self.module
         for kind in ("opencodex", "gjc"):
@@ -283,6 +379,220 @@ class ModelRetryPolicyTests(unittest.TestCase):
             self.assertEqual(result["reason"], "low_information")
             self.assertEqual(result["model"], "mlx/local")
             self.assertEqual(calls[-1], ("mlx/local", 60))
+
+    def _delivery_fixture(self, log_id, *, sent_at=None, response_window=300.0):
+        m = self.module
+        current = time.time()
+        event = {
+            "event_id": f"db:1:{log_id}",
+            "chat_id": 1,
+            "log_id": log_id,
+            "analysis_watermark_log_id": log_id,
+            "source_epoch": 1,
+            "owner_id": "owner",
+            "author_nickname": "member",
+            "message": "질문",
+            "sent_at": int(current - 5 if sent_at is None else sent_at),
+        }
+        if response_window is not ...:
+            event["response_window_upper_seconds"] = response_window
+        connection = m.transition_journal.open_queue(
+            m.QUEUE,
+            create=True,
+            expected_chat_id=None,
+        )
+        connection.execute(
+            """
+            INSERT INTO reply_jobs(
+                event_id,event_json,status,due_at,decision,reason,category,
+                reply,scheduled_delay_seconds,error_class,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event["event_id"], json.dumps(event, ensure_ascii=False), "processing",
+                None, "reply", "useful", "social", "answer", 9.5, None,
+                current - 10.0, current,
+            ),
+        )
+        connection.commit()
+        job = {
+            "event_id": event["event_id"],
+            "event_json": json.dumps(event, ensure_ascii=False),
+            "reply": "answer",
+        }
+        return event, job, connection
+
+    @contextlib.contextmanager
+    def _scheduled_delivery_patches(self, watermarks, *, preflight=None, sender=None):
+        m = self.module
+        sender = sender or mock.Mock(return_value=True)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(m, "db_authoritative_event_allowed", return_value=True))
+            stack.enter_context(mock.patch.object(m, "privacy_attestation_current", return_value=True))
+            stack.enter_context(mock.patch.object(m, "_reply_turn_hold_reason", return_value=None))
+            stack.enter_context(mock.patch.object(m, "event_exceeds_response_upper", return_value=False))
+            stack.enter_context(mock.patch.object(m, "later_self_already_replied", return_value=False))
+            stack.enter_context(mock.patch.object(m, "_constructed_geeknews_outbound", return_value=False))
+            stack.enter_context(mock.patch.object(m, "_event_recent_conversation", return_value=[]))
+            stack.enter_context(mock.patch.object(m, "_policy_valid_draft", return_value=True))
+            stack.enter_context(mock.patch.object(m, "_send_time_repeat_hold", return_value=None))
+            stack.enter_context(mock.patch.object(
+                m,
+                "pre_ax_delivery_probe",
+                return_value=preflight or {"result": "ready"},
+            ))
+            stack.enter_context(mock.patch.object(
+                m,
+                "stable_room_watermark_log_id",
+                side_effect=watermarks,
+            ))
+            stack.enter_context(mock.patch.object(m, "send_reply", sender))
+            yield sender
+
+    def test_context_freshness_unknown_defers_at_both_send_boundaries(self):
+        m = self.module
+        for offset, site in enumerate(("before_preflight", "after_preflight"), start=1):
+            with self.subTest(site=site):
+                event, job, connection = self._delivery_fixture(900 + offset)
+                watermarks = (
+                    [None]
+                    if site == "before_preflight"
+                    else [event["analysis_watermark_log_id"], None]
+                )
+                try:
+                    with self._scheduled_delivery_patches(watermarks) as sender, \
+                         mock.patch.object(m, "finish_delivery_unknown") as unknown:
+                        m.process_job(job, "scheduled", connection)
+                    sender.assert_not_called()
+                    unknown.assert_not_called()
+                    row = connection.execute(
+                        """
+                        SELECT status,due_at,reason,reply,error_class
+                        FROM reply_jobs WHERE event_id=?
+                        """,
+                        (event["event_id"],),
+                    ).fetchone()
+                    self.assertEqual(row["status"], "pending")
+                    self.assertIsNotNone(row["due_at"])
+                    self.assertEqual(row["reason"], "context_freshness_unavailable")
+                    self.assertIsNone(row["reply"])
+                    self.assertEqual(row["error_class"], "context_freshness_unavailable")
+                finally:
+                    connection.close()
+
+    def test_context_freshness_unknown_expires_as_stale_backlog(self):
+        m = self.module
+        current = time.time()
+        sent_at = current - 300.0 - m.PRE_SEND_RETRY_GRACE_SECONDS - 10.0
+        event, job, connection = self._delivery_fixture(
+            910,
+            sent_at=sent_at,
+            response_window=300.0,
+        )
+        try:
+            with self._scheduled_delivery_patches([None]) as sender, \
+                 mock.patch.object(m, "_coalesced_burst_event", side_effect=lambda value: value), \
+                 mock.patch.object(m, "durable_policy_skip", return_value=True), \
+                 mock.patch.object(m, "complete_event"), \
+                 mock.patch.object(m, "finish_delivery_unknown") as unknown:
+                m.process_job(job, "scheduled", connection)
+            sender.assert_not_called()
+            unknown.assert_not_called()
+            row = connection.execute(
+                "SELECT status,due_at,reason,reply FROM reply_jobs WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+            self.assertEqual(tuple(row), ("skipped", None, "stale_backlog", None))
+        finally:
+            connection.close()
+
+    def test_context_freshness_unknown_malformed_or_absent_window_is_bounded(self):
+        m = self.module
+        event, job, connection = self._delivery_fixture(
+            920,
+            response_window="not-a-window",
+        )
+        try:
+            with self._scheduled_delivery_patches([None]) as sender, \
+                 mock.patch.object(m, "update_context_decision", return_value=True), \
+                 mock.patch.object(m, "record_delivery_unknown"):
+                m.process_job(job, "scheduled", connection)
+            sender.assert_not_called()
+            row = connection.execute(
+                "SELECT status,due_at FROM reply_jobs WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+            self.assertEqual(tuple(row), ("delivery_unknown", None))
+        finally:
+            connection.close()
+
+        current = time.time()
+        sent_at = (
+            current
+            - m.PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS
+            - m.PRE_SEND_RETRY_GRACE_SECONDS
+            - 10.0
+        )
+        event, job, connection = self._delivery_fixture(
+            921,
+            sent_at=sent_at,
+            response_window=...,
+        )
+        try:
+            with self._scheduled_delivery_patches([None]) as sender, \
+                 mock.patch.object(m, "_coalesced_burst_event", side_effect=lambda value: value), \
+                 mock.patch.object(m, "durable_policy_skip", return_value=True), \
+                 mock.patch.object(m, "complete_event"):
+                m.process_job(job, "scheduled", connection)
+            sender.assert_not_called()
+            row = connection.execute(
+                "SELECT status,reason FROM reply_jobs WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+            self.assertEqual(tuple(row), ("skipped", "stale_backlog"))
+        finally:
+            connection.close()
+
+    def test_newer_context_requeues_and_stable_context_sends(self):
+        m = self.module
+        event, job, connection = self._delivery_fixture(930)
+        try:
+            with self._scheduled_delivery_patches([event["log_id"] + 1]) as sender, \
+                 mock.patch.object(m, "_coalesced_burst_event", side_effect=lambda value: value), \
+                 mock.patch.object(m, "durable_policy_skip", return_value=True), \
+                 mock.patch.object(m, "complete_event"):
+                m.process_job(job, "scheduled", connection)
+            sender.assert_not_called()
+            row = connection.execute(
+                "SELECT status,due_at,reason,reply,error_class FROM reply_jobs WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+            self.assertEqual(row["status"], "pending")
+            self.assertIsNotNone(row["due_at"])
+            self.assertEqual(row["reason"], "conversation_context_changed")
+            self.assertIsNone(row["reply"])
+            self.assertEqual(row["error_class"], "conversation_context_changed")
+        finally:
+            connection.close()
+
+        event, job, connection = self._delivery_fixture(931)
+        sender = mock.Mock(return_value=True)
+        try:
+            with self._scheduled_delivery_patches(
+                [event["log_id"], event["log_id"]], sender=sender
+            ), \
+                 mock.patch.object(m, "update_context_decision", return_value=True), \
+                 mock.patch.object(m, "record_delivery_ledger"), \
+                 mock.patch.object(m, "complete_event"):
+                m.process_job(job, "scheduled", connection)
+            sender.assert_called_once()
+            row = connection.execute(
+                "SELECT status FROM reply_jobs WHERE event_id=?",
+                (event["event_id"],),
+            ).fetchone()
+            self.assertEqual(row["status"], "sent")
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":

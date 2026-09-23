@@ -10,6 +10,7 @@ for the separately installed session monitor.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -46,6 +47,16 @@ MAX_ROOMS = 32
 MAX_ASSET_BYTES = 256 * 1024 * 1024
 MAX_CONFIG_BYTES = 1024 * 1024
 RELEASE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+RUNTIME_ENTRY_SCRIPT_NAMES = (
+    "auto-reply-service.py",
+    "auto-reply-session-monitor.py",
+    "auto-reply-supervisor.py",
+    "auto-reply-db-watch.py",
+    "auto-reply-worker.py",
+    "auto-reply-rerank.py",
+    "auto-reply-apple-watch.py",
+    "auto-reply-tui.py",
+)
 RUNTIME_SCRIPT_NAMES = (
     "auto-reply-service.py",
     "auto-reply-session-monitor.py",
@@ -53,7 +64,13 @@ RUNTIME_SCRIPT_NAMES = (
     "auto-reply-db-watch.py",
     "auto-reply-worker.py",
     "auto-reply-rerank.py",
+    "auto_reply_knowledge_graph.py",
+    "auto_reply_ondevice.py",
+    "auto_reply_reference_search.py",
+    "auto_reply_reference_store.py",
     "auto_reply_transition_journal.py",
+    "jarvis_abort.py",
+    "local_mlx_gateway.py",
     "auto-reply-apple-watch.py",
     "auto_reply_ax_ui.py",
     "auto_reply_metrics.py",
@@ -64,6 +81,62 @@ RUNTIME_DATA_NAMES = ("auto-reply-schema.json",)
 
 class PackagingError(RuntimeError):
     pass
+
+
+def import_closure(scripts_dir: Path, entry_names: Iterable[str]) -> set[str]:
+    """Return local Python module names reachable from the runtime entries."""
+    local_modules = {
+        path.stem: path
+        for path in scripts_dir.iterdir()
+        if path.suffix == ".py" and path.is_file()
+    }
+    pending = [Path(name).stem for name in entry_names]
+    missing_entries = sorted(name for name in pending if name not in local_modules)
+    if missing_entries:
+        raise PackagingError(
+            "runtime import entry is missing: "
+            + ", ".join(f"{name}.py" for name in missing_entries)
+        )
+
+    closure: set[str] = set()
+    while pending:
+        module_name = pending.pop()
+        if module_name in closure:
+            continue
+        path = local_modules[module_name]
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError) as exc:
+            raise PackagingError(f"cannot inspect runtime imports in {path.name}: {exc}") from exc
+        closure.add(module_name)
+
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(
+                    alias.name.split(".", 1)[0]
+                    for alias in node.names
+                    if alias.name.split(".", 1)[0] in local_modules
+                )
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module
+                and node.module.split(".", 1)[0] in local_modules
+            ):
+                imported.add(node.module.split(".", 1)[0])
+        pending.extend(sorted(imported - closure))
+    return closure
+
+
+def runtime_import_gaps(
+    scripts_dir: Path,
+    prepared_names: Iterable[str],
+    entry_names: Iterable[str] = RUNTIME_ENTRY_SCRIPT_NAMES,
+) -> set[str]:
+    """Return runtime-local imports omitted from the explicit copy list."""
+    prepared_modules = {Path(name).stem for name in prepared_names}
+    return import_closure(scripts_dir, entry_names) - prepared_modules
 
 
 def _sha256(path: Path) -> str:
@@ -434,6 +507,14 @@ def stage_runtime(
     python = _owned_source(python, executable=True, allow_homebrew_python_keg=True)
     config = _owned_source(config, maximum_bytes=MAX_CONFIG_BYTES)
     validated_config_sha256 = _config_selectors(config, selectors)
+    missing_runtime_modules = runtime_import_gaps(source_dir, RUNTIME_SCRIPT_NAMES)
+    if missing_runtime_modules:
+        raise PackagingError(
+            "runtime script copy list is missing local import modules: "
+            + ", ".join(
+                f"{name}.py" for name in sorted(missing_runtime_modules)
+            )
+        )
 
     # Configuration and every immutable input are validated before creating
     # even the private state/runtime directories. A selector mismatch is a

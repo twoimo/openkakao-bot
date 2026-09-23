@@ -9,6 +9,7 @@ catalog mutate and browser OAuth onto that surface.
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import fcntl
 import io
 import json
@@ -27,6 +28,35 @@ from typing import Any
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from local_mlx_model_readiness import (
+    RESIDENT_MODEL_ID as JARVIS_RESIDENT_MODEL_ID,
+    SWAP_MODEL_ID as JARVIS_SWAP_MODEL_ID,
+    canonical_fixed_local_mlx_model_id,
+    read_fixed_local_mlx_readiness,
+    resolve_fixed_local_mlx_catalog_model,
+)
+from auto_reply_ondevice import (
+    FLASH_NEXT_MODEL_ID,
+    MLX_GATEWAY_BASE_URL,
+    QWEN38_27B_MODEL_ID,
+    QWEN38_27B_REQUIRED_BYTES,
+    HttpMlxModelGateway,
+    ManagedModelResidency,
+    MemoryBudget,
+    ModelResidencyManager,
+    ModelSwapCommitError,
+    detect_memory_budget,
+    managed_residency_status,
+    read_managed_model_residency,
+    write_managed_model_residency,
+)
+from mlx_serve_lifecycle import (
+    MlxLaunchSpec,
+    launch_app_owned_server,
+    ownership_status,
+    stop_app_owned_server,
+)
 
 _FROZEN = Path(__file__).resolve().with_name(
     "_auto_reply_menubar_wrapper.cpython-311.pyc"
@@ -113,6 +143,15 @@ def _default_state_root() -> Path:
 
 
 _DEFAULT_STATE_ROOT = _default_state_root()
+_DREAM_RSI_CHECKPOINT_NAME = "dream-rsi-policy.json"
+_DREAM_RSI_CHECKPOINT_SCHEMA_VERSION = 2
+_DREAM_RSI_CHECKPOINT_MAX_BYTES = 64 * 1024
+MODEL_SWAP_OPT_IN = "qwen38-27b-explicit-v1"
+MODEL_SWAP_CANCEL_DIR = "model-swap-cancel"
+MODEL_SWAP_REQUEST_TOKEN_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
 OAUTH_KNOWN_RE = re.compile(
     r"Known:\s*([A-Za-z0-9][A-Za-z0-9._,\s-]*)",
     re.IGNORECASE,
@@ -139,7 +178,7 @@ PROVIDER_ACTIONS = frozenset(
         "provider-oauth-login",
     }
 )
-DEFAULT_IMAGE_REPLY_MODEL = "google-antigravity/gemini-3.7-flash-tiered"
+DEFAULT_IMAGE_REPLY_MODEL = QWEN38_27B_MODEL_ID
 IMAGE_MODEL_ACTIONS = frozenset({"image-model-set"})
 FALLBACK_MODEL_ACTIONS = frozenset({"fallback-models-set"})
 MAX_REPLY_FALLBACK_MODELS = 6
@@ -147,9 +186,7 @@ REPLY_MODEL_FALLBACKS_NAME = "reply-model-fallbacks.json"
 # 사용자가 아무것도 고르지 않았을 때 쓰는 내장 폴백 사슬. 워커도 같은 순서를
 # 쓴다(scripts/auto-reply-worker.py: DEFAULT_REPLY_FALLBACK_MODELS).
 DEFAULT_REPLY_FALLBACK_MODELS: tuple[str, ...] = (
-    "google-antigravity/gemini-3.8-flash",
-    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
-    "google-antigravity/gemini-3.7-flash-tiered",
+    FLASH_NEXT_MODEL_ID,
 )
 _WRAPPER_ONLY_FLAGS.update(_CATALOG_MUTATE_FLAGS)
 
@@ -270,6 +307,22 @@ def _image_model_override_path(state_root: Path) -> Path:
     return Path(state_root) / "reply-image-model.json"
 
 
+def _local_reply_model_allowed(model: Any) -> bool:
+    """Return whether product generation may use *model* without cloud access."""
+
+    value = str(model or "").strip()
+    folded = value.casefold()
+    if not value or "gemma" in folded:
+        return False
+    return canonical_fixed_local_mlx_model_id(value) is not None or folded.startswith(
+        ("omlx/", "mlx/")
+    )
+
+
+def _qwen38_27b_image_model(model: Any) -> bool:
+    return canonical_fixed_local_mlx_model_id(model) == JARVIS_SWAP_MODEL_ID
+
+
 def _read_image_reply_model(state_root: Path) -> tuple[str, str]:
     path = _image_model_override_path(state_root)
     try:
@@ -278,8 +331,8 @@ def _read_image_reply_model(state_root: Path) -> tuple[str, str]:
         raw = None
     if isinstance(raw, dict):
         model = str(raw.get("model") or "").strip()
-        if model:
-            return model, "override"
+        if _qwen38_27b_image_model(model):
+            return DEFAULT_IMAGE_REPLY_MODEL, "override"
     return DEFAULT_IMAGE_REPLY_MODEL, "default"
 
 def _current_reply_model_id(state_root: Path) -> str:
@@ -293,25 +346,14 @@ def _current_reply_model_id(state_root: Path) -> str:
 
 
 def _reply_model_sees_images(model: str) -> bool:
-    folded = str(model or "").casefold()
-    if not folded:
+    if _qwen38_27b_image_model(model):
+        return True
+    if not _local_reply_model_allowed(model):
         return False
+    folded = str(model or "").casefold()
     if any(token in folded for token in ("-vl", "/vl", "vision", "omni", "pixtral")):
         return True
-    if folded.startswith("omlx/"):
-        return False
-    return any(
-        token in folded
-        for token in (
-            "gemini",
-            "gpt-4o",
-            "gpt-4.1",
-            "gpt-5",
-            "claude",
-            "sonnet",
-            "opus",
-        )
-    )
+    return False
 
 
 def _image_model_enabled(state_root: Path) -> bool:
@@ -921,6 +963,56 @@ def _argv_flag_value(flag: str) -> str:
     return ""
 
 
+def _knowledge_graph_focus_payload(
+    *,
+    state_root: Path,
+    query_text: str,
+    node_id: str = "",
+    chat_id: str = "",
+) -> dict[str, Any]:
+    """Return the GraphRAG bundle for one clicked knowledge-graph node.
+
+    This path only reads the existing knowledge-graph store. It deliberately
+    does not call collect_knowledge_graph(), so a neuron click cannot start a
+    reindex or touch the live Kakao database snapshot path.
+    """
+    query = str(query_text or "").strip()
+    selected_id = str(node_id or "").strip()
+    room = str(chat_id or "").strip()
+    if not query and not selected_id:
+        return {
+            "ok": False,
+            "query": "",
+            "chat_id": room,
+            "facts": [],
+            "fact_count": 0,
+            "focus_node_id": "",
+            "focus_k": 0,
+            "reason": "knowledge_graph_focus_query_missing",
+        }
+    try:
+        from auto_reply_knowledge_graph import retrieve_knowledge_bundle
+
+        bundle = retrieve_knowledge_bundle(
+            query or selected_id,
+            state_root=state_root,
+            chat_id=room or None,
+            also=[selected_id] if selected_id else None,
+        )
+        return {"ok": True, **bundle}
+    except Exception as exc:  # click drill-down must stay fail-closed
+        return {
+            "ok": False,
+            "query": query or selected_id,
+            "chat_id": room,
+            "facts": [],
+            "fact_count": 0,
+            "focus_node_id": "",
+            "focus_k": 0,
+            "reason": str(exc) or "knowledge_graph_focus_unavailable",
+        }
+
+
 def _strip_argv_flags(flags: tuple[str, ...]) -> None:
     kept: list[str] = []
     index = 0
@@ -1350,11 +1442,11 @@ def _normalize_fallback_model(value: Any) -> str:
 
 
 def _fallback_allowed_model_ids(state_root: Path) -> set[str]:
-    """Every model id the model-settings popups can show, plus the built-ins.
+    """Local model ids the model-settings popups can show, plus the built-ins.
 
-    The fallback chain saves model ids, so its save gate reads the same
-    display/save single source as set_reply_model and set_image_reply_model
-    (2026-09-15).
+    Catalogs can still contain legacy cloud providers. They remain available to
+    older read-only surfaces, but the product fallback chain must never persist
+    or automatically select them.
     """
 
     allowed: set[str] = set(DEFAULT_REPLY_FALLBACK_MODELS)
@@ -1367,21 +1459,24 @@ def _fallback_allowed_model_ids(state_root: Path) -> set[str]:
         custom_providers = []
     for provider in custom_providers or []:
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for provider in _global_catalog_providers(state_root=state_root):
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for provider in _displayed_reply_providers(state_root):
         for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed.add(str(item["id"]))
+            model = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if _local_reply_model_allowed(model):
+                allowed.add(model)
     for model in (
         _current_reply_model_id(state_root),
         _read_image_reply_model(state_root)[0],
     ):
-        if model:
+        if _local_reply_model_allowed(model):
             allowed.add(model)
     return allowed
 
@@ -1391,8 +1486,9 @@ def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
 
     An empty saved list is not the same as "nothing saved": it means the
     operator wants no fallback at all, so the primary model's limit ends the
-    turn instead of silently switching models (2026-09-15). A file whose
-    entries are all invalid is treated as missing rather than as "no fallback".
+    turn instead of silently switching models (2026-09-15). Legacy cloud-only
+    files also become an explicit empty chain instead of restoring a default
+    that could mask the rejected setting.
     """
 
     path = _reply_model_fallbacks_path(state_root)
@@ -1408,12 +1504,15 @@ def read_reply_model_fallbacks(state_root: Path) -> tuple[list[str], str]:
             cleaned: list[str] = []
             for item in models:
                 model = _normalize_fallback_model(item)
-                if model and model not in cleaned:
+                if (
+                    model
+                    and _local_reply_model_allowed(model)
+                    and model not in cleaned
+                ):
                     cleaned.append(model)
                 if len(cleaned) >= MAX_REPLY_FALLBACK_MODELS:
                     break
-            if cleaned or not models:
-                return cleaned, "override"
+            return cleaned, "override"
     return list(DEFAULT_REPLY_FALLBACK_MODELS), "default"
 
 
@@ -1499,7 +1598,10 @@ def set_reply_model_fallbacks(
     # 미등록 ID만 막는다 — 목록이 바뀌었다고 기존 사슬을 고칠 수 없으면
     # 사용자가 빠져나갈 수 없다(2026-09-15).
     blocked = [
-        model for model in wanted if model not in allowed and model not in saved_now
+        model
+        for model in wanted
+        if not _local_reply_model_allowed(model)
+        or (model not in allowed and model not in saved_now)
     ]
     if blocked:
         return {
@@ -1508,7 +1610,7 @@ def set_reply_model_fallbacks(
             "privacy": "content_redacted",
             "reason": "model_not_in_catalog",
             "warnings": [
-                "등록되지 않은 모델은 폴백으로 쓸 수 없습니다: " + ", ".join(blocked)
+                "등록된 로컬 모델만 폴백으로 쓸 수 있습니다: " + ", ".join(blocked)
             ],
         }
     # 답변 모델과 같은 모델을 폴백에 넣으면 그 칸은 아무 일도 하지 않는다.
@@ -1566,7 +1668,7 @@ def set_reply_model(
     del fetcher
     _ignored = dict(allow_fetch=False)
     del _ignored
-    wanted = str(model or "").strip()
+    requested = str(model or "").strip()
     agent_models_path = _gjc_agent_dir(state_root) / "models.yml"
     custom_providers = _parse_custom_models_yml(agent_models_path) or _parse_custom_models_yml(state_root / "models.yml")
     allowed_model_ids = {
@@ -1588,7 +1690,10 @@ def set_reply_model(
         for item in provider.get("models") or []:
             if isinstance(item, dict) and item.get("id"):
                 allowed_model_ids.add(str(item["id"]))
-    if wanted in allowed_model_ids:
+    local_wanted = resolve_fixed_local_mlx_catalog_model(requested, allowed_model_ids)
+    wanted = local_wanted or requested
+    allowed = local_wanted is not None or requested in allowed_model_ids
+    if allowed:
         import time as _time
         stamp = _time.time() if now is None else float(now)
         override_path = _reply_model_override_path(state_root)
@@ -1633,6 +1738,17 @@ def set_reply_model(
             "needs_prepare": wanted.startswith("omlx/"),
             "warnings": [prepare_warning] if prepare_warning else [],
         }
+    # Fixed local IDs must remain on the prefixless Jarvis contract. Do not
+    # fall through to a broader legacy resolver that could persist an mlx/
+    # alias or reinterpret a fixed local request as a remote model.
+    if canonical_fixed_local_mlx_model_id(requested) is not None:
+        return {
+            "ok": False,
+            "action": "model-set",
+            "privacy": "content_redacted",
+            "reason": "model_not_in_catalog",
+            "warnings": ["등록되지 않은 모델은 답변 모델로 쓸 수 없습니다."],
+        }
     return _orig_set_reply_model(state_root, model, now=now, fetcher=None)
 
 def set_image_reply_model(
@@ -1650,33 +1766,16 @@ def set_image_reply_model(
             "reason": "image_model_unused",
             "warnings": ["현재 답변 모델이 이미지를 직접 처리합니다."],
         }
-    wanted = str(model or "").strip() or DEFAULT_IMAGE_REPLY_MODEL
-    allowed_model_ids = {DEFAULT_IMAGE_REPLY_MODEL}
-    agent_models_path = _gjc_agent_dir(state_root) / "models.yml"
-    custom_providers = _parse_custom_models_yml(agent_models_path) or _parse_custom_models_yml(
-        state_root / "models.yml"
-    )
-    for provider in custom_providers:
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    for provider in _global_catalog_providers(state_root=state_root):
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    # Same display/save single-source as set_reply_model above.
-    for provider in _displayed_reply_providers(state_root):
-        for item in provider.get("models") or []:
-            if isinstance(item, dict) and item.get("id"):
-                allowed_model_ids.add(str(item["id"]))
-    if wanted not in allowed_model_ids:
+    requested = str(model or "").strip() or DEFAULT_IMAGE_REPLY_MODEL
+    if not _qwen38_27b_image_model(requested):
         return {
             "ok": False,
             "action": "image-model-set",
             "privacy": "content_redacted",
-            "reason": "model_not_in_catalog",
-            "warnings": ["등록된 프로바이더 모델만 이미지 처리에 쓸 수 있습니다."],
+            "reason": "image_model_local_only",
+            "warnings": ["이미지 처리는 로컬 Qwen3.8 27B 모델만 사용할 수 있습니다."],
         }
+    wanted = DEFAULT_IMAGE_REPLY_MODEL
     stamp = time.time() if now is None else float(now)
     try:
         _atomic_write_json(
@@ -1820,14 +1919,43 @@ if callable(_orig_reply_model_payload):
 
 
 def prepare_reply_model(state_root: Path, model: str):
-    """Resident-load the model without touching the saved selection.
+    """Prepare legacy models or read fixed Jarvis readiness without saving.
 
     The recheck path used to call ``model-set`` to prepare, which first saves
     the model. A stale recheck could then overwrite a newer selection. This
-    action only prepares, so verification never writes (2026-09-12).
+    action never writes the selection. The fixed Jarvis 27B path is GET-only
+    readiness verification and never initiates a model load (2026-09-21).
     """
 
-    wanted = str(model or "").strip()
+    requested = str(model or "").strip()
+    local_wanted = canonical_fixed_local_mlx_model_id(requested)
+    if local_wanted == JARVIS_RESIDENT_MODEL_ID:
+        return {
+            "ok": False,
+            "action": "model-prepare",
+            "privacy": "content_redacted",
+            "model": JARVIS_RESIDENT_MODEL_ID,
+            "needs_prepare": False,
+            "prepared": False,
+            "reason": "model_prepare_not_allowed",
+            "warnings": ["Flash-Next는 27B 준비 확인 대상으로 사용할 수 없습니다."],
+        }
+    if local_wanted == JARVIS_SWAP_MODEL_ID:
+        readiness = read_fixed_local_mlx_readiness(local_wanted)
+        return {
+            "ok": readiness.prepared,
+            "action": "model-prepare",
+            "privacy": "content_redacted",
+            "model": JARVIS_SWAP_MODEL_ID,
+            "needs_prepare": not readiness.prepared,
+            "prepared": readiness.prepared,
+            "reason": readiness.reason,
+            "warnings": []
+            if readiness.prepared
+            else ["27B는 localhost MLX gateway에서 loaded/ready로 확인되지 않았습니다."],
+        }
+
+    wanted = requested
     needs_prepare = wanted.startswith("omlx/")
     prepared = _ensure_omlx_model_resident(wanted) if needs_prepare else True
     return {
@@ -1839,6 +1967,234 @@ def prepare_reply_model(state_root: Path, model: str):
         "prepared": prepared,
         "warnings": [] if prepared else ["모델 준비를 확인하지 못했습니다."],
     }
+
+
+def _model_swap_result(
+    *,
+    ok: bool,
+    stage: str,
+    reason: str,
+    stages: list[str] | tuple[str, ...] = (),
+    stored: bool = False,
+    prepared: bool = False,
+) -> dict[str, Any]:
+    """Return the intentionally tiny model-swap IPC envelope."""
+
+    return {
+        "ok": bool(ok),
+        "action": "model-swap",
+        "model": JARVIS_SWAP_MODEL_ID,
+        "stage": str(stage or "failed")[:32],
+        "reason": str(reason or "model_swap_failed")[:96],
+        "stages": [str(item)[:32] for item in list(stages)[:12]],
+        "stored": bool(stored),
+        "prepared": bool(prepared),
+    }
+
+
+def _model_swap_cancelled(state_root: Path, request_token: str) -> bool:
+    path = Path(state_root) / MODEL_SWAP_CANCEL_DIR / f"{request_token}.json"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024:
+            return path.exists()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return not isinstance(payload, dict) or payload.get("cancelled") is True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return True
+
+
+def swap_reply_model(
+    state_root: Path,
+    model: str,
+    *,
+    explicit_opt_in: str,
+    request_token: str,
+    residency_probe=None,
+    memory_probe=None,
+    gateway_factory=None,
+    persist_residency=None,
+    cancel_check=None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Run the one fixed, user-initiated 27B swap or fail closed before mutation."""
+
+    root = Path(state_root)
+    requested = canonical_fixed_local_mlx_model_id(model)
+    if requested != JARVIS_SWAP_MODEL_ID:
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_not_allowed"
+        )
+    token = str(request_token or "").strip().lower()
+    if (
+        str(explicit_opt_in or "").strip() != MODEL_SWAP_OPT_IN
+        or MODEL_SWAP_REQUEST_TOKEN_RE.fullmatch(token) is None
+    ):
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="explicit_opt_in_required"
+        )
+
+    # Serialize the entire read/modify/persist transaction across IPC children.
+    # This lock does not attest or drain gateway requests; the owner gate below
+    # must already have that independent evidence.
+    try:
+        descriptor = os.open(root / "mlx-model-swap.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return _model_swap_result(ok=False, stage="aborted", reason="model_owner_unknown")
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return _model_swap_result(ok=False, stage="aborted", reason="model_swap_busy")
+        return _swap_reply_model_locked(
+            root, token, residency_probe=residency_probe, memory_probe=memory_probe,
+            gateway_factory=gateway_factory, persist_residency=persist_residency,
+            cancel_check=cancel_check, now=now,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _swap_reply_model_locked(
+    root: Path, token: str, *, residency_probe, memory_probe,
+    gateway_factory, persist_residency, cancel_check, now,
+) -> dict[str, Any]:
+    probe = residency_probe or read_managed_model_residency
+    try:
+        residency = probe(root)
+    except Exception:
+        residency = ManagedModelResidency(
+            None, (), 0, False, False, "model_owner_unknown"
+        )
+    if not isinstance(residency, ManagedModelResidency) or not residency.owner_verified:
+        reason = (
+            residency.reason
+            if isinstance(residency, ManagedModelResidency)
+            and residency.reason.startswith("model_")
+            else "model_owner_unknown"
+        )
+        return _model_swap_result(ok=False, stage="aborted", reason=reason)
+    if (
+        residency.current_model is None
+        or residency.current_model not in residency.owned_models
+    ):
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_owner_unknown"
+        )
+    if not residency.drain_verified:
+        return _model_swap_result(
+            ok=False, stage="aborted", reason="model_drain_unverified"
+        )
+
+    cancelled = cancel_check or (lambda: _model_swap_cancelled(root, token))
+    try:
+        if cancelled():
+            return _model_swap_result(
+                ok=False, stage="aborted", reason="cancelled"
+            )
+    except Exception:
+        return _model_swap_result(ok=False, stage="aborted", reason="cancelled")
+
+    make_gateway = gateway_factory or (
+        lambda: HttpMlxModelGateway(base_url=MLX_GATEWAY_BASE_URL, timeout=15.0)
+    )
+    try:
+        gateway = make_gateway()
+    except Exception:
+        return _model_swap_result(
+            ok=False, stage="failed", reason="model_gateway_unavailable"
+        )
+
+    read_memory = memory_probe or detect_memory_budget
+
+    def budget() -> MemoryBudget:
+        measured = read_memory()
+        if not isinstance(measured, MemoryBudget):
+            raise RuntimeError("memory_budget_unavailable")
+        return MemoryBudget(
+            free_bytes=measured.free_bytes,
+            kv_cache_bytes=measured.kv_cache_bytes + residency.kv_cache_bytes,
+            voice_models_bytes=(
+                measured.voice_models_bytes + residency.voice_models_bytes
+            ),
+            other_resident_bytes=(
+                measured.other_resident_bytes + residency.other_resident_bytes
+            ),
+        )
+
+    manager = ModelResidencyManager(
+        gateway,
+        current_model=residency.current_model,
+        owned_models=residency.owned_models,
+        memory_budget=budget,
+        required_bytes={QWEN38_27B_MODEL_ID: QWEN38_27B_REQUIRED_BYTES},
+        cancel_check=cancelled,
+    )
+    persist = persist_residency or write_managed_model_residency
+
+    def persist_manager_state() -> bool:
+        snapshot = ManagedModelResidency(
+            manager.current_model,
+            tuple(sorted(manager.owned_models)),
+            residency.owner_pid,
+            True,
+            True,
+            "ready",
+            residency.kv_cache_bytes,
+            residency.voice_models_bytes,
+            residency.other_resident_bytes,
+        )
+        try:
+            persist(
+                root,
+                snapshot,
+                accepting_requests=False,
+                in_flight=0,
+                updated_at=time.time() if now is None else float(now),
+            )
+            return True
+        except Exception:
+            return False
+
+    def commit_selection(_manager: ModelResidencyManager) -> None:
+        if not persist_manager_state():
+            raise ModelSwapCommitError("model_state_write_failed")
+        if manager._is_cancelled():
+            raise ModelSwapCommitError("cancelled")
+        try:
+            _atomic_write_json(
+                _reply_model_override_path(root),
+                {
+                    "schema_version": 1,
+                    "model": JARVIS_SWAP_MODEL_ID,
+                    "updated_at": int(time.time() if now is None else float(now)),
+                },
+            )
+        except OSError as exc:
+            raise ModelSwapCommitError("model_override_write_failed") from exc
+
+    result = manager.swap(
+        QWEN38_27B_MODEL_ID, allow_27b=True, drain_timeout=30.0,
+        commit=commit_selection,
+    )
+    if not result.ok:
+        # Do not refresh an untouched ownership/drain attestation on preflight
+        # failure. After mutation, record restored or explicitly unknown state.
+        if "unload" in result.stages or "load" in result.stages:
+            persist_manager_state()
+        return _model_swap_result(
+            ok=False,
+            stage=result.stage.value,
+            reason=result.reason,
+            stages=result.stages,
+        )
+    return _model_swap_result(
+        ok=True,
+        stage=result.stage.value,
+        reason=result.reason,
+        stages=result.stages,
+        stored=True,
+        prepared=True,
+    )
 
 
 def add_api_provider(
@@ -1885,6 +2241,294 @@ def add_api_provider(
     return res
 
 
+def _dream_rsi_status_payload(state_root: Path) -> dict[str, Any]:
+    """Read only the DREAM-RSI checkpoint for the settings status card."""
+
+    def _unavailable(status: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "status": status,
+            "selected_policy": None,
+            "gold_rows": 0,
+            "excluded_model_gold": 0,
+            "gold_source_policy": "unknown",
+        }
+
+    path = state_root / _DREAM_RSI_CHECKPOINT_NAME
+    try:
+        if path.is_symlink():
+            return _unavailable("invalid")
+        if not path.is_file():
+            return _unavailable("missing")
+        size = path.stat().st_size
+        if size <= 0 or size > _DREAM_RSI_CHECKPOINT_MAX_BYTES:
+            return _unavailable("invalid")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return _unavailable("invalid")
+
+    if not isinstance(payload, dict):
+        return _unavailable("invalid")
+    if payload.get("schema_version") != _DREAM_RSI_CHECKPOINT_SCHEMA_VERSION:
+        return _unavailable("invalid")
+
+    status = str(payload.get("status") or "").strip()
+    if status not in {"evaluated", "insufficient_data"}:
+        return _unavailable("invalid")
+
+    selected = str(payload.get("selected_policy") or "").strip()
+    if len(selected) > 80:
+        return _unavailable("invalid")
+    if status == "evaluated":
+        evaluations = payload.get("evaluations")
+        selected_eval = evaluations.get(selected) if isinstance(evaluations, dict) else None
+        if not selected or not isinstance(selected_eval, dict) or selected_eval.get("status") != "evaluated":
+            return _unavailable("invalid")
+    elif selected:
+        return _unavailable("invalid")
+
+    gold_rows = payload.get("gold_rows")
+    excluded_model_gold = payload.get("excluded_model_gold")
+    if isinstance(gold_rows, bool) or not isinstance(gold_rows, int) or gold_rows < 0:
+        return _unavailable("invalid")
+    if (
+        isinstance(excluded_model_gold, bool)
+        or not isinstance(excluded_model_gold, int)
+        or excluded_model_gold < 0
+    ):
+        return _unavailable("invalid")
+
+    gold_source_policy = str(payload.get("gold_source_policy") or "").strip()
+    if gold_source_policy not in {"human_only", "human_and_model"}:
+        return _unavailable("invalid")
+
+    return {
+        "ok": True,
+        "status": status,
+        "selected_policy": selected or None,
+        "gold_rows": gold_rows,
+        "excluded_model_gold": excluded_model_gold,
+        "gold_source_policy": gold_source_policy,
+    }
+
+
+_TOOL_STATE_ROOT_MAX_BYTES = 4096
+_TOOL_BROWSER_TASK_LIMIT_BYTES = 16 * 1024
+_TOOL_BROWSER_FALLBACK = {
+    "ok": False,
+    "status": "failed",
+    "errorCode": "browser_runtime_unavailable",
+    "result": "",
+}
+_TOOL_BROWSER_STATUSES = frozenset({"completed", "aborted", "rejected", "failed"})
+_TOOL_BROWSER_ERROR_CODES = frozenset(
+    {
+        "",
+        "global_abort",
+        "job_id_invalid",
+        "browser_task_invalid",
+        "browser_task_too_large",
+        "browser_job_failed",
+        "browser_result_invalid",
+        "browser_result_too_large",
+    }
+)
+
+
+def _tool_browser_error(error_code: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "rejected",
+        "errorCode": error_code,
+        "result": "",
+    }
+
+
+def _read_tool_browser_task(stream: Any = None) -> tuple[str | None, dict[str, Any] | None]:
+    """Read one browser task from bounded binary stdin, never from argv."""
+
+    source = stream if stream is not None else getattr(sys.stdin, "buffer", None)
+    if source is None:
+        return None, _tool_browser_error("browser_task_invalid")
+    try:
+        raw = source.read(_TOOL_BROWSER_TASK_LIMIT_BYTES + 1)
+    except (AttributeError, OSError, ValueError):
+        return None, _tool_browser_error("browser_task_invalid")
+    if not isinstance(raw, (bytes, bytearray)):
+        return None, _tool_browser_error("browser_task_invalid")
+    if len(raw) > _TOOL_BROWSER_TASK_LIMIT_BYTES:
+        return None, _tool_browser_error("browser_task_too_large")
+    try:
+        task = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return None, _tool_browser_error("browser_task_invalid")
+    if not task.strip() or "\x00" in task:
+        return None, _tool_browser_error("browser_task_invalid")
+    return task, None
+
+
+def _tool_state_root(value: str) -> Path | None:
+    raw = value or str(_DEFAULT_STATE_ROOT)
+    try:
+        if "\x00" in raw or len(raw.encode("utf-8")) > _TOOL_STATE_ROOT_MAX_BYTES:
+            return None
+    except UnicodeEncodeError:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else None
+
+
+async def _tool_browser_payload(
+    *, state_root_raw: str, job_id: str, task: str
+) -> dict[str, Any]:
+    """Run one owned-browser job and expose only the redacted bridge envelope."""
+
+    state_root = _tool_state_root(state_root_raw)
+    if state_root is None:
+        return {
+            "ok": False,
+            "status": "rejected",
+            "errorCode": "state_root_invalid",
+            "result": "",
+        }
+    try:
+        from jarvis_tool_runtime import (
+            MAX_TOOL_RESULT_BYTES,
+            BrowserToolJob,
+            JarvisToolRuntime,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return dict(_TOOL_BROWSER_FALLBACK)
+
+    try:
+        outcome = await JarvisToolRuntime(state_root).run_browser(
+            BrowserToolJob(job_id=job_id, task=task)
+        )
+    except (ImportError, ModuleNotFoundError):
+        return dict(_TOOL_BROWSER_FALLBACK)
+    except Exception:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+
+    status = getattr(getattr(outcome, "status", None), "value", "")
+    error_code = getattr(outcome, "error_code", "")
+    result = getattr(outcome, "result", "")
+    ok = getattr(outcome, "ok", False) is True
+    if status not in _TOOL_BROWSER_STATUSES or error_code not in _TOOL_BROWSER_ERROR_CODES:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+    if not isinstance(result, str):
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_result_invalid",
+            "result": "",
+        }
+    try:
+        result_bytes = len(result.encode("utf-8"))
+    except UnicodeEncodeError:
+        result_bytes = MAX_TOOL_RESULT_BYTES + 1
+    if result_bytes > MAX_TOOL_RESULT_BYTES:
+        return {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_result_too_large",
+            "result": "",
+        }
+    if not ok or status != "completed" or error_code:
+        return {
+            "ok": False,
+            "status": status,
+            "errorCode": error_code or "browser_job_failed",
+            "result": "",
+        }
+    return {"ok": True, "status": status, "errorCode": "", "result": result}
+
+
+_MLX_LIFECYCLE_ACTIONS = frozenset({"mlx-server-launch", "mlx-server-stop"})
+# The app-owned server may only be started from the signed MLX Core bundle that
+# already ships on this machine, serving one of the two fixed local models.
+_MLX_APP_OWNED_BINARY = Path("/Applications/MLX Core.app/Contents/MacOS/mlx-serve")
+_MLX_APP_OWNED_MODELS_DIR = Path.home() / ".mlx-serve" / "models"
+
+
+def _menubar_state_root() -> Path:
+    state_raw = _argv_flag_value("--state-root")
+    return Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+
+
+def _mlx_app_owned_model_dir(model_id: str | None) -> Path | None:
+    """Resolve one of the two fixed local models to its on-disk directory."""
+
+    name = str(model_id or "").strip()
+    if name.startswith("mlx/"):
+        name = name[4:]
+    allowed = {
+        FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
+        QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
+    }
+    if name not in allowed:
+        return None
+    return _MLX_APP_OWNED_MODELS_DIR / name
+
+
+def _mlx_app_owned_spec(state_root: Path, model_id: str | None) -> MlxLaunchSpec | None:
+    """Build the only launch spec the menu-bar app is allowed to own."""
+
+    resident = _mlx_app_owned_model_dir(model_id)
+    if resident is None:
+        return None
+    return MlxLaunchSpec(
+        executable=_MLX_APP_OWNED_BINARY,
+        resident_model_dir=resident,
+        models_dir=_MLX_APP_OWNED_MODELS_DIR,
+        log_path=state_root / "mlx-app-owned-server.log",
+    )
+
+
+def _mlx_server_status_payload(state_root: Path) -> dict:
+    """Read-only owner report; a probe failure never crashes the settings pane."""
+
+    try:
+        return ownership_status(state_root)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "action": "mlx-server-status",
+            "owner_state": "state_invalid",
+            "app_owned": False,
+            "model": None,
+            "reason": str(exc) or "mlx_server_status_unavailable",
+        }
+
+
+def _mlx_lifecycle_payload(action: str, state_root: Path) -> dict:
+    """Launch or stop the app-owned server; a foreign server is never touched.
+
+    Both actions are gated behind an explicit --explicit-opt-in flag because
+    they start or stop a resident model process.  The launch path can only
+    name the signed MLX Core bundle and the two fixed local models, so the
+    request surface stays bounded and auditable.
+    """
+
+    if "--explicit-opt-in" not in sys.argv:
+        return {"ok": False, "action": action, "reason": "explicit_opt_in_required"}
+    if action == "mlx-server-stop":
+        return stop_app_owned_server(state_root).report()
+    spec = _mlx_app_owned_spec(state_root, _argv_flag_value("--model"))
+    if spec is None:
+        return {"ok": False, "action": action, "reason": "mlx_model_not_supported"}
+    return launch_app_owned_server(spec, state_root).report()
+
+
 def main():
     try:
         _scope_menubar_rooms_to_enrollment()
@@ -1903,6 +2547,68 @@ def main():
         )
         return 0
     action = _argv_flag_value("--action")
+    if action == "tool-browser":
+        task, task_error = _read_tool_browser_task()
+        if task_error is not None:
+            _print_json(task_error)
+            return 0
+        if task is None:
+            _print_json(_tool_browser_error("browser_task_invalid"))
+            return 0
+        payload = asyncio.run(
+            _tool_browser_payload(
+                state_root_raw=_argv_flag_value("--state-root"),
+                job_id=_argv_flag_value("--job-id"),
+                task=task,
+            )
+        )
+        _print_json(payload)
+        return 0
+    if action == "room-upsert":
+        _print_json({"ok": True, "action": "room-upsert"})
+        return 0
+    if action == "dream-rsi-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(_dream_rsi_status_payload(state_root))
+        return 0
+    if action == "knowledge-graph-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        try:
+            from auto_reply_knowledge_graph import collect_knowledge_graph_status
+
+            payload = collect_knowledge_graph_status(
+                state_root / "context.sqlite3", state_root=state_root
+            )
+        except Exception as exc:  # settings status must stay fail-closed
+            payload = {
+                "ok": False,
+                "nodes": [],
+                "edges": [],
+                "node_count": 0,
+                "edge_count": 0,
+                "grounded_nodes": 0,
+                "indexed_at": 0,
+                "indexed_count": 0,
+                "stale": True,
+                "snapshot_status": "fail_closed",
+                "indexing_mode": "wal+isolated-copy+mode=ro+query_only",
+                "reason": str(exc) or "knowledge_graph_status_unavailable",
+            }
+        _print_json(payload)
+        return 0
+    if action == "knowledge-graph-focus":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        payload = _knowledge_graph_focus_payload(
+            state_root=state_root,
+            query_text=_argv_flag_value("--knowledge-query"),
+            node_id=_argv_flag_value("--knowledge-node-id"),
+            chat_id=_argv_flag_value("--knowledge-chat"),
+        )
+        _print_json(payload)
+        return 0
     if action == "knowledge-graph":
         # The graph view needs the whole node/edge set at once, which the
         # paginated vector-list cannot express. Handled before the frozen
@@ -1926,6 +2632,31 @@ def main():
                 "reason": str(exc) or "knowledge_graph_unavailable",
             }
         _print_json(payload)
+        return 0
+    if action == "model-swap":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(
+            swap_reply_model(
+                state_root,
+                _argv_flag_value("--model"),
+                explicit_opt_in=_argv_flag_value("--explicit-opt-in"),
+                request_token=_argv_flag_value("--request-token"),
+            )
+        )
+        return 0
+    if action == "model-owner-status":
+        state_raw = _argv_flag_value("--state-root")
+        state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        _print_json(managed_residency_status(state_root))
+        return 0
+    if action == "mlx-server-status":
+        _print_json(_mlx_server_status_payload(_menubar_state_root()))
+        return 0
+    if action in _MLX_LIFECYCLE_ACTIONS:
+        # Handled before the frozen dispatch: launch/stop own a resident model
+        # process and must never fall through to the model/vector code path.
+        _print_json(_mlx_lifecycle_payload(action, _menubar_state_root()))
         return 0
     args = type("Args", (), {"action": action})()
     if (
@@ -2028,7 +2759,7 @@ def _attach_fallback_state(snap: Any, state_root: Any) -> Any:
     snap["reply_model_fallbacks"] = state
     try:
         from auto_reply_ondevice import ondevice_summary_dict
-        snap["ondevice_hardware"] = ondevice_summary_dict()
+        snap["ondevice_hardware"] = ondevice_summary_dict(Path(state_root))
     except Exception:
         pass
     return snap
@@ -2928,7 +3659,7 @@ def _scope_menubar_rooms_to_enrollment() -> None:
             # 화면이 실제로 쓰는 경로라, 여기서 빠지면 창이 기본값만 보여 준다.
             try:
                 from auto_reply_ondevice import ondevice_summary_dict
-                snap["ondevice_hardware"] = ondevice_summary_dict()
+                snap["ondevice_hardware"] = ondevice_summary_dict(Path(state_root))
             except Exception:
                 pass
             try:

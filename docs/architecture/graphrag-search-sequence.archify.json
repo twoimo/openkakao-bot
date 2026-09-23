@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "GraphRAG retrieval sequence",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1080,
+      580
+    ]
+  },
+  "participants": [
+    {
+      "id": "turn",
+      "type": "external",
+      "label": "Incoming message"
+    },
+    {
+      "id": "bundle",
+      "type": "backend",
+      "label": "Knowledge bundle",
+      "sublabel": "retrieve_knowledge_bundle"
+    },
+    {
+      "id": "normalize",
+      "type": "backend",
+      "label": "query_haystacks",
+      "sublabel": "normalize_text_query"
+    },
+    {
+      "id": "bm25",
+      "type": "database",
+      "label": "kg_entities_fts",
+      "sublabel": "_bm25_candidates / FTS5"
+    },
+    {
+      "id": "dense",
+      "type": "database",
+      "label": "ann_buckets",
+      "sublabel": "_dense_ann_query"
+    },
+    {
+      "id": "rrf",
+      "type": "backend",
+      "label": "_rrf_merge"
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "Graph expansion",
+      "sublabel": "k_hop_neighborhood"
+    }
+  ],
+  "segments": [
+    {
+      "from": 132,
+      "to": 235,
+      "label": "Ingest + normalize"
+    },
+    {
+      "from": 243,
+      "to": 378,
+      "label": "Independent retrieval"
+    },
+    {
+      "from": 386,
+      "to": 443,
+      "label": "Rank fusion"
+    },
+    {
+      "from": 451,
+      "to": 496,
+      "label": "Graph expansion + evidence"
+    }
+  ],
+  "messages": [
+    {
+      "id": "ingest",
+      "from": "turn",
+      "to": "bundle",
+      "y": 160,
+      "label": "query_text + room/context",
+      "variant": "emphasis"
+    },
+    {
+      "id": "normalize_query",
+      "from": "bundle",
+      "to": "normalize",
+      "y": 190,
+      "label": "query_haystacks(query_text)",
+      "variant": "default"
+    },
+    {
+      "id": "normalized",
+      "from": "normalize",
+      "to": "bundle",
+      "y": 220,
+      "label": "normalized haystacks",
+      "variant": "return"
+    },
+    {
+      "id": "bm25_query",
+      "from": "bundle",
+      "to": "bm25",
+      "y": 250,
+      "label": "_bm25_candidates(..., limit=40)",
+      "variant": "default"
+    },
+    {
+      "id": "bm25_hits",
+      "from": "bm25",
+      "to": "bundle",
+      "y": 280,
+      "label": "BM25 ranked entity ids",
+      "variant": "return"
+    },
+    {
+      "id": "dense_query",
+      "from": "bundle",
+      "to": "dense",
+      "y": 310,
+      "label": "_dense_ann_query(..., limit=40)",
+      "variant": "default"
+    },
+    {
+      "id": "dense_hits",
+      "from": "dense",
+      "to": "bundle",
+      "y": 340,
+      "label": "dense ANN ids + watermark",
+      "variant": "return"
+    },
+    {
+      "id": "dense_fail",
+      "from": "dense",
+      "to": "bundle",
+      "y": 370,
+      "label": "exception -> search_mode=bm25_only",
+      "variant": "dashed"
+    },
+    {
+      "id": "rrf_query",
+      "from": "bundle",
+      "to": "rrf",
+      "y": 400,
+      "label": "_rrf_merge(bm25_ranked, dense_ranked)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rrf_hits",
+      "from": "rrf",
+      "to": "bundle",
+      "y": 430,
+      "label": "RRF ordered candidate ids",
+      "variant": "return"
+    },
+    {
+      "id": "expand",
+      "from": "bundle",
+      "to": "graph",
+      "y": 460,
+      "label": "k_hop_neighborhood(top candidate, DEFAULT_K_HOP)",
+      "variant": "default"
+    },
+    {
+      "id": "expanded",
+      "from": "graph",
+      "to": "bundle",
+      "y": 490,
+      "label": "focused nodes + relation facts",
+      "variant": "return"
+    }
+  ]
+}

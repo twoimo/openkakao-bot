@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Jarvis Three.js render lifecycle",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      580
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Visible render path"
+    },
+    {
+      "id": "visibility",
+      "label": "Hidden / resume path"
+    }
+  ],
+  "states": [
+    {
+      "id": "window_visible",
+      "type": "start",
+      "label": "Window visible",
+      "sublabel": "focus / visibilitychange",
+      "lane": "main",
+      "col": 0,
+      "width": 118,
+      "height": 92,
+      "step": "01"
+    },
+    {
+      "id": "lifecycle_active",
+      "type": "active",
+      "label": "RenderLifecycle",
+      "sublabel": "transition(visible)",
+      "lane": "main",
+      "col": 1,
+      "width": 118,
+      "height": 92,
+      "step": "02"
+    },
+    {
+      "id": "raf_running",
+      "type": "active",
+      "label": "AnimationLoop",
+      "sublabel": "RAF running",
+      "lane": "main",
+      "col": 2,
+      "width": 118,
+      "height": 92,
+      "step": "03"
+    },
+    {
+      "id": "runtime_snapshot",
+      "type": "active",
+      "label": "Snapshot poller",
+      "sublabel": "RuntimeSnapshotPoller",
+      "lane": "main",
+      "col": 3,
+      "width": 118,
+      "height": 92,
+      "step": "04"
+    },
+    {
+      "id": "core_response",
+      "type": "active",
+      "label": "JarvisCore.render()",
+      "sublabel": "rings / nucleus / lattice",
+      "lane": "main",
+      "col": 4,
+      "width": 118,
+      "height": 92,
+      "step": "05"
+    },
+    {
+      "id": "window_hidden",
+      "type": "waiting",
+      "label": "Window hidden",
+      "sublabel": "blur / hidden / closed",
+      "lane": "visibility",
+      "col": 0,
+      "width": 118,
+      "height": 92,
+      "tag": "pause"
+    },
+    {
+      "id": "raf_stopped",
+      "type": "waiting",
+      "label": "AnimationLoop.stop()",
+      "sublabel": "pending RAF cancelled",
+      "lane": "visibility",
+      "col": 1,
+      "width": 118,
+      "height": 92,
+      "tag": "RAF=0"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "visible_to_lifecycle",
+      "from": "window_visible",
+      "to": "lifecycle_active",
+      "variant": "emphasis"
+    },
+    {
+      "id": "lifecycle_to_raf",
+      "from": "lifecycle_active",
+      "to": "raf_running",
+      "variant": "emphasis"
+    },
+    {
+      "id": "raf_to_snapshot",
+      "from": "raf_running",
+      "to": "runtime_snapshot",
+      "variant": "default"
+    },
+    {
+      "id": "snapshot_to_core",
+      "from": "runtime_snapshot",
+      "to": "core_response",
+      "variant": "default"
+    },
+    {
+      "id": "hide",
+      "from": "raf_running",
+      "to": "window_hidden",
+      "variant": "security"
+    },
+    {
+      "id": "hidden_to_raf_stop",
+      "from": "window_hidden",
+      "to": "raf_stopped",
+      "variant": "security"
+    },
+    {
+      "id": "resume",
+      "from": "raf_stopped",
+      "to": "window_visible",
+      "variant": "emphasis",
+      "route": "bottom-channel"
+    }
+  ]
+}

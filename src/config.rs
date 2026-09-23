@@ -6,6 +6,13 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+pub(crate) const MLX_FLASH_NEXT_MODEL_ID: &str = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+pub(crate) const MLX_FLASH_NEXT_PREFIXED_MODEL_ID: &str =
+    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
+pub(crate) const MLX_27B_MODEL_ID: &str = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
+pub(crate) const MLX_27B_PREFIXED_MODEL_ID: &str = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit";
+pub(crate) const MLX_SERVE_PROVIDER: &str = "mlx-serve";
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct OpenKakaoConfig {
     #[serde(default)]
@@ -82,7 +89,7 @@ pub struct AutoReplyConfig {
     #[serde(default)]
     pub reply_runner: Option<String>,
     /// Reply runner protocol. The unattended worker currently supports
-    /// `codex` and the legacy `gjc` adapter.
+    /// `codex`, `gjc`, and the `opencodex` transport placeholder.
     #[serde(default)]
     pub reply_runner_kind: Option<String>,
     /// Exact model passed to the configured reply runner.
@@ -251,7 +258,10 @@ pub fn verify_config_attestation(config: &OpenKakaoConfig) -> Result<(PathBuf, S
 /// Validate the model privacy contract before an unattended worker starts.
 pub fn validate_model_privacy(config: &OpenKakaoConfig) -> Result<()> {
     match config.model.privacy_mode.as_deref() {
-        Some("local") => Ok(()),
+        Some("local") if !config.model.allow_egress => Ok(()),
+        Some("local") => {
+            anyhow::bail!("local model privacy requires model.allow_egress=false")
+        }
         Some("remote_explicit")
             if config.model.allow_egress
                 && config
@@ -272,6 +282,38 @@ pub fn validate_model_privacy(config: &OpenKakaoConfig) -> Result<()> {
         }
         None => anyhow::bail!("model privacy mode must be explicitly configured"),
     }
+}
+
+pub(crate) fn canonical_mlx_local_model(model: Option<&str>) -> Option<&'static str> {
+    match model {
+        Some(MLX_FLASH_NEXT_MODEL_ID | MLX_FLASH_NEXT_PREFIXED_MODEL_ID) => {
+            Some(MLX_FLASH_NEXT_MODEL_ID)
+        }
+        Some(MLX_27B_MODEL_ID | MLX_27B_PREFIXED_MODEL_ID) => Some(MLX_27B_MODEL_ID),
+        _ => None,
+    }
+}
+
+pub(crate) fn validate_auto_reply_local_mlx_profile(config: &OpenKakaoConfig) -> Result<()> {
+    if config.model.privacy_mode.as_deref() != Some("local")
+        || config.model.allow_egress
+        || config.model.provider.as_deref() != Some(MLX_SERVE_PROVIDER)
+    {
+        anyhow::bail!(
+            "local MLX AutoReply requires model.privacy_mode=local, model.allow_egress=false, and model.provider=mlx-serve"
+        );
+    }
+    if config.auto_reply.reply_runner_kind.as_deref() != Some("opencodex") {
+        anyhow::bail!(
+            "local MLX AutoReply requires reply_runner_kind=opencodex as its validated transport placeholder"
+        );
+    }
+    if canonical_mlx_local_model(config.auto_reply.reply_model.as_deref()).is_none() {
+        anyhow::bail!(
+            "local MLX AutoReply requires the exact Qwen3.8 Flash-Next or Qwen3.8 27B MLX-Serve model ID"
+        );
+    }
+    Ok(())
 }
 
 pub fn unattended_auto_reply_enabled(config: &OpenKakaoConfig) -> bool {
@@ -415,6 +457,10 @@ pub fn validate_auto_reply_startup(
         anyhow::bail!("AX sending is disabled; set safety.allow_ax_send = true");
     }
     validate_model_privacy(config).context("AutoReply model privacy attestation failed")?;
+    let local_mlx_profile = config.model.privacy_mode.as_deref() == Some("local");
+    if local_mlx_profile {
+        validate_auto_reply_local_mlx_profile(config)?;
+    }
     if config.auto_reply.reply_runner_kind.as_deref() == Some("codex") {
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || config.model.provider.as_deref() != Some("openai-codex")
@@ -435,7 +481,8 @@ pub fn validate_auto_reply_startup(
     if matches!(
         config.auto_reply.reply_runner_kind.as_deref(),
         Some("opencodex") | Some("gjc")
-    ) {
+    ) && !local_mlx_profile
+    {
         if config.model.privacy_mode.as_deref() != Some("remote_explicit")
             || !matches!(
                 config.model.provider.as_deref(),
@@ -473,40 +520,56 @@ pub fn validate_auto_reply_startup(
     }
     for (index, name) in target_names.iter().enumerate() {
         let chat_id = target_ids.get(index).copied();
-        let mut allowed = config.safety.allowed_send_chats.iter().any(|allowed| {
-            allowed == name
-                || chat_id.is_some_and(|id| {
-                    *allowed == id.to_string()
-                        || *allowed == format!("id:{id}")
-                        || allowed.starts_with(&format!("bind:{id}:"))
-                })
-        });
-        if !allowed {
-            if let Some(ref root_str) = config.auto_reply.state_root {
-                let catalog_path = std::path::Path::new(root_str).join("menubar-room-catalog.json");
-                if let Ok(catalog_bytes) = std::fs::read(&catalog_path) {
-                    if let Ok(catalog_json) = serde_json::from_slice::<serde_json::Value>(&catalog_bytes) {
-                        if let Some(rooms) = catalog_json.get("rooms").and_then(|r| r.as_array()) {
-                            for room in rooms {
-                                let r_id = room.get("chat_id").and_then(|id| id.as_i64());
-                                let r_title = room.get("title").and_then(|t| t.as_str()).unwrap_or("");
-                                let enabled = room.get("auto_reply") == Some(&serde_json::Value::Bool(true))
-                                    || room.get("geeknews") == Some(&serde_json::Value::Bool(true));
-                                if enabled && (chat_id == r_id || (!r_title.is_empty() && r_title == name)) {
-                                    allowed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !allowed {
+        if !allowed_send_chat_targets(config, name, chat_id) {
             anyhow::bail!("chat \"{name}\" is not present in safety.allowed_send_chats");
         }
     }
     Ok(())
+}
+
+pub fn allowed_send_chat_targets(
+    config: &OpenKakaoConfig,
+    chat_name: &str,
+    chat_id: Option<i64>,
+) -> bool {
+    if config.safety.allowed_send_chats.iter().any(|allowed| {
+        allowed == chat_name
+            || chat_id.is_some_and(|id| {
+                *allowed == id.to_string()
+                    || *allowed == format!("id:{id}")
+                    || allowed.starts_with(&format!("bind:{id}:"))
+            })
+    }) {
+        return true;
+    }
+
+    let Some(root_str) = config.auto_reply.state_root.as_deref() else {
+        return false;
+    };
+    let catalog_path = std::path::Path::new(root_str).join("menubar-room-catalog.json");
+    let Ok(catalog_bytes) = std::fs::read(&catalog_path) else {
+        return false;
+    };
+    let Ok(catalog_json) = serde_json::from_slice::<serde_json::Value>(&catalog_bytes) else {
+        return false;
+    };
+    let Some(rooms) = catalog_json.get("rooms").and_then(|rooms| rooms.as_array()) else {
+        return false;
+    };
+
+    rooms.iter().any(|room| {
+        let Some(object) = room.as_object() else {
+            return false;
+        };
+        let r_id = object.get("chat_id").and_then(|id| id.as_i64());
+        let r_title = object
+            .get("title")
+            .and_then(|title| title.as_str())
+            .filter(|title| !title.is_empty());
+        let enabled = object.get("auto_reply") == Some(&serde_json::Value::Bool(true))
+            || object.get("geeknews") == Some(&serde_json::Value::Bool(true));
+        enabled && (chat_id == r_id || r_title == Some(chat_name))
+    })
 }
 
 pub fn validate_auto_reply(config: &OpenKakaoConfig) -> Result<()> {
@@ -578,6 +641,9 @@ mod tests {
         config.safety.allow_auto_reply = true;
         assert!(validate_model_privacy(&config).is_ok());
         assert!(unattended_auto_reply_enabled(&config));
+
+        config.model.allow_egress = true;
+        assert!(validate_model_privacy(&config).is_err());
     }
 
     #[test]
@@ -586,6 +652,9 @@ mod tests {
         config.safety.allow_auto_reply = true;
         config.safety.allow_ax_send = true;
         config.model.privacy_mode = Some("local".into());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("opencodex".into());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
         config.auto_reply.self_nickname = Some("self".into());
         config.auto_reply.reply_authors = vec!["author".into()];
         config.safety.allowed_send_chats = vec!["room".into()];
@@ -593,6 +662,126 @@ mod tests {
         assert!(validate_auto_reply_startup(&config, &["other".into()], &[2]).is_err());
         config.safety.allow_ax_send = false;
         assert!(validate_auto_reply_startup(&config, &["room".into()], &[1]).is_err());
+    }
+
+    #[test]
+    fn allowed_send_chat_targets_matches_allowlist_and_catalog_policy() {
+        let mut config = OpenKakaoConfig::default();
+        config.safety.allowed_send_chats = vec!["Vision AI 경진대회".into()];
+        assert!(allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+        assert!(!allowed_send_chat_targets(&config, "Vision AI", None));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        config.safety.allowed_send_chats.clear();
+        config.auto_reply.state_root = Some(dir.path().to_string_lossy().into_owned());
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            r#"{"rooms":[{"chat_id":437046948660911,"title":"Vision AI 경진대회","auto_reply":true,"geeknews":false}] }"#,
+        )
+        .expect("write catalog");
+        assert!(allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+        // Exact title match only. The numeric id still authorises the room
+        // because AutoReply selectors carry both the id and the name.
+        assert!(allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+        assert!(!allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회 extra",
+            None
+        ));
+        assert!(!allowed_send_chat_targets(&config, "Vision AI 경진대회 ", None));
+
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            r#"{"rooms":[{"chat_id":437046948660911,"title":"Vision AI 경진대회","auto_reply":false,"geeknews":false}]}"#,
+        )
+        .expect("write disabled catalog");
+        assert!(!allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            "{invalid",
+        )
+        .expect("write invalid catalog");
+        assert!(!allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+    }
+
+    #[test]
+    fn allowed_send_chat_targets_fails_closed_without_a_catalog() {
+        let mut config = OpenKakaoConfig::default();
+        assert!(!allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            None
+        ));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        config.auto_reply.state_root = Some(dir.path().to_string_lossy().into_owned());
+        // state_root set, but no catalog file on disk.
+        assert!(!allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            None
+        ));
+
+        // An empty CLI name must not match an empty catalog title.
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            r#"{"rooms":[{"chat_id":437046948660911,"title":"","auto_reply":true}]}"#,
+        )
+        .expect("write catalog");
+        assert!(!allowed_send_chat_targets(&config, "", None));
+        assert!(!allowed_send_chat_targets(&config, "Vision AI 경진대회", None));
+        // The room is still reachable through its numeric id.
+        assert!(allowed_send_chat_targets(
+            &config,
+            "Vision AI 경진대회",
+            Some(437046948660911)
+        ));
+    }
+
+    #[test]
+    fn local_mlx_auto_reply_profile_requires_exact_privacy_provider_and_model() {
+        let mut config = OpenKakaoConfig::default();
+        config.model.privacy_mode = Some("local".into());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("opencodex".into());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_ok());
+
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_PREFIXED_MODEL_ID.into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_ok());
+
+        config.auto_reply.reply_model = Some("google-antigravity/gemini-3.8-flash".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.auto_reply.reply_model = Some(MLX_FLASH_NEXT_MODEL_ID.into());
+        config.model.allow_egress = true;
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.model.allow_egress = false;
+        config.model.provider = Some("opencodex".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
+        config.model.provider = Some(MLX_SERVE_PROVIDER.into());
+        config.auto_reply.reply_runner_kind = Some("gjc".into());
+        assert!(validate_auto_reply_local_mlx_profile(&config).is_err());
     }
 
     #[test]

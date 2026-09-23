@@ -62,13 +62,12 @@
 # allow_auto_reply = false
 
 [model]
-# Required for unattended AutoReply replies: use "local", or explicitly
-# attest remote egress with allow_egress, provider, and retention.
-# The Codex configuration below requires these exact remote-explicit values.
-# privacy_mode = "remote_explicit"
-# allow_egress = true
-# provider = "openai-codex"
-# retention = "provider-policy"
+# Production AutoReply worker/menubar generation is local MLX only.
+# Gemini and other cloud primary/fallback models fail closed and are never
+# selected automatically. Use this fixed profile (no model or image egress):
+# privacy_mode = "local"
+# allow_egress = false
+# provider = "mlx-serve"
 
 [auto_reply]
 # Exact selectors used by `openkakao-cli auto-reply` when --chat is omitted.
@@ -86,10 +85,11 @@
 # entry below.
 # reply_authors = ["참여자A", "참여자B"]
 # Fetching a posted URL contacts that third-party host and may trigger tracking
-# or action links. Keep disabled unless this separate egress is explicitly wanted.
+# or action links. This separate source-collection permission does not authorize
+# cloud LLM execution or model/image egress.
 # allow_link_fetch = false
-# Sending authorized-room image bytes to the configured reply model is a
-# separate media-egress boundary. Keep disabled unless explicitly intended.
+# Image analysis stays on local MLX and uses the allowlisted Qwen3.8 27B path.
+# It fails closed when local 27B is unavailable and never falls back to cloud.
 # allow_image_analysis = false
 
 # Required absolute paths for deterministic foreground or LaunchAgent
@@ -97,16 +97,16 @@
 # 3.13. The 24/7 installer additionally requires the supplied path itself not
 # to be a symlink.
 # python_interpreter = "/opt/homebrew/opt/python@3.13/bin/python3.13"
-# Gajae-Code must point at a private user-owned regular file, not a symlink.
-# reply_runner = "/Users/me/.local/lib/openkakao/gjc.js"
-# reply_runner_kind = "gjc"
-# These exact values select the Gajae-Code Antigravity Gemini 3.7 Flash
-# high-thinking (tiered) model. Startup fails closed if they drift.
-# reply_model = "google-antigravity/gemini-3.7-flash-tiered"
-# reply_reasoning_effort = "high"
+# Fixed local MLX profile. Flash-Next is the default; the exact Qwen3.8 27B ID
+# is reserved for image replies and an explicit operator-requested replacement.
+# The executable is retained only as the validated worker transport placeholder;
+# readiness and generation probes use the exact loopback MLX endpoint.
+# reply_runner = "/opt/homebrew/bin/opencodex"
+# reply_runner_kind = "opencodex"
+# reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+# reply_reasoning_effort = "medium"
 # reply_service_tier = "default"
-# Dedicated private (0700) Codex home is only required for reply_runner_kind=codex.
-# reply_codex_home = "/Users/me/Library/Application Support/openkakao/auto-reply/codex-home"
+# The exact `mlx/`-prefixed form of both allowlisted model IDs is also accepted.
 # state_root = "/Users/me/Library/Application Support/openkakao/auto-reply"
 
 # Optional per-room allowlists. Keep this subtable after all [auto_reply]

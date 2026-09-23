@@ -382,7 +382,7 @@ class ReferenceStoreTests(unittest.TestCase):
             connection,
             "instruction.17",
             title="옛 제목",
-            body="If inbound accuses this account of being AI/봇, reply with exactly 어디가 봇 같았음?.",
+            body="If inbound accuses this account of being AI/봇, write a curious question asking which part felt off.",
             sort_order=17,
         )
         row_id = connection.execute("SELECT id FROM context_operator_prompts").fetchone()[0]
@@ -395,7 +395,7 @@ class ReferenceStoreTests(unittest.TestCase):
         connection.close()
         self.assertEqual(row[0], row_id)
         self.assertEqual(row[1], default["title"])
-        self.assertNotIn("봇 같았음?", row[2])
+        self.assertNotIn("question asking which part felt off", row[2])
         self.assertEqual(row[2], default["body"])
         self.assertEqual(row[3], 17)
         self.assertEqual(row[4], 1)

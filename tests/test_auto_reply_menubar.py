@@ -1,4 +1,7 @@
+import asyncio
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import sqlite3
@@ -6,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -743,7 +747,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 (room / module.OPERATOR_REQUEST_NAME).read_text(encoding="utf-8")
             )
             self.assertEqual(request["action"], "auto-reply-now")
-            self.assertNotIn("queue-body-must-never-escape", json.dumps(result))
+            encoded = json.dumps(
+                {"result": result, "request": request}, ensure_ascii=False
+            )
+            for secret in FORBIDDEN:
+                self.assertNotIn(secret, encoded)
             del helper
 
     def test_geeknews_now_writes_operator_request(self):
@@ -762,7 +770,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(request["action"], "geeknews-now")
             self.assertEqual(request["schema_version"], 1)
-            encoded = json.dumps(result, ensure_ascii=False)
+            encoded = json.dumps(
+                {"result": result, "request": request}, ensure_ascii=False
+            )
             for secret in FORBIDDEN:
                 self.assertNotIn(secret, encoded)
             del helper
@@ -821,126 +831,64 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_swift_draws_pipeline_and_rooms(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn("class PipelineView", source)
-        self.assertIn("class MenuPanelView", source)
-        # 메뉴 패널의 주인공은 자비스 홀로그램 코어다. 예전에 이 자리를
-        # 차지하던 MiniPipelineView는 쓰는 곳이 없어 없앴다 (2026-09-17).
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
         self.assertIn("class JarvisCoreView", source)
-        self.assertNotIn("class MiniPipelineView", source)
-        self.assertNotIn("for line in model.menu_lines", source)
-        self.assertIn("showRoomsWindow", source)
-        self.assertIn("toggleRoomListClicked", source)
-        self.assertIn("inspectRoomButtonClicked", source)
-        self.assertIn("applyRoomList", source)
-        self.assertIn("roomsExpanded", source)
-        self.assertIn("tileY", source)
-        self.assertIn("roomGridColumns", source)
-        self.assertIn("roomGridExtra", source)
-        self.assertIn("layoutWidth", source)
-        self.assertIn("intrinsicContentSize", source)
-        self.assertIn("panelBaseHeight", source)
-        self.assertIn("max(bounds.width, Self.panelWidth)", source)
-        self.assertIn("layoutRoomGrid", source)
-        self.assertIn("button.isHidden = true", source)
-        self.assertIn("roomsListExpanded = false", source)
-        # 코어 좌우에 이름표를 세로로 늘어놓던 줄은 코어 아래 한 줄로
-        # 합쳐졌다. 점등은 자리로, 이름은 툴팁으로 읽는다 (2026-09-19).
-        self.assertIn("statusRowTop", source)
-        self.assertIn("drawStatusRow", source)
-        self.assertIn("healthTooltip", source)
-        self.assertNotIn("lampY", source)
-        self.assertNotIn("보고 있는 방", source)
-        self.assertIn("chat.catalog || chat.live", source)
-        self.assertIn("inspectableRooms", source)
-        self.assertIn("selectedRoom", source)
-        self.assertIn("24 + titleSize.width", source)
-        self.assertIn("statusPill.midY - captionSize.height / 2", source)
-        self.assertIn("catalog-upsert", source)
-        self.assertIn("statusImage", source)
-        self.assertNotIn(
-            "NSBezierPath(ovalIn: NSRect(x: 1, y: 2, width: 10, height: 10))",
-            source,
-        )
-        self.assertIn("let size = NSSize(width: 18, height: 14)", source)
-        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
-        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
-        self.assertIn("func presentGearMenu()", source)
-        self.assertIn("available_chats", source)
-        self.assertIn('"제목"', source)
-        self.assertIn('title: "추가"', source)
-        self.assertIn('title: "삭제"', source)
-        self.assertNotIn('placeholderString = "id"', source)
-        self.assertIn("systemGray", source)
-        self.assertIn('case "off"', source)
-        self.assertIn("즉시 답장 보내기", source)
-        self.assertIn("긱뉴스 바로 전송", source)
-        self.assertNotIn("menuAutoReplyItem", source)
-        self.assertNotIn("menuGeekNewsItem", source)
-        self.assertNotIn("let autoNow = NSMenuItem(", source)
-        self.assertNotIn("let geekNow = NSMenuItem(", source)
-        self.assertIn("auto-reply-now", source)
-        self.assertIn("geeknews-now", source)
-        self.assertNotIn("Reveal Logs", source)
-        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 완전히 빠졌다.
-        # 창 코드는 남아 있지만 메뉴 항목은 없어야 한다 (2026-09-16).
-        self.assertNotIn('title: "자가 진단…"', source)
-        self.assertNotIn('title: "자가 점검…"', source)
-        self.assertNotIn('title: "자가 개선…"', source)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
+        self.assertIn("x: width - Self.panelInset - Self.gearSize", panel)
+        self.assertIn("y: Self.panelInset", panel)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("coreView.activity = JarvisCoreView.activity(", panel)
+        self.assertIn("JarvisCoreView.background(model, chatId:", panel)
+
+        # The menu extra itself is only the Jarvis core plus the top-right gear.
+        self.assertNotIn("tileButtons", panel)
+        self.assertNotIn("tileClicked", panel)
+        self.assertNotIn('"room-popup"', panel)
+        self.assertNotIn("roomGridExtra", panel)
+        self.assertNotIn("layoutRoomGrid", panel)
+        self.assertNotIn("roomsExpanded", panel)
+        self.assertNotIn("drawStatusRow", panel)
+        self.assertNotIn("statusRowTop", panel)
+        self.assertNotIn("LampCell", panel)
+        self.assertNotIn("health-row", panel)
+        self.assertNotIn("즉시 답장 보내기", panel)
+        self.assertNotIn("긱뉴스 바로 전송", panel)
+        self.assertNotIn("대량 검증", source)
+        self.assertNotIn("기능 점검", source)
         self.assertNotIn("showImproveWindow", source)
-        # 자가 개선 파이프라인은 사용자 요청으로 통째로 없앴다. 그 파이프라인이
-        # 쓰던 진행 문구·램프 갱신도 함께 사라졌다 (2026-09-17).
-        self.assertNotIn("runImprovePipeline", source)
-        self.assertNotIn("improve-prep", source)
-        self.assertNotIn("improve-launch", source)
-        self.assertNotIn("updateComponentLamps", source)
-        # 구성요소 램프는 메뉴 패널에 그대로 남아 있다. 자가 점검 창이
-        # 사라진 뒤로는 이 화면이 상태를 보여 주는 유일한 자리다.
-        self.assertIn('("창", health["ax"] ?? "off")', source)
-        self.assertIn('("감시", health["watchdog"] ?? "off")', source)
-        # 자가 개선 파이프라인은 파이썬 쪽에서도 함께 없앴다 (2026-09-17).
-        self.assertNotIn("improve-prep", MENUBAR.read_text())
-        self.assertNotIn("improve-launch", MENUBAR.read_text())
-        self.assertNotIn("showDoctorWindow", source)
-        self.assertNotIn("ensureDoctorWindow", source)
-        self.assertNotIn("TUI 열기", source)
-        self.assertNotIn("openTui", source)
-        self.assertNotIn("Open TUI", source)
-        self.assertNotIn("--tui-command", source)
-        self.assertNotIn("--tui-script", source)
-        self.assertIn('("geek", "긱뉴스"', source)
-        self.assertNotIn('("geek", "Geek"', source)
-        self.assertIn('("catalog", "추가됨"', source)
-        self.assertLess(source.find('("live", "동작"'), source.find('("catalog", "추가됨"'))
-        self.assertLess(source.find('("geek", "긱뉴스"'), source.find('("catalog", "추가됨"'))
-        self.assertIn("roomsTableClicked", source)
-        self.assertIn("toggleRoomCatalog", source)
-        self.assertIn("upsertRoomFlags", source)
-        # The hint has to keep saying which switches drag the others along;
-        # everything else about it was cut as explanation clutter
-        # (2026-09-16).
-        self.assertIn("칸을 눌러 켜고 끕니다", source)
-        self.assertIn("답변·긱뉴스를 켜면 동작도 함께 켜집니다", source)
-        self.assertIn("func reusedLamp", source)
-        self.assertIn("final class LampCell", source)
-        self.assertIn("toggleRoomLive", source)
-        # 등록과 실행은 다른 사실이라 다른 표시를 가져야 한다. 예전에는
-        # live || catalog를 한 초록 점으로 그려서, 목록에만 넣어 둔 방과
-        # 지금 도는 방이 똑같이 보였다 (2026-09-16, 6 Pro 지적).
-        self.assertNotIn("chat.live || chat.catalog", source)
-        self.assertIn("on: chat.live,", source)
-        # 목록에만 있고 아직 돌지 않는 방은 그 사실을 도움말로 말한다.
-        self.assertIn("목록에만 있고 아직 돌지 않습니다", source)
-        self.assertIn('"geeknews_rss": "긱뉴스"', MENUBAR.read_text())
-        # 자가 점검 창은 사용자 요청으로 창째로 없앴다. 그 창이 쓰던
-        # 다시 점검·자가 개선 단추와 필터도 함께 사라졌다 (2026-09-17).
-        self.assertNotIn("doctor-heal", source)
-        self.assertNotIn("doctorFilterChanged", source)
-        self.assertNotIn("자가 개선", source)
-        self.assertNotIn("자가 점검", source)
-        # 자가 진단·자가 점검 메뉴는 사용자 요청으로 메뉴에서 빠졌다. 창 코드와
-        # 파이프라인 문구는 남지만 메뉴 항목은 없어야 한다 (2026-09-16).
-        self.assertNotIn('title: "자가 진단…"', source)
-        self.assertNotIn('title: "자가 점검…"', source)
+        self.assertNotIn("showOnboarding", source)
+
+        self.assertIn("self?.showUnifiedSettingsWindow()", source)
+        self.assertIn("func ensureUnifiedSettingsWindow()", source)
+        self.assertNotIn("func presentGearMenu()", source)
+        self.assertIn("settingsRoomPopup", source)
+        self.assertIn("settingsSlotFields", source)
+        self.assertNotIn("settingsAutoButton", source)
+        self.assertNotIn("settingsGeekButton", source)
+        self.assertIn('entry["identifier"] = identifier', source)
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func settingsRoomChanged")
+        ]
+        self.assertNotIn("settingsHealthLamps", settings)
+        self.assertNotIn("settingsHealthSummary", settings)
+        self.assertNotIn('Chrome.label("건강"', settings)
+        self.assertNotIn('"점검이 필요한 구성 요소', settings)
+        self.assertNotIn('"작업 목록"', settings)
+        self.assertNotIn("settingsJobButtons", settings)
+        self.assertNotIn("settingsJobClicked", settings)
+        self.assertIn("size: NSSize(width: 640, height: 400)", settings)
+        self.assertIn("minimum: NSSize(width: 600, height: 380)", settings)
+        self.assertIn("stack.alignment = .width", settings)
+        self.assertIn("Chrome.scrollable(stack, in: content)", settings)
+        self.assertIn("settingsWindow?.setContentSize(NSSize(width: 640, height: 400))", source)
 
     def _check_codes(self, report):
         return [item["code"] for item in report["checks"]]
@@ -1426,51 +1374,112 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.assertNotIn(secret, encoded)
             del helper
 
-    def test_swift_tiles_open_job_window(self):
+    def test_swift_unified_settings_keeps_only_status_and_primary_navigation(self):
         source = SWIFT.read_text(encoding="utf-8")
-        self.assertIn("tileClicked", source)
-        self.assertIn("showJobsWindow", source)
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func showRoomsWindow()")
+        ]
+        self.assertIn('"온디바이스 모델 설정"', settings)
+        self.assertIn("#selector(showModelSettingsWindow)", settings)
+        self.assertIn('"채팅방 관리"', settings)
+        self.assertIn("#selector(showRoomsWindow)", settings)
+        self.assertIn('"답변 기록"', settings)
+        self.assertIn("#selector(showLogWindow)", settings)
+        self.assertIn('"지식 그래프"', settings)
+        self.assertIn("#selector(showVectorWindow)", settings)
+        self.assertNotIn('Chrome.label("건강"', settings)
+        self.assertNotIn('"점검이 필요한 구성 요소', settings)
+        self.assertNotIn('"작업 목록"', settings)
+        self.assertNotIn("#selector(settingsJobClicked(_:))", settings)
+        self.assertNotIn("settingsJobButtons", settings)
+        self.assertNotIn('"즉시 답장 보내기"', settings)
+        self.assertNotIn("#selector(instantAutoReplyClicked)", settings)
+        self.assertNotIn('"긱뉴스 바로 전송"', settings)
+        self.assertNotIn("#selector(instantGeekNewsClicked)", settings)
+        self.assertNotIn('NSUserInterfaceItemIdentifier("settings-instant-auto")', settings)
+        self.assertNotIn('NSUserInterfaceItemIdentifier("settings-instant-geek")', settings)
+        self.assertNotIn("func instantAutoReplyClicked()", source)
+        self.assertNotIn("func instantGeekNewsClicked()", source)
+        self.assertIn(
+            '[("morning", "아침"), ("lunch", "점심"), ("evening", "저녁")]',
+            settings,
+        )
         self.assertIn("--jobs-status", source)
-        # 창을 여는 항목은 톱니바퀴 메뉴 한 곳에만 있다 (2026-09-17).
-        self.assertIn('("채팅방 관리…", #selector(showRoomsWindow))', source)
-        self.assertIn("func presentGearMenu()", source)
-        self.assertIn("작업 목록", source)
-        self.assertNotIn('title: "Rooms…"', source)
-        self.assertIn("jobsSkipClicked", source)
-        self.assertIn("restoreRoomsSelection", source)
-        # 머리글은 본문과 같은 쪽에 붙는다. 열마다 정렬이 다르므로 창 하나를
-        # 통째로 보고 판단하지 않고, 열을 만드는 한 곳에서 정하게 한다
-        # (2026-09-16).
-        self.assertIn("column.headerCell.alignment = alignment", source)
-        self.assertIn("alignment: spec.0 == \"title\" ? .left : .center", source)
-        self.assertIn("roomsTableClicked", source)
-        self.assertIn("lamp.interactive = interactive", source)
-        self.assertIn("final class CenteredLabelCell", source)
-        self.assertIn("field.centerYAnchor.constraint(equalTo: centerYAnchor)", source)
-        self.assertIn("(cell.label.cell as? NSTextFieldCell)?.alignment = .center", source)
-        self.assertIn("-> CenteredLabelCell", source)
-        self.assertIn("채팅방을 창으로 띄워 주세요", source)
-        self.assertIn("미확인 건너뛰기", source)
-        self.assertIn("jobsFilterChanged", source)
-        self.assertIn("NSSegmentedControl", source)
-        self.assertIn("enum Chrome", source)
-        # 패널은 코어 아래 한 줄로 상태를 모은 뒤 360pt로 좁아졌고, 코어는
-        # 168pt로 커졌다. 좌우 빈칸을 없애는 것이 목적이었다 (2026-09-19).
-        self.assertIn("static let panelWidth: CGFloat = 360", source)
-        self.assertIn("static let coreSize: CGFloat = 168", source)
-        # 패널 높이는 조각을 이어 붙여 계산한다. 숫자를 따로 박아 두면 조각을
-        # 고칠 때마다 아래가 겹치거나 빈 띠가 남는다 (2026-09-16).
-        self.assertIn("static let panelBaseHeight: CGFloat = actionTop + actionHeight + bottomInset", source)
-        self.assertIn("static let sectionGap: CGFloat = 10", source)
-        self.assertIn("static let tileTop: CGFloat = roomGridTop", source)
-        self.assertIn("static let actionTop: CGFloat = tileTop + tileHeight + sectionGap", source)
-        self.assertIn("vectorCompactStatusLine", source)
-        self.assertNotIn("count) 멈춤", source)
-        self.assertIn("vectorStatusLine", source)
-        self.assertNotIn("CGPoint(x: 16, y: 186)", source)
-        self.assertIn("NSSearchField", source)
+        self.assertIn("func showJobsWindow(status: String)", source)
+        self.assertNotIn("tileClicked", source)
+        self.assertNotIn("func presentGearMenu()", source)
 
+        build = source[
+            source.index("func buildMenu(_ model: MenubarModel)"):
+            source.index("func applyImageReplyModelSelection")
+        ]
+        self.assertIn("menu.addItem(graphic)", build)
+        self.assertNotIn("NSMenuItem(title:", build)
 
+    def test_swift_unified_settings_empty_room_is_read_only(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func updateUnifiedSettingsWindow"):
+            source.index("func traceOperatorSurface")
+        ]
+        self.assertIn("if rooms.isEmpty", settings)
+        self.assertIn('popup.addItem(withTitle: "고를 방이 없습니다")', settings)
+        self.assertIn("popup.isEnabled = false", settings)
+        self.assertNotIn("settingsAutoButton", settings)
+        self.assertNotIn("settingsGeekButton", settings)
+        self.assertNotIn('"바로 실행"', settings)
+        room_choice = source[
+            source.index("struct RoomChoice"):
+            source.index("struct AvailableChat")
+        ]
+        self.assertIn("let auto_reply: Bool", room_choice)
+        self.assertIn("let geeknews: Bool", room_choice)
+        self.assertIn("auto_reply: room.auto_reply", source)
+        self.assertIn("geeknews: room.geeknews", source)
+        self.assertIn("auto_reply: chat.auto_reply", source)
+        self.assertIn("geeknews: chat.geeknews", source)
+        self.assertIn("등록된 채팅방이 없습니다.", settings)
+
+    def test_swift_jobs_window_remains_without_unified_settings_shortcut(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func showRoomsWindow()")
+        ]
+        self.assertNotIn("settingsJobClicked", settings)
+        self.assertNotIn("settings-job-", settings)
+        self.assertIn("func showJobsWindow(status: String)", source)
+        self.assertIn('static let jobKinds = ["open", "sent", "skipped", "unknown"]', source)
+
+    def test_swift_operator_surface_failure_logs_are_payload_free(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        result = source[
+            source.index("func presentOperatorResult"):
+            source.index("func alertOperator")
+        ]
+        self.assertIn("guard let data else", result)
+        self.assertIn("operator action failed without response", result)
+        self.assertIn("operator action returned invalid response", result)
+
+        trace = source[
+            source.index("func traceOperatorSurface"):
+            source.index("@objc func showRoomsWindow")
+        ]
+        self.assertIn(".prefix(240)", trace)
+        self.assertIn('replacingOccurrences(of: "\\n", with: " ")', trace)
+        self.assertNotIn("JSONSerialization", trace)
+        self.assertNotIn("api_key", trace.lower())
+        self.assertNotIn("token", trace.lower())
+
+        action = source[
+            source.index("func runOperatorAction"):
+            source.index("func presentOperatorResult")
+        ]
+        self.assertIn('var extra = ["--action", action]', action)
+        self.assertIn('["--chat-id", String(chatId)]', action)
+        self.assertNotIn("--message", action)
+        self.assertNotIn("--api-key", action)
 
     def test_vector_crud_roundtrip_on_temp_db(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1555,8 +1564,15 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def test_swift_has_korean_vector_memory_window(self):
         source = SWIFT.read_text(encoding="utf-8")
         # 창 이름은 지식 그래프로 바뀌었고, 제목은 코어가 아니라 창이 정한다.
-        # 메뉴 패널의 항목은 톱니바퀴 안으로 들어갔다 (2026-09-17).
-        self.assertIn('("지식 그래프…", #selector(showVectorWindow))', source)
+        # 메뉴 패널의 항목은 통합 설정 창으로 들어갔다 (2026-09-19).
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func showRoomsWindow()")
+        ]
+        self.assertIn(
+            'Chrome.roundedButton("지식 그래프", target: self, action: #selector(showVectorWindow))',
+            settings,
+        )
         self.assertIn('window.title = "지식 그래프 (대화 기억)"', source)
         self.assertIn("showVectorWindow", source)
         self.assertIn("--vector-upsert", source)
@@ -2199,7 +2215,202 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertFalse(denied["ok"])
             del helper
 
-    def test_worker_uses_reply_model_override(self):
+    def test_model_swap_requires_opt_in_and_verified_owner_before_gateway(self):
+        module = load("auto_reply_menubar_model_swap_gates")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
+            no_opt_in = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in="",
+                request_token=token,
+                gateway_factory=gateway_factory,
+            )
+            self.assertEqual(no_opt_in["reason"], "explicit_opt_in_required")
+            gateway_factory.assert_not_called()
+
+            owner_unknown = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: module.ManagedModelResidency(
+                    None, (), 0, False, False, "model_owner_unknown"
+                ),
+                gateway_factory=gateway_factory,
+            )
+            self.assertEqual(owner_unknown["reason"], "model_owner_unknown")
+            gateway_factory.assert_not_called()
+
+    def test_external_owner_is_reported_without_touching_the_gateway(self):
+        module = load("auto_reply_menubar_model_swap_external_owner")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
+            external = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: module.ManagedModelResidency(
+                    None, (), 0, False, False, "model_owner_unmanaged"
+                ),
+                gateway_factory=gateway_factory,
+            )
+            self.assertFalse(external["ok"])
+            self.assertEqual(external["stage"], "aborted")
+            self.assertEqual(external["reason"], "model_owner_unmanaged")
+            gateway_factory.assert_not_called()
+
+    def test_main_dispatches_model_owner_status_read_only(self):
+        module = load(f"auto_reply_menubar_owner_dispatch_{id(self)}")
+        expected = {
+            "ok": True,
+            "action": "model-owner-status",
+            "owner_state": "model_owner_unmanaged",
+            "owner_verified": False,
+            "drain_verified": False,
+            "current_model": None,
+        }
+        argv = sys.argv
+        try:
+            sys.argv = [
+                "auto-reply-menubar.py",
+                "--action",
+                "model-owner-status",
+                "--state-root",
+                "/tmp/jarvis-owner-state",
+            ]
+            with mock.patch.object(
+                module, "_scope_menubar_rooms_to_enrollment"
+            ), mock.patch.object(
+                module, "_apply_catalog_mutates"
+            ), mock.patch.object(
+                module, "managed_residency_status", return_value=expected
+            ) as status, mock.patch.object(
+                module, "_print_json"
+            ) as print_json, mock.patch.object(
+                module, "swap_reply_model"
+            ) as swap, mock.patch.object(
+                module, "_orig_main"
+            ) as legacy_main:
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = argv
+
+        status.assert_called_once_with(Path("/tmp/jarvis-owner-state"))
+        print_json.assert_called_once_with(expected)
+        swap.assert_not_called()
+        legacy_main.assert_not_called()
+
+    def test_model_swap_fake_failures_cancellation_and_safe_success(self):
+        module = load("auto_reply_menubar_model_swap_fakes")
+        token = "123e4567-e89b-42d3-a456-426614174000"
+        previous = f"mlx/{module.JARVIS_RESIDENT_MODEL_ID}"
+        target = module.QWEN38_27B_MODEL_ID
+        residency = module.ManagedModelResidency(
+            previous, (previous,), 4242, True, True, "ready"
+        )
+
+        class FakeGateway:
+            def __init__(self):
+                self.calls = []
+                self.load_failures = set()
+                self.probe_results = {}
+                self.cancel_on_load = None
+
+            def unload(self, model_id):
+                self.calls.append(("unload", model_id))
+
+            def load(self, model_id):
+                self.calls.append(("load", model_id))
+                if self.cancel_on_load is not None and model_id == target:
+                    self.cancel_on_load()
+                if model_id in self.load_failures:
+                    raise RuntimeError("load failed")
+
+            def probe(self, model_id):
+                self.calls.append(("probe", model_id))
+                return self.probe_results.get(model_id, True)
+
+        def run(root, gateway, memory_bytes=120 * 1024**3, cancel_check=None):
+            return module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: residency,
+                memory_probe=lambda: module.MemoryBudget(memory_bytes),
+                gateway_factory=lambda: gateway,
+                persist_residency=lambda *_args, **_kwargs: None,
+                cancel_check=cancel_check,
+                now=123.0,
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+
+            insufficient_gateway = FakeGateway()
+            insufficient = run(root, insufficient_gateway, memory_bytes=1)
+            self.assertEqual(insufficient["reason"], "insufficient_free_memory_rollback_failed")
+            self.assertNotIn(("load", previous), insufficient_gateway.calls)
+
+            load_gateway = FakeGateway()
+            load_gateway.load_failures.update({target, previous})
+            load_failed = run(root, load_gateway)
+            self.assertEqual(load_failed["reason"], "load_failed_rollback_failed")
+
+            probe_gateway = FakeGateway()
+            probe_gateway.probe_results[target] = False
+            probe_gateway.load_failures.add(previous)
+            probe_failed = run(root, probe_gateway)
+            self.assertEqual(probe_failed["reason"], "probe_failed_rollback_failed")
+
+            pre_cancel_factory = mock.Mock(side_effect=AssertionError("cancelled before gateway"))
+            pre_cancelled = module.swap_reply_model(
+                root,
+                module.JARVIS_SWAP_MODEL_ID,
+                explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                request_token=token,
+                residency_probe=lambda _root: residency,
+                gateway_factory=pre_cancel_factory,
+                cancel_check=lambda: True,
+            )
+            self.assertEqual(pre_cancelled["reason"], "cancelled")
+            pre_cancel_factory.assert_not_called()
+
+            cancelled = {"value": False}
+            cancel_gateway = FakeGateway()
+            cancel_gateway.cancel_on_load = lambda: cancelled.__setitem__("value", True)
+            mid_cancelled = run(
+                root, cancel_gateway, cancel_check=lambda: cancelled["value"]
+            )
+            self.assertEqual(mid_cancelled["reason"], "cancelled")
+            self.assertIn(("unload", target), cancel_gateway.calls)
+            self.assertIn(("load", previous), cancel_gateway.calls)
+
+            success_gateway = FakeGateway()
+            success = run(root, success_gateway)
+            self.assertEqual(
+                set(success),
+                {"ok", "action", "model", "stage", "reason", "stages", "stored", "prepared"},
+            )
+            self.assertTrue(success["ok"])
+            self.assertTrue(success["stored"])
+            self.assertTrue(success["prepared"])
+            encoded = json.dumps(success, sort_keys=True)
+            self.assertNotIn("prompt", encoded)
+            self.assertNotIn("secret", encoded)
+
+            marker = root / module.MODEL_SWAP_CANCEL_DIR / f"{token}.json"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text('{"schema_version":1,"cancelled":true}', encoding="utf-8")
+            self.assertTrue(module._model_swap_cancelled(root, token))
+
+    def test_worker_ignores_cloud_reply_model_override(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2229,8 +2440,113 @@ class AutoReplyMenubarTests(unittest.TestCase):
             spec.loader.exec_module(worker)
             self.assertEqual(
                 worker._active_reply_model(),
-                "google-antigravity/gemini-3.6-flash-tiered",
+                worker.FLASH_NEXT_MODEL_ID,
             )
+
+
+    def test_worker_missing_dream_checkpoint_keeps_live_generation(self):
+        worker_path = SCRIPTS / "auto-reply-worker.py"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            state = root / "rooms" / "1" / "reply-state.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("{}", encoding="utf-8")
+            environment = {
+                "OPENKAKAO_REPLY_STATE": str(state),
+                "OPENKAKAO_AUTO_REPLY_STATE_ROOT": str(root),
+            }
+            with mock.patch.dict(os.environ, environment, clear=False):
+                spec = importlib.util.spec_from_file_location(
+                    "auto_reply_dream_checkpoint_worker", worker_path
+                )
+                worker = importlib.util.module_from_spec(spec)
+                assert spec.loader is not None
+                spec.loader.exec_module(worker)
+
+                decision = (
+                    0,
+                    json.dumps(
+                        {
+                            "should_reply": False,
+                            "reply": "",
+                            "reason": "low_information",
+                            "category": "uncertain",
+                            "evidence_ids": [],
+                        }
+                    ).encode("utf-8"),
+                    b"",
+                )
+                runner = mock.Mock(return_value=decision)
+                slot = {
+                    "allowed": True,
+                    "lease_token": "a" * 32,
+                    "retry_at": 9_999_999_999.0,
+                }
+                with contextlib.ExitStack() as stack:
+                    replacements = {
+                        "REPLY_RUNNER_KIND": "gjc",
+                        "_WORKER_HEALTH": None,
+                        "_generation_reply_model": mock.Mock(return_value="test/model"),
+                        "privacy_attestation_current": mock.Mock(return_value=True),
+                        "runner_is_trusted": mock.Mock(return_value=True),
+                        "record_learned_style_tells": mock.Mock(),
+                        "learned_style_tell_avoids": mock.Mock(return_value=[]),
+                        "_identity_policy_decision": mock.Mock(return_value=None),
+                        "_reply_decision_instructions": mock.Mock(return_value=[]),
+                        "_reply_decision_system_prompt": mock.Mock(return_value="Test decision"),
+                        "_queue_expected_chat_id": mock.Mock(return_value=1),
+                        "_ensure_omlx_model_resident": mock.Mock(),
+                        "_publish_model_status": mock.Mock(),
+                        "_active_journal_checkpoint": mock.Mock(),
+                        "_acquire_model_call_slot": mock.Mock(return_value=slot),
+                        "_finish_model_call_success": mock.Mock(return_value=True),
+                        "_run_bounded_process": runner,
+                        "reaction_register": mock.Mock(return_value={"evidence_id": "reaction:test"}),
+                        "youtube_reaction_register": mock.Mock(
+                            return_value={"evidence_id": "youtube:test"}
+                        ),
+                        "_room_laughter_allows": mock.Mock(return_value=False),
+                        "_room_awe_allows": mock.Mock(return_value=False),
+                    }
+                    for name, value in replacements.items():
+                        stack.enter_context(mock.patch.object(worker, name, value))
+                    stack.enter_context(
+                        mock.patch(
+                            "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                            return_value={},
+                        )
+                    )
+
+                    missing = worker.generate_reply("확인했어요", [], [], [], [])
+                    self.assertNotIn("dream_rsi_policy", missing)
+
+                    (root / "dream-rsi-policy.json").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": 2,
+                                "dreamed_at": 123,
+                                "status": "evaluated",
+                                "selected_policy": "echo_last_message",
+                                "gold_rows": 3,
+                                "excluded_model_gold": 1,
+                                "gold_source_policy": "human_only",
+                                "evaluations": {
+                                    "echo_last_message": {"status": "evaluated"}
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                    selected = worker.generate_reply("확인했어요", [], [], [], [])
+
+                for key in ("should_reply", "reply", "reason", "category", "prompt_sha256"):
+                    self.assertEqual(selected[key], missing[key])
+                self.assertEqual(runner.call_count, 2)
+                self.assertEqual(
+                    selected["dream_rsi_policy"]["selected_policy"],
+                    "echo_last_message",
+                )
 
     def test_menubar_model_set_uses_stale_catalog_without_fetch(self):
         module = load("auto_reply_menubar_model_set_stale")
@@ -2318,42 +2634,41 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("statusItem.menu = buildMenu(model)", source)
         self.assertIn("guard menu === statusItem.menu", source)
 
-    def test_image_reply_model_defaults_to_gemini_flash_and_persists(self):
+    def test_image_reply_model_defaults_to_qwen27b_and_rejects_cloud(self):
         module = load("auto_reply_menubar_image_model")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             now = 1_000.0
-            agent_dir = state / "gjc-agent"
-            agent_dir.mkdir(mode=0o700, exist_ok=True)
-            (agent_dir / "models.yml").write_text(
-                "providers:\n"
-                "  google-antigravity:\n"
-                "    models:\n"
-                "      - id: gemini-3.7-flash-tiered\n"
-                "      - id: gemini-3.6-flash-tiered\n",
+            (state / "reply-image-model.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "updated_at": 1,
+                    }
+                ),
                 encoding="utf-8",
             )
             image_id, source = module._read_image_reply_model(state)
-            self.assertEqual(image_id, "google-antigravity/gemini-3.7-flash-tiered")
+            self.assertEqual(image_id, module.QWEN38_27B_MODEL_ID)
             self.assertEqual(source, "default")
-            result = module.set_image_reply_model(
+            denied = module.set_image_reply_model(
                 state.resolve(),
                 "google-antigravity/gemini-3.6-flash-tiered",
                 now=now,
             )
+            self.assertFalse(denied["ok"])
+            self.assertEqual(denied["reason"], "image_model_local_only")
+            result = module.set_image_reply_model(
+                state.resolve(), module.JARVIS_SWAP_MODEL_ID, now=now
+            )
             self.assertTrue(result["ok"])
             self.assertEqual(result["action"], "image-model-set")
-            self.assertEqual(
-                result["model"], "google-antigravity/gemini-3.6-flash-tiered"
-            )
+            self.assertEqual(result["model"], module.QWEN38_27B_MODEL_ID)
             saved = json.loads((state / "reply-image-model.json").read_text())
-            self.assertEqual(saved["model"], "google-antigravity/gemini-3.6-flash-tiered")
-            denied = module.set_image_reply_model(
-                state.resolve(), "not-a-real/model", now=now
-            )
-            self.assertFalse(denied["ok"])
+            self.assertEqual(saved["model"], module.QWEN38_27B_MODEL_ID)
 
-    def test_worker_uses_image_model_override_only_for_images(self):
+    def test_worker_ignores_cloud_image_override_and_routes_images_to_qwen27b(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2395,7 +2710,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(
                 worker._generation_reply_model(True),
-                "google-antigravity/gemini-3.7-flash-tiered",
+                worker.QWEN38_27B_MODEL_ID,
             )
             source = worker_path.read_text(encoding="utf-8")
             isolated = source.split("if REPLY_RUNNER_KIND == \"codex\":", 1)[1].split(
@@ -2405,7 +2720,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertIn('env.pop("PI_CODING_AGENT_DIR", None)', isolated)
             self.assertNotIn("GJC_CODING_AGENT_DIR\"] = str(gjc_agent_dir)", isolated)
 
-    def test_worker_skips_image_model_when_reply_model_sees_images(self):
+    def test_worker_keeps_qwen27b_for_images_when_already_primary(self):
         worker_path = SCRIPTS / "auto-reply-worker.py"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -2416,7 +2731,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
                         "updated_at": 1,
                     }
                 ),
@@ -2441,15 +2756,14 @@ class AutoReplyMenubarTests(unittest.TestCase):
             spec.loader.exec_module(worker)
             self.assertEqual(
                 worker._generation_reply_model(True),
-                "google-antigravity/gemini-3.7-flash-tiered",
+                worker.QWEN38_27B_MODEL_ID,
             )
 
     def test_omlx_reply_model_keeps_image_model_enabled(self):
         module = load("auto_reply_menubar_image_gate")
         self.assertFalse(module._reply_model_sees_images("omlx/Qwen3.6-35B-A3B-8bit"))
-        self.assertTrue(
-            module._reply_model_sees_images("google-antigravity/gemini-3.7-flash-tiered")
-        )
+        self.assertFalse(module._reply_model_sees_images("google-antigravity/gemini-3.7-flash-tiered"))
+        self.assertTrue(module._reply_model_sees_images(module.QWEN38_27B_MODEL_ID))
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             (state / "reply-model.json").write_text(
@@ -2467,7 +2781,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "model": "google-antigravity/gemini-3.7-flash-tiered",
+                        "model": module.QWEN38_27B_MODEL_ID,
                         "updated_at": 1,
                     }
                 ),
@@ -2475,7 +2789,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertFalse(module._image_model_enabled(state))
             denied = module.set_image_reply_model(
-                state, "google-antigravity/gemini-3.6-flash-tiered", now=1.0
+                state, module.QWEN38_27B_MODEL_ID, now=1.0
             )
             self.assertFalse(denied["ok"])
             self.assertEqual(denied["reason"], "image_model_unused")
@@ -2494,24 +2808,47 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(source, "default")
             self.assertEqual(models, list(module.DEFAULT_REPLY_FALLBACK_MODELS))
 
+    def test_reply_model_fallbacks_ignore_legacy_cloud_entries(self):
+        module = load("auto_reply_menubar_fallbacks_cloud_legacy")
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            state.joinpath(module.REPLY_MODEL_FALLBACKS_NAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": [
+                            "google-antigravity/gemini-3.8-flash",
+                            "mlx/local-backup",
+                            "google-antigravity/gemini-3.7-flash-tiered",
+                        ],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                module.read_reply_model_fallbacks(state),
+                (["mlx/local-backup"], "override"),
+            )
+
     def test_reply_model_fallbacks_save_reads_back_ordered_chain(self):
         module = load("auto_reply_menubar_fallbacks_save")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
             module._fallback_allowed_model_ids = lambda _root: {
-                "kiro/claude-opus-5",
-                "kiro/claude-sonnet-5",
-                "kiro/claude-opus-4.8",
+                "mlx/local-a",
+                "mlx/local-b",
+                "omlx/local-c",
             }
             saved = module.set_reply_model_fallbacks(
                 state,
-                "kiro/claude-opus-5,kiro/claude-sonnet-5,kiro/claude-opus-4.8",
+                "mlx/local-a,mlx/local-b,omlx/local-c",
                 now=1.0,
             )
             self.assertTrue(saved["ok"])
             self.assertEqual(
                 saved["fallback_models"],
-                ["kiro/claude-opus-5", "kiro/claude-sonnet-5", "kiro/claude-opus-4.8"],
+                ["mlx/local-a", "mlx/local-b", "omlx/local-c"],
             )
             self.assertEqual(saved["fallback_source"], "override")
             # The window and the worker read this file, so check the on-disk shape.
@@ -2541,8 +2878,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
         module = load("auto_reply_menubar_fallbacks_clear")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
-            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
-            module.set_reply_model_fallbacks(state, "kiro/claude-opus-5", now=1.0)
+            module._fallback_allowed_model_ids = lambda _root: {"mlx/local-a"}
+            module.set_reply_model_fallbacks(state, "mlx/local-a", now=1.0)
             self.assertTrue((state / module.REPLY_MODEL_FALLBACKS_NAME).is_file())
             cleared = module.set_reply_model_fallbacks(state, None, now=2.0, clear=True)
             self.assertTrue(cleared["ok"])
@@ -2556,13 +2893,17 @@ class AutoReplyMenubarTests(unittest.TestCase):
         module = load("auto_reply_menubar_fallbacks_reject")
         with tempfile.TemporaryDirectory() as raw:
             state = Path(raw)
-            module._fallback_allowed_model_ids = lambda _root: {"kiro/claude-opus-5"}
+            module._fallback_allowed_model_ids = lambda _root: {
+                "google-antigravity/gemini-3.8-flash"
+            }
             too_many = module.set_reply_model_fallbacks(
                 state, ",".join(f"kiro/m{index}" for index in range(7)), now=1.0
             )
             self.assertFalse(too_many["ok"])
             self.assertEqual(too_many["reason"], "too_many_fallbacks")
-            unknown = module.set_reply_model_fallbacks(state, "nope/nope", now=1.0)
+            unknown = module.set_reply_model_fallbacks(
+                state, "google-antigravity/gemini-3.8-flash", now=1.0
+            )
             self.assertFalse(unknown["ok"])
             self.assertEqual(unknown["reason"], "model_not_in_catalog")
             self.assertFalse((state / module.REPLY_MODEL_FALLBACKS_NAME).exists())
@@ -2578,7 +2919,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "models": ["kiro/claude-opus-5"],
+                        "models": ["mlx/local-a"],
                         "updated_at": 1,
                     }
                 ),
@@ -2586,7 +2927,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             snapshot = module.collect_menubar_model(root)
             self.assertEqual(
-                snapshot["reply_model_fallbacks"]["models"], ["kiro/claude-opus-5"]
+                snapshot["reply_model_fallbacks"]["models"], ["mlx/local-a"]
             )
             self.assertEqual(
                 snapshot["reply_model_fallbacks"]["source"], "override"
@@ -2636,7 +2977,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "models": ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+                        "models": [
+                            "google-antigravity/gemini-3.8-flash",
+                            "mlx/local-a",
+                            "omlx/local-b",
+                        ],
                         "updated_at": 1,
                     }
                 ),
@@ -2644,8 +2989,19 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(
                 worker._reply_fallback_candidates(),
-                ["kiro/claude-opus-5", "kiro/claude-sonnet-5"],
+                ["mlx/local-a", "omlx/local-b"],
             )
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "models": ["google-antigravity/gemini-3.8-flash"],
+                        "updated_at": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(worker._reply_fallback_candidates(), [])
             # "No fallback" must survive as an empty chain, not become defaults.
             path.write_text(
                 json.dumps({"schema_version": 1, "models": [], "updated_at": 1}),
@@ -3301,6 +3657,76 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertNotIn("Int.random", source[source.find("final class KnowledgeGraphView"):])
         self.assertNotIn("arc4random", source[source.find("final class KnowledgeGraphView"):])
 
+    def test_swift_khop_focus_has_bounded_zoom_and_auditable_center(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn("private func kHopNodeIds(around nodeId: String, hops: Int)", graph)
+        self.assertIn(".prefix(Self.focusNeighborLimit)", graph)
+        self.assertIn("guard focusHop < Self.maxFocusHop else { return }", graph)
+        self.assertIn("focusHop += 1", graph)
+        self.assertIn("func focusAuditState() -> (nodeId: String?, hop: Int, center: CGPoint?)", graph)
+        self.assertIn("x: center.x + (interpolated.x - center.x) * zoom", graph)
+
+    def test_khop_graph_change_preserves_core_gear_extra_contract(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
+        self.assertNotIn("KnowledgeGraphView", panel)
+        self.assertIn("func ensureUnifiedSettingsWindow()", source)
+
+    def test_settings_sync_status_card_uses_existing_status_and_keeps_jarvis_constants(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()"):
+            source.index("@objc func settingsRoomChanged")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        graph_python = (SCRIPTS / "auto_reply_knowledge_graph.py").read_text(encoding="utf-8")
+
+        self.assertIn('Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-card")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-copy")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-mode")', settings)
+        self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-index")', settings)
+        self.assertIn('applySettingsSyncStatus(model.vector_memory, graph: settingsGraphStatus)', source)
+        self.assertIn('graph.indexing_mode == "wal+isolated-copy+mode=ro+query_only"', source)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
+        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn("DEFAULT_K_HOP = 2", graph_python)
+        self.assertIn("MAX_K_HOP = 3", graph_python)
+        self.assertIn("K_HOP_NEIGHBOR_LIMIT = 10", graph_python)
+
     def test_swift_applies_a_graph_snapshot_in_one_layout_pass(self):
         """A snapshot must not settle the force layout twice.
 
@@ -3359,6 +3785,65 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn('"--action", "knowledge-graph"', source)
         self.assertIn("refreshKnowledgeGraph", source)
         self.assertIn("selectVectorRow(forKnowledgeNode:", source)
+
+    def test_swift_premium_chrome_uses_quiet_hairline_tokens(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        chrome = source[
+            source.index("enum Chrome {") :
+            source.index("final class FlippedContainerView")
+        ]
+        card = source[
+            source.index("final class CardView") :
+            source.index("/// 레이아웃 감사")
+        ]
+        empty = source[
+            source.index("final class EmptyStateView") :
+            source.index("final class CardView")
+        ]
+        settings = source[
+            source.index("func ensureUnifiedSettingsWindow()") :
+            source.index("@objc func settingsRoomChanged")
+        ]
+
+        self.assertIn("static let hairlineWidth: CGFloat = 0.5", chrome)
+        self.assertIn("static let cardCornerRadius: CGFloat = 9", chrome)
+        self.assertIn("static let tableRowHeight: CGFloat = 34", chrome)
+        self.assertIn("NSColor.controlBackgroundColor.withAlphaComponent(0.50)", chrome)
+        self.assertIn("static func hairlineSeparator() -> NSBox", chrome)
+        self.assertIn("layer?.borderWidth = Chrome.hairlineWidth", card)
+        self.assertIn("layer?.borderWidth = Chrome.hairlineWidth", empty)
+        self.assertIn('Chrome.sectionTitle("대상 채팅방")', settings)
+        self.assertIn(
+            'Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)',
+            settings,
+        )
+        self.assertIn('Chrome.sectionTitle("DREAM-RSI", color: jarvisGold)', settings)
+        self.assertIn('Chrome.sectionTitle("GeekNews 슬롯")', settings)
+        self.assertIn("Chrome.hairlineSeparator()", settings)
+
+    def test_swift_extra_refines_gear_and_core_without_size_drift(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        core = source[
+            source.index("final class JarvisCoreView") :
+            source.index("final class MenuPanelView")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView") :
+            source.index("final class CenteredLabelCell")
+        ]
+
+        self.assertIn('NSImage(systemSymbolName: "gearshape"', panel)
+        self.assertNotIn('NSImage(systemSymbolName: "gearshape.fill"', panel)
+        self.assertIn(
+            "NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)",
+            panel,
+        )
+        self.assertIn("path.lineWidth = 0.7", core)
+        self.assertIn("outer.lineWidth = 0.75", core)
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
 
     def test_swift_cards_grow_with_their_content(self):
         """A card must take its height from its content.
@@ -3430,6 +3915,96 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("enum LayoutAudit", source)
         # The audit has to run after the run loop laid the views out.
         self.assertIn("DispatchQueue.main.async { [weak self] in", source)
+
+    def test_swift_log_empty_state_replaces_the_table(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        ensure_start = source.index("func ensureLogWindow()")
+        ensure_end = source.index("func fitLogTableHeight()", ensure_start)
+        ensure = source[ensure_start:ensure_end]
+        self.assertIn(
+            'EmptyStateView(symbolName: "clock.arrow.circlepath", compact: true)',
+            ensure,
+        )
+        self.assertIn(
+            "emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72)",
+            ensure,
+        )
+
+        filter_start = source.index("func applyLogFilter(reload: Bool = true)")
+        filter_end = source.index("func rememberLogSelection()", filter_start)
+        apply_filter = source[filter_start:filter_end]
+        self.assertIn("let empty = displayedReceipts.isEmpty", apply_filter)
+        self.assertIn("logTableScroll?.isHidden = empty", apply_filter)
+        self.assertIn("logEmptyState?.isHidden = !empty", apply_filter)
+        self.assertIn("fitLogWindow()", apply_filter)
+
+        fit_start = source.index("func fitLogTableHeight()")
+        fit_end = source.index("func updateLogWindow(_ model: MenubarModel)", fit_start)
+        fit = source[fit_start:fit_end]
+        self.assertIn("Self.logTableMinimumRows", fit)
+        self.assertIn("Self.logTableMaximumHeight", fit)
+
+    def test_swift_rooms_empty_and_filtered_states_replace_the_table(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        ensure_start = source.index("func ensureRoomsWindow()")
+        ensure_end = source.index("func fitRoomsWindow()", ensure_start)
+        ensure = source[ensure_start:ensure_end]
+        self.assertIn(
+            'EmptyStateView(symbolName: "bubble.left.and.bubble.right", compact: true)',
+            ensure,
+        )
+        self.assertIn(
+            "Chrome.vstack([headerCard, emptyState, scroll], spacing: 10)",
+            ensure,
+        )
+        self.assertIn(
+            "emptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 72)",
+            ensure,
+        )
+
+        filter_start = source.index("func applyRoomsFilter()")
+        filter_end = source.index("func roomsFingerprint", filter_start)
+        apply_filter = source[filter_start:filter_end]
+        self.assertIn(
+            'trimmingCharacters(in: .whitespacesAndNewlines)', apply_filter
+        )
+        self.assertIn("if query.isEmpty", apply_filter)
+        self.assertIn("displayedChats = allChats", apply_filter)
+        self.assertIn("let empty = displayedChats.isEmpty", apply_filter)
+        self.assertIn("roomsTableScroll?.isHidden = empty", apply_filter)
+        self.assertIn("roomsEmptyState?.isHidden = !empty", apply_filter)
+        self.assertIn("if allChats.isEmpty", apply_filter)
+        self.assertIn('"검색 결과가 없습니다"', apply_filter)
+        self.assertIn("fitRoomsWindow()", apply_filter)
+
+        fit_start = source.index("func fitRoomsWindow()")
+        fit_end = source.index("func applyRoomsFilter()", fit_start)
+        fit = source[fit_start:fit_end]
+        self.assertIn("let minimumFrameHeight = window.frameRect", fit)
+        self.assertIn("let minimumHeight = min(440, minimumFrameHeight)", fit)
+
+        update_start = source.index("func updateRoomsWindow(_ model: MenubarModel)")
+        update_end = source.index("func reusedLabel", update_start)
+        update = source[update_start:update_end]
+        self.assertIn(
+            "if !roomsSnapshotApplied || fingerprint != lastRoomsFingerprint",
+            update,
+        )
+        self.assertIn("roomsSnapshotApplied = true", update)
+
+    def test_layout_audit_applies_log_and_rooms_without_a_loaded_model(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        audit_start = source.index("func runLayoutAudit(_ outputDir: String) -> String")
+        audit_end = source.index("settingsGraphStatus = loadSettingsSyncStatus()", audit_start)
+        audit = source[audit_start:audit_end]
+        self.assertIn("let loadedModel = loadModel()", audit)
+        self.assertIn("let auditModel = loadedModel ?? Self.unavailableModel()", audit)
+        self.assertIn('logWindow?.setFrameAutosaveName("")', audit)
+        self.assertIn('roomsWindow?.setFrameAutosaveName("")', audit)
+        self.assertIn("updateRoomsWindow(auditModel)", audit)
+        self.assertIn("updateLogWindow(auditModel)", audit)
+        self.assertIn("fitRoomsWindow()", audit)
+        self.assertIn("fitLogWindow()", audit)
 
     def test_layout_audit_detects_collapsed_cards_and_empty_bands(self):
         """The audit is the only way to check a window nobody can see, so it has
@@ -3538,6 +4113,64 @@ class AutoReplyMenubarTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.analyze(directory / "missing")
 
+
+    def test_dream_rsi_status_reads_checkpoint_without_evaluation_or_copy(self):
+        module = load("auto_reply_menubar_dream_status")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "dream-rsi-policy.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "dreamed_at": 123,
+                        "status": "evaluated",
+                        "selected_policy": "mirror_prompt_tail",
+                        "gold_rows": 7,
+                        "excluded_model_gold": 2,
+                        "gold_source_policy": "human_only",
+                        "evaluations": {
+                            "mirror_prompt_tail": {"status": "evaluated"}
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch(
+                "auto_reply_dream_rsi.dream_policy_evaluation",
+                side_effect=AssertionError("status path must not evaluate DREAM-RSI"),
+            ) as evaluate, mock.patch(
+                "auto_reply_golden_dataset._connect_readonly",
+                side_effect=AssertionError("status path must not copy/read live DB"),
+            ) as copy_reader:
+                report = module._dream_rsi_status_payload(root)
+
+        evaluate.assert_not_called()
+        copy_reader.assert_not_called()
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["status"], "evaluated")
+        self.assertEqual(report["selected_policy"], "mirror_prompt_tail")
+        self.assertEqual(report["gold_rows"], 7)
+        self.assertEqual(report["excluded_model_gold"], 2)
+        self.assertEqual(report["gold_source_policy"], "human_only")
+
+        source = MENUBAR.read_text(encoding="utf-8")
+        helper_start = source.index("def _dream_rsi_status_payload(")
+        helper_end = source.index("\ndef main():", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertNotIn("dream_policy_evaluation", helper)
+        self.assertNotIn("context.sqlite3", helper)
+        swift = SWIFT.read_text(encoding="utf-8")
+        self.assertIn('"settings-sync-card"', swift)
+        self.assertIn('"settings-dream-rsi-card"', swift)
+        self.assertIn('["--action", "dream-rsi-status"]', swift)
+        apply_start = swift.index("func applySettingsDreamRsiStatus(")
+        apply_end = swift.index("\n    func applySettingsSyncStatus(", apply_start)
+        apply_body = swift[apply_start:apply_end]
+        self.assertIn("let gold = NSColor(", apply_body)
+        self.assertIn("let amber = NSColor(", apply_body)
+        self.assertNotIn(".systemGreen", apply_body)
+
     def test_menubar_exposes_the_knowledge_graph_action(self):
         """The action has to be answered before the frozen vector dispatch."""
         source = MENUBAR.read_text(encoding="utf-8")
@@ -3548,6 +4181,115 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertGreater(graph_at, 0)
         self.assertGreater(dispatch_at, 0)
         self.assertLess(graph_at, dispatch_at, "the graph action must come first")
+
+    def test_knowledge_graph_focus_action_uses_bundle_and_stays_fail_closed(self):
+        module = load("auto_reply_menubar_graph_focus_test")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = {
+                "query": "선택 뉴런",
+                "chat_id": "room-42",
+                "facts": ["[관계] A —(연결)→ B"],
+                "fact_count": 1,
+                "candidate_count": 1,
+                "entities_count": 1,
+                "relations_count": 1,
+                "focus_node_id": "entity:a",
+                "focus_k": 2,
+                "focus_node_count": 2,
+                "focus_edge_count": 1,
+            }
+            with mock.patch(
+                "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                return_value=bundle,
+            ) as retrieve, mock.patch(
+                "auto_reply_knowledge_graph.collect_knowledge_graph"
+            ) as reindex:
+                payload = module._knowledge_graph_focus_payload(
+                    state_root=root,
+                    query_text="선택 뉴런",
+                    node_id="entity:a",
+                    chat_id="room-42",
+                )
+            retrieve.assert_called_once_with(
+                "선택 뉴런",
+                state_root=root,
+                chat_id="room-42",
+                also=["entity:a"],
+            )
+            reindex.assert_not_called()
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["facts"], bundle["facts"])
+            self.assertEqual(payload["focus_node_id"], "entity:a")
+            self.assertEqual(payload["focus_k"], 2)
+
+            with mock.patch(
+                "auto_reply_knowledge_graph.retrieve_knowledge_bundle",
+                side_effect=sqlite3.OperationalError(
+                    "isolated read-only snapshot unavailable"
+                ),
+            ):
+                failed = module._knowledge_graph_focus_payload(
+                    state_root=root,
+                    query_text="선택 뉴런",
+                    node_id="entity:a",
+                    chat_id="room-42",
+                )
+            self.assertFalse(failed["ok"])
+            self.assertEqual(failed["facts"], [])
+            self.assertEqual(failed["focus_node_id"], "")
+            self.assertEqual(failed["focus_k"], 0)
+
+        source = MENUBAR.read_text(encoding="utf-8")
+        focus_at = source.find('if action == "knowledge-graph-focus":')
+        graph_at = source.find('if action == "knowledge-graph":')
+        dispatch_at = source.find('args = type("Args", (), {"action": action})()')
+        self.assertGreater(focus_at, 0)
+        self.assertLess(focus_at, graph_at)
+        self.assertLess(focus_at, dispatch_at)
+        helper_start = source.index("def _knowledge_graph_focus_payload(")
+        helper_end = source.index("\ndef _strip_argv_flags", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertIn("retrieve_knowledge_bundle", helper)
+        self.assertNotIn("context.sqlite3", helper)
+
+    def test_swift_graph_focus_drilldown_uses_existing_evidence_card_and_contracts(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        graph = source[
+            source.index("final class KnowledgeGraphView"):
+            source.index("final class JarvisCoreView")
+        ]
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
+        request_start = source.index("func requestKnowledgeGraphFocus(for node: KnowledgeNode)")
+        request_end = source.index("\n    /// 사용자가 그래프를 다시 읽으라고 했을 때", request_start)
+        request = source[request_start:request_end]
+
+        self.assertIn('"--action", "knowledge-graph-focus"', request)
+        self.assertIn('"--knowledge-query", node.label', request)
+        self.assertIn('"--knowledge-node-id", node.id', request)
+        self.assertIn('["--knowledge-chat", room]', request)
+        self.assertIn("renderKnowledgeGraphEvidence(node, bundle: report)", request)
+        self.assertIn("nodeId: report.focus_node_id", request)
+        self.assertIn("hop: report.focus_k", request)
+        self.assertIn('lines.append("관련 사실·관계")', source)
+        self.assertIn('bundle.facts.map { "• \\($0)" }', source)
+
+        self.assertIn("static let defaultFocusHop = 2", graph)
+        self.assertIn("static let maxFocusHop = 3", graph)
+        self.assertIn("static let focusNeighborLimit = 10", graph)
+        self.assertIn("static let focusDuration: Double = 0.32", graph)
+        self.assertIn("static let cameraZoomScale: CGFloat = 1.08", graph)
+        self.assertIn(
+            "let boundedHop = min(max(hop, Self.defaultFocusHop), Self.maxFocusHop)",
+            graph,
+        )
+        self.assertIn("static let panelWidth: CGFloat = 276", panel)
+        self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
+        self.assertIn("static let coreSize: CGFloat = 236", panel)
+        self.assertIn("static let gearSize: CGFloat = 28", panel)
 
     def test_knowledge_graph_action_survives_a_broken_state_root(self):
         """A missing state root must return an empty graph, not crash the menu."""
@@ -3798,20 +4540,31 @@ class AutoReplyMenubarTests(unittest.TestCase):
         """The panel has to pass the core's background value into the core."""
 
         source = SWIFT.read_text(encoding="utf-8")
+        panel = source[
+            source.index("final class MenuPanelView"):
+            source.index("final class CenteredLabelCell")
+        ]
         self.assertIn("background: Double = 0", source)
-        self.assertIn("background: String? = nil", source)
-        self.assertIn("JarvisCoreView.background(model, chatId:", source)
-        self.assertIn("background: background.activity", source)
-        self.assertIn("background: background.caption", source)
+        self.assertIn("JarvisCoreView.background(model, chatId:", panel)
+        self.assertIn("background: background.activity", panel)
         self.assertIn("let background: BackgroundActivity?", source)
-        # 파이프라인 단계가 살아 있으면 그 설명이 먼저고, 백그라운드 한 줄은
-        # 그다음이다. 순서가 뒤집히면 답변 생성 중에 화면이 동기화만 말한다.
-        active_at = source.find('stages.first(where: { $0.state == "active" })')
-        background_at = source.find("if let text = background, !text.isEmpty {")
-        open_jobs_at = source.find("if openJobs > 0 {", background_at)
-        self.assertGreater(active_at, 0)
-        self.assertGreater(background_at, active_at)
-        self.assertGreater(open_jobs_at, background_at)
+        self.assertIn("let speed = Self.idleSpeed + Self.activeSpeed * currentActivity", source)
+        self.assertIn("spawnPulse(strength: max(clamped, 0.45))", source)
+        self.assertIn("let boost = 1.0 + currentActivity * 1.7", source)
+        self.assertIn("0.22 * currentActivity * near", source)
+
+    def test_swift_jarvis_core_is_gold_amber_without_decorative_glow(self):
+        source = SWIFT.read_text(encoding="utf-8")
+        core = source[
+            source.index("final class JarvisCoreView"):
+            source.index("final class MenuPanelView")
+        ]
+        self.assertIn("private static let gold = NSColor(", core)
+        self.assertIn("private static let amber = NSColor(", core)
+        self.assertNotIn("drawBackdrop(", core)
+        self.assertNotIn("drawLevelRing(", core)
+        self.assertNotIn("Palette.level(level)", core)
+        self.assertNotIn("NSGradient(", core)
 
 
 def load_layout_check():
@@ -3837,6 +4590,41 @@ class LayoutGateTests(unittest.TestCase):
 
     def setUp(self):
         self.check = load_layout_check()
+
+    def test_menu_panel_gate_identifies_gear_by_audit_identifier(self):
+        rows = []
+        for window in ("menu-panel", "menu-panel-dark"):
+            rows.extend([
+                {
+                    "window": window,
+                    "path": f"{window}/AutoReplyMenu.JarvisCoreView#0",
+                    "kind": "AutoReplyMenu.JarvisCoreView",
+                    "hidden": False,
+                },
+                {
+                    "window": window,
+                    "path": f"{window}/NSButton#1",
+                    "kind": "NSButton",
+                    "identifier": "gear",
+                    "hidden": False,
+                    "text": "",
+                },
+            ])
+        self.assertEqual(self.check.menu_panel_surface_violations(rows), {})
+
+    def test_layout_gate_allows_only_jarvis_gear_overlap(self):
+        overlap = {
+            "window": "menu-panel",
+            "a": "AutoReplyMenu.JarvisCoreView ",
+            "b": "NSButton ",
+            "overlap": [24.0, 24.0],
+        }
+        self.assertTrue(self.check.intentional_menu_panel_overlap(overlap))
+        overlap["window"] = "settings"
+        self.assertFalse(self.check.intentional_menu_panel_overlap(overlap))
+        overlap["window"] = "menu-panel"
+        overlap["a"] = "NSButton "
+        self.assertFalse(self.check.intentional_menu_panel_overlap(overlap))
 
     def scroll_stack(
         self, table_width, clip_width, h_scroller=False, window="log-min", columns_right=None
@@ -4089,6 +4877,340 @@ class LayoutGateTests(unittest.TestCase):
         self.assertIn("final class TableScrollView: NSScrollView", source)
         self.assertIn("override func tile()", source)
         self.assertIn("let scroll = TableScrollView()", source)
+
+
+class JarvisBrowserBridgeActionTests(unittest.TestCase):
+    def test_browser_task_stdin_is_bounded_and_strict_utf8(self):
+        module = load(f"auto_reply_menubar_tool_stdin_{id(self)}")
+
+        class RecordingStream(io.BytesIO):
+            requested = None
+
+            def read(self, size=-1):
+                self.requested = size
+                return super().read(size)
+
+        valid_stream = RecordingStream("브라우저 작업".encode("utf-8"))
+        task, error = module._read_tool_browser_task(valid_stream)
+        self.assertEqual(task, "브라우저 작업")
+        self.assertIsNone(error)
+        self.assertEqual(valid_stream.requested, 16 * 1024 + 1)
+
+        for raw, error_code in (
+            (b"", "browser_task_invalid"),
+            (b"   ", "browser_task_invalid"),
+            (b"bad\x00task", "browser_task_invalid"),
+            (b"\xff", "browser_task_invalid"),
+            (b"x" * (16 * 1024 + 1), "browser_task_too_large"),
+        ):
+            task, error = module._read_tool_browser_task(io.BytesIO(raw))
+            self.assertIsNone(task)
+            self.assertEqual(
+                error,
+                {
+                    "ok": False,
+                    "status": "rejected",
+                    "errorCode": error_code,
+                    "result": "",
+                },
+            )
+
+    def test_invalid_input_and_global_abort_return_redacted_fixed_envelopes(self):
+        from jarvis_abort import AbortController
+
+        module = load(f"auto_reply_menubar_tool_browser_{id(self)}")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            invalid = asyncio.run(
+                module._tool_browser_payload(
+                    state_root_raw=str(root), job_id="../bad", task="private task"
+                )
+            )
+            self.assertEqual(
+                invalid,
+                {
+                    "ok": False,
+                    "status": "rejected",
+                    "errorCode": "job_id_invalid",
+                    "result": "",
+                },
+            )
+
+            AbortController(root).abort("operator stop")
+            aborted = asyncio.run(
+                module._tool_browser_payload(
+                    state_root_raw=str(root), job_id="browser-1", task="private task"
+                )
+            )
+            self.assertEqual(
+                aborted,
+                {
+                    "ok": False,
+                    "status": "aborted",
+                    "errorCode": "global_abort",
+                    "result": "",
+                },
+            )
+            self.assertNotIn("private task", repr((invalid, aborted)))
+
+    def test_oversized_result_and_missing_runtime_fail_closed(self):
+        from jarvis_tool_runtime import (
+            MAX_TOOL_RESULT_BYTES,
+            ToolJobResult,
+            ToolKind,
+            ToolStatus,
+        )
+
+        module = load(f"auto_reply_menubar_tool_bounds_{id(self)}")
+
+        class OversizedRuntime:
+            def __init__(self, _state_root):
+                pass
+
+            async def run_browser(self, job):
+                return ToolJobResult(
+                    job_id=job.job_id,
+                    kind=ToolKind.BROWSER,
+                    status=ToolStatus.COMPLETED,
+                    ok=True,
+                    result="x" * (MAX_TOOL_RESULT_BYTES + 1),
+                )
+
+        class MissingRuntime:
+            def __init__(self, _state_root):
+                pass
+
+            async def run_browser(self, _job):
+                raise ModuleNotFoundError("browser_use secret path")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", OversizedRuntime):
+                oversized = asyncio.run(
+                    module._tool_browser_payload(
+                        state_root_raw=temporary, job_id="browser-2", task="task"
+                    )
+                )
+            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", MissingRuntime):
+                unavailable = asyncio.run(
+                    module._tool_browser_payload(
+                        state_root_raw=temporary, job_id="browser-3", task="task"
+                    )
+                )
+
+        self.assertEqual(oversized["errorCode"], "browser_result_too_large")
+        self.assertEqual(oversized["result"], "")
+        self.assertEqual(unavailable["errorCode"], "browser_runtime_unavailable")
+        self.assertEqual(set(unavailable), {"ok", "status", "errorCode", "result"})
+        self.assertNotIn("secret path", repr(unavailable))
+
+    def test_main_dispatches_only_the_internal_browser_arguments(self):
+        module = load(f"auto_reply_menubar_tool_dispatch_{id(self)}")
+        expected = {
+            "ok": False,
+            "status": "failed",
+            "errorCode": "browser_job_failed",
+            "result": "",
+        }
+
+        class BinaryInput:
+            def __init__(self, payload):
+                self.buffer = io.BytesIO(payload)
+
+        argv = sys.argv
+        try:
+            sys.argv = [
+                "auto-reply-menubar.py",
+                "--action",
+                "tool-browser",
+                "--state-root",
+                "/tmp/jarvis-state",
+                "--job-id",
+                "browser-4",
+            ]
+            with mock.patch.object(
+                module.sys, "stdin", BinaryInput(b"bounded task")
+            ), mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"), mock.patch.object(
+                module, "_apply_catalog_mutates"
+            ), mock.patch.object(
+                module, "_tool_browser_payload", new=mock.AsyncMock(return_value=expected)
+            ) as run_browser, mock.patch.object(module, "_print_json") as print_json, mock.patch.object(
+                module, "_orig_main"
+            ) as legacy_main:
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = argv
+
+        run_browser.assert_awaited_once_with(
+            state_root_raw="/tmp/jarvis-state",
+            job_id="browser-4",
+            task="bounded task",
+        )
+        print_json.assert_called_once_with(expected)
+        legacy_main.assert_not_called()
+
+
+class JarvisMlxServerActionTests(unittest.TestCase):
+    """The app-owned MLX server actions must stay bounded and opt-in gated."""
+
+    def _run(self, module, argv, **patches):
+        context = [
+            mock.patch.object(module, "_scope_menubar_rooms_to_enrollment"),
+            mock.patch.object(module, "_apply_catalog_mutates"),
+        ]
+        for target, replacement in patches.items():
+            context.append(mock.patch.object(module, target, new=replacement))
+        print_json = mock.MagicMock()
+        context.append(mock.patch.object(module, "_print_json", new=print_json))
+        legacy_main = mock.MagicMock()
+        context.append(mock.patch.object(module, "_orig_main", new=legacy_main))
+        saved = sys.argv
+        try:
+            sys.argv = ["auto-reply-menubar.py", *argv]
+            with contextlib.ExitStack() as stack:
+                for entry in context:
+                    stack.enter_context(entry)
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = saved
+        legacy_main.assert_not_called()
+        self.assertEqual(print_json.call_count, 1)
+        return print_json.call_args.args[0]
+
+    def test_status_action_reports_only_bounded_codes(self):
+        module = load(f"auto_reply_menubar_mlx_status_{id(self)}")
+        payload = self._run(
+            module,
+            ["--action", "mlx-server-status", "--state-root", "/tmp/jarvis-mlx-state"],
+            ownership_status=lambda root: {
+                "ok": True,
+                "action": "mlx-server-status",
+                "owner_state": "foreign_listener",
+                "app_owned": False,
+                "model": None,
+            },
+        )
+        self.assertEqual(payload["owner_state"], "foreign_listener")
+        self.assertEqual(
+            set(payload), {"ok", "action", "owner_state", "app_owned", "model"}
+        )
+
+    def test_status_action_fails_closed_when_the_probe_raises(self):
+        module = load(f"auto_reply_menubar_mlx_status_fail_{id(self)}")
+
+        def boom(state_root):
+            raise RuntimeError("probe exploded")
+
+        with mock.patch.object(module, "ownership_status", new=boom):
+            payload = module._mlx_server_status_payload(Path("/tmp/jarvis-mlx-state"))
+        self.assertEqual(payload["owner_state"], "state_invalid")
+        self.assertFalse(payload["app_owned"])
+        self.assertIsNone(payload["model"])
+        self.assertEqual(payload["action"], "mlx-server-status")
+        self.assertIn("probe exploded", payload["reason"])
+
+    def test_lifecycle_actions_require_an_explicit_opt_in(self):
+        module = load(f"auto_reply_menubar_mlx_optin_{id(self)}")
+        launched = mock.MagicMock()
+        stopped = mock.MagicMock()
+        for action in ("mlx-server-launch", "mlx-server-stop"):
+            payload = self._run(
+                module,
+                ["--action", action, "--state-root", "/tmp/jarvis-mlx-state"],
+                launch_app_owned_server=launched,
+                stop_app_owned_server=stopped,
+            )
+            self.assertEqual(payload["reason"], "explicit_opt_in_required")
+            self.assertFalse(payload["ok"])
+        launched.assert_not_called()
+        stopped.assert_not_called()
+
+    def test_launch_names_only_the_signed_bundle_and_fixed_models(self):
+        module = load(f"auto_reply_menubar_mlx_launch_{id(self)}")
+        captured = {}
+
+        def fake_launch(spec, state_root):
+            captured["spec"] = spec
+            captured["state_root"] = state_root
+            return mock.MagicMock(report=lambda: {"ok": True, "action": "mlx-server-launch"})
+
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            launch_app_owned_server=fake_launch,
+        )
+        self.assertTrue(payload["ok"])
+        spec = captured["spec"]
+        self.assertEqual(spec.executable, module._MLX_APP_OWNED_BINARY)
+        self.assertEqual(spec.resident_model_dir.name, "Qwen3.8-27B-MLX-Serve-4bit")
+        self.assertEqual(spec.models_dir, module._MLX_APP_OWNED_MODELS_DIR)
+        self.assertEqual(
+            spec.log_path, Path("/tmp/jarvis-mlx-state") / "mlx-app-owned-server.log"
+        )
+        self.assertEqual(spec.host, "127.0.0.1")
+        self.assertEqual(spec.port, 11234)
+        self.assertEqual(spec.validate(), "")
+
+    def test_launch_accepts_the_prefixed_model_id_and_rejects_anything_else(self):
+        module = load(f"auto_reply_menubar_mlx_models_{id(self)}")
+        prefixed = module._mlx_app_owned_spec(
+            Path("/tmp/jarvis-mlx-state"),
+            "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+        )
+        self.assertIsNotNone(prefixed)
+        self.assertEqual(
+            prefixed.resident_model_dir.name,
+            "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+        )
+        for candidate in (None, "", "remote/arbitrary", "ddalcu/../../etc/passwd"):
+            self.assertIsNone(
+                module._mlx_app_owned_spec(Path("/tmp/jarvis-mlx-state"), candidate),
+                msg=f"accepted model {candidate!r}",
+            )
+
+        launched = mock.MagicMock()
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                "remote/arbitrary",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            launch_app_owned_server=launched,
+        )
+        self.assertEqual(payload["reason"], "mlx_model_not_supported")
+        launched.assert_not_called()
+
+    def test_stop_reports_the_owner_mismatch_without_signalling(self):
+        from mlx_serve_lifecycle import StopResult
+
+        module = load(f"auto_reply_menubar_mlx_stop_{id(self)}")
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-stop",
+                "--state-root",
+                "/tmp/jarvis-mlx-state",
+                "--explicit-opt-in",
+            ],
+            stop_app_owned_server=lambda root: StopResult(
+                False, "stop_owner_mismatch", 38868
+            ),
+        )
+        self.assertEqual(payload, {"ok": False, "action": "mlx-server-stop", "reason": "stop_owner_mismatch"})
+        self.assertNotIn("38868", repr(payload))
 
 
 if __name__ == "__main__":

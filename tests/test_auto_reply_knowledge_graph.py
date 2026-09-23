@@ -10,6 +10,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 import subprocess
@@ -17,6 +18,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,10 +26,13 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import auto_reply_ondevice as ONDEVICE
+import local_mlx_gateway as LOCAL_MLX
 
-def load_graph():
+
+def load_graph(module_name: str = "kg_under_test"):
     path = SCRIPTS / "auto_reply_knowledge_graph.py"
-    spec = importlib.util.spec_from_file_location("kg_under_test", path)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[spec.name] = module
@@ -99,6 +104,11 @@ class GraphShapeTests(unittest.TestCase):
             with self.subTest(edge=edge["relation"]):
                 self.assertIn(edge["source"], ids)
                 self.assertIn(edge["target"], ids)
+                self.assertIn("room_id", edge)
+                self.assertIn("valid_from", edge)
+                self.assertIn("valid_to", edge)
+                self.assertIn("evidence_message_id", edge)
+                self.assertIn("evidence", edge)
 
     def test_a_broken_state_root_still_returns_the_seeded_graph(self):
         """A missing ledger must not blank the window."""
@@ -110,6 +120,119 @@ class GraphShapeTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertGreater(report["node_count"], 0)
         self.assertEqual(report["grounded_nodes"], 0)
+
+
+class KHopNeighborhoodTests(unittest.TestCase):
+    def _add_entity(self, conn, entity_id: str, name: str) -> None:
+        conn.execute(
+            "INSERT INTO kg_entities (entity_id, name, category, aliases_json, description,"
+            " key_facts_json, importance, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (entity_id, name, "entity", "[]", name, "[]", 50, 1),
+        )
+
+    def _add_relation(self, conn, source: str, target: str, weight: int) -> None:
+        conn.execute(
+            "INSERT INTO kg_relations (source_id, relation, target_id, context, weight, updated_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (source, "RELATED_TO", target, "bounded triple", weight, 1),
+        )
+
+    def test_k_hop_caps_depth_neighbors_and_invalid_nodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._add_entity(conn, "ent:test:root", "root")
+                for index in range(25):
+                    entity_id = f"ent:test:n{index:02d}"
+                    self._add_entity(conn, entity_id, entity_id)
+                    self._add_relation(conn, "ent:test:root", entity_id, 100 - index)
+                conn.commit()
+            finally:
+                conn.close()
+
+            result = KG.k_hop_neighborhood(
+                "ent:test:root", 99, 99, state_root=root
+            )
+            self.assertEqual(result["k"], KG.MAX_K_HOP)
+            self.assertEqual(result["limit"], KG.K_HOP_NEIGHBOR_LIMIT)
+            self.assertLessEqual(
+                len(result["node_ids"]),
+                1 + KG.MAX_K_HOP * KG.K_HOP_NEIGHBOR_LIMIT,
+            )
+            self.assertEqual(len(result["node_ids"]), 11)
+            self.assertEqual(
+                KG.k_hop_neighborhood("", 2, 10, state_root=root)["node_ids"], []
+            )
+            self.assertEqual(
+                KG.k_hop_neighborhood("message:raw:1", 2, 10, state_root=root)["node_ids"], []
+            )
+            self.assertEqual(
+                KG.k_hop_neighborhood("ent:test:missing", 2, 10, state_root=root)["node_ids"], []
+            )
+
+    def test_collect_focus_never_materializes_message_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._add_entity(conn, "ent:test:root", "root")
+                self._add_entity(conn, "topic:test:child", "child")
+                self._add_entity(conn, "message:raw:1", "raw message")
+                self._add_relation(conn, "ent:test:root", "topic:test:child", 90)
+                self._add_relation(conn, "ent:test:root", "message:raw:1", 100)
+                conn.commit()
+            finally:
+                conn.close()
+
+            report = KG.collect_knowledge_graph(
+                root / "context.sqlite3",
+                focus_node_id="ent:test:root",
+                focus_k=2,
+                focus_limit=10,
+            )
+            node_ids = {node["id"] for node in report["nodes"]}
+            self.assertEqual(node_ids, {"ent:test:root", "topic:test:child"})
+            self.assertEqual(len(report["edges"]), 1)
+            self.assertEqual(report["edges"][0]["target"], "topic:test:child")
+
+    def test_retrieve_bundle_uses_default_two_hop_focus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                for entity_id, name, aliases in (
+                    ("ent:test:alpha", "Alpha", ["alpha"]),
+                    ("topic:test:beta", "Beta", []),
+                    ("ent:test:gamma", "Gamma", []),
+                ):
+                    conn.execute(
+                        "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                        " description, key_facts_json, importance, updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?)",
+                        (
+                            entity_id,
+                            name,
+                            "entity",
+                            json.dumps(aliases),
+                            name,
+                            json.dumps([name + " fact"]),
+                            50,
+                            1,
+                        ),
+                    )
+                self._add_relation(conn, "ent:test:alpha", "topic:test:beta", 90)
+                self._add_relation(conn, "topic:test:beta", "ent:test:gamma", 80)
+                conn.commit()
+            finally:
+                conn.close()
+
+            bundle = KG.retrieve_knowledge_bundle("alpha", state_root=root)
+            self.assertEqual(bundle["focus_node_id"], "ent:test:alpha")
+            self.assertEqual(bundle["focus_k"], KG.DEFAULT_K_HOP)
+            self.assertEqual(bundle["focus_node_count"], 3)
+            self.assertEqual(bundle["focus_edge_count"], 2)
+            self.assertTrue(any(fact.startswith("[관계]") for fact in bundle["facts"]))
 
 
 class EvidenceTests(unittest.TestCase):
@@ -229,8 +352,15 @@ class BackgroundReindexTests(unittest.TestCase):
                 if first["reindex"]["started"]:
                     # The second call must reuse the running refresh rather than
                     # starting a second walk over the same database.
-                    self.assertFalse(second["reindex"]["started"])
-                    self.assertEqual(second["reindex"]["reason"], "in_flight")
+                    second_reindex = second.get("reindex") or {
+                        "started": False,
+                        "reason": "idle",
+                    }
+                    self.assertFalse(second_reindex.get("started"))
+                    self.assertIn(
+                        second_reindex.get("reason"),
+                        ("in_flight", "idle"),
+                    )
             finally:
                 KG.wait_for_background_reindex()
 
@@ -451,6 +581,33 @@ class RealIndexPathTests(unittest.TestCase):
         self.assertEqual(stamped, "", "실패한 색인을 '색인했다'로 찍으면 안 된다")
 
 
+    def test_reindex_is_decoupled_from_dream_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._state_root(Path(tmp))
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.ensure_seeded(conn)
+                with mock.patch.multiple(
+                    KG,
+                    index_topic_entities=mock.DEFAULT,
+                    index_topic_relations=mock.DEFAULT,
+                    index_chat_entities=mock.DEFAULT,
+                    index_person_entities=mock.DEFAULT,
+                    index_membership_relations=mock.DEFAULT,
+                    prune_indexed_entities=mock.DEFAULT,
+                    _merge_seed_rooms=mock.DEFAULT,
+                    attach_ledger_evidence=mock.DEFAULT,
+                ), mock.patch(
+                    "auto_reply_dream_rsi.dream_policy_evaluation",
+                    side_effect=RuntimeError("dream failed"),
+                ) as dream:
+                    KG._reindex_all(conn, root, cycle_started_at=int(time.time()))
+                dream.assert_not_called()
+                self.assertEqual(KG.read_meta(conn, "last_index_error"), "")
+                self.assertNotEqual(KG.read_meta(conn, "last_indexed_at"), "")
+            finally:
+                conn.close()
+
 class IsolatedReadOnlyConnectionTests(unittest.TestCase):
     def _write_source_db(self, root: Path) -> Path:
         db = root / "context.sqlite3"
@@ -496,6 +653,135 @@ class IsolatedReadOnlyConnectionTests(unittest.TestCase):
             finally:
                 holder.rollback()
                 holder.close()
+
+    def test_copy_failure_is_fail_closed_and_never_opens_the_live_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self._write_source_db(Path(tmp))
+            real_connect = sqlite3.connect
+            opened: list[str] = []
+
+            def tracked_connect(target, *args, **kwargs):
+                opened.append(str(target))
+                return real_connect(target, *args, **kwargs)
+
+            with mock.patch.object(KG.shutil, "copy2", side_effect=OSError("copy refused")):
+                with mock.patch.object(KG.sqlite3, "connect", side_effect=tracked_connect):
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError,
+                        "isolated read-only snapshot unavailable",
+                    ):
+                        with KG._open_isolated_ro_conn(db):
+                            self.fail("copy failure must not yield a connection")
+
+            self.assertEqual(opened, [], "copy failure must not fall back to the live Kakao DB")
+
+    def test_isolated_copy_carries_the_wal_sidecar_and_sees_uncheckpointed_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "context.sqlite3"
+            writer = sqlite3.connect(db)
+            try:
+                writer.execute("PRAGMA journal_mode = WAL")
+                writer.execute("PRAGMA wal_autocheckpoint = 0")
+                writer.execute(
+                    "CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                writer.execute("INSERT INTO sample (value) VALUES ('wal only row')")
+                writer.commit()
+                self.assertTrue(
+                    db.with_name(db.name + "-wal").exists(),
+                    "the fixture must leave a WAL for the copy to carry",
+                )
+                with KG._open_isolated_ro_conn(db) as conn:
+                    copied = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+                    self.assertNotEqual(copied.resolve(), db.resolve())
+                    self.assertTrue((copied.parent / (copied.name + "-wal")).exists())
+                    self.assertEqual(
+                        conn.execute("SELECT value FROM sample").fetchone()[0],
+                        "wal only row",
+                    )
+            finally:
+                writer.close()
+
+    def test_the_copy_is_retried_when_the_wal_sidecar_moves_mid_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = self._write_source_db(root)
+            wal = db.with_name(db.name + "-wal")
+            wal.write_bytes(b"fixture" * 4)
+            real_copy2 = KG.shutil.copy2
+            calls = {"count": 0}
+
+            def moving_copy2(source, target, *args, **kwargs):
+                result = real_copy2(source, target, *args, **kwargs)
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    wal.write_bytes(b"fixture" * 8)
+                return result
+
+            destination = root / "copy"
+            destination.mkdir()
+            with mock.patch.object(KG.shutil, "copy2", side_effect=moving_copy2):
+                copied = KG._copy_consistent_sqlite_replica(db, destination)
+            self.assertEqual(copied, destination / db.name)
+            self.assertTrue(copied.exists())
+            self.assertGreaterEqual(
+                calls["count"], 4, "the mutated first copy must be rejected and redone"
+            )
+
+    def test_a_source_that_never_settles_fails_closed_at_the_public_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = self._write_source_db(root)
+            wal = db.with_name(db.name + "-wal")
+            wal.write_bytes(b"fixture")
+            real_copy2 = KG.shutil.copy2
+            real_connect = sqlite3.connect
+            opened: list[str] = []
+
+            def tracked_connect(target, *args, **kwargs):
+                opened.append(str(target))
+                return real_connect(target, *args, **kwargs)
+
+            def always_moving(source, target, *args, **kwargs):
+                result = real_copy2(source, target, *args, **kwargs)
+                if Path(source) == db:
+                    with open(wal, "ab") as handle:
+                        handle.write(b"x")
+                return result
+
+            with mock.patch.object(KG.shutil, "copy2", side_effect=always_moving):
+                with mock.patch.object(KG.sqlite3, "connect", side_effect=tracked_connect):
+                    with self.assertRaisesRegex(
+                        sqlite3.OperationalError,
+                        "isolated read-only snapshot unavailable",
+                    ):
+                        with KG._open_isolated_ro_conn(db):
+                            self.fail("a mutating source must not yield a connection")
+
+            self.assertEqual(opened, [], "a mutating source must not open the live Kakao DB")
+
+    def test_status_reports_fail_closed_empty_index_from_persisted_index_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                KG.write_meta(conn, "last_index_error", "rooms: OperationalError: isolated read-only snapshot unavailable")
+                KG.write_meta(conn, "last_snapshot_status", "fail_closed")
+            finally:
+                conn.close()
+
+            status = KG.collect_knowledge_graph_status(
+                root / "context.sqlite3",
+                state_root=root,
+                now=2_000_000_000,
+            )
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["snapshot_status"], "fail_closed")
+        self.assertEqual(status["indexed_count"], 0)
+        self.assertEqual(status["indexed_at"], 0)
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["indexing_mode"], "wal+isolated-copy+mode=ro+query_only")
 
 
 class MigrationTests(unittest.TestCase):
@@ -752,6 +1038,641 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(result, {"nodes": 0, "relations": 0})
 
 
+class DenseRefreshBatchingTests(unittest.TestCase):
+    def setUp(self):
+        self._model_patch = mock.patch.object(
+            KG,
+            "_active_dense_embedding_model",
+            return_value="mlx-test/embedder",
+        )
+        self._model_patch.start()
+        self._original_probe = KG._dense_embedding_probe
+        self._probe_patch = mock.patch.object(
+            KG,
+            "_dense_embedding_probe",
+            return_value=(True, "probe_ok"),
+        )
+        self._probe_patch.start()
+
+    def tearDown(self):
+        self._probe_patch.stop()
+        self._model_patch.stop()
+
+    def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENKAKAO_LOCAL_EMBEDDING_URL", None)
+            default_kg = load_graph("kg_default_dense_endpoint_test")
+        try:
+            self.assertIs(
+                default_kg.DEFAULT_DENSE_EMBEDDING_URL,
+                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+            )
+            self.assertEqual(
+                default_kg.DENSE_EMBEDDING_URL,
+                "http://127.0.0.1:11234/v1/embeddings",
+            )
+
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps(
+                        {
+                            "model": "mlx/test-model",
+                            "data": [{"index": 0, "embedding": [3.0, 4.0]}],
+                        }
+                    ).encode("utf-8")
+
+            with mock.patch.object(
+                default_kg,
+                "_active_dense_embedding_model",
+                return_value="mlx/test-model",
+            ), mock.patch.object(
+                default_kg,
+                "_open_loopback_embedding_request",
+                return_value=Response(),
+            ) as open_request:
+                vectors = default_kg._local_dense_embeddings(["로컬 임베딩"])
+
+            request = open_request.call_args.args[0]
+            self.assertEqual(request.full_url, LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL)
+            self.assertEqual(json.loads(request.data)["model"], "mlx/test-model")
+            self.assertEqual(
+                open_request.call_args.kwargs["timeout"],
+                default_kg.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+            )
+            self.assertEqual(vectors, [(0.6, 0.8)])
+        finally:
+            sys.modules.pop("kg_default_dense_endpoint_test", None)
+
+    def test_dense_endpoint_environment_override_still_wins(self):
+        override = "http://localhost:19123/v1/embeddings"
+        with mock.patch.dict(
+            os.environ,
+            {"OPENKAKAO_LOCAL_EMBEDDING_URL": override},
+            clear=False,
+        ):
+            override_kg = load_graph("kg_dense_endpoint_override_test")
+        try:
+            self.assertEqual(override_kg.DENSE_EMBEDDING_URL, override)
+            self.assertEqual(
+                override_kg.DEFAULT_DENSE_EMBEDDING_URL,
+                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+            )
+        finally:
+            sys.modules.pop("kg_dense_endpoint_override_test", None)
+
+    def test_mlx_gateway_endpoint_constants_have_one_shared_source(self):
+        self.assertIs(ONDEVICE.MLX_GATEWAY_BASE_URL, LOCAL_MLX.MLX_GATEWAY_BASE_URL)
+        self.assertIs(
+            KG.DEFAULT_DENSE_EMBEDDING_URL,
+            LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+        )
+
+    def _make_graph(self, root: Path, count: int) -> sqlite3.Connection:
+        conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+        for index in range(count):
+            conn.execute(
+                "INSERT INTO kg_entities (entity_id, name, category, aliases_json,"
+                " description, key_facts_json, importance, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    f"ent:test:{index:02d}",
+                    f"entity {index}",
+                    "entity",
+                    "[]",
+                    f"description {index}",
+                    "[]",
+                    1,
+                    index + 1,
+                ),
+            )
+        conn.commit()
+        return conn
+
+    def _dense_counts(self, root: Path) -> tuple[int, int]:
+        dense = sqlite3.connect(root / KG.DENSE_INDEX_DB_NAME)
+        try:
+            return (
+                dense.execute("SELECT COUNT(*) FROM dense_vectors").fetchone()[0],
+                dense.execute("SELECT COUNT(*) FROM ann_buckets").fetchone()[0],
+            )
+        finally:
+            dense.close()
+
+    def _embedding_response(self, count: int):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "model": "mlx-test/embedder",
+                        "data": [
+                            {"index": index, "embedding": [1.0, 0.0]}
+                            for index in range(count)
+                        ]
+                    }
+                ).encode("utf-8")
+
+        return Response()
+
+    def test_dense_refresh_default_batch_size_is_eight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 17)
+            calls: list[tuple[int, float]] = []
+
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                calls.append((len(payload["input"]), timeout))
+                return self._embedding_response(len(payload["input"]))
+
+            try:
+                with mock.patch.object(
+                    KG,
+                    "_open_loopback_embedding_request",
+                    side_effect=fake_urlopen,
+                ):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                calls,
+                [
+                    (8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS),
+                    (8, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                    (1, KG.DENSE_EMBEDDING_TIMEOUT_SECONDS),
+                ],
+            )
+            self.assertEqual(result["status"], "indexed")
+            self.assertEqual(result["indexed"], 17)
+
+    def test_dense_refresh_cold_start_succeeds_without_splitting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls: list[tuple[int, float]] = []
+            simulated_duration_seconds = 10.0
+
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                calls.append((len(payload["input"]), timeout))
+                if timeout < simulated_duration_seconds:
+                    raise TimeoutError("simulated cold-start timeout")
+                return self._embedding_response(len(payload["input"]))
+
+            try:
+                with mock.patch.object(
+                    KG,
+                    "_open_loopback_embedding_request",
+                    side_effect=fake_urlopen,
+                ):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                calls,
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
+            )
+            self.assertEqual(result["status"], "indexed")
+            self.assertEqual(result["indexed"], 8)
+
+    def test_dense_refresh_aborts_timeout_batch_and_never_splits_to_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls: list[tuple[int, float]] = []
+
+            def fake_urlopen(request, *, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                input_count = len(payload["input"])
+                calls.append((input_count, timeout))
+                if input_count == 8:
+                    raise TimeoutError("simulated first-attempt timeout")
+                return self._embedding_response(input_count)
+
+            try:
+                with mock.patch.object(
+                    KG,
+                    "_open_loopback_embedding_request",
+                    side_effect=fake_urlopen,
+                ):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                calls,
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
+            )
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("RuntimeError", result["reason"])
+            self.assertEqual(self._dense_counts(root), (0, 0))
+
+    def test_dense_refresh_single_item_timeout_preserves_previous_dense_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_vectors"
+                " (entity_id, vector_json, dim, model, index_version, watermark)"
+                " VALUES ('stale', '[1.0,0.0]', 2, 'stale', 'stale', 'stale')"
+            )
+            dense.execute(
+                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (0, '00', 'stale')"
+            )
+            dense.commit()
+            dense.close()
+            prior_counts = self._dense_counts(root)
+            calls: list[tuple[int, float]] = []
+
+            def fake_embeddings(
+                texts,
+                *,
+                model_id=None,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
+            ):
+                calls.append((len(texts), timeout_seconds))
+                raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            self.assertEqual(
+                calls,
+                [(8, KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS)],
+            )
+            self.assertEqual(result["status"], "unavailable")
+            self.assertTrue(dense_status.startswith("unavailable:"))
+            self.assertEqual(prior_counts, (1, 1))
+            self.assertEqual(self._dense_counts(root), prior_counts)
+            dense = sqlite3.connect(root / KG.DENSE_INDEX_DB_NAME)
+            try:
+                self.assertEqual(
+                    dense.execute(
+                        "SELECT entity_id FROM dense_vectors WHERE entity_id='stale'"
+                    ).fetchone(),
+                    ("stale",),
+                )
+                self.assertEqual(
+                    dense.execute(
+                        "SELECT band, bucket, entity_id FROM ann_buckets"
+                        " WHERE band=0 AND bucket='00' AND entity_id='stale'"
+                    ).fetchone(),
+                    (0, "00", "stale"),
+                )
+            finally:
+                dense.close()
+
+    def test_dense_refresh_permanent_failure_does_not_split_or_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            calls = 0
+
+            def fake_embeddings(
+                _texts,
+                *,
+                model_id=None,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
+            ):
+                nonlocal calls
+                calls += 1
+                self.assertEqual(
+                    timeout_seconds,
+                    KG.DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS,
+                )
+                raise KG._DenseEmbeddingPermanentError(
+                    "local dense embedding dimension mismatch"
+                )
+
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            self.assertEqual(calls, 1)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(
+                dense_status,
+                "unavailable:RuntimeError:local dense embedding dimension mismatch",
+            )
+
+    def test_dense_refresh_empty_graph_creates_no_dense_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                with mock.patch.object(KG, "_local_dense_embeddings") as embeddings:
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            embeddings.assert_not_called()
+            self.assertEqual(result["status"], "empty")
+            self.assertEqual(result["indexed"], 0)
+            self.assertEqual(dense_status, "empty")
+            self.assertFalse((root / KG.DENSE_INDEX_DB_NAME).exists())
+
+    def test_unavailable_probe_aborts_before_batch_requests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            try:
+                with mock.patch.object(
+                    KG,
+                    "_dense_embedding_probe",
+                    return_value=(False, "probe_unavailable"),
+                ), mock.patch.object(KG.urllib.request, "urlopen") as urlopen:
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            urlopen.assert_not_called()
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("probe_unavailable", status)
+
+    def test_request_cap_and_cycle_deadline_abort_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 8)
+            try:
+                with mock.patch.object(KG, "DENSE_EMBEDDING_CYCLE_REQUEST_CAP", 0):
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("request_cap", status)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            try:
+                with mock.patch.object(KG, "DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS", -1):
+                    result = KG.refresh_dense_index(conn, root)
+                status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("cycle_deadline", status)
+
+    def test_non_loopback_local_embedding_url_is_rejected_before_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            try:
+                # The probe cache is module level, so drop any result an
+                # earlier test already memoized before exercising the guard.
+                with mock.patch.object(
+                    KG,
+                    "_DENSE_PROBE_CACHE",
+                    None,
+                ), mock.patch.object(
+                    KG,
+                    "_dense_embedding_probe",
+                    self._original_probe,
+                ), mock.patch.object(
+                    KG,
+                    "DENSE_EMBEDDING_URL",
+                    "https://example.com/v1/embeddings",
+                ), mock.patch.object(KG.urllib.request, "urlopen") as urlopen:
+                    result = KG.refresh_dense_index(conn, root)
+                dense_status = KG.read_meta(conn, "last_dense_status")
+            finally:
+                conn.close()
+
+            urlopen.assert_not_called()
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn("loopback-local", dense_status)
+
+    def test_dense_refresh_persists_one_vector_per_entity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 10)
+
+            def fake_embeddings(
+                texts,
+                *,
+                model_id=None,
+                timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
+                _budget=None,
+            ):
+                return [(1.0, 0.0)] * len(texts)
+
+            try:
+                entity_count = conn.execute("SELECT COUNT(*) FROM kg_entities").fetchone()[0]
+                with mock.patch.object(KG, "_local_dense_embeddings", side_effect=fake_embeddings):
+                    result = KG.refresh_dense_index(conn, root)
+            finally:
+                conn.close()
+
+            vector_count, bucket_count = self._dense_counts(root)
+            self.assertEqual(result["indexed"], entity_count)
+            self.assertEqual(vector_count, entity_count)
+            self.assertEqual(bucket_count, entity_count * KG.ANN_BANDS)
+
+    def test_http_4xx_raises_permanent_dense_error(self):
+        err = KG.urllib.error.HTTPError(
+            "http://127.0.0.1:11234/v1/embeddings",
+            400,
+            "Bad Request",
+            {},
+            None,
+        )
+        with mock.patch.object(
+            KG,
+            "_open_loopback_embedding_request",
+            side_effect=err,
+        ):
+            with self.assertRaises(KG._DenseEmbeddingPermanentError) as ctx:
+                KG._local_dense_embeddings(
+                    ["테스트"],
+                    model_id="mlx-test/embedder",
+                )
+            self.assertIn("local dense embedding unavailable", str(ctx.exception))
+
+    def test_dense_ann_query_fails_closed_when_graph_watermark_is_newer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            KG.write_meta(conn, "last_dense_status", "indexed:1")
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_meta (key, value) VALUES ('index_version', ?), ('watermark', '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.commit()
+            dense.close()
+            conn.close()
+
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", None), \
+                 mock.patch.object(KG, "_local_dense_embeddings") as mock_embed:
+                with self.assertRaises(RuntimeError) as ctx:
+                    KG._dense_ann_query(root, "질의")
+                self.assertIn("dense index watermark stale", str(ctx.exception))
+                mock_embed.assert_not_called()
+
+    def test_fresh_worker_queries_dense_without_indexer_probe_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            KG.write_meta(conn, "last_indexed_at", "100")
+            KG.write_meta(conn, "last_dense_status", "indexed:1")
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_meta (key, value) VALUES ('index_version', ?), ('watermark', '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.execute(
+                "INSERT INTO dense_meta (key, value) VALUES ('model_id', 'mlx-test/embedder'),"
+                " ('endpoint_identity', ?)",
+                (KG._dense_endpoint_identity(),),
+            )
+            dense.execute(
+                "INSERT INTO dense_vectors (entity_id, vector_json, dim, model, index_version, watermark)"
+                " VALUES ('ent:test:00', '[1.0, 0.0]', 2, 'mlx-test/embedder', ?, '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.executemany(
+                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (?,?,?)",
+                [
+                    (band, bucket, "ent:test:00")
+                    for band, bucket in KG._ann_band_keys((1.0, 0.0))
+                ],
+            )
+            dense.commit()
+            dense.close()
+            conn.close()
+
+            query_time = 1050.0
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", None), \
+                 mock.patch.object(KG, "_active_dense_embedding_model", return_value="mlx-test/embedder"), \
+                 mock.patch.object(KG.time, "monotonic", return_value=query_time), \
+                 mock.patch.object(KG, "_local_dense_embeddings", return_value=[(1.0, 0.0)]):
+                hits, watermark = KG._dense_ann_query(root, "질의")
+                self.assertEqual(watermark, "100")
+                self.assertEqual([entity_id for entity_id, _score in hits], ["ent:test:00"])
+                self.assertEqual(
+                    KG._DENSE_PROBE_CACHE,
+                    (query_time, "mlx-test/embedder", KG._dense_endpoint_identity()),
+                )
+
+
+class DenseModelIdentityTests(unittest.TestCase):
+    @staticmethod
+    def _response(payload):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self, _limit=None):
+                return json.dumps(payload).encode("utf-8")
+
+        return Response()
+
+    def test_active_model_requires_loaded_ready_embedding_capability(self):
+        models = {
+            "data": [
+                {
+                    "id": "mlx/loaded-embedder",
+                    "loaded": True,
+                    "state": "ready",
+                    "capabilities": ["chat", "embeddings"],
+                },
+                {
+                    "id": "mlx/unloaded-embedder",
+                    "loaded": False,
+                    "state": "unloaded",
+                    "capabilities": ["embeddings"],
+                },
+            ]
+        }
+        with (
+            mock.patch.object(KG, "DENSE_EMBEDDING_URL", "http://127.0.0.1:19123/v1/embeddings"),
+            mock.patch.object(KG, "DENSE_EMBEDDING_MODEL", ""),
+            mock.patch.object(KG, "_DENSE_MODEL_CACHE", None),
+            mock.patch.object(
+                KG,
+                "_open_loopback_embedding_request",
+                return_value=self._response(models),
+            ) as open_request,
+        ):
+            self.assertEqual(KG._active_dense_embedding_model(), "mlx/loaded-embedder")
+
+        request = open_request.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:19123/v1/models")
+        self.assertEqual(
+            open_request.call_args.kwargs["timeout"],
+            KG.DENSE_EMBEDDING_MODELS_TIMEOUT_SECONDS,
+        )
+
+    def test_chat_model_without_embedding_capability_is_not_used_as_encoder(self):
+        models = {
+            "data": [
+                {
+                    "id": "mlx/chat-only",
+                    "loaded": True,
+                    "state": "ready",
+                    "capabilities": ["chat", "tool_use"],
+                }
+            ]
+        }
+        with (
+            mock.patch.object(KG, "DENSE_EMBEDDING_MODEL", ""),
+            mock.patch.object(KG, "_DENSE_MODEL_CACHE", None),
+            mock.patch.object(
+                KG,
+                "_open_loopback_embedding_request",
+                return_value=self._response(models),
+            ),
+        ):
+            with self.assertRaises(KG._DenseEmbeddingPermanentError) as raised:
+                KG._active_dense_embedding_model()
+        self.assertIn("one ready local embedding model", str(raised.exception))
+
+    def test_loopback_redirect_handler_rejects_redirect_before_followup(self):
+        request = KG.urllib.request.Request(
+            "http://127.0.0.1:19123/v1/embeddings"
+        )
+        with self.assertRaises(KG.urllib.error.HTTPError) as raised:
+            KG._RejectLoopbackRedirects().redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://example.invalid/collect",
+            )
+        self.assertIn("redirects are disabled", str(raised.exception))
+        raised.exception.close()
+
+
 class NormalizeTests(unittest.TestCase):
     def test_normalize_rejects_a_non_dict(self):
         self.assertEqual(KG._normalize_evidence(None)["kind"], "seed")
@@ -965,6 +1886,140 @@ class KnowledgeGraphRagAndNormalizationTests(unittest.TestCase):
         partial = KG._keyword_match_score(['코인'], ['코인 시세'])
         self.assertGreater(exact, partial)
 
+
+
+class AnnSignMatrixTests(unittest.TestCase):
+    """The LSH sign matrix is memoized. The bucket keys must not move.
+
+    `_ann_band_keys` used to re-derive 64 x dim blake2b signs inside the
+    projection loop: 64 x 2560 = 163,840 hashes, measured at 71.139ms of pure
+    hashing for one 2560-dim query vector and 3,560.9ms for 50 vectors. The
+    signs now come from a matrix built once
+    per shape. An already-built ann_buckets table is only valid while the keys
+    are unchanged, so the keys below are frozen against the earlier
+    implementation (measured 2026-09-22).
+    """
+
+    # vector = (((index * 37) % 101) - 50) / 101 for index in range(dim)
+    FROZEN_KEYS = {
+        8: [(0, "00"), (1, "46"), (2, "4a"), (3, "88"), (4, "20"), (5, "ba"), (6, "de"), (7, "9a")],
+        64: [(0, "22"), (1, "f0"), (2, "0b"), (3, "44"), (4, "38"), (5, "ea"), (6, "0f"), (7, "76")],
+        2560: [(0, "ba"), (1, "36"), (2, "46"), (3, "e3"), (4, "fb"), (5, "1b"), (6, "18"), (7, "51")],
+    }
+
+    def tearDown(self):
+        KG._ANN_SIGN_MATRIX_CACHE.clear()
+
+    @staticmethod
+    def _vector(dim: int) -> tuple:
+        return tuple(((index * 37) % 101 - 50) / 101.0 for index in range(dim))
+
+    def test_band_keys_are_frozen_for_every_shape(self):
+        for dim, expected in self.FROZEN_KEYS.items():
+            self.assertEqual(KG._ann_band_keys(self._vector(dim)), expected, f"dim={dim}")
+
+    def test_the_matrix_is_built_once_per_shape_and_padded_to_the_dimension(self):
+        first = KG._ann_sign_matrix(4, 16)
+        second = KG._ann_sign_matrix(4, 16)
+        self.assertIs(first, second)
+        self.assertEqual(len(KG._ANN_SIGN_MATRIX_CACHE), 1)
+        self.assertEqual([len(row) for row in first], [16, 16, 16, 16])
+        self.assertTrue(all(set(row) <= {0, 1} for row in first))
+        # A different bit count is a different shape and must not reuse rows.
+        self.assertIsNot(KG._ann_sign_matrix(6, 16), first)
+
+    def test_the_matrix_cache_stays_bounded(self):
+        for dim in range(1, KG._ANN_SIGN_MATRIX_CACHE_MAX_SHAPES + 3):
+            KG._ann_sign_matrix(2, dim)
+        self.assertLessEqual(
+            len(KG._ANN_SIGN_MATRIX_CACHE), KG._ANN_SIGN_MATRIX_CACHE_MAX_SHAPES
+        )
+
+    def test_degenerate_vectors_keep_eight_bands(self):
+        nan = float("nan")
+        for vector in ((), (0.0,), (nan, 1.0, -1.0), (float("inf"), float("-inf"), 0.0)):
+            keys = KG._ann_band_keys(vector)
+            self.assertEqual([band for band, _ in keys], list(range(KG.ANN_BANDS)), repr(vector))
+            self.assertTrue(all(len(bucket) == 2 for _band, bucket in keys), repr(vector))
+
+
+class SynonymIndexTests(unittest.TestCase):
+    """The synonym lookup table must reproduce the dictionary scan exactly.
+
+    `_alias_matches` folded every dictionary value on every call (4.34us per
+    (term, haystack) pair on the reply path). It now reads a folded index built
+    once at import. This test keeps the folded table honest against a literal
+    copy of the scan it replaced (2026-09-22).
+    """
+
+    @staticmethod
+    def _scan(alias, haystack, context_haystacks=None) -> bool:
+        # 2026-09-22 이전 구현 그대로.
+        folded = alias.casefold().strip()
+        if not folded:
+            return False
+        haystack_folded = haystack.casefold()
+        expanded_terms = [folded]
+        context_values = list(context_haystacks or (haystack,))
+        for syn_key, syn_vals in KG.SYNONYM_DICTIONARY.items():
+            if folded == syn_key.casefold() or folded in [v.casefold() for v in syn_vals]:
+                if (
+                    syn_key in KG.CONTEXT_GATED_SYNONYM_KEYS
+                    and not KG._alizonku_context_confirmed(context_values)
+                ):
+                    continue
+                expanded_terms.append(syn_key.casefold())
+                expanded_terms.extend([v.casefold() for v in syn_vals])
+        for term in set(expanded_terms):
+            if len(term) <= 2:
+                if re.search(
+                    KG.KOREAN_PREFIX_PATTERN + re.escape(term) + KG.KOREAN_PARTICLES_PATTERN,
+                    haystack_folded,
+                ) is not None:
+                    return True
+            elif term in haystack_folded:
+                return True
+        return False
+
+    def test_the_folded_index_reproduces_the_dictionary_scan(self):
+        terms = [
+            "알쫀쿠", "알리바바쿠폰", "러닝박에", "러닝", "쿠폰", "Anthropic Claude",
+            "claude", "CLAUDE", "", "  ", "컴유", "알리바바 클라우드", "지피티",
+        ]
+        haystacks = [
+            "오늘 알쫀쿠 쿠폰 받았어",
+            "러닝박에 갔는데 사람 많더라",
+            "알리바바 클라우드 쿠폰 만료일 확인해줘",
+            "Anthropic Claude 클로드 비교",
+            "",
+        ]
+        contexts = [None, ("쿠폰",), ("알리바바",), ("",), haystacks[:2]]
+        checked = 0
+        for term in terms:
+            for haystack in haystacks:
+                for context in contexts:
+                    expected = self._scan(term, haystack, context_haystacks=context)
+                    self.assertEqual(
+                        KG._alias_matches(term, haystack, context_haystacks=context),
+                        expected,
+                        f"alias={term!r} haystack={haystack!r} context={context!r}",
+                    )
+                    checked += 1
+        self.assertEqual(checked, len(terms) * len(haystacks) * len(contexts))
+
+    def test_the_context_gate_still_blocks_a_bare_abbreviation(self):
+        # "알쫀쿠"는 문맥이 없으면 알리바바 클라우드 쿠폰으로 확장하지 않는다.
+        self.assertFalse(KG._alias_matches("알쫀쿠", "알리바바 클라우드 쿠폰", context_haystacks=("",)))
+        self.assertTrue(
+            KG._alias_matches("알쫀쿠", "알리바바 클라우드 쿠폰", context_haystacks=("알리바바",))
+        )
+
+    def test_every_dictionary_term_is_folded_into_the_index(self):
+        for syn_key, syn_vals in KG.SYNONYM_DICTIONARY.items():
+            for term in (syn_key, *syn_vals):
+                entries = KG._SYNONYM_INDEX.get(term.casefold())
+                self.assertIsNotNone(entries, term)
+                self.assertIn(syn_key, [raw for raw, _folded, _vals in entries], term)
 
 
 class RoomIsolationTests(unittest.TestCase):

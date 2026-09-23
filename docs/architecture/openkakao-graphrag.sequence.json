@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "GraphRAG 드릴다운은 기존 저장소만 조회한다",
+    "output": "docs/architecture/openkakao-graphrag.html",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1080,
+      560
+    ],
+    "views": [
+      {
+        "id": "operator-click",
+        "label": "운영자 클릭",
+        "focus": [
+          "extra",
+          "settings",
+          "menubar"
+        ],
+        "note": "Extra 또는 설정에서 노드를 누르면 knowledge-graph-focus만 호출한다."
+      },
+      {
+        "id": "existing-store",
+        "label": "기존 저장소",
+        "focus": [
+          "menubar",
+          "graph"
+        ],
+        "note": "클릭은 카카오톡 원본을 복사하거나 재색인하지 않는다."
+      },
+      {
+        "id": "fail-closed-facts",
+        "label": "fail-closed facts",
+        "focus": [
+          "bundle",
+          "graph",
+          "menubar",
+          "settings"
+        ],
+        "note": "조회 실패 시 facts는 빈 배열이고 관련 사실·관계만 갱신한다."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "extra",
+      "type": "frontend",
+      "label": "Extra",
+      "sublabel": "코어·gear"
+    },
+    {
+      "id": "settings",
+      "type": "frontend",
+      "label": "통합 설정",
+      "sublabel": "지식 그래프"
+    },
+    {
+      "id": "menubar",
+      "type": "backend",
+      "label": "메뉴바 브리지",
+      "sublabel": "knowledge-graph-focus"
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "그래프 저장소",
+      "sublabel": "기존 store"
+    },
+    {
+      "id": "bundle",
+      "type": "backend",
+      "label": "GraphRAG",
+      "sublabel": "k-hop 2/3/10"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 250,
+      "label": "클릭"
+    },
+    {
+      "from": 260,
+      "to": 370,
+      "label": "기존 store"
+    },
+    {
+      "from": 380,
+      "to": 480,
+      "label": "관련 사실·관계"
+    }
+  ],
+  "messages": [
+    {
+      "id": "open-settings",
+      "from": "extra",
+      "to": "settings",
+      "y": 160,
+      "label": "gear 또는 노드 클릭",
+      "variant": "emphasis"
+    },
+    {
+      "id": "focus-action",
+      "from": "settings",
+      "to": "menubar",
+      "y": 188,
+      "label": "knowledge-graph-focus",
+      "variant": "emphasis"
+    },
+    {
+      "id": "store-read",
+      "from": "menubar",
+      "to": "graph",
+      "y": 270,
+      "label": "기존 store만 조회",
+      "variant": "security"
+    },
+    {
+      "id": "store-rows",
+      "from": "graph",
+      "to": "menubar",
+      "y": 298,
+      "label": "노드·엣지 또는 빈 집합",
+      "variant": "return"
+    },
+    {
+      "id": "retrieve-bundle",
+      "from": "menubar",
+      "to": "bundle",
+      "y": 330,
+      "label": "retrieve_knowledge_bundle",
+      "variant": "emphasis"
+    },
+    {
+      "id": "khop-query",
+      "from": "bundle",
+      "to": "graph",
+      "y": 358,
+      "label": "k_hop_neighborhood 2/3/10"
+    },
+    {
+      "id": "khop-rows",
+      "from": "graph",
+      "to": "bundle",
+      "y": 386,
+      "label": "neighborhood",
+      "variant": "return"
+    },
+    {
+      "id": "facts-or-empty",
+      "from": "bundle",
+      "to": "menubar",
+      "y": 418,
+      "label": "facts 또는 빈 배열",
+      "variant": "return"
+    },
+    {
+      "id": "render-facts",
+      "from": "menubar",
+      "to": "settings",
+      "y": 446,
+      "label": "관련 사실·관계",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "settings",
+      "from": 160,
+      "to": 452,
+      "type": "frontend"
+    },
+    {
+      "participant": "menubar",
+      "from": 188,
+      "to": 452,
+      "type": "backend"
+    },
+    {
+      "participant": "graph",
+      "from": 265,
+      "to": 392,
+      "type": "database"
+    },
+    {
+      "participant": "bundle",
+      "from": 325,
+      "to": 424,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "클릭 경로",
+      "items": [
+        "노드 클릭은 knowledge-graph-focus만 호출한다",
+        "카카오톡 원본 복사와 재색인은 이 경로에 없다"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "기존 저장소",
+      "items": [
+        "이미 있는 knowledge-graph.sqlite3만 읽는다",
+        "k-hop은 2/3/10이며 드릴다운이 인덱스를 다시 만들지 않는다"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "fail-closed",
+      "items": [
+        "조회 실패 시 facts는 빈 배열이다",
+        "관련 사실·관계만 갱신하고 원본 DB를 열지 않는다"
+      ]
+    }
+  ]
+}

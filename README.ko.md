@@ -19,7 +19,7 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 2. 새 메시지가 오면 답장 후보인지 판단합니다.
 3. 예전 대화와 내 말투를 참고해 답 초안을 만듭니다.
 4. 카카오톡 입력창에 대신 입력해 보냅니다. (접근성 API)
-5. 메뉴바에서 켜고 끄고, 방을 고를 수 있습니다.
+5. Tauri 메뉴바 패널은 골드 코어만 표시하고 인터랙티브 요소를 두지 않습니다. 통합 설정은 메뉴바 트레이 아이콘을 우클릭해서 엽니다.
 
 카카오 서버에 별도로 로그인해서 메시지를 빼 오는 봇이 **아닙니다.**
 **맥에 설치된 카카오톡 앱**이 있어야 하고, 그 앱이 만든 로컬 DB를 읽습니다.
@@ -27,14 +27,16 @@ macOS 카카오톡에서 **지정한 채팅방만** 읽고, 내 말투에 가깝
 ```text
 카카오톡 맥 앱
     │  (대화가 로컬 DB에 저장됨)
-    ▼
-openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
+    ▼ 임시 복사 후 mode=ro + query_only
+openkakao-cli
+    ├─► 벡터 기억 (context.sqlite3, 내 Mac에만 생성)
+    └─► 지식 그래프 (knowledge-graph.sqlite3, GraphRAG k-hop 2/3/10)
     │
     ▼
-자동 답장 워커 + LLM
+자동 답장 워커 + 권장 MLX Qwen3.8 Flash-Next
     │
     ▼
-카카오톡 입력창에 전송 (손쉬운 사용 권한 필요)
+카카오톡 입력창에 전송 (AX local-send)
 ```
 
 ---
@@ -63,10 +65,11 @@ openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
 | 카카오톡 대화 DB | `~/Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Application Support/com.kakao.KakaoTalkMac/` 아래의 암호화된 DB 파일 |
 | 카카오톡 캐시 | `~/Library/Containers/com.kakao.KakaoTalkMac/Data/Library/Caches/Cache.db` |
 | 벡터/기억 DB | `~/Library/Application Support/openkakao/context.sqlite3` |
+| 지식 그래프 | `~/Library/Application Support/openkakao/bujamentor/knowledge-graph.sqlite3` |
 | 자동 답장 상태 | `~/Library/Application Support/openkakao/auto-reply/` |
 | 로그인 정보 | `~/.config/openkakao/credentials.json` |
 
-벡터 DB는 처음 동기화할 때 **프로그램이 알아서 만듭니다.** 미리 복사해 올 필요가 없습니다.
+벡터 DB와 지식 그래프는 처음 동기화할 때 **프로그램이 알아서 만듭니다.** 미리 복사해 올 필요가 없습니다. 그래프 클릭은 이미 있는 저장소만 읽으며, 그 클릭으로 카카오톡 원본을 복사하거나 재색인하지 않습니다.
 
 ---
 
@@ -151,6 +154,10 @@ openkakao-cli 가 DB를 읽음  ──►  벡터 기억(내 Mac에만 생성)
 | `pipeline_transitions` | 처리 단계 일지 |
 | `model-circuit.sqlite3` → `model_circuit_breaker` | 모델 장애 시 잠시 멈추는 회로 |
 
+**지식 그래프** — `~/Library/Application Support/openkakao/bujamentor/knowledge-graph.sqlite3`
+
+채팅방·참여자·주제 엔티티와 관계를 담습니다. 메뉴바 드릴다운과 답장 GraphRAG가 이 파일을 읽습니다. GitHub에 올리지 마세요.
+
 이 파일들은 실행하면 자동으로 만들어집니다. **백업이 필요하면 내 디스크에서만** 하세요.
 
 ---
@@ -169,7 +176,7 @@ cargo build --release
 
 macOS **시스템 설정 → 개인정보 보호 및 보안**에서:
 
-1. **전체 디스크 접근 권한** — 터미널(또는 메뉴바 앱 `AutoReplyMenu`) 허용
+1. **전체 디스크 접근 권한** — 터미널(또는 메뉴바 앱 `OpenKakao Jarvis`) 허용
 2. **손쉬운 사용** — 답을 카카오톡에 입력하려면 허용
 
 카카오톡은 **실행 중**이어야 합니다.
@@ -193,41 +200,70 @@ cp config.example.toml ~/.config/openkakao/config.toml
 `config.toml`에서 최소한 아래를 채웁니다.
 
 ```toml
+[model]
+privacy_mode = "local"
+allow_egress = false
+provider = "mlx-serve"
+
 [auto_reply]
 # 예시: 채팅방 ID와 화면에 보이는 정확한 방 이름
 # chats = ["bind:123456789012345:채팅방이름"]
 self_nickname = "카카오톡에 보이는 내 닉네임"
 python_interpreter = "/opt/homebrew/opt/python@3.13/bin/python3.13"
-# reply_runner = "/Users/나/.local/lib/openkakao/gjc.js"
-# reply_runner_kind = "gjc"
-# reply_model = "사용할 모델 이름"
+reply_runner = "/opt/homebrew/bin/opencodex"
+reply_runner_kind = "opencodex"
+reply_model = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 ```
 
 - `chats`에 없는 방에는 답을 보내지 않습니다.
 - `self_nickname`은 **내가 보낸 메시지**를 구분하는 데 씁니다. 카카오톡에 보이는 이름과 같아야 합니다.
-- 링크를 열어보거나 사진을 모델에 보내는 옵션은 기본이 꺼져 있습니다. 필요할 때만 켜세요.
+- 운영 자동 답장 워커와 메뉴바의 텍스트·이미지 생성은 로컬 MLX만 허용합니다. Flash-Next가 기본이고, Qwen3.8 27B는 이미지 경로와 운영자가 명시적으로 요청한 모델 교체 대상입니다. Gemini와 기타 클라우드 모델은 주 모델이나 대체 모델로 거부되며 자동 선택되지 않습니다.
+- 게시된 URL 원문 수집은 별도의 명시적 네트워크 작업입니다. 이를 허용해도 클라우드 LLM 실행이나 모델·이미지 외부 전송이 허용되지는 않습니다.
+- 링크 원문 수집과 로컬 이미지 분석 옵션은 기본이 꺼져 있습니다. 필요할 때만 켜세요.
 
 ### 5. 메뉴바로 켜기 (초보자에게 추천)
 
 ```bash
-sh scripts/build-auto-reply-menubar.sh
+sh scripts/build-jarvis-desktop.sh
+sh scripts/install-jarvis-desktop.sh
+sh scripts/start-auto-reply-menubar.command
 ```
 
-만들어진 `AutoReplyMenu.app`을 실행하면 메뉴바에서 방 선택, 모델, 시작/중지를 다룰 수 있습니다.
+`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 패널에는 골드 코어만 보입니다. 방 선택, 쉬운 답변 모드, 음성 시작, 대화 검색, 최근 답변은 메뉴바 트레이 아이콘을 우클릭해 여는 960×880 설정 창에서 다룹니다. 넓은 화면은 58:42 두 열과 16px 간격으로 배치하고, 800px 아래에서는 한 열로 바뀝니다. 기술 진단·권한·대량 점검 화면은 두지 않습니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
+
+온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
 무인 실행(launchd)은 `docs/auto-reply-launchd-supervision.md`와 `scripts/install-auto-reply-launchd.sh`를 보세요. 처음이면 메뉴바부터 시작하는 편이 안전합니다.
 
 ---
 
+## Jarvis Tauri와 지식 그래프
+
+Tauri 메뉴바 창은 골드 홀로그램 코어만 두며 인터랙티브 요소는 없습니다. 설정은 960×880 창에서 채팅방·답변 선택, 음성·대화 상태, 대화 찾기·최근 답변을 58:42 비율과 16px 간격으로 나란히 배치하고, 800px 아래 화면에서는 한 열로 전환합니다. 전문 용어와 모델 식별자는 숨기고, 모델 전환 안전 확인은 사용자가 선택했을 때 내부에서 수행합니다. 첫 화면 진입은 기존 7개 병렬 호출에서 스냅샷과 검색 자료를 포함한 3개로 줄었습니다(57.1%).
+
+음성 대화는 최근 4번의 질문과 답변(메시지당 최대 600자)을 프로세스 메모리에 보관하며, 10분 동안 새 대화가 없으면 비웁니다. 답을 말한 뒤에는 호출어를 다시 기다립니다.
+
+카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
+
+노드 클릭은 `knowledge-graph-focus`만 호출하고, 이미 있는 `knowledge-graph.sqlite3`에서 k-hop `2/3/10` 번들을 읽습니다. 클릭 경로에는 원본 복사와 재색인이 없습니다. 조회 실패 시 `facts`는 빈 배열이고 `관련 사실·관계`만 갱신합니다.
+
+다이어그램 본문(노드·카드·레이블)은 한국어로 작성했습니다. Archify Viewer UI와 `<html lang>`은 영어 폴백입니다. 이 HTML은 로컬 showcase validate / deliver / visual-check를 통과한 산출물이며, 지각적 AHP나 설치된 앱 재빌드를 증명하지 않습니다.
+
+- [Tauri cutover 아키텍처](docs/architecture/jarvis-openkakao-units1-4.html)
+- [Jarvis Three.js 렌더 생명주기](docs/architecture/jarvis-three-render-lifecycle.html)
+- [GraphRAG 드릴다운 시퀀스](docs/architecture/openkakao-graphrag.html)
+
+---
 ## 폴더 안내
 
 | 경로 | 내용 |
 |------|------|
 | `src/` | Rust 코어. 로컬 DB 읽기, 전송, 자동 답장 호스트 |
 | `scripts/` | 파이썬 워커, DB 감시, 메뉴바, 설치 스크립트 |
-| `macos/AutoReplyMenu/` | 메뉴바 앱 (Swift) |
+| `desktop/` | Tauri v2 + Three.js 메뉴바 앱과 Rust bridge |
+| `macos/AutoReplyMenu/` | legacy Swift Extra (명시적 opt-in 경로) |
 | `tests/` | 동작이 깨지지 않는지 확인하는 테스트 |
-| `docs/` | 운영·개선 메모 |
+| `docs/` | 운영 메모와 Archify 다이어그램 (`docs/architecture/`) |
 | `config.example.toml` | 설정 예시. 이걸 복사해 씁니다 |
 | `examples/launchd/` | macOS 백그라운드 실행 예시 |
 
@@ -246,6 +282,12 @@ sh scripts/build-auto-reply-menubar.sh
 
 **벡터 검색이 비어 있다**
 정상입니다. 대화가 아직 동기화되지 않은 것입니다. 카카오톡 DB를 이 저장소에 넣을 필요는 없고, 에이전트를 켜 두면 `context.sqlite3`가 내 Mac에 만들어집니다.
+
+**그래프를 눌렀는데 관련 사실·관계가 비어 있다**
+클릭은 이미 있는 `knowledge-graph.sqlite3`만 읽습니다. 재색인하거나 카카오톡 원본을 복사하지 않습니다. 조회가 실패하면 `facts`는 빈 배열입니다.
+
+**로컬 생성이 안 된다**
+온디바이스 권장은 MLX Qwen3.8 Flash-Next이지만, 프로브가 시간 초과하면 fail-closed입니다. 권장 모델 ID가 곧 완료된 생성을 뜻하지는 않습니다.
 
 ---
 

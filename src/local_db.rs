@@ -1296,6 +1296,78 @@ pub struct LocalDbReader {
     account_user_id: i64,
 }
 
+/// Immutable source identity used only by the production context-sync replica
+/// path. Discovering this value never opens the KakaoTalk SQLite database.
+pub struct LocalDbReplicaSource {
+    db_path: PathBuf,
+    db_identity: DatabaseIdentity,
+    secure_key: String,
+    account_fingerprint: String,
+    account_user_id: i64,
+}
+
+impl LocalDbReplicaSource {
+    pub fn discover() -> Result<Self> {
+        let uuid = get_platform_uuid().context("Failed to get IOPlatformUUID")?;
+        let user_id = get_user_id_from_plist().context("Failed to get KakaoTalk user ID")?;
+        let db_name = derive_database_name(user_id, &uuid);
+        let db_path =
+            find_database_path(&db_name).context("Failed to locate KakaoTalk local database")?;
+        let db_identity = database_identity(&db_path)?;
+        Ok(Self {
+            db_path,
+            db_identity,
+            secure_key: derive_secure_key(user_id, &uuid),
+            account_fingerprint: local_account_fingerprint(user_id, &uuid),
+            account_user_id: user_id,
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.db_path
+    }
+
+    pub fn account_fingerprint(&self) -> &str {
+        &self.account_fingerprint
+    }
+
+    pub fn account_user_id(&self) -> i64 {
+        self.account_user_id
+    }
+
+    pub fn ensure_source_identity(&self) -> Result<()> {
+        if database_identity(&self.db_path)? != self.db_identity {
+            anyhow::bail!("Local database identity changed");
+        }
+        Ok(())
+    }
+
+    pub fn open_replica(&self, replica_path: &Path) -> Result<LocalDbReader> {
+        if replica_path == self.db_path {
+            anyhow::bail!("context sync replica path must not be the source database");
+        }
+        self.ensure_source_identity()?;
+        let replica_identity = database_identity(replica_path)?;
+        let conn = open_encrypted_connection_bounded(replica_path, &self.secure_key)?;
+        conn.execute_batch("PRAGMA query_only = ON;")?;
+        let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0))?;
+        if query_only != 1 {
+            anyhow::bail!("context sync replica query_only verification failed");
+        }
+        if database_identity(replica_path)? != replica_identity {
+            anyhow::bail!("context sync replica identity changed during open");
+        }
+        self.ensure_source_identity()?;
+        Ok(LocalDbReader {
+            conn,
+            db_path: replica_path.to_path_buf(),
+            db_identity: replica_identity,
+            account_fingerprint: self.account_fingerprint.clone(),
+            account_user_id: self.account_user_id,
+        })
+    }
+}
+
 fn local_account_fingerprint(user_id: i64, uuid: &str) -> String {
     hex::encode(sha2::Sha256::digest(
         format!("openkakao-local-account-v1\0{uuid}\0{user_id}").as_bytes(),
@@ -1339,7 +1411,11 @@ fn parse_local_db_open_timeout(raw: Option<&str>) -> std::time::Duration {
 }
 
 fn local_db_open_timeout() -> std::time::Duration {
-    parse_local_db_open_timeout(std::env::var(LOCAL_DB_OPEN_TIMEOUT_SECS_ENV).ok().as_deref())
+    parse_local_db_open_timeout(
+        std::env::var(LOCAL_DB_OPEN_TIMEOUT_SECS_ENV)
+            .ok()
+            .as_deref(),
+    )
 }
 
 /// Run `op` on a helper thread and give up after `timeout`.
@@ -1544,6 +1620,56 @@ impl LocalDbReader {
         Ok(rows)
     }
 
+    /// Read one exact message row by log id from the same read-only snapshot.
+    ///
+    /// A bound scheduled send attests the source row's author, and the newest
+    /// page is not the only authority for that row: a scheduled reply fires after
+    /// a debounce window, so in an active room the source row is usually older
+    /// than the newest rows. Reading it by id keeps that attestation on the same
+    /// read-only snapshot without widening the tail page.
+    pub fn read_message_by_log_id(
+        &self,
+        chat_id: i64,
+        log_id: i64,
+    ) -> Result<Option<LocalMessage>> {
+        self.ensure_database_identity()?;
+        let mut stmt = self.conn.prepare(
+            "SELECT m.logId, m.chatId, m.authorId,
+                COALESCE(u.displayName, u.friendNickName, u.nickName, '') as senderName,
+                COALESCE(m.message, '') as message, m.attachment, m.type, m.sentAt
+             FROM NTChatMessage m
+             LEFT JOIN NTUser u ON m.authorId = u.userId AND u.linkId = 0
+             WHERE m.chatId = ? AND m.logId = ?
+             LIMIT 1",
+        )?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(chat_id), Box::new(log_id)];
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let account_user_id = self.account_user_id;
+        let mut rows = stmt.query(params_refs.as_slice())?;
+        let message = match rows.next()? {
+            Some(row) => {
+                let author_id: i64 = row.get(2).unwrap_or(0);
+                Some(LocalMessage {
+                    log_id: row.get(0)?,
+                    chat_id: row.get(1)?,
+                    author_id,
+                    is_self: is_self_author(author_id, account_user_id),
+                    sender_name: row.get(3).unwrap_or_default(),
+                    message: row.get(4).unwrap_or_default(),
+                    attachment: row.get(5).unwrap_or_default(),
+                    message_type: row.get(6).unwrap_or(0),
+                    sent_at: row.get(7).unwrap_or(0),
+                })
+            }
+            None => None,
+        };
+        drop(rows);
+        drop(stmt);
+        self.ensure_database_identity()?;
+        Ok(message)
+    }
     pub fn list_group_chats(&self, limit: usize) -> Result<Vec<LocalGroupChat>> {
         self.ensure_database_identity()?;
         let mut stmt = self.conn.prepare(
@@ -2183,8 +2309,14 @@ mod tests {
     fn local_db_open_timeout_stays_inside_its_bounds() {
         let default = std::time::Duration::from_secs(LOCAL_DB_OPEN_TIMEOUT_SECS_DEFAULT);
         assert_eq!(parse_local_db_open_timeout(None), default);
-        assert_eq!(parse_local_db_open_timeout(Some("30")), std::time::Duration::from_secs(30));
-        assert_eq!(parse_local_db_open_timeout(Some("  45  ")), std::time::Duration::from_secs(45));
+        assert_eq!(
+            parse_local_db_open_timeout(Some("30")),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_local_db_open_timeout(Some("  45  ")),
+            std::time::Duration::from_secs(45)
+        );
         // Zero, negative, non-numeric and oversized values fall back to the default
         // instead of disabling the bound.
         assert_eq!(parse_local_db_open_timeout(Some("0")), default);
@@ -2494,13 +2626,7 @@ mod tests {
     #[test]
     fn group_title_prefers_extended_kakao_or_extra_name() {
         assert_eq!(
-            resolve_group_title(
-                "NIMDA 인수인계",
-                "NIMDA 인수인계 임원방",
-                "",
-                "",
-                &[]
-            ),
+            resolve_group_title("NIMDA 인수인계", "NIMDA 인수인계 임원방", "", "", &[]),
             Some("NIMDA 인수인계 임원방".to_string()),
         );
         assert_eq!(
@@ -2806,6 +2932,68 @@ mod tests {
         assert!(!is_self_author(900, 0));
         assert!(!is_self_author(0, 0));
         assert!(!is_self_author(901, 900));
+    }
+
+    #[test]
+    fn context_sync_local_open_replica_rejects_source_and_enforces_query_only() -> Result<()> {
+        const FIXTURE_KEY: &str = "context-sync-local-fixture-key";
+
+        let tempdir = tempfile::tempdir()?;
+        let source_path = tempdir.path().join("source.sqlite3");
+        let replica_path = tempdir.path().join("replica.sqlite3");
+
+        {
+            let connection = Connection::open(&source_path)?;
+            connection.pragma_update(None, "key", FIXTURE_KEY)?;
+            connection.pragma_update(None, "cipher_compatibility", 3)?;
+            connection.execute_batch(
+                "CREATE TABLE messages(id INTEGER PRIMARY KEY, body TEXT NOT NULL);\
+                 INSERT INTO messages(body) VALUES ('first');",
+            )?;
+        }
+        std::fs::copy(&source_path, &replica_path)?;
+
+        let source = LocalDbReplicaSource {
+            db_identity: database_identity(&source_path)?,
+            db_path: source_path.clone(),
+            secure_key: FIXTURE_KEY.to_string(),
+            account_fingerprint: "synthetic-context-sync-fixture".to_string(),
+            account_user_id: 42,
+        };
+
+        let direct_error = source
+            .open_replica(&source_path)
+            .err()
+            .expect("production replica API must reject the source database path");
+        assert!(
+            direct_error
+                .to_string()
+                .contains("context sync replica path must not be the source database"),
+            "unexpected direct-open error: {direct_error}"
+        );
+
+        let reader = source.open_replica(&replica_path)?;
+        assert_eq!(reader.db_path, replica_path);
+        assert_ne!(reader.db_path, source_path);
+        let query_only: i64 = reader
+            .conn
+            .query_row("PRAGMA query_only", [], |row| row.get(0))?;
+        assert_eq!(query_only, 1);
+        assert_eq!(
+            reader
+                .conn
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row
+                    .get::<_, i64>(0))?,
+            1
+        );
+        assert!(
+            reader
+                .conn
+                .execute("INSERT INTO messages(body) VALUES ('blocked')", [])
+                .is_err(),
+            "production replica reader must reject writes"
+        );
+        Ok(())
     }
 
     #[test]

@@ -69,17 +69,23 @@ jobs:
       - name: Cargo test
         run: cargo test --manifest-path $MANIFEST
 
+      # The toolchain is pinned to 1.95.0 with the clippy component in
+      # rust-toolchain.toml, so this gate cannot drift with the runner image.
+      - name: Lint CLI crate (clippy)
+        run: cargo clippy --manifest-path $MANIFEST --all-targets -- -D warnings
+
       - name: Smoke CLI
         run: cargo build --manifest-path $MANIFEST && ./target/debug/openkakao-cli --version
 
-      # The menu extra is a separate program from the CLI and used to have no
-      # check at all: a broken card layout shipped because nothing compiled it
-      # (2026-09-16).
-      - name: Build menu extra
+      # Keep the retired Swift Extra build covered while the primary menu-bar
+      # bundle is built by the separate Tauri job below. The explicit backend
+      # prevents this compatibility audit from invoking the Tauri installer.
+      - name: Build legacy Swift menu extra
         env:
           # The runner has no developer certificate; ad-hoc signing is enough
           # to run the audit below (2026-09-16).
           OPENKAKAO_SIGN_IDENTITY: "-"
+          OPENKAKAO_MENUBAR_BACKEND: swift
         run: sh scripts/build-auto-reply-menubar.sh
 
       # tests.test_auto_reply_menubar cannot run here: the menu extra's Python
@@ -100,3 +106,136 @@ jobs:
             --bin "$PWD/target/debug/openkakao-cli"
           python3 scripts/audit-menubar-layout.py /tmp/layout-audit > /tmp/layout-audit/report.txt
           python3 scripts/check-menubar-layout.py /tmp/layout-audit
+
+      # The windows cannot be seen from the runner, so a failure here lives only
+      # inside the PNGs. Keep the audit output from failing runs as well: the
+      # 24pt band that failed on the Sonoma runner could not be reproduced
+      # locally, and reading the artifact is what settled it (2026-09-22).
+      - name: Upload menu layout audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: menu-layout-audit
+          path: /tmp/layout-audit
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Validate Tauri launcher contracts
+        run: |
+          sh -n scripts/build-jarvis-desktop.sh
+          sh -n scripts/install-jarvis-desktop.sh
+          sh -n scripts/build-auto-reply-menubar.sh
+          sh -n scripts/install-auto-reply-menubar.sh
+          sh -n scripts/start-auto-reply-menubar.command
+          /usr/bin/plutil -lint desktop/launchd/com.openkakao.jarvis.desktop.plist.example
+
+  desktop:
+    name: Tauri desktop and focused Python tests
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Bind checkout to the triggering commit
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run focused local AI tests
+        run: >-
+          python3 -m unittest
+          tests.test_auto_reply_ondevice
+          tests.test_auto_reply_reference_search
+          tests.test_auto_reply_knowledge_graph
+          tests.test_auto_reply_finetune
+          tests.test_jarvis_unit4
+          tests.test_jarvis_desktop_launchers
+          tests.test_local_mlx_model_readiness
+          tests.test_verify_local_models
+          tests.test_mlx_serve_lifecycle
+          tests.test_auto_reply_dream_rsi
+          tests.test_dream_rsi_alphaxiv
+          tests.test_menubar_layout_check
+          tests.test_auto_reply_turn_holds
+          tests.test_auto_reply_worker_mlx
+          tests.test_auto_reply_retry_policy
+          tests.test_auto_reply_fallback_lease
+          tests.test_auto_reply_reference_store
+          tests.test_auto_reply_session_monitor
+          tests.test_auto_reply_session_packager
+          tests.test_rag_eval
+          tests.test_auto_reply_service_entry
+          tests.test_auto_reply_dw_starting_takeover
+          tests.test_auto_reply_db_watch_retry
+          tests.test_jarvis_browser_use
+          tests.test_jarvis_wake_eval
+          tests.test_jarvis_wake_evidence
+          tests.test_jarvis_browser_runtime
+          tests.test_jarvis_desktop_render_check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Test desktop frontend
+        working-directory: desktop
+        run: npm test -- --run
+
+      - name: Build desktop frontend
+        working-directory: desktop
+        run: npm run build
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Cache desktop cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: cargo-desktop-${{ runner.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-desktop-${{ runner.os }}-
+
+      - name: Fetch locked desktop Rust dependencies
+        run: cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked
+
+      - name: Test desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked --offline
+
+      - name: Check desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo check --manifest-path desktop/src-tauri/Cargo.toml --locked --offline
+
+      # Every desktop-crate lint is either fixed or carries an in-code reason,
+      # so this step keeps the bridge free of dead code and accidental
+      # signatures instead of relying on a local clippy run (2026-09-22).
+      - name: Lint desktop Rust bridge offline
+        env:
+          OPENKAKAO_TAURI_SOURCE_CHECK: "1"
+        run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets --locked --offline -- -D warnings
+
+      # These Rust steps are source-level Tauri checks, not packaged app proof.
+      # A packaged build still requires the fail-closed frozen CPython and CLI
+      # resources and is validated separately after trusted provisioning.

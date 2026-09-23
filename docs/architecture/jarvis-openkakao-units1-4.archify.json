@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Jarvis / openkakao architecture after Tauri cutover",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      800
+    ]
+  },
+  "components": [
+    {
+      "id": "kakao_db",
+      "type": "external",
+      "label": "KakaoTalk local DB",
+      "sublabel": "SQLCipher source",
+      "pos": [
+        40,
+        120
+      ],
+      "size": [
+        170,
+        90
+      ]
+    },
+    {
+      "id": "copy",
+      "type": "security",
+      "label": "Isolated SQLite copy",
+      "sublabel": "copy first; fail closed",
+      "pos": [
+        250,
+        120
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "graphrag",
+      "type": "backend",
+      "label": "GraphRAG search",
+      "sublabel": "BM25 + dense ANN + RRF",
+      "pos": [
+        480,
+        120
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Auto-reply worker",
+      "sublabel": "local orchestration",
+      "pos": [
+        710,
+        120
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "ax",
+      "type": "security",
+      "label": "AX local-send",
+      "sublabel": "Accessibility boundary",
+      "pos": [
+        940,
+        120
+      ],
+      "size": [
+        170,
+        90
+      ]
+    },
+    {
+      "id": "composer",
+      "type": "external",
+      "label": "KakaoTalk composer",
+      "sublabel": "local UI send target",
+      "pos": [
+        1150,
+        120
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "Local memory stores",
+      "sublabel": "context + knowledge graph",
+      "pos": [
+        480,
+        340
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "mlx",
+      "type": "backend",
+      "label": "MLX local runtime",
+      "sublabel": "Flash-Next; 27B unloaded",
+      "pos": [
+        710,
+        340
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "swift",
+      "type": "frontend",
+      "label": "Swift AutoReplyMenu (legacy)",
+      "sublabel": "opt-in compatibility path",
+      "pos": [
+        250,
+        560
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "tauri",
+      "type": "frontend",
+      "label": "Jarvis Tauri desktop",
+      "sublabel": "primary app · LaunchAgent",
+      "pos": [
+        710,
+        560
+      ],
+      "size": [
+        190,
+        90
+      ]
+    },
+    {
+      "id": "three",
+      "type": "frontend",
+      "label": "Three.js renderer",
+      "sublabel": "15fps idle · 30fps work",
+      "pos": [
+        940,
+        560
+      ],
+      "size": [
+        170,
+        90
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "a1",
+      "from": "kakao_db",
+      "to": "copy",
+      "label": "isolated snapshot",
+      "labelDy": 69
+    },
+    {
+      "id": "a2",
+      "from": "copy",
+      "to": "graphrag",
+      "label": "read-only evidence",
+      "labelDy": 69
+    },
+    {
+      "id": "a3",
+      "from": "graphrag",
+      "to": "worker",
+      "label": "ranked context",
+      "labelDy": 69
+    },
+    {
+      "id": "a4",
+      "from": "worker",
+      "to": "ax",
+      "label": "approved reply",
+      "labelDy": 69
+    },
+    {
+      "id": "a5",
+      "from": "ax",
+      "to": "composer",
+      "label": "AX local-send",
+      "labelDy": 69
+    },
+    {
+      "id": "a6",
+      "from": "memory",
+      "to": "graphrag",
+      "label": "local indexes",
+      "labelDx": -86
+    },
+    {
+      "id": "a7",
+      "from": "mlx",
+      "to": "worker",
+      "label": "local generation",
+      "labelDx": 88
+    },
+    {
+      "id": "a9",
+      "from": "tauri",
+      "to": "three",
+      "label": "render state",
+      "labelDy": 69
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Live boundary",
+      "items": [
+        "OpenKakao Jarvis.app is the primary menu-bar app.",
+        "The legacy Swift Extra is backed up and disabled."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Recovery contract",
+      "items": [
+        "Isolated copy failure is fail-closed.",
+        "No cloud fallback; delivery_unknown is never auto-retried."
+      ]
+    }
+  ]
+}

@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SCORER_REVISION = "live-ledger-3"
+SCORER_REVISION = "live-ledger-4"
 DEFAULT_STATE_ROOT = Path(
     os.environ.get(
         "OPENKAKAO_AUTO_REPLY_STATE_ROOT",
@@ -350,7 +350,9 @@ def measure_content_fit(
     lives on the sent row, so one turn spans two ledger lines with the same
     event_id. Judging the sent row alone would report 0 for every turn that did
     retrieve context, which is what the first version of this scorer did
-    (2026-09-16).
+    (2026-09-16). Recent-conversation and media grounding are also valid, but
+    only when the scheduled receipt names the actual recent:/media: evidence
+    and proves that at least one evidence id survived into the prompt.
     """
     families: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -374,6 +376,11 @@ def measure_content_fit(
                 if isinstance(count, int) and count > 0:
                     grounded += 1
                     break
+        else:
+            for row in family:
+                if _scheduled_prompt_grounding(row):
+                    grounded += 1
+                    break
     score = ratio(grounded, considered)
     return criterion(
         "content_fit",
@@ -383,8 +390,39 @@ def measure_content_fit(
         considered,
         period,
         event_ids,
-        "검색된 대화 맥락이 붙은 채로 보낸 답변 비율(같은 이벤트의 예약·전송 행을 합쳐서 판단)",
+        "장기 검색 맥락 또는 프롬프트의 recent:/media: 근거가 붙은 전송 비율(같은 이벤트의 예약·전송 행을 합쳐서 판단)",
     )
+
+
+def _scheduled_prompt_grounding(row: dict[str, Any]) -> bool:
+    """A scheduled receipt cites concrete recent/media evidence in its prompt."""
+    if str(row.get("status") or "") != "scheduled":
+        return False
+    evidence_ids = row.get("evidence_ids")
+    if not isinstance(evidence_ids, list) or not any(
+        _is_prompt_grounding_id(value) for value in evidence_ids
+    ):
+        return False
+    prompt_count = row.get("prompt_evidence_ids")
+    retrieval = row.get("retrieval")
+    if not isinstance(prompt_count, int) or isinstance(prompt_count, bool):
+        prompt_count = (
+            retrieval.get("prompt_evidence_ids")
+            if isinstance(retrieval, dict)
+            else None
+        )
+    return (
+        isinstance(prompt_count, int)
+        and not isinstance(prompt_count, bool)
+        and prompt_count > 0
+    )
+
+
+def _is_prompt_grounding_id(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    prefix, separator, identifier = value.partition(":")
+    return separator == ":" and prefix in {"recent", "media"} and bool(identifier.strip())
 
 
 def measure_reliability(

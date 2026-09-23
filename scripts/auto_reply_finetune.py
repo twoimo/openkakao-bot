@@ -23,6 +23,10 @@ import shutil
 import subprocess
 import sys
 import time
+import math
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -47,6 +51,7 @@ DEFAULT_SESSION_GAP = 1800.0
 # mlx_lm.lora masks the prompt when told to, so the model is scored on the
 # answer only. The instruction line frames the task the same way every time.
 DEFAULT_INSTRUCTION = "다음 카카오톡 대화에 자연스럽게 답장하세요."
+FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 
 
 @dataclass
@@ -502,6 +507,821 @@ def compare_runs(
     }
 
 
+DPO_EVAL_UNAVAILABLE = "eval_unavailable"
+
+
+def _sum_response_logprobs(values: Any) -> float | None:
+    """Sum token logprobs from one response. Missing or non-finite -> None."""
+    if not isinstance(values, (list, tuple)) or not values:
+        return None
+    total = 0.0
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        total += number
+    if not math.isfinite(total):
+        return None
+    return total
+
+
+def dpo_loss_from_logprobs(
+    *,
+    chosen_logprobs: Any,
+    rejected_logprobs: Any,
+    beta: float = 0.1,
+    tokenizer_id: str = "",
+    base_model: str = "",
+    ref_chosen_logprobs: Any = None,
+    ref_rejected_logprobs: Any = None,
+    require_reference: bool = False,
+) -> dict[str, Any]:
+    """Standard DPO loss from response-token logprobs. Never string similarity.
+
+    기준 모델 로그확률이 있으면 표준 DPO 목적값(objective="dpo")을 계산한다.
+    기준 값이 없으면 0으로 대체한 reference-free 값으로 계산하되 objective와
+    reference_free로 그 사실을 표시한다. require_reference=True이면 기준 값이
+    없을 때 수치를 만들지 않고 missing_reference_logprobs로 닫는다.
+    """
+    chosen = _sum_response_logprobs(chosen_logprobs)
+    # beta가 nan/inf이면 delta와 loss가 비유한값이 되는데, 종전에는 그 값을
+    # status="ok"로 돌려주며 mean_loss를 조용히 오염시켰다.
+    beta_invalid = False
+    try:
+        beta_value = float(beta)
+    except (TypeError, ValueError):
+        beta_invalid = True
+        beta_value = 0.0
+    if beta_invalid or not math.isfinite(beta_value):
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "invalid_beta",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    rejected = _sum_response_logprobs(rejected_logprobs)
+    if chosen is None or rejected is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if require_reference and (
+        ref_chosen_logprobs is None or ref_rejected_logprobs is None
+    ):
+        # 표준 DPO는 같은 토크나이저·기준 모델의 응답 토큰 로그확률을 요구한다.
+        # 기준 모델 값이 없으면 0으로 대체하지 않고 평가 불가로 닫는다.
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_reference_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+            "require_reference": True,
+            "reference_model": "none",
+            "reference_free": False,
+            "objective": "dpo",
+        }
+    chosen_ref = _sum_response_logprobs(ref_chosen_logprobs) if ref_chosen_logprobs is not None else 0.0
+    rejected_ref = _sum_response_logprobs(ref_rejected_logprobs) if ref_rejected_logprobs is not None else 0.0
+    if ref_chosen_logprobs is not None and chosen_ref is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if ref_rejected_logprobs is not None and rejected_ref is None:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "missing_logprobs",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if chosen_ref is None:
+        chosen_ref = 0.0
+    if rejected_ref is None:
+        rejected_ref = 0.0
+    # L = -log σ(β [(log πθ(yw)-log πref(yw)) - (log πθ(yl)-log πref(yl))])
+    # logprob이 ±1e308 같은 극단값이면 β·(차이)나 softplus가 inf/nan이 되므로
+    # 값을 만들지 않고 fail-closed로 닫는다.
+    gap = (chosen - chosen_ref) - (rejected - rejected_ref)
+    delta = beta_value * gap
+    if not math.isfinite(delta):
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "non_finite_delta",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    if delta >= 0:
+        loss = math.log1p(math.exp(-delta))
+    else:
+        loss = -delta + math.log1p(math.exp(delta))
+    if not math.isfinite(loss):
+        # delta가 유한하면 softplus도 유한하지만, 이 함수는 어떤 입력에도
+        # 비유한 수치를 status="ok"로 돌려주지 않는 것을 계약으로 삼는다.
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "non_finite_loss",
+            "loss": None,
+            "tokenizer_id": tokenizer_id,
+            "base_model": base_model,
+        }
+    return {
+        "status": "ok",
+        "reason": "dpo_logprob",
+        "loss": loss,
+        "delta": gap,
+        "beta": beta_value,
+        "tokenizer_id": tokenizer_id,
+        "base_model": base_model,
+        "require_reference": bool(require_reference),
+        "reference_model": (
+            "given"
+            if ref_chosen_logprobs is not None and ref_rejected_logprobs is not None
+            else "none"
+        ),
+        "reference_free": not (
+            ref_chosen_logprobs is not None and ref_rejected_logprobs is not None
+        ),
+        "objective": (
+            "dpo"
+            if ref_chosen_logprobs is not None and ref_rejected_logprobs is not None
+            else "reference_free_preference"
+        ),
+    }
+
+
+def evaluate_preference_pairs(
+    pairs: Sequence[dict[str, Any]],
+    *,
+    tokenizer_id: str,
+    base_model: str,
+    beta: float = 0.1,
+    require_reference: bool = False,
+) -> dict[str, Any]:
+    """Evaluate preferred/dispreferred pairs. Missing logprobs are unavailable."""
+    evaluated = 0
+    unavailable = 0
+    losses: list[float] = []
+    reports: list[dict[str, Any]] = []
+    for pair in pairs:
+        report = dpo_loss_from_logprobs(
+            chosen_logprobs=pair.get("chosen_logprobs") or pair.get("preferred_logprobs"),
+            rejected_logprobs=pair.get("rejected_logprobs") or pair.get("dispreferred_logprobs"),
+            beta=beta,
+            tokenizer_id=tokenizer_id,
+            base_model=base_model,
+            ref_chosen_logprobs=pair.get("ref_chosen_logprobs"),
+            ref_rejected_logprobs=pair.get("ref_rejected_logprobs"),
+            require_reference=require_reference,
+        )
+        provenance = {
+            "pair_id": str(pair.get("pair_id") or ""),
+            "source": str(pair.get("source") or ""),
+            "preferred": str(pair.get("preferred") or pair.get("chosen") or ""),
+            "dispreferred": str(pair.get("dispreferred") or pair.get("rejected") or ""),
+        }
+        report = {**report, **provenance}
+        reports.append(report)
+        if report["status"] == DPO_EVAL_UNAVAILABLE:
+            unavailable += 1
+            continue
+        evaluated += 1
+        if report.get("loss") is not None:
+            losses.append(float(report["loss"]))
+    mean_loss = sum(losses) / len(losses) if losses else None
+    objectives = {str(report.get("objective") or "") for report in reports}
+    return {
+        "status": "ok" if evaluated else DPO_EVAL_UNAVAILABLE,
+        "evaluated": evaluated,
+        "unavailable": unavailable,
+        "mean_loss": mean_loss,
+        "tokenizer_id": tokenizer_id,
+        "base_model": base_model,
+        "require_reference": bool(require_reference),
+        "reference_free": "reference_free_preference" in objectives,
+        "string_similarity_used": False,
+        "pairs": reports,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DPO 응답 토큰 로그확률 수집 (2026-09-22)
+#
+# 로컬 MLX 게이트웨이는 요청에 logprobs=true를 주면 모델이 직접 생성한 토큰의
+# 로그확률을 돌려준다. 다만 echo 모드를 구현하지 않고 assistant prefill도
+# 이어쓰기로 처리하지 않으므로, 이미 저장된 임의의 응답 문자열은 채점할 수 없다.
+# 그래서 아래 수집 경로는 실제로 생성된 토큰의 로그확률만 기록하고, 값이 없으면
+# 문자열 유사도로 대체하지 않고 평가 불가로 닫는다.
+# ---------------------------------------------------------------------------
+
+CAPTURE_METHOD = "generation_response_token_logprob"
+CAPTURE_MAX_RESPONSE_BYTES = 256 * 1024
+CAPTURE_TIMEOUT_SECONDS = 45.0
+CAPTURE_HARD_TIMEOUT_SECONDS = 90.0
+CAPTURE_MAX_MESSAGES = 16
+CAPTURE_MAX_MESSAGE_CHARS = 4_000
+CAPTURE_MAX_MODEL_CHARS = 512
+CAPTURE_DEFAULT_MAX_TOKENS = 96
+CAPTURE_MAX_TOKENS_CEILING = 512
+CAPTURE_PREVIEW_CHARS = 240
+CAPTURE_MAX_SAMPLES = 8
+CAPTURE_MAX_TEMPERATURE = 2.0
+SCORING_PROBE_MARKER = "OPENKAKAO_ECHO_PROBE"
+SCORING_PROBE_SUFFIX = " alpha beta gamma delta"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """로컬 게이트웨이 밖으로 요청이 튀지 않게 리다이렉트를 거부한다."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+        return None
+
+
+def _open_local_only(request: urllib.request.Request, *, timeout: float):
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _normalize_gateway_base_url(value: Any) -> str | None:
+    """loopback http 게이트웨이만 허용하고 /v1 형태로 정규화한다."""
+    try:
+        parsed = urllib.parse.urlsplit(str(value or "").strip())
+    except ValueError:
+        return None
+    if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
+        return None
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return None
+    if parsed.path.rstrip("/") not in ("", "/v1"):
+        return None
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"http://{parsed.hostname}{port}/v1"
+
+
+def _sanitize_capture_messages(messages: Any) -> list[dict[str, str]] | None:
+    """역할·길이를 제한한 chat 메시지 목록. 형식이 어긋나면 None."""
+    if not isinstance(messages, (list, tuple)) or not messages:
+        return None
+    if len(messages) > CAPTURE_MAX_MESSAGES:
+        return None
+    cleaned: list[dict[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            return None
+        role = str(message.get("role") or "").strip().lower()
+        if role not in ("system", "user", "assistant"):
+            return None
+        content = message.get("content")
+        if not isinstance(content, str):
+            return None
+        trimmed = content.strip()
+        if not trimmed:
+            return None
+        cleaned.append({"role": role, "content": trimmed[:CAPTURE_MAX_MESSAGE_CHARS]})
+    return cleaned
+
+
+def _capture_failure(reason: str, *, model: str = "") -> dict[str, Any]:
+    return {
+        "status": DPO_EVAL_UNAVAILABLE,
+        "reason": reason,
+        "logprobs": None,
+        "sum": None,
+        "token_count": 0,
+        "model": model,
+        "response_text": "",
+        "capture_method": CAPTURE_METHOD,
+        "string_similarity_used": False,
+    }
+
+
+def _post_local_json(
+    url: str, payload: dict[str, Any], *, timeout: float
+) -> tuple[dict[str, Any] | None, str]:
+    """로컬 게이트웨이에 한 번 POST하고 (본문, 오류코드)를 돌려준다."""
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer local",
+        },
+    )
+    try:
+        with _open_local_only(request, timeout=timeout) as response:
+            raw = response.read(CAPTURE_MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        return None, f"http_{getattr(exc, 'code', 0)}"
+    except Exception as exc:
+        return None, f"gateway_{type(exc).__name__}"
+    if len(raw) > CAPTURE_MAX_RESPONSE_BYTES:
+        return None, "response_too_large"
+    try:
+        parsed = json.loads(raw.decode("utf-8", "replace"))
+    except (ValueError, UnicodeDecodeError):
+        return None, "malformed_response"
+    if not isinstance(parsed, dict):
+        return None, "malformed_response"
+    return parsed, ""
+
+
+def _bounded_timeout(timeout: Any) -> float | None:
+    try:
+        value = float(timeout)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return min(value, CAPTURE_HARD_TIMEOUT_SECONDS)
+
+
+def capture_response_logprobs(
+    *,
+    base_url: str,
+    model: str,
+    messages: Any,
+    max_tokens: int = CAPTURE_DEFAULT_MAX_TOKENS,
+    timeout: float = CAPTURE_TIMEOUT_SECONDS,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    """로컬 게이트웨이에서 응답을 생성하고 실제 토큰 로그확률을 기록한다."""
+    gateway = _normalize_gateway_base_url(base_url)
+    if gateway is None:
+        return _capture_failure("non_loopback_gateway")
+    safe_model = str(model or "").strip()
+    if not safe_model or len(safe_model) > CAPTURE_MAX_MODEL_CHARS:
+        return _capture_failure("invalid_model")
+    cleaned = _sanitize_capture_messages(messages)
+    if cleaned is None:
+        return _capture_failure("invalid_messages", model=safe_model)
+    try:
+        token_budget = int(max_tokens)
+    except (TypeError, ValueError):
+        return _capture_failure("invalid_max_tokens", model=safe_model)
+    if token_budget < 1 or token_budget > CAPTURE_MAX_TOKENS_CEILING:
+        return _capture_failure("invalid_max_tokens", model=safe_model)
+    effective_timeout = _bounded_timeout(timeout)
+    if effective_timeout is None:
+        return _capture_failure("invalid_timeout", model=safe_model)
+    try:
+        effective_temperature = float(temperature)
+    except (TypeError, ValueError):
+        return _capture_failure("invalid_temperature", model=safe_model)
+    if (
+        not math.isfinite(effective_temperature)
+        or effective_temperature < 0.0
+        or effective_temperature > CAPTURE_MAX_TEMPERATURE
+    ):
+        return _capture_failure("invalid_temperature", model=safe_model)
+
+    payload = {
+        "model": safe_model,
+        "messages": cleaned,
+        "max_tokens": token_budget,
+        "temperature": effective_temperature,
+        "logprobs": True,
+        "top_logprobs": 1,
+    }
+    body, error = _post_local_json(
+        f"{gateway}/chat/completions", payload, timeout=effective_timeout
+    )
+    if body is None:
+        return _capture_failure(error or "malformed_response", model=safe_model)
+    try:
+        choice = body["choices"][0]
+        content = str(choice["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return _capture_failure("malformed_response", model=safe_model)
+    if not content:
+        return _capture_failure("empty_completion", model=safe_model)
+    logprob_block = choice.get("logprobs")
+    entries = (
+        logprob_block.get("content") if isinstance(logprob_block, dict) else None
+    )
+    if not isinstance(entries, list) or not entries:
+        return _capture_failure("logprobs_absent", model=safe_model)
+    values: list[Any] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return _capture_failure("malformed_logprobs", model=safe_model)
+        values.append(entry.get("logprob"))
+    total = _sum_response_logprobs(values)
+    if total is None:
+        return _capture_failure("non_finite_logprobs", model=safe_model)
+    return {
+        "status": "ok",
+        "reason": "dpo_logprob_capture",
+        "logprobs": [float(value) for value in values],
+        "sum": total,
+        "token_count": len(values),
+        "model": safe_model,
+        "response_text": content[:CAPTURE_PREVIEW_CHARS],
+        "capture_method": CAPTURE_METHOD,
+        "string_similarity_used": False,
+    }
+
+
+def probe_response_scoring(
+    *,
+    base_url: str,
+    model: str,
+    timeout: float = CAPTURE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """게이트웨이가 이미 저장된 응답 문자열을 채점할 수 있는지 실측한다.
+
+    표준 DPO는 같은 응답 문자열에 대한 정책·기준 모델 로그확률을 모두 요구한다.
+    생성 전용 엔드포인트는 그중 한쪽만 줄 수 있으므로, echo 지원 여부를 실제
+    요청으로 확인해 보고서에 근거로 남긴다.
+    """
+    base = {
+        "mode": "completions_echo",
+        "string_similarity_used": False,
+        "probe_executed": False,
+    }
+    gateway = _normalize_gateway_base_url(base_url)
+    if gateway is None:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "non_loopback_gateway", "supports_response_scoring": False}
+    safe_model = str(model or "").strip()
+    if not safe_model or len(safe_model) > CAPTURE_MAX_MODEL_CHARS:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_model", "supports_response_scoring": False}
+    effective_timeout = _bounded_timeout(timeout)
+    if effective_timeout is None:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_timeout", "supports_response_scoring": False}
+    marker = f"{SCORING_PROBE_MARKER}{SCORING_PROBE_SUFFIX}"
+    body, error = _post_local_json(
+        f"{gateway}/completions",
+        {
+            "model": safe_model,
+            "prompt": marker,
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "echo": True,
+            "logprobs": 1,
+        },
+        timeout=effective_timeout,
+    )
+    if body is None:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": error or "malformed_response", "supports_response_scoring": False}
+    try:
+        echoed = str(body["choices"][0]["text"] or "")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "malformed_response", "supports_response_scoring": False}
+    supported = SCORING_PROBE_MARKER.lower() in echoed.lower()
+    return {
+        **base,
+        "status": "ok",
+        "reason": "echo_supported" if supported else "echo_unsupported",
+        "supports_response_scoring": supported,
+        "probe_executed": True,
+        "echo_preview": echoed[:CAPTURE_PREVIEW_CHARS],
+    }
+
+
+def _attribute_pair_logprobs(
+    pair: dict[str, Any], samples: list[dict[str, Any]]
+) -> tuple[Any, Any, str]:
+    """샘플과 저장된 선호 라벨로 chosen/rejected 로그확률을 정한다."""
+    chosen = pair.get("chosen_logprobs") or pair.get("preferred_logprobs")
+    rejected = pair.get("rejected_logprobs") or pair.get("dispreferred_logprobs")
+    if chosen is not None and rejected is not None:
+        return chosen, rejected, "stored_logprobs"
+    by_text = {str(sample.get("response_text") or ""): sample for sample in samples}
+    preferred = str(pair.get("preferred") or pair.get("chosen") or "").strip()
+    dispreferred = str(pair.get("dispreferred") or pair.get("rejected") or "").strip()
+    if preferred and dispreferred and preferred in by_text and dispreferred in by_text:
+        return (
+            by_text[preferred]["logprobs"],
+            by_text[dispreferred]["logprobs"],
+            "sample_text_match",
+        )
+    return None, None, "unattributed"
+
+
+def capture_preference_pair_logprobs(
+    pairs: Sequence[dict[str, Any]],
+    *,
+    base_url: str,
+    model: str,
+    max_tokens: int = CAPTURE_DEFAULT_MAX_TOKENS,
+    timeout: float = CAPTURE_TIMEOUT_SECONDS,
+    samples: int = 2,
+    temperature: float = 0.7,
+    tokenizer_id: str = "",
+    reference: dict[str, dict[str, Any]] | None = None,
+    require_reference: bool = True,
+) -> dict[str, Any]:
+    """프롬프트를 실제로 샘플링해 로그확률을 모으고 표준 DPO로 평가한다.
+
+    기준 모델 로그확률(reference)이 없으면 표준 DPO 수치는 만들지 않고
+    평가 불가로 닫는다. 값이 없는 쌍은 문자열 유사도로 채우지 않는다.
+    """
+    return _run_pair_capture(
+        pairs,
+        base_url=base_url,
+        model=model,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        samples=samples,
+        temperature=temperature,
+        tokenizer_id=tokenizer_id,
+        reference=reference,
+        require_reference=require_reference,
+    )
+
+
+def sample_prompt_candidates(
+    prompt: str,
+    *,
+    base_url: str,
+    model: str,
+    samples: int = 2,
+    max_tokens: int = CAPTURE_DEFAULT_MAX_TOKENS,
+    timeout: float = CAPTURE_TIMEOUT_SECONDS,
+    temperature: float = 0.7,
+) -> dict[str, Any]:
+    """한 프롬프트의 온폴리시 후보와 실제 로그확률을 저장 가능한 형태로 돌려준다."""
+    base = {
+        "capture_method": CAPTURE_METHOD,
+        "string_similarity_used": False,
+        "samples_requested": 0,
+    }
+    try:
+        sample_budget = int(samples)
+    except (TypeError, ValueError):
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_samples", "candidates": []}
+    if sample_budget < 1 or sample_budget > CAPTURE_MAX_SAMPLES:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_samples", "candidates": []}
+    safe_prompt = str(prompt or "").strip()
+    if not safe_prompt:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "empty_prompt", "candidates": []}
+    candidates: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    for _ in range(sample_budget):
+        result = capture_response_logprobs(
+            base_url=base_url,
+            model=model,
+            messages=[{"role": "user", "content": safe_prompt[:CAPTURE_MAX_MESSAGE_CHARS]}],
+            max_tokens=max_tokens,
+            timeout=timeout,
+            temperature=temperature,
+        )
+        if result.get("status") != "ok":
+            reasons.append(str(result.get("reason") or ""))
+            continue
+        candidates.append(
+            {
+                "response_text": result.get("response_text"),
+                "logprobs": result.get("logprobs"),
+                "sum": result.get("sum"),
+                "token_count": result.get("token_count"),
+                "capture_method": CAPTURE_METHOD,
+            }
+        )
+    return {
+        **base,
+        "status": "ok" if candidates else DPO_EVAL_UNAVAILABLE,
+        "reason": "" if candidates else (reasons[0] if reasons else "insufficient_samples"),
+        "samples_requested": sample_budget,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def _run_pair_capture(
+    pairs: Sequence[dict[str, Any]],
+    *,
+    base_url: str,
+    model: str,
+    max_tokens: int,
+    timeout: float,
+    samples: int,
+    temperature: float,
+    tokenizer_id: str,
+    reference: dict[str, dict[str, Any]] | None,
+    require_reference: bool,
+) -> dict[str, Any]:
+    base = {
+        "capture_method": CAPTURE_METHOD,
+        "string_similarity_used": False,
+        "base_url": str(base_url or ""),
+        "model": str(model or ""),
+        "sample_temperature": temperature,
+        "samples_per_prompt": 0,
+    }
+    try:
+        sample_budget = int(samples)
+    except (TypeError, ValueError):
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_samples", "pairs": []}
+    if sample_budget < 1 or sample_budget > CAPTURE_MAX_SAMPLES:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_samples", "pairs": []}
+    if not isinstance(pairs, (list, tuple)) or not pairs:
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "no_pairs", "pairs": []}
+    if any(not isinstance(pair, dict) for pair in pairs):
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_pair", "pairs": []}
+    if reference is not None and not isinstance(reference, dict):
+        return {**base, "status": DPO_EVAL_UNAVAILABLE, "reason": "invalid_reference", "pairs": []}
+
+    prepared: list[dict[str, Any]] = []
+    captured = 0
+    unavailable = 0
+    for index, pair in enumerate(pairs):
+        prompt = str(pair.get("prompt") or "").strip()
+        pair_id = str(pair.get("pair_id") or f"pair-{index}")
+        if not prompt:
+            unavailable += 1
+            prepared.append({**pair, "pair_id": pair_id, "capture_status": DPO_EVAL_UNAVAILABLE, "capture_reason": "empty_prompt"})
+            continue
+        usable: list[dict[str, Any]] = []
+        last_reason = ""
+        for _ in range(sample_budget):
+            captured_result = capture_response_logprobs(
+                base_url=base_url,
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                timeout=timeout,
+                temperature=temperature,
+            )
+            if captured_result.get("status") == "ok":
+                usable.append(captured_result)
+            else:
+                last_reason = str(captured_result.get("reason") or "")
+        if len(usable) < 2:
+            unavailable += 1
+            prepared.append(
+                {
+                    **pair,
+                    "pair_id": pair_id,
+                    "capture_status": DPO_EVAL_UNAVAILABLE,
+                    "capture_reason": last_reason or "insufficient_samples",
+                }
+            )
+            continue
+        chosen, rejected, attributed_by = _attribute_pair_logprobs(pair, usable)
+        ref_pair = (reference or {}).get(pair_id) or {}
+        if chosen is None or rejected is None:
+            unavailable += 1
+            prepared.append(
+                {
+                    **pair,
+                    "pair_id": pair_id,
+                    "capture_status": DPO_EVAL_UNAVAILABLE,
+                    "capture_reason": "unattributed_samples",
+                    "attributed_by": attributed_by,
+                }
+            )
+            continue
+        captured += 1
+        prepared.append(
+            {
+                **pair,
+                "pair_id": pair_id,
+                "capture_status": "ok",
+                "attributed_by": attributed_by,
+                "chosen_logprobs": chosen,
+                "rejected_logprobs": rejected,
+                "ref_chosen_logprobs": ref_pair.get("ref_chosen_logprobs"),
+                "ref_rejected_logprobs": ref_pair.get("ref_rejected_logprobs"),
+            }
+        )
+
+    evaluation = evaluate_preference_pairs(
+        [pair for pair in prepared if pair.get("capture_status") == "ok"],
+        tokenizer_id=tokenizer_id,
+        base_model=model,
+        require_reference=require_reference,
+    )
+    return {
+        **base,
+        "status": "ok" if captured else DPO_EVAL_UNAVAILABLE,
+        "captured": captured,
+        "unavailable": unavailable,
+        "samples_per_prompt": sample_budget,
+        "require_reference": bool(require_reference),
+        "reference_supplied": bool(reference),
+        "pairs": prepared,
+        "evaluation": evaluation,
+    }
+
+
+def load_preference_pairs(path: Path, *, max_bytes: int = 8 * 1024 * 1024) -> tuple[list[dict[str, Any]], str]:
+    """선호 쌍 JSONL을 읽는다. 없거나 읽을 수 없으면 (빈 목록, 오류코드)."""
+    try:
+        if not path.is_file():
+            return [], "pairs_missing"
+        if path.stat().st_size > max_bytes:
+            return [], "pairs_too_large"
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return [], "pairs_unreadable"
+    except UnicodeDecodeError:
+        return [], "pairs_not_utf8"
+    pairs: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            item = json.loads(stripped)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            pairs.append(item)
+    if not pairs:
+        return [], "pairs_empty"
+    return pairs, ""
+
+
+def build_dpo_report(
+    *,
+    pairs_path: Path,
+    base_url: str,
+    model: str,
+    ref_pairs_path: Path | None = None,
+    max_tokens: int = CAPTURE_DEFAULT_MAX_TOKENS,
+    samples: int = 2,
+    timeout: float = CAPTURE_TIMEOUT_SECONDS,
+    tokenizer_id: str = "",
+) -> dict[str, Any]:
+    """JSONL 선호 쌍을 읽어 로그확률 수집·기준 채점 가능성·DPO 평가를 묶는다."""
+    pairs, error = load_preference_pairs(pairs_path)
+    if error:
+        return {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": error,
+            "capture_method": CAPTURE_METHOD,
+            "string_similarity_used": False,
+            "pairs": [],
+        }
+    reference: dict[str, dict[str, Any]] | None = None
+    if ref_pairs_path is not None:
+        ref_pairs, ref_error = load_preference_pairs(ref_pairs_path)
+        if ref_error:
+            return {
+                "status": DPO_EVAL_UNAVAILABLE,
+                "reason": ref_error,
+                "capture_method": CAPTURE_METHOD,
+                "string_similarity_used": False,
+                "pairs": [],
+            }
+        reference = {}
+        for ref_pair in ref_pairs:
+            ref_id = str(ref_pair.get("pair_id") or "")
+            if not ref_id:
+                continue
+            reference[ref_id] = {
+                "ref_chosen_logprobs": ref_pair.get("chosen_logprobs"),
+                "ref_rejected_logprobs": ref_pair.get("rejected_logprobs"),
+            }
+    probe = probe_response_scoring(base_url=base_url, model=model, timeout=timeout)
+    capture = capture_preference_pair_logprobs(
+        pairs,
+        base_url=base_url,
+        model=model,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        samples=samples,
+        tokenizer_id=tokenizer_id,
+        reference=reference,
+    )
+    return {
+        "status": capture.get("status"),
+        "capture_method": CAPTURE_METHOD,
+        "string_similarity_used": False,
+        "base_url": base_url,
+        "model": model,
+        "scoring_probe": probe,
+        "capture": {
+            "status": capture.get("status"),
+            "reason": capture.get("reason", ""),
+            "captured": capture.get("captured", 0),
+            "unavailable": capture.get("unavailable", 0),
+            "samples_per_prompt": capture.get("samples_per_prompt", 0),
+            "sample_temperature": capture.get("sample_temperature"),
+        },
+        "evaluation": capture.get("evaluation", {}),
+        "pairs": capture.get("pairs", []),
+    }
+
+
 def run_training(plan: TrainingPlan, *, timeout: float = 7200.0) -> dict[str, Any]:
     """Execute the training command and report how it went."""
     executable = _resolve_lora_executable()
@@ -558,7 +1378,7 @@ def _resolve_model(explicit: str | None) -> str:
 
         return recommend_ondevice_setup(detect_hardware()).recommended_model
     except Exception:
-        return "mlx-community/gemma-3-4b-it-4bit"
+        return FLASH_NEXT_MODEL_ID
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -592,6 +1412,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evaluate", action="store_true", help="학습 전후 손실을 비교")
     parser.add_argument("--test-batches", type=int, default=4)
     parser.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
+    parser.add_argument("--dpo-pairs", type=Path, default=None, help="선호 쌍 JSONL 경로")
+    parser.add_argument(
+        "--dpo-ref-pairs",
+        type=Path,
+        default=None,
+        help="기준 모델 로그확률을 담은 JSONL 경로(선택)",
+    )
+    parser.add_argument(
+        "--dpo-capture",
+        action="store_true",
+        help="로컬 게이트웨이에서 응답 토큰 로그확률을 실제로 수집",
+    )
+    parser.add_argument(
+        "--dpo-base-url",
+        default="http://127.0.0.1:11234/v1",
+        help="로컬 MLX 게이트웨이 base URL",
+    )
+    parser.add_argument("--dpo-model", default=None, help="수집에 쓸 모델 ID (기본: --model)")
+    parser.add_argument("--dpo-max-tokens", type=int, default=CAPTURE_DEFAULT_MAX_TOKENS)
+    parser.add_argument("--dpo-samples", type=int, default=2)
     return parser
 
 
@@ -651,6 +1491,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             if "baseline" in report:
                 report["comparison"] = compare_runs(report["baseline"], report["tuned"])
 
+    if args.dpo_pairs is not None:
+        # 로컬 게이트웨이가 생성한 토큰의 실제 로그확률만 사용한다. 값이 없으면
+        # build_dpo_report가 평가 불가로 닫고 문자열 유사도로 대체하지 않는다.
+        report["dpo"] = build_dpo_report(
+            pairs_path=args.dpo_pairs.expanduser(),
+            base_url=args.dpo_base_url,
+            model=args.dpo_model or model,
+            ref_pairs_path=(
+                args.dpo_ref_pairs.expanduser() if args.dpo_ref_pairs is not None else None
+            ),
+            max_tokens=args.dpo_max_tokens,
+            samples=args.dpo_samples,
+            tokenizer_id=args.dpo_model or model,
+        )
+
     report_path = data_dir / "finetune-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -675,9 +1530,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "comparison" in report:
             cmp_ = report["comparison"]
             print(f"손실: {cmp_['baseline_loss']} → {cmp_['tuned_loss']} (개선 {cmp_['improved']})")
+        if "dpo" in report:
+            dpo = report["dpo"]
+            evaluation = dpo.get("evaluation") or {}
+            probe = dpo.get("scoring_probe") or {}
+            captured = dpo.get("capture") or {}
+            print(
+                f"DPO: {dpo.get('status')} · 수집 {captured.get('captured', 0)}쌍 · "
+                f"평가 {evaluation.get('evaluated', 0)} · 평가 불가 {evaluation.get('unavailable', 0)}"
+            )
+            print(
+                "  응답 문자열 채점 지원: "
+                f"{probe.get('supports_response_scoring')} ({probe.get('reason', '')})"
+            )
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

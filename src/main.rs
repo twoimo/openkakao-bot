@@ -4,6 +4,7 @@ use openkakao_cli::ax_send;
 mod auto_reply_runtime;
 mod commands;
 mod config;
+mod context_sync_replica;
 mod credentials;
 use openkakao_cli::error;
 mod export;
@@ -1033,6 +1034,21 @@ enum Commands {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: usize,
     },
+    /// Read-only AX diagnostic: report whether an already-open chat window's
+    /// message composer is discoverable. Performs no mutation and never opens
+    /// a chat window, so it is safe to run against a live session.
+    AxProbe {
+        #[arg(long)]
+        chat: String,
+        /// Print the bounded AX subtree of the chat window instead of the
+        /// composer summary. Read-only diagnostic; never mutates or opens a chat.
+        #[arg(long)]
+        dump: bool,
+        /// Node budget for --dump. Bounds the walk so a virtualized transcript
+        /// cannot stall the caller.
+        #[arg(long, default_value_t = 400)]
+        max_nodes: usize,
+    },
     /// Watch for incoming KakaoTalk messages via AX (no server contact,
     /// background) and fire hooks/webhooks on unread-count increases
     AxWatch {
@@ -1180,6 +1196,7 @@ fn is_local_only_command(command: &Commands) -> bool {
             | Commands::LocalSend { .. }
             | Commands::LocalDelete { .. }
             | Commands::AxRead { .. }
+            | Commands::AxProbe { .. }
             | Commands::AxWatch { .. }
             | Commands::AutoReply { .. }
             | Commands::AutoReplyHost { .. }
@@ -1543,14 +1560,18 @@ struct AutoReplyRunner {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AutoReplyLlmChoice {
+    MlxQwen38FlashNext,
+    MlxQwen38TwentySevenB,
     GjcGemini37Flash,
     GjcOpencodeDeepseek41Flash,
     CodexGpt56Luna,
 }
 
 impl AutoReplyLlmChoice {
-    fn all() -> [Self; 3] {
+    fn all() -> [Self; 5] {
         [
+            Self::MlxQwen38FlashNext,
+            Self::MlxQwen38TwentySevenB,
             Self::GjcGemini37Flash,
             Self::GjcOpencodeDeepseek41Flash,
             Self::CodexGpt56Luna,
@@ -1558,6 +1579,11 @@ impl AutoReplyLlmChoice {
     }
 
     fn from_model(model: &str) -> Option<Self> {
+        match config::canonical_mlx_local_model(Some(model)) {
+            Some(config::MLX_FLASH_NEXT_MODEL_ID) => return Some(Self::MlxQwen38FlashNext),
+            Some(config::MLX_27B_MODEL_ID) => return Some(Self::MlxQwen38TwentySevenB),
+            _ => {}
+        }
         match model.trim() {
             "google-antigravity/gemini-3.8-flash"
             | "google-antigravity/gemini-3.7-flash-high"
@@ -1582,6 +1608,8 @@ impl AutoReplyLlmChoice {
 
     fn label(self) -> &'static str {
         match self {
+            Self::MlxQwen38FlashNext => "Local MLX Qwen3.8 Flash-Next",
+            Self::MlxQwen38TwentySevenB => "Local MLX Qwen3.8 27B",
             Self::GjcGemini37Flash => "Gajae-Code Gemini 3.7 Flash (high)",
             Self::GjcOpencodeDeepseek41Flash => "OpenCode Go DeepSeek V4.1 Flash",
             Self::CodexGpt56Luna => "Codex GPT-5.6 Luna",
@@ -1590,6 +1618,8 @@ impl AutoReplyLlmChoice {
 
     fn model(self) -> &'static str {
         match self {
+            Self::MlxQwen38FlashNext => config::MLX_FLASH_NEXT_MODEL_ID,
+            Self::MlxQwen38TwentySevenB => config::MLX_27B_MODEL_ID,
             Self::GjcGemini37Flash => "google-antigravity/gemini-3.7-flash-tiered",
             Self::GjcOpencodeDeepseek41Flash => "opencode-go-session/deepseek-v4.1-flash",
             Self::CodexGpt56Luna => "gpt-5.6-luna",
@@ -1597,6 +1627,20 @@ impl AutoReplyLlmChoice {
     }
 
     fn apply(self, config: &mut config::OpenKakaoConfig) {
+        if matches!(self, Self::MlxQwen38FlashNext | Self::MlxQwen38TwentySevenB) {
+            config.model.privacy_mode = Some("local".into());
+            config.model.allow_egress = false;
+            config.model.provider = Some(config::MLX_SERVE_PROVIDER.into());
+            config.model.retention = None;
+            config.auto_reply.reply_runner_kind = Some("opencodex".into());
+            config.auto_reply.reply_model = Some(self.model().into());
+            config.auto_reply.reply_reasoning_effort = Some("medium".into());
+            config.auto_reply.reply_service_tier = Some("default".into());
+            if config.auto_reply.reply_runner.is_none() {
+                config.auto_reply.reply_runner = Some("/opt/homebrew/bin/opencodex".into());
+            }
+            return;
+        }
         if config.auto_reply.reply_runner_kind.as_deref() == Some("opencodex") {
             config.model.privacy_mode = Some("remote_explicit".into());
             config.model.allow_egress = true;
@@ -1611,6 +1655,8 @@ impl AutoReplyLlmChoice {
             return;
         }
         match self {
+            Self::MlxQwen38FlashNext => unreachable!("local MLX choice returns above"),
+            Self::MlxQwen38TwentySevenB => unreachable!("local MLX choice returns above"),
             Self::GjcGemini37Flash | Self::GjcOpencodeDeepseek41Flash => {
                 config.model.privacy_mode = Some("remote_explicit".into());
                 config.model.allow_egress = true;
@@ -1660,7 +1706,7 @@ fn select_auto_reply_llm(
 ) -> Result<AutoReplyLlmChoice> {
     if let Some(requested) = requested {
         return AutoReplyLlmChoice::from_model(requested).with_context(|| {
-            format!("unknown reply model {requested:?}; use gemini-3.7-flash, deepseek-v4.1-flash or gpt-5.6-luna")
+            format!("unknown reply model {requested:?}; use the exact local Qwen3.8 Flash-Next or Qwen3.8 27B ID, gemini-3.7-flash, deepseek-v4.1-flash or gpt-5.6-luna")
         });
     }
     if json_output || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
@@ -1691,11 +1737,214 @@ fn select_auto_reply_llm(
     Ok(AutoReplyLlmChoice::all()[index])
 }
 
+const LOCAL_MLX_BASE_URL: &str = "http://127.0.0.1:11234/v1";
+const LOCAL_MLX_MODELS_URL: &str = "http://127.0.0.1:11234/v1/models";
+const LOCAL_MLX_CHAT_URL: &str = "http://127.0.0.1:11234/v1/chat/completions";
+// 2026-09-22 실측 cold-start 첫 토큰은 23.09초였다. 15초 중단은 warm-up도
+// 취소해 preflight_failed가 5회 연속 발생했으므로 충분한 기동 여유를 둔다.
+const LOCAL_MLX_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+const LOCAL_MLX_MAX_RESPONSE_BYTES: usize = 64 * 1024;
+const LOCAL_MLX_MAX_MODEL_ROWS: usize = 256;
+const LOCAL_MLX_MAX_CHOICES: usize = 8;
+const LOCAL_MLX_MAX_CONTENT_BYTES: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalMlxProbeMethod {
+    Get,
+    Post,
+}
+
+struct LocalMlxProbeRequest {
+    method: LocalMlxProbeMethod,
+    url: &'static str,
+    body: Option<Vec<u8>>,
+    timeout: Duration,
+    max_response_bytes: usize,
+}
+
+struct LocalMlxProbeResponse {
+    status: u16,
+    body: Vec<u8>,
+}
+
+trait LocalMlxProbeTransport {
+    fn send(&self, request: LocalMlxProbeRequest) -> Result<LocalMlxProbeResponse>;
+}
+
+struct ReqwestLocalMlxProbeTransport;
+
+impl LocalMlxProbeTransport for ReqwestLocalMlxProbeTransport {
+    fn send(&self, request: LocalMlxProbeRequest) -> Result<LocalMlxProbeResponse> {
+        if !request.url.starts_with(LOCAL_MLX_BASE_URL)
+            || !matches!(request.url, LOCAL_MLX_MODELS_URL | LOCAL_MLX_CHAT_URL)
+        {
+            anyhow::bail!("local MLX probe rejected a non-loopback endpoint");
+        }
+        if request.timeout.is_zero()
+            || request.timeout > LOCAL_MLX_PROBE_TIMEOUT
+            || request.max_response_bytes > LOCAL_MLX_MAX_RESPONSE_BYTES
+        {
+            anyhow::bail!("local MLX probe request exceeds its fixed bounds");
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(request.timeout)
+            .build()
+            .context("build bounded local MLX probe client")?;
+        let request_builder = match request.method {
+            LocalMlxProbeMethod::Get => {
+                if request.body.is_some() {
+                    anyhow::bail!("local MLX models request must not contain a body");
+                }
+                client.get(request.url)
+            }
+            LocalMlxProbeMethod::Post => client
+                .post(request.url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(
+                    request
+                        .body
+                        .context("local MLX generation request body is missing")?,
+                ),
+        }
+        .header(reqwest::header::ACCEPT, "application/json");
+        let response = request_builder
+            .send()
+            .context("send bounded local MLX probe request")?;
+        let status = response.status().as_u16();
+        let mut body = Vec::new();
+        response
+            .take(request.max_response_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut body)
+            .context("read bounded local MLX probe response")?;
+        if body.len() > request.max_response_bytes {
+            anyhow::bail!("local MLX probe response is too large");
+        }
+        Ok(LocalMlxProbeResponse { status, body })
+    }
+}
+
+fn parse_local_mlx_probe_json(
+    response: LocalMlxProbeResponse,
+    stage: &str,
+) -> Result<serde_json::Value> {
+    if response.status != 200 {
+        anyhow::bail!("local MLX {stage} probe returned HTTP {}", response.status);
+    }
+    if response.body.len() > LOCAL_MLX_MAX_RESPONSE_BYTES {
+        anyhow::bail!("local MLX {stage} probe response is too large");
+    }
+    serde_json::from_slice(&response.body)
+        .with_context(|| format!("local MLX {stage} probe returned malformed JSON"))
+}
+
+fn probe_local_mlx_auto_reply(
+    config: &config::OpenKakaoConfig,
+    transport: &dyn LocalMlxProbeTransport,
+) -> Result<()> {
+    config::validate_auto_reply_local_mlx_profile(config)?;
+    let model = config::canonical_mlx_local_model(config.auto_reply.reply_model.as_deref())
+        .context("local MLX AutoReply model is not allowlisted")?;
+
+    let models = parse_local_mlx_probe_json(
+        transport.send(LocalMlxProbeRequest {
+            method: LocalMlxProbeMethod::Get,
+            url: LOCAL_MLX_MODELS_URL,
+            body: None,
+            timeout: LOCAL_MLX_PROBE_TIMEOUT,
+            max_response_bytes: LOCAL_MLX_MAX_RESPONSE_BYTES,
+        })?,
+        "models",
+    )?;
+    let rows = models
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .context("local MLX models probe response is malformed")?;
+    if rows.len() > LOCAL_MLX_MAX_MODEL_ROWS {
+        anyhow::bail!("local MLX models probe returned too many rows");
+    }
+    let mut target = None;
+    for row in rows {
+        let row = row
+            .as_object()
+            .context("local MLX models probe row is malformed")?;
+        let row_id = row
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .context("local MLX models probe row has no model ID")?;
+        if config::canonical_mlx_local_model(Some(row_id)) == Some(model) {
+            if target.is_some() {
+                anyhow::bail!("local MLX models probe returned an ambiguous model");
+            }
+            target = Some(row);
+        }
+    }
+    let target = target.context("local MLX model is not advertised")?;
+    if target.get("loaded").and_then(serde_json::Value::as_bool) != Some(true)
+        || target.get("state").and_then(serde_json::Value::as_str) != Some("ready")
+    {
+        anyhow::bail!("local MLX model is not ready");
+    }
+
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "확인이라고만 답하세요."}],
+        "max_tokens": 8,
+        "temperature": 0,
+        "stream": false,
+    }))?;
+    let generation = parse_local_mlx_probe_json(
+        transport.send(LocalMlxProbeRequest {
+            method: LocalMlxProbeMethod::Post,
+            url: LOCAL_MLX_CHAT_URL,
+            body: Some(body),
+            timeout: LOCAL_MLX_PROBE_TIMEOUT,
+            max_response_bytes: LOCAL_MLX_MAX_RESPONSE_BYTES,
+        })?,
+        "generation",
+    )?;
+    let choices = generation
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .context("local MLX generation probe response is malformed")?;
+    if choices.len() > LOCAL_MLX_MAX_CHOICES {
+        anyhow::bail!("local MLX generation probe returned too many choices");
+    }
+    let content = choices
+        .first()
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .context("local MLX generation probe returned no content")?;
+    if content.trim().is_empty() || content.len() > LOCAL_MLX_MAX_CONTENT_BYTES {
+        anyhow::bail!("local MLX generation probe content is invalid");
+    }
+    Ok(())
+}
+
 fn probe_auto_reply_llm(
     config: &config::OpenKakaoConfig,
     choice: AutoReplyLlmChoice,
 ) -> Result<()> {
-    // 1. First probe via OpenCodex authentication gateway (http://127.0.0.1:10100/v1) for zero-latency verified check
+    probe_auto_reply_llm_with_local_transport(config, choice, &ReqwestLocalMlxProbeTransport)
+}
+
+fn probe_auto_reply_llm_with_local_transport(
+    config: &config::OpenKakaoConfig,
+    choice: AutoReplyLlmChoice,
+    local_transport: &dyn LocalMlxProbeTransport,
+) -> Result<()> {
+    if matches!(
+        choice,
+        AutoReplyLlmChoice::MlxQwen38FlashNext | AutoReplyLlmChoice::MlxQwen38TwentySevenB
+    ) {
+        return probe_local_mlx_auto_reply(config, local_transport);
+    }
+
+    // Remote choices retain the existing OpenCodex authentication-gateway probe.
     if let Ok(client) = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .build()
@@ -1738,6 +1987,12 @@ fn probe_auto_reply_llm(
         anyhow::bail!("opencodex runner failed probe: {}", stdout.trim());
     }
     match choice {
+        AutoReplyLlmChoice::MlxQwen38FlashNext => {
+            unreachable!("local MLX choice returns before remote probes")
+        }
+        AutoReplyLlmChoice::MlxQwen38TwentySevenB => {
+            unreachable!("local MLX choice returns before remote probes")
+        }
         AutoReplyLlmChoice::GjcGemini37Flash => {
             let output = Command::new(&runner.path)
                 .args([
@@ -5701,6 +5956,34 @@ fn require_persisted_auto_reply_readiness(
     Ok(())
 }
 
+/// Resolve the scheduled send's source row for its author attestation.
+///
+/// The bound send attests that the row it answers has the expected author, and
+/// it used to look for that row only in the newest 20 messages. A scheduled
+/// reply fires after a debounce window, so in an active room the source row is
+/// usually older than those 20 rows; the preflight then failed with "scheduled
+/// reply source row is unavailable" and the job died as stale_backlog
+/// (2026-09-22, room 417: 70 of 202 preflight attempts). Prefer the page that
+/// was already read, then fall back to a direct log-id lookup on the same
+/// read-only reader. A row that is genuinely gone still fails closed.
+fn resolve_bound_source_message<F>(
+    windowed: &[local_db::LocalMessage],
+    expected_source_log_id: i64,
+    lookup: F,
+) -> Result<local_db::LocalMessage>
+where
+    F: FnOnce(i64) -> Result<Option<local_db::LocalMessage>>,
+{
+    if let Some(message) = windowed
+        .iter()
+        .find(|message| message.log_id == expected_source_log_id)
+    {
+        return Ok(message.clone());
+    }
+    lookup(expected_source_log_id)
+        .context("read the scheduled reply source row")?
+        .context("scheduled reply source row is unavailable")
+}
 fn require_expected_local_source_tail(
     target_chat_id: i64,
     expected_source_log_id: i64,
@@ -5763,15 +6046,10 @@ fn require_ax_send(config: &config::OpenKakaoConfig) -> Result<()> {
 
 /// `local-send` has no chat-id to cross-check against (the local DB it would
 /// normally verify with is unreadable on current KakaoTalk builds), so an
-/// exact-match allowlist in config is the only guard against typos or
-/// substring collisions sending to the wrong chat.
+/// exact-match allowlist in config and the shared catalog guard are used to
+/// prevent typos or substring collisions sending to the wrong chat.
 fn require_allowed_send_chat(config: &config::OpenKakaoConfig, chat_name: &str) -> Result<()> {
-    if !config
-        .safety
-        .allowed_send_chats
-        .iter()
-        .any(|c| c == chat_name)
-    {
+    if !config::allowed_send_chat_targets(config, chat_name, None) {
         anyhow::bail!(
             "chat \"{chat_name}\" is not in the local-send allowlist.\n\n\
              local-send matches chats by display-name text scraped from the KakaoTalk UI,\n\
@@ -6594,9 +6872,9 @@ fn main() -> Result<()> {
                 )?,
                 None => Vec::new(),
             };
-            let reader = local_db::LocalDbReader::open()?;
-            let account_fingerprint = reader.account_fingerprint().to_owned();
-            let account_user_id = reader.account_user_id();
+            let source = context_sync_replica::ContextSyncReplicaSource::discover()?;
+            let account_fingerprint = source.account_fingerprint().to_owned();
+            let account_user_id = source.account_user_id();
             let state = openkakao_cli::context::live_context_sync_state(
                 &db_path,
                 &account_fingerprint,
@@ -6634,7 +6912,8 @@ fn main() -> Result<()> {
                     &chat,
                     checkpoint,
                     |expected_chat_id, expected_checkpoint| {
-                        reader.poll_after(
+                        let replica = source.open_fresh()?;
+                        replica.reader().poll_after(
                             expected_chat_id,
                             local_db::LOCAL_POLL_MAX_ROWS,
                             Some(expected_checkpoint),
@@ -7258,10 +7537,11 @@ fn main() -> Result<()> {
                             expected_last_observed,
                             &source_fence,
                         )?;
-                        let source_message = messages
-                            .iter()
-                            .find(|message| message.log_id == expected_last_observed)
-                            .context("scheduled reply source row is unavailable")?;
+                        let source_message = resolve_bound_source_message(
+                            &messages,
+                            expected_last_observed,
+                            |log_id| reader.read_message_by_log_id(target_chat_id, log_id),
+                        )?;
                         if proactive_send {
                             if !source_message.is_self
                                 && (source_message.author_id != expected_author_id
@@ -7351,6 +7631,31 @@ fn main() -> Result<()> {
                 count,
                 json,
             })?
+        }
+        Commands::AxProbe {
+            chat,
+            dump,
+            max_nodes,
+        } => {
+            if dump {
+                for line in ax_send::dump_ax(&chat, max_nodes)? {
+                    println!("{line}");
+                }
+            } else {
+                let report = ax_send::probe_ax(&chat)?;
+                if json {
+                    crate::util::output_json(&report)?;
+                } else {
+                    println!(
+                        "chat={:?} window_found={} composer_found={} elapsed_ms={} label={:?}",
+                        report.chat_name,
+                        report.window_found,
+                        report.composer_found,
+                        report.elapsed_ms,
+                        report.label
+                    );
+                }
+            }
         }
         Commands::AxWatch {
             interval,
@@ -7477,6 +7782,37 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeLocalMlxProbeTransport {
+        responses: std::cell::RefCell<std::collections::VecDeque<LocalMlxProbeResponse>>,
+        requests: std::cell::RefCell<Vec<LocalMlxProbeRequest>>,
+    }
+
+    impl FakeLocalMlxProbeTransport {
+        fn new(responses: Vec<LocalMlxProbeResponse>) -> Self {
+            Self {
+                responses: std::cell::RefCell::new(responses.into()),
+                requests: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn json(status: u16, value: serde_json::Value) -> LocalMlxProbeResponse {
+            LocalMlxProbeResponse {
+                status,
+                body: serde_json::to_vec(&value).expect("serialize fake local MLX response"),
+            }
+        }
+    }
+
+    impl LocalMlxProbeTransport for FakeLocalMlxProbeTransport {
+        fn send(&self, request: LocalMlxProbeRequest) -> Result<LocalMlxProbeResponse> {
+            self.requests.borrow_mut().push(request);
+            self.responses
+                .borrow_mut()
+                .pop_front()
+                .context("missing fake local MLX response")
+        }
+    }
 
     #[test]
     fn retry_bounded_stops_at_the_first_success() {
@@ -8910,6 +9246,36 @@ mod tests {
 
     #[test]
     fn auto_reply_llm_aliases_map_to_attested_models() {
+        for exact in [
+            config::MLX_FLASH_NEXT_MODEL_ID,
+            config::MLX_FLASH_NEXT_PREFIXED_MODEL_ID,
+        ] {
+            assert_eq!(
+                AutoReplyLlmChoice::from_model(exact),
+                Some(AutoReplyLlmChoice::MlxQwen38FlashNext)
+            );
+        }
+        assert_eq!(
+            AutoReplyLlmChoice::from_model(&format!(" {} ", config::MLX_FLASH_NEXT_MODEL_ID)),
+            None,
+            "the local model allowlist must remain exact"
+        );
+        for exact in [
+            config::MLX_27B_MODEL_ID,
+            config::MLX_27B_PREFIXED_MODEL_ID,
+        ] {
+            assert_eq!(
+                AutoReplyLlmChoice::from_model(exact),
+                Some(AutoReplyLlmChoice::MlxQwen38TwentySevenB)
+            );
+        }
+        let mut json_config = config::OpenKakaoConfig::default();
+        json_config.auto_reply.reply_model = Some(config::MLX_FLASH_NEXT_PREFIXED_MODEL_ID.into());
+        assert_eq!(
+            select_auto_reply_llm(&mut json_config, None, true)
+                .expect("JSON mode should select the configured exact local model"),
+            AutoReplyLlmChoice::MlxQwen38FlashNext
+        );
         assert_eq!(
             AutoReplyLlmChoice::from_model("gemini-3.7-flash")
                 .expect("gemini alias")
@@ -8937,7 +9303,183 @@ mod tests {
             Some("opencode-go-session")
         );
         assert_eq!(config.auto_reply.reply_runner_kind.as_deref(), Some("gjc"));
-        assert_eq!(AutoReplyLlmChoice::all().len(), 3);
+        assert_eq!(AutoReplyLlmChoice::all().len(), 5);
+    }
+
+    #[test]
+    fn auto_reply_local_mlx_choice_applies_fail_closed_profile() {
+        let mut config = config::OpenKakaoConfig::default();
+        config.model.privacy_mode = Some("remote_explicit".into());
+        config.model.allow_egress = true;
+        config.model.provider = Some("openai-codex".into());
+        config.model.retention = Some("provider-policy".into());
+
+        AutoReplyLlmChoice::MlxQwen38FlashNext.apply(&mut config);
+
+        assert_eq!(config.model.privacy_mode.as_deref(), Some("local"));
+        assert!(!config.model.allow_egress);
+        assert_eq!(
+            config.model.provider.as_deref(),
+            Some(config::MLX_SERVE_PROVIDER)
+        );
+        assert!(config.model.retention.is_none());
+        assert_eq!(
+            config.auto_reply.reply_model.as_deref(),
+            Some(config::MLX_FLASH_NEXT_MODEL_ID)
+        );
+        assert_eq!(
+            config.auto_reply.reply_runner_kind.as_deref(),
+            Some("opencodex")
+        );
+        assert_eq!(
+            config.auto_reply.reply_runner.as_deref(),
+            Some("/opt/homebrew/bin/opencodex")
+        );
+        config::validate_auto_reply_local_mlx_profile(&config)
+            .expect("applied local MLX profile must validate");
+    }
+
+    #[test]
+    fn auto_reply_local_mlx_probe_uses_only_bounded_loopback_requests() {
+        let mut config = config::OpenKakaoConfig::default();
+        AutoReplyLlmChoice::MlxQwen38FlashNext.apply(&mut config);
+        let transport = FakeLocalMlxProbeTransport::new(vec![
+            FakeLocalMlxProbeTransport::json(
+                200,
+                serde_json::json!({
+                    "data": [{
+                        "id": config::MLX_FLASH_NEXT_PREFIXED_MODEL_ID,
+                        "loaded": true,
+                        "state": "ready"
+                    }]
+                }),
+            ),
+            FakeLocalMlxProbeTransport::json(
+                200,
+                serde_json::json!({"choices": [{"message": {"content": "확인"}}]}),
+            ),
+        ]);
+
+        probe_auto_reply_llm_with_local_transport(
+            &config,
+            AutoReplyLlmChoice::MlxQwen38FlashNext,
+            &transport,
+        )
+        .expect("ready local MLX model should pass the bounded probe");
+
+        let requests = transport.requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, LocalMlxProbeMethod::Get);
+        assert_eq!(requests[0].url, LOCAL_MLX_MODELS_URL);
+        assert!(requests[0].body.is_none());
+        assert_eq!(requests[1].method, LocalMlxProbeMethod::Post);
+        assert_eq!(requests[1].url, LOCAL_MLX_CHAT_URL);
+        assert!(requests.iter().all(|request| {
+            request.timeout == LOCAL_MLX_PROBE_TIMEOUT
+                && request.max_response_bytes == LOCAL_MLX_MAX_RESPONSE_BYTES
+                && request.url.starts_with(LOCAL_MLX_BASE_URL)
+                && !request.url.contains("10100")
+                && !request.url.contains("/load")
+                && !request.url.contains("/unload")
+                && !request.url.contains("/swap")
+        }));
+        let generation: serde_json::Value =
+            serde_json::from_slice(requests[1].body.as_deref().expect("generation probe body"))
+                .expect("parse generation probe body");
+        assert_eq!(
+            generation.get("model").and_then(serde_json::Value::as_str),
+            Some(config::MLX_FLASH_NEXT_MODEL_ID)
+        );
+        assert_eq!(
+            generation
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64),
+            Some(8)
+        );
+        assert_eq!(
+            generation
+                .pointer("/messages/0/content")
+                .and_then(serde_json::Value::as_str),
+            Some("확인이라고만 답하세요.")
+        );
+    }
+
+    #[test]
+    fn auto_reply_local_mlx_probe_fails_closed_without_generation_or_remote_fallback() {
+        let mut config = config::OpenKakaoConfig::default();
+        AutoReplyLlmChoice::MlxQwen38FlashNext.apply(&mut config);
+        let not_ready = FakeLocalMlxProbeTransport::new(vec![FakeLocalMlxProbeTransport::json(
+            200,
+            serde_json::json!({
+                "data": [{
+                    "id": config::MLX_FLASH_NEXT_MODEL_ID,
+                    "loaded": false,
+                    "state": "unloaded"
+                }]
+            }),
+        )]);
+        let error = probe_auto_reply_llm_with_local_transport(
+            &config,
+            AutoReplyLlmChoice::MlxQwen38FlashNext,
+            &not_ready,
+        )
+        .expect_err("an unloaded model must fail before generation");
+        assert_eq!(error.to_string(), "local MLX model is not ready");
+        assert_eq!(not_ready.requests.borrow().len(), 1);
+
+        let malformed = FakeLocalMlxProbeTransport::new(vec![LocalMlxProbeResponse {
+            status: 200,
+            body: b"{not-json".to_vec(),
+        }]);
+        assert!(probe_auto_reply_llm_with_local_transport(
+            &config,
+            AutoReplyLlmChoice::MlxQwen38FlashNext,
+            &malformed,
+        )
+        .is_err());
+        assert_eq!(malformed.requests.borrow().len(), 1);
+
+        let redirected = FakeLocalMlxProbeTransport::new(vec![
+            FakeLocalMlxProbeTransport::json(302, serde_json::json!({"redirect": true})),
+        ]);
+        let redirect_error = probe_auto_reply_llm_with_local_transport(
+            &config,
+            AutoReplyLlmChoice::MlxQwen38FlashNext,
+            &redirected,
+        )
+        .expect_err("redirects must fail closed");
+        assert!(redirect_error.to_string().contains("HTTP 302"));
+        assert_eq!(redirected.requests.borrow().len(), 1);
+
+        config.auto_reply.reply_model = Some("google-antigravity/gemini-3.8-flash".into());
+        let invalid_profile = FakeLocalMlxProbeTransport::new(Vec::new());
+        assert!(probe_auto_reply_llm_with_local_transport(
+            &config,
+            AutoReplyLlmChoice::MlxQwen38FlashNext,
+            &invalid_profile,
+        )
+        .is_err());
+        assert!(invalid_profile.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn auto_reply_local_mlx_transport_rejects_non_fixed_endpoints_before_network() {
+        for url in [
+            "http://127.0.0.1:10100/v1/models",
+            "https://models.example.invalid/v1/models",
+        ] {
+            let error = match ReqwestLocalMlxProbeTransport.send(LocalMlxProbeRequest {
+                    method: LocalMlxProbeMethod::Get,
+                    url,
+                    body: None,
+                    timeout: LOCAL_MLX_PROBE_TIMEOUT,
+                    max_response_bytes: LOCAL_MLX_MAX_RESPONSE_BYTES,
+                }) {
+                Ok(_) => panic!("non-fixed endpoint must be rejected before transport"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("non-loopback endpoint"));
+        }
     }
 
     #[test]
@@ -11255,6 +11797,30 @@ connection.close()
     }
 
     #[test]
+    fn require_allowed_send_chat_accepts_a_catalog_enabled_room_title() {
+        let mut config = config::OpenKakaoConfig::default();
+        config.safety.allowed_send_chats = vec!["부자멘토멘티".into()];
+        assert!(require_allowed_send_chat(&config, "부자멘토멘티").is_ok());
+        // No substring, no surrounding whitespace, no case folding.
+        assert!(require_allowed_send_chat(&config, "부자멘토").is_err());
+        assert!(require_allowed_send_chat(&config, "부자멘토멘티 ").is_err());
+        assert!(require_allowed_send_chat(&config, "Vision AI 경진대회").is_err());
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("menubar-room-catalog.json"),
+            r#"{"rooms":[{"chat_id":437046948660911,"title":"Vision AI 경진대회","auto_reply":true,"geeknews":true}]}"#,
+        )
+        .expect("write catalog");
+        config.auto_reply.state_root = Some(dir.path().to_string_lossy().into_owned());
+        // The menubar catalog is the same trust level as the config allowlist,
+        // so enabling the room in the app must be enough to let local-send run.
+        assert!(require_allowed_send_chat(&config, "Vision AI 경진대회").is_ok());
+        assert!(require_allowed_send_chat(&config, "Vision AI").is_err());
+        assert!(require_allowed_send_chat(&config, "부자멘토").is_err());
+    }
+
+    #[test]
     fn loco_write_disabled_by_default() {
         let config = crate::config::OpenKakaoConfig::default();
         assert!(!config.safety.allow_loco_write);
@@ -11319,4 +11885,67 @@ connection.close()
         config.safety.allow_loco_write = true;
         assert!(require_loco_write(&config).is_ok());
     }
+    fn bound_source_message(log_id: i64, author_id: i64, sender_name: &str) -> local_db::LocalMessage {
+        local_db::LocalMessage {
+            log_id,
+            chat_id: 417_780_809_780_519,
+            author_id,
+            is_self: false,
+            sender_name: sender_name.to_string(),
+            message: "body".to_string(),
+            attachment: String::new(),
+            message_type: 1,
+            sent_at: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn bound_source_message_prefers_the_page_that_was_already_read() {
+        let windowed = vec![bound_source_message(7, 4242, "권준혁")];
+        let mut lookups = 0;
+        let resolved = resolve_bound_source_message(&windowed, 7, |_| {
+            lookups += 1;
+            Ok(None)
+        })
+        .expect("a row inside the page resolves without a second read");
+        assert_eq!(resolved.log_id, 7);
+        assert_eq!(resolved.sender_name, "권준혁");
+        assert_eq!(lookups, 0, "the window hit must not re-query the DB");
+    }
+
+    #[test]
+    fn bound_source_message_falls_back_to_a_log_id_lookup() {
+        // The newest page holds only later rows, which is the normal shape of a
+        // scheduled reply in an active room.
+        let windowed = vec![bound_source_message(9, 1, "다른 사람")];
+        let resolved = resolve_bound_source_message(&windowed, 7, |log_id| {
+            assert_eq!(log_id, 7);
+            Ok(Some(bound_source_message(7, 4242, "권준혁")))
+        })
+        .expect("the direct lookup resolves an older source row");
+        assert_eq!(resolved.log_id, 7);
+        assert_eq!(resolved.author_id, 4242);
+    }
+
+    #[test]
+    fn bound_source_message_fails_closed_when_the_row_is_gone() {
+        let windowed = vec![bound_source_message(9, 1, "다른 사람")];
+        let error = resolve_bound_source_message(&windowed, 7, |_| Ok(None))
+            .expect_err("a missing source row must not become a send");
+        assert!(error
+            .to_string()
+            .contains("scheduled reply source row is unavailable"));
+    }
+
+        #[test]
+        fn bound_source_message_reports_a_lookup_failure() {
+            let windowed: Vec<local_db::LocalMessage> = Vec::new();
+            let error = resolve_bound_source_message(&windowed, 7, |_| anyhow::bail!("database gone"))
+                .expect_err("a read failure must surface instead of a silent miss");
+            // The context wraps the read error, so the cause is on the chain
+            // rather than in the outermost message.
+            let chain = format!("{error:#}");
+            assert!(chain.contains("database gone"), "{chain}");
+            assert!(chain.contains("read the scheduled reply source row"), "{chain}");
+        }
 }

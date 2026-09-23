@@ -77,9 +77,16 @@ def _find_cli_bin() -> Path:
     bundle_bin = p.parent.parent / "bin" / "openkakao-cli"
     if bundle_bin.is_file():
         return bundle_bin
-    app_bin = Path("/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli")
-    if app_bin.is_file():
-        return app_bin
+    tauri_app_bin = Path(
+        "/Applications/OpenKakao Jarvis.app/Contents/Resources/bin/openkakao-cli"
+    )
+    if tauri_app_bin.is_file():
+        return tauri_app_bin
+    legacy_app_bin = Path(
+        "/Applications/AutoReplyMenu.app/Contents/Resources/bin/openkakao-cli"
+    )
+    if legacy_app_bin.is_file():
+        return legacy_app_bin
     repo_bin = p.parents[1] / "target" / "release" / "openkakao-cli"
     if repo_bin.is_file():
         return repo_bin
@@ -2215,6 +2222,7 @@ def _state(state: dict) -> dict:
         except DbFence:
             pass
     leftover_cli_takeover = False
+    starting_cli_takeover = False
     leftover_idle_candidate = False
     clean_idle_candidate = False
     clean_cli_takeover = False
@@ -2237,15 +2245,71 @@ def _state(state: dict) -> dict:
                 and in_flight_candidate.get("owner_id") != current_owner
             )
         )
+        candidate_acked = state.get("acked_log_ids")
+        candidate_observed = state.get("observed_log_ids")
+        candidate_watermark = state.get("acked_watermark")
+        candidate_last_observed = state.get("last_observed_log_id")
+        candidate_floor = state.get("cursor_floor")
+        candidate_owner = state.get("owner_id")
+        candidate_epoch = state.get("source_epoch")
+        candidate_ids_valid = (
+            isinstance(candidate_acked, list)
+            and isinstance(candidate_observed, list)
+            and len(candidate_acked) <= 500
+            and len(candidate_observed) <= 500
+            and all(
+                not isinstance(value, bool)
+                and isinstance(value, int)
+                and 0 < value < MAX_INT64
+                for value in (*candidate_acked, *candidate_observed)
+            )
+            and len(set(candidate_acked)) == len(candidate_acked)
+            and len(set(candidate_observed)) == len(candidate_observed)
+        )
+        candidate_acked_set = set(candidate_acked) if candidate_ids_valid else set()
+        candidate_observed_set = (
+            set(candidate_observed) if candidate_ids_valid else set()
+        )
+        leftover_cursor_shape_ok = (
+            candidate_ids_valid
+            and isinstance(candidate_owner, str)
+            and bool(candidate_owner)
+            and not isinstance(candidate_epoch, bool)
+            and isinstance(candidate_epoch, int)
+            and 0 < candidate_epoch < MAX_INT64
+            and not isinstance(candidate_floor, bool)
+            and isinstance(candidate_floor, int)
+            and 0 <= candidate_floor < MAX_INT64
+            and not isinstance(candidate_watermark, bool)
+            and isinstance(candidate_watermark, int)
+            and 0 < candidate_watermark < MAX_INT64
+            and not isinstance(candidate_last_observed, bool)
+            and isinstance(candidate_last_observed, int)
+            and 0 <= candidate_last_observed < MAX_INT64
+            and candidate_floor <= candidate_watermark
+            and candidate_watermark == max(candidate_acked_set, default=0)
+            and candidate_last_observed == max(candidate_observed_set, default=0)
+            and candidate_acked_set <= candidate_observed_set
+        )
+        # A 2026-09-22 interrupted start can persist an observed-but-unacked
+        # tail while pending_log_ids is still empty. src/main.rs deliberately
+        # treats that tail as resumable from the CLI-attested prior ACK instead
+        # of minting replay authority from the newer observation.
         leftover_idle_candidate = (
             (
                 state.get("pending_gaps") in ([], ["reconcile_required"])
             )
-            and candidate_phase in {"idle", "hooking"}
+            and candidate_phase in {"idle", "pending", "hooking", "acknowledging"}
             and leftover_orphaned_in_flight
+            and leftover_cursor_shape_ok
             and (
                 (capability[0] == "fenced" and capability[1] is False)
                 or capability == ("ready", True, "ready", "")
+                or (
+                    capability[0] == "starting"
+                    and capability[1] is False
+                    and capability[2] == "starting"
+                )
             )
         )
         clean_idle_candidate = (
@@ -2271,6 +2335,12 @@ def _state(state: dict) -> dict:
             and authority_changed
             and current_owner
             and configured_epoch_value is not None
+        )
+        starting_cli_takeover = bool(
+            leftover_cli_takeover
+            and capability[0] == "starting"
+            and capability[1] is False
+            and capability[2] == "starting"
         )
         clean_cli_takeover = bool(
             clean_idle_candidate
@@ -2303,6 +2373,11 @@ def _state(state: dict) -> dict:
         if fresh_state and cursor_authority.get("kind") != CURSOR_FRESH_KIND:
             invalid_state = True
         if leftover_cli_takeover and (
+            cursor_authority.get("kind") != CURSOR_LEFTOVER_KIND
+            or cursor_authority.get("cursor_floor") != state.get("acked_watermark")
+        ):
+            invalid_state = True
+        if starting_cli_takeover and (
             cursor_authority.get("kind") != CURSOR_LEFTOVER_KIND
             or cursor_authority.get("cursor_floor") != state.get("acked_watermark")
         ):
@@ -2402,10 +2477,27 @@ def _state(state: dict) -> dict:
     acked_set = set(acked_values)
     observed_set = set(observed_values)
     pending_set = set(pending_values)
+    unacked_observed = observed_set - acked_set
+    pending_subset_unacked = pending_set <= unacked_observed
+    starting_tail_resume_authorized = bool(
+        starting_cli_takeover
+        and enrollment is not None
+        and enrollment["cursor_authority"].get("kind") == CURSOR_LEFTOVER_KIND
+        and enrollment["cursor_authority"].get("cursor_floor") == watermark
+        and not (acked_set - observed_set)
+        and watermark == max(acked_set, default=0)
+        and last_observed == max(observed_set, default=0)
+        and pending_subset_unacked
+        and bool(unacked_observed - pending_set)
+    )
+    if acked_set - observed_set:
+        invalid_state = True
+    if not pending_subset_unacked:
+        invalid_state = True
+    elif pending_set != unacked_observed and not starting_tail_resume_authorized:
+        invalid_state = True
     if (
-        acked_set - observed_set
-        or pending_set != observed_set - acked_set
-        or pending_set & acked_set
+        pending_set & acked_set
         or watermark != max(acked_set, default=0)
         or last_observed != max(observed_set, default=0)
     ):
@@ -3085,6 +3177,11 @@ def _emit_with_ack_fence(*args: object, **kwargs: object) -> str:
                 flush=True,
             )
             return "skipped"
+        if _sqlite_busy_text(exc):
+            cause = str(exc).strip()[:200]
+            raise SqliteBusyTransient(
+                f"emit_sqlite_busy:{type(exc).__name__}:{cause}"
+            ) from exc
         raise DbFence("reconcile_required:delivery_ack_uncertain") from exc
     if ack in {"accepted", "duplicate", "skipped"}:
         return ack
@@ -4158,6 +4255,11 @@ def poll_once(
             continue
         if log_id <= int(state["acked_watermark"]) and log_id not in pending:
             continue
+        # SQLITE_BUSY from the local reply queue proves that this hook attempt
+        # never entered the reply pipeline. Preserve the exact clean cursor
+        # proof from before publishing the candidate so the existing bounded
+        # transient retry can fence delivery and retry safely.
+        pre_hook_state = dict(state)
         ordered_messages = _merge_recent_tail(
             state.get("recent_message_tail", []),
             [message],
@@ -4188,6 +4290,17 @@ def poll_once(
             state["pending_log_ids"] = sorted(pending)
             state["in_flight_candidate"] = candidate
             state["candidate_phase"] = "hooking"
+            # One local-poll page can carry LOCAL_POLL_MAX_ROWS candidates and
+            # every hook costs a subprocess round trip, so a catch-up page runs
+            # for minutes. The liveness stamp used to be written once at the top
+            # of the poll, which left a genuinely busy room looking dead for the
+            # whole page: the supervisor fences a db heartbeat older than
+            # HEARTBEAT_MAX_AGE_SECONDS and the reply worker's send fence reads
+            # the same stamp, so a long page blocked its own delivery. Refresh
+            # it on every candidate transition this page durably persists; a
+            # hook that wedges still leaves the gap it deserves, because no
+            # transition is written while it runs.
+            state["heartbeat_at"] = time.time()
             if not save_state(
                 state,
                 _generation_lock_held=True,
@@ -4336,6 +4449,22 @@ def poll_once(
                     skip_reason="empty_message",
                     candidate=candidate,
                 )
+        except SqliteBusyTransient as exc:
+            state = pre_hook_state
+            state.update(
+                capability_state="fenced",
+                delivery_enabled=False,
+                fence_reason=_fixed_fence_reason(exc),
+                poll_retry_kind=TRANSIENT_POLL_RETRY_KIND,
+                heartbeat_at=time.time(),
+                fence="db_unavailable",
+            )
+            print(
+                f"[db-watch] {_fixed_fence_reason(exc)}:"
+                f"{type(exc).__name__}:{str(exc).strip()[:200]}",
+                flush=True,
+            )
+            return state, emitted
         finally:
             # Only an accepted queue insert transfers the path capability to
             # the reply worker. Every other ACK or exception releases it here.
@@ -4355,6 +4484,9 @@ def poll_once(
             ):
                 raise DbFence("reconcile_required")
             disk_state["candidate_phase"] = "acknowledging"
+            # Same liveness refresh as the hooking write: the hook just
+            # returned, so this candidate proved the watcher is alive.
+            disk_state["heartbeat_at"] = time.time()
             if not save_state(
                 disk_state,
                 _generation_lock_held=True,

@@ -18,17 +18,87 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "scripts" / "auto-reply-service.py"
-PINNED_PYTHON = Path("/opt/homebrew/opt/python@3.11/bin/python3.11")
+# The service accepts these Homebrew opt kegs (plus a user-owned interpreter),
+# so the suite probes the same set instead of assuming one of them exists.
+PINNED_PYTHONS = (
+    Path("/opt/homebrew/opt/python@3.11/bin/python3.11"),
+    Path("/opt/homebrew/opt/python@3.12/bin/python3.12"),
+    Path("/opt/homebrew/opt/python@3.13/bin/python3.13"),
+)
+PINNED_PYTHON = PINNED_PYTHONS[0]
 INSTALLER = ROOT / "scripts" / "install-auto-reply-service.sh"
 STATUS = ROOT / "scripts" / "status-auto-reply-service.sh"
 UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-service.sh"
 SESSION_UNINSTALLER = ROOT / "scripts" / "uninstall-auto-reply-session-monitor.sh"
 
 
+_TEST_PYTHON_CACHE: list[Path] = []
+
+
 def _test_python() -> Path:
-    if PINNED_PYTHON.exists():
-        return PINNED_PYTHON
-    return Path(sys.executable)
+    # Probing spawns subprocesses, so resolve the interpreter once per run.
+    if not _TEST_PYTHON_CACHE:
+        _TEST_PYTHON_CACHE.append(_resolve_test_python())
+    return _TEST_PYTHON_CACHE[0]
+
+
+def _resolve_test_python() -> Path:
+    # Presence is not enough. A Homebrew keg can exist while its
+    # Python.framework binary is gone (every child then dies with
+    # "dyld: Library not loaded"), and a framework build installed by a package
+    # manager is often root-owned, which the service refuses. Probe each
+    # candidate for both, so the suite runs on the first interpreter that starts
+    # *and* satisfies the service's own ownership rule.
+    runnable: list[Path] = []
+    for candidate in (*PINNED_PYTHONS, Path(sys.executable)):
+        if not _interpreter_runs(candidate):
+            continue
+        runnable.append(candidate)
+        if not _service_accepts_interpreter(candidate):
+            continue
+        # Homebrew opt kegs are symlinks the service deliberately keeps
+        # unresolved; anything else is resolved the way the service does.
+        if "/opt/homebrew/opt/python@" in str(candidate):
+            return candidate
+        return candidate.resolve()
+    if runnable:
+        return runnable[0]
+    return Path(sys.executable).resolve()
+
+
+def _interpreter_runs(path: Path) -> bool:
+    try:
+        probe = subprocess.run(
+            [str(path), "-c", "import sys; sys.exit(0)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
+
+
+def _service_accepts_interpreter(path: Path) -> bool:
+    # Mirrors _owned_file() in scripts/auto-reply-service.py.
+    text = str(path)
+    if "/Cellar/python@" in text:
+        return False
+    if path.is_symlink() and "/opt/homebrew/opt/python@" not in text:
+        return False
+    try:
+        resolved = path.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode):
+        return False
+    if not path.is_symlink() and metadata.st_uid != os.geteuid():
+        return False
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        return False
+    return True
 
 
 
@@ -106,6 +176,120 @@ class CatalogSelectorTests(unittest.TestCase):
                     ["bind:7:답변방", "bind:8:긱뉴스만"],
                 )
 
+    def test_catalog_preflight_accepts_whole_set_in_one_call(self):
+        module = load_entry("auto_reply_catalog_whole_set_test")
+        candidates = ["id:1", "id:2", "id:3"]
+        with mock.patch.object(
+            module, "_preflight_cli", return_value=(True, {"valid": True}, "")
+        ) as preflight:
+            accepted = module._preflight_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, candidates)
+        preflight.assert_called_once()
+        self.assertEqual(preflight.call_args.args[2], candidates)
+        self.assertEqual(
+            preflight.call_args.kwargs["timeout_seconds"],
+            module.PREFLIGHT_TIMEOUT_SECONDS,
+        )
+
+    def test_catalog_preflight_retries_once_and_records_aggregate_reason(self):
+        module = load_entry("auto_reply_catalog_retry_failure_test")
+        candidates = ["id:1", "id:2", "id:3"]
+        calls = []
+
+        def fake_preflight(_binary, _config, selectors, **kwargs):
+            calls.append((tuple(selectors), kwargs.get("timeout_seconds")))
+            return False, {}, f"whole set rejected attempt {len(calls)}"
+
+        with tempfile.TemporaryDirectory() as raw:
+            state_root = Path(raw)
+            with mock.patch.object(module, "_catalog_selectors", return_value=candidates), mock.patch.object(
+                module, "_preflight_cli", side_effect=fake_preflight
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "whole set rejected attempt 1",
+                ) as raised:
+                    module._perform_preflight(
+                        Path("/tmp/python"),
+                        Path("/tmp/entry.py"),
+                        Path("/tmp/openkakao-cli"),
+                        Path("/tmp/config.toml"),
+                        None,
+                        state_root,
+                        invalidate=False,
+                    )
+            artifact = json.loads((state_root / "preflight-skipped.json").read_text())
+
+        self.assertIn("whole set rejected attempt 2", str(raised.exception))
+        self.assertEqual(
+            [selectors for selectors, _timeout in calls],
+            [("id:1", "id:2", "id:3"), ("id:1", "id:2", "id:3")],
+        )
+        self.assertEqual(artifact["scope"], "aggregate")
+        self.assertEqual(artifact["selectors"], candidates)
+        self.assertIn("whole set rejected attempt 1", artifact["reason"])
+        self.assertIn("whole set rejected attempt 2", artifact["reason"])
+
+    def test_catalog_preflight_requires_full_set_capable_first_call(self):
+        module = load_entry("auto_reply_catalog_full_set_only_test")
+        candidates = ["id:1", "id:2", "id:3"]
+
+        def full_set_only(_binary, _config, selectors, **_kwargs):
+            if selectors == candidates:
+                return True, {"valid": True}, ""
+            return False, {}, "single-room calls are invalid for this config"
+
+        with mock.patch.object(
+            module, "_preflight_cli", side_effect=full_set_only
+        ) as preflight:
+            accepted = module._preflight_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, candidates)
+        self.assertEqual(preflight.call_count, 1)
+
+    def test_catalog_preflight_never_issues_single_room_calls(self):
+        module = load_entry("auto_reply_catalog_no_single_room_test")
+        candidates = ["id:1", "id:2", "id:3"]
+        calls = []
+
+        def transient_then_ok(_binary, _config, selectors, **_kwargs):
+            calls.append(tuple(selectors))
+            if len(calls) == 1:
+                return False, {}, "transient aggregate failure"
+            return True, {"valid": True}, ""
+
+        with mock.patch.object(
+            module, "_preflight_cli", side_effect=transient_then_ok
+        ):
+            accepted = module._preflight_catalog_selectors(
+                Path("/tmp/openkakao-cli"), Path("/tmp/config.toml"), candidates
+            )
+
+        self.assertEqual(accepted, candidates)
+        self.assertEqual(calls, [tuple(candidates), tuple(candidates)])
+        self.assertTrue(all(len(selectors) == len(candidates) for selectors in calls))
+
+    def test_local_mlx_probe_timeout_covers_cold_start_within_service_budget(self):
+        module = load_entry("auto_reply_probe_budget_test")
+        source = (ROOT / "src" / "main.rs").read_text(encoding="utf-8")
+        marker = "const LOCAL_MLX_PROBE_TIMEOUT: Duration = Duration::from_secs("
+        start = source.index(marker) + len(marker)
+        end = source.index(");", start)
+        probe_timeout_seconds = int(source[start:end])
+
+        self.assertEqual(probe_timeout_seconds, 120)
+        self.assertGreater(probe_timeout_seconds, 23.09)
+        self.assertLess(probe_timeout_seconds, module.PREFLIGHT_TIMEOUT_SECONDS)
+        self.assertLessEqual(
+            module.PREFLIGHT_TIMEOUT_SECONDS * 3,
+            module.MAX_CATALOG_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+
 class AutoReplyServiceEntryTests(unittest.TestCase):
     maxDiff = None
 
@@ -113,6 +297,17 @@ class AutoReplyServiceEntryTests(unittest.TestCase):
         # macOS exposes TemporaryDirectory through the `/var` compatibility
         # symlink while the service deliberately attests canonical paths.
         root = root.resolve()
+        # The service refuses any interpreter that is not a Homebrew opt keg or
+        # a user-owned file, so a host that offers neither cannot exercise this
+        # path. Skip instead of reporting a product failure that is really an
+        # environment gap.
+        python = _test_python()
+        if not _service_accepts_interpreter(python):
+            raise unittest.SkipTest(
+                "no interpreter the auto-reply service accepts on this host "
+                f"(needs a /opt/homebrew/opt/python@* keg or a user-owned "
+                f"python; got {python})"
+            )
         runtime = root / "runtime"
         runtime.mkdir(mode=0o700)
         module = load_entry(f"auto_reply_fixture_{id(root)}")
@@ -2023,8 +2218,8 @@ raise SystemExit(73)
             json.dumps(db_state), encoding="utf-8"
         )
 
-    def test_status_is_nonzero_when_unloaded_stale_or_fenced(self):
-        for case in ("unloaded", "stale", "fenced", "pending"):
+    def test_status_is_nonzero_when_unloaded_stale_or_pending(self):
+        for case in ("unloaded", "stale", "pending"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 fixture = self._fixture(root)
@@ -2037,7 +2232,6 @@ raise SystemExit(73)
                     self._write_health(
                         fixture["state"], 42,
                         stale=case == "stale",
-                        fenced=case == "fenced",
                         pending=case == "pending",
                     )
                 result = self._run(
@@ -2048,6 +2242,38 @@ raise SystemExit(73)
                     env,
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_status_tolerates_a_transient_fence_and_reports_a_persistent_one(self):
+        # 46eabb5 made the readiness-lease grace explicit: while the supervisor is
+        # running and its status file is fresh, a short readiness dip or a fence is
+        # an in-flight transition rather than a failure. The same fence must be
+        # reported once the file goes stale, so the grace cannot hide a stuck room.
+        for stale, expected_nonzero in ((False, False), (True, True)):
+            with self.subTest(stale=stale), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                fixture = self._fixture(root)
+                launchctl, plutil = self._fake_launchctl(root)
+                env, _, _, _, loaded, _ = self._service_env(
+                    root, fixture, launchctl, plutil
+                )
+                loaded.touch()
+                self._write_health(fixture["state"], 42, stale=stale, fenced=True)
+                result = self._run(
+                    [
+                        "/bin/sh", str(STATUS), "--state-root", str(fixture["state"]),
+                        "--chat-id", "42",
+                    ],
+                    env,
+                )
+                if expected_nonzero:
+                    self.assertNotEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                else:
+                    self.assertEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                    self.assertIn("healthy=true", result.stdout)
 
     def test_status_accepts_fresh_ready_target_room(self):
         with tempfile.TemporaryDirectory() as temporary:

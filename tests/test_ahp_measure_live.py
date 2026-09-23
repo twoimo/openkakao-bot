@@ -319,6 +319,99 @@ class CriterionTests(unittest.TestCase):
             item = SCORER.measure(root, "1", 7)["criteria"]["content_fit"]
         self.assertEqual(item["numerator"], 1)
 
+    def test_content_fit_counts_recent_and_media_prompt_grounding_without_long_context(self):
+        rows = [
+            {
+                "recorded_at": stamp(),
+                "event_id": "recent-turn",
+                "status": "scheduled",
+                "context_match_count": 0,
+                "evidence_ids": ["recent:101"],
+                "prompt_evidence_ids": 1,
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "recent-turn",
+                "status": "sent",
+                "reply": "최근 대화 기반 답",
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "media-turn",
+                "status": "scheduled",
+                "retrieval": {"context_matches": 0, "prompt_evidence_ids": 1},
+                "evidence_ids": ["media:abc123"],
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "media-turn",
+                "status": "sent",
+                "reply": "이미지 기반 답",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["content_fit"]
+        self.assertEqual(item["denominator"], 2)
+        self.assertEqual(item["numerator"], 2)
+        self.assertAlmostEqual(item["score"], 1.0, places=4)
+
+    def test_content_fit_rejects_unlinked_or_non_prompt_evidence(self):
+        rows = [
+            {
+                "recorded_at": stamp(),
+                "event_id": "recent-list-only",
+                "status": "scheduled",
+                "context_match_count": 0,
+                "recent_conversation": [
+                    {"evidence_id": "recent:201", "message": "근거처럼 보이는 대화"}
+                ],
+                "retrieval": {"evidence_ids": 3, "prompt_evidence_ids": 1},
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "recent-list-only",
+                "status": "sent",
+                "reply": "evidence_ids 없는 전송",
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "trimmed-from-prompt",
+                "status": "scheduled",
+                "context_match_count": 0,
+                "evidence_ids": ["recent:202"],
+                "prompt_evidence_ids": 0,
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "trimmed-from-prompt",
+                "status": "sent",
+                "reply": "프롬프트에서 빠진 근거",
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "sent-only-media",
+                "status": "scheduled",
+                "context_match_count": 0,
+            },
+            {
+                "recorded_at": stamp(),
+                "event_id": "sent-only-media",
+                "status": "sent",
+                "reply": "sent 행에만 있는 근거",
+                "evidence_ids": ["media:def456"],
+                "prompt_evidence_ids": 1,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ledger(root, "1", rows)
+            item = SCORER.measure(root, "1", 7)["criteria"]["content_fit"]
+        self.assertEqual(item["denominator"], 3)
+        self.assertEqual(item["numerator"], 0)
+        self.assertAlmostEqual(item["score"], 0.0, places=4)
+
     def test_content_fit_ignores_turns_that_never_sent(self):
         rows = [
             {
