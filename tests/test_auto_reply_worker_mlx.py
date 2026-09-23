@@ -99,6 +99,23 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 self.assertTrue(all("/load" not in url for url, _data, _timeout in calls))
                 direct_urlopen.assert_not_called()
 
+    def test_stale_operator_prompt_cannot_restore_ai_accusation_probe(self):
+        module = self.module
+        stale = (
+            "If inbound accuses this account of being AI/봇, write one curious "
+            "question asking which part felt off."
+        )
+        with mock.patch.object(
+            module,
+            "_load_operator_reply_prompts",
+            return_value={"system": [], "instruction": [stale]},
+        ):
+            instructions = module._reply_decision_instructions()
+        self.assertNotIn(stale, instructions)
+        self.assertTrue(
+            any("do not ask a follow-up or turn it into a meta-conversation" in item for item in instructions)
+        )
+
     def _run_mlx_completion_response(self, payload):
         module = self.module
 

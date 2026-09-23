@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from array import array
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -41,9 +41,15 @@ QWEN3_TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 QWEN3_TTS_PRECISION = "bf16"
 LOCAL_LLM_BASE_URL = "http://127.0.0.1:11234/v1"
 LOCAL_LLM_MAX_RESPONSE_BYTES = 64 * 1024
+VOICE_CONTEXT_TURNS = 4
+VOICE_CONTEXT_ITEM_MAX_CHARS = 600
+VOICE_CONTEXT_TTL_SECONDS = 10 * 60
+VOICE_WAKE_RESUME_DELAY_SECONDS = 0.5
 VOICE_PERSONA_PROMPT = (
     "당신은 건조하고 절제된 영국식 집사 말투의 Jarvis다. "
     "항상 한국어로 짧고 정확하게 답한다. 과장된 감탄이나 아첨은 하지 않는다. "
+    "스스로 질문을 만든 뒤 답하지 않는다. 필요한 정보가 빠져 행동할 수 없을 때만 짧게 되묻고, "
+    "그 외에는 답을 마친 뒤 대화를 억지로 이어가는 질문 없이 턴을 끝낸다. "
     "이 말투는 음성 대화에만 적용된다."
 )
 
@@ -201,7 +207,13 @@ class SttAdapter(Protocol):
 
 
 class LlmAdapter(Protocol):
-    def generate(self, text: str, token: AbortToken) -> str: ...
+    def generate(
+        self,
+        text: str,
+        token: AbortToken,
+        *,
+        history: Sequence[Mapping[str, str]] = (),
+    ) -> str: ...
 
 
 class TtsAdapter(Protocol):
@@ -473,7 +485,33 @@ class JarvisVoicePipeline:
         self._speech_frames = 0
         self._silence_frames = 0
         self._noise_frames = 0
+        self._conversation: deque[dict[str, str]] = deque(maxlen=VOICE_CONTEXT_TURNS * 2)
+        self._last_conversation_turn = 0.0
         self._lock = threading.Lock()
+        self._publish()
+
+    def _recent_conversation(self) -> list[dict[str, str]]:
+        if (
+            self._last_conversation_turn
+            and time.monotonic() - self._last_conversation_turn > VOICE_CONTEXT_TTL_SECONDS
+        ):
+            self._conversation.clear()
+        return [dict(message) for message in self._conversation]
+
+    def _remember_conversation_turn(self, transcript: str, reply: str) -> None:
+        self._conversation.append(
+            {"role": "user", "content": transcript[:VOICE_CONTEXT_ITEM_MAX_CHARS]}
+        )
+        self._conversation.append(
+            {"role": "assistant", "content": reply[:VOICE_CONTEXT_ITEM_MAX_CHARS]}
+        )
+        self._last_conversation_turn = time.monotonic()
+
+    def _rearm_after_reply(self) -> None:
+        self.state = VoiceState.WAKE_LISTEN
+        self.ring.clear()
+        self._speech_frames = self._silence_frames = self._noise_frames = 0
+        self._wake_source = "none"
         self._publish()
 
     def _publish(self, error_code: str = "") -> None:
@@ -586,7 +624,11 @@ class JarvisVoicePipeline:
         try:
             self.state = VoiceState.GENERATING
             self._publish()
-            reply = self.llm.generate(transcript, self.token).strip()
+            reply = self.llm.generate(
+                transcript,
+                self.token,
+                history=self._recent_conversation(),
+            ).strip()
             self.token.raise_if_cancelled()
             if not reply:
                 return self._end(VoiceState.ERROR, "generation_error")
@@ -606,9 +648,8 @@ class JarvisVoicePipeline:
         except Exception:
             return self._end(VoiceState.ERROR, "tts_error")
 
-        self.state = VoiceState.ENDED
-        self.ring.clear()
-        self._publish()
+        self._remember_conversation_turn(transcript, reply)
+        self._rearm_after_reply()
         return VoiceResult(VoiceState.ENDED, transcript=transcript, reply=reply)
 
 
@@ -617,7 +658,13 @@ class LocalMlxLlm:
         self.base_url = _validate_local_llm_base_url(base_url)
         self.model = model
 
-    def generate(self, text: str, token: AbortToken) -> str:
+    def generate(
+        self,
+        text: str,
+        token: AbortToken,
+        *,
+        history: Sequence[Mapping[str, str]] = (),
+    ) -> str:
         token.raise_if_cancelled()
         if self.model != FLASH_NEXT_MODEL_ID:
             raise RuntimeError("model_swap_required")
@@ -626,6 +673,15 @@ class LocalMlxLlm:
                 "model": self.model.removeprefix("mlx/"),
                 "messages": [
                     {"role": "system", "content": VOICE_PERSONA_PROMPT},
+                    *[
+                        {
+                            "role": message["role"],
+                            "content": message["content"][:VOICE_CONTEXT_ITEM_MAX_CHARS],
+                        }
+                        for message in history[-VOICE_CONTEXT_TURNS * 2 :]
+                        if message.get("role") in {"user", "assistant"}
+                        and isinstance(message.get("content"), str)
+                    ],
                     {"role": "user", "content": text[:4000]},
                 ],
                 "temperature": 0.3,
@@ -817,7 +873,7 @@ def run_microphone_session(
     state_root: Path,
     custom_wake_model: Path | None = None,
 ) -> VoiceResult:
-    """Run one wake -> reply session from a dedicated 16 kHz microphone stream."""
+    """Run a continuous wake -> reply loop from a dedicated 16 kHz microphone stream."""
 
     assert_isolated_voice_environment()
     from jarvis_abort import AbortController
@@ -842,8 +898,9 @@ def run_microphone_session(
         pipeline._publish()
         frontend = OpenWakeVadFrontend(custom_wake_model=selected)
         # Blocking reads keep capture bounded to one 20 ms frame. When STT/LLM/TTS
-        # runs, the stream is not read; the session returns immediately after TTS,
-        # so playback cannot become a fresh wake/user utterance.
+        # runs, the stream is not read; after TTS, a short suppression interval
+        # prevents its tail from becoming a fresh wake/user utterance.
+        wake_suppressed_until = 0.0
         with sd.RawInputStream(
             samplerate=16_000,
             channels=1,
@@ -856,9 +913,15 @@ def run_microphone_session(
                 raw, overflowed = stream.read(320)
                 if overflowed:
                     pipeline._noise_frames += 1
+                if time.monotonic() < wake_suppressed_until:
+                    continue
                 result = pipeline.feed_frontend_frame(frontend, bytes(raw))
-                if result is not None:
-                    return result
+                if result is None:
+                    continue
+                if result.state == VoiceState.ENDED and pipeline.state == VoiceState.WAKE_LISTEN:
+                    wake_suppressed_until = time.monotonic() + VOICE_WAKE_RESUME_DELAY_SECONDS
+                    continue
+                return result
     except JarvisCancelled:
         return pipeline._end(VoiceState.ABORTED, "global_abort")
     except Exception:

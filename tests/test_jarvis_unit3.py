@@ -17,6 +17,8 @@ from auto_reply_ax_ui import AX_ABORT_FOCUS_REQUIRED, AX_ABORT_GLOBAL, backgroun
 from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
 from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, VoiceState, WakePhraseGate
+from jarvis_voice import VOICE_CONTEXT_TTL_SECONDS
+from jarvis_voice import VOICE_PERSONA_PROMPT
 from jarvis_voice import QWEN3_TTS_MODEL_ID, Qwen3TtsAdapter
 from jarvis_voice import OpenWakeVadFrontend
 from jarvis_voice import BUNDLED_CUSTOM_WAKE_MODEL, resolve_custom_wake_model
@@ -33,10 +35,12 @@ class FakeStt:
 class FakeLlm:
     def __init__(self, controller: AbortController | None = None):
         self.controller = controller
+        self.calls: list[tuple[str, list[dict[str, str]]]] = []
 
-    def generate(self, text: str, token) -> str:
+    def generate(self, text: str, token, *, history=()) -> str:
         if self.controller is not None:
             self.controller.abort()
+        self.calls.append((text, [dict(message) for message in history]))
         return "알겠습니다."
 
 
@@ -53,6 +57,55 @@ class FakeTts:
 
 
 class JarvisAbortAndVoiceTests(unittest.TestCase):
+    def test_voice_turns_keep_four_bounded_context_turns_and_rearm_wake(self):
+        with TemporaryDirectory() as temp_dir:
+            controller = AbortController(Path(temp_dir))
+            llm = FakeLlm()
+            pipeline = JarvisVoicePipeline(
+                stt=FakeStt(), llm=llm, tts=FakeTts(), token=controller.token()
+            )
+            results = [
+                pipeline.process_utterance(b"\x01\x00" * 320)
+                for _ in range(6)
+            ]
+
+        self.assertTrue(all(result.state == VoiceState.ENDED for result in results))
+        self.assertEqual(pipeline.state, VoiceState.WAKE_LISTEN)
+        self.assertEqual(llm.calls[0][1], [])
+        self.assertEqual(
+            llm.calls[5][1],
+            [
+                {"role": "user", "content": "테스트 요청"},
+                {"role": "assistant", "content": "알겠습니다."},
+            ] * 4,
+        )
+
+    def test_voice_context_expires_after_idle_ttl(self):
+        from unittest import mock
+
+        with TemporaryDirectory() as temp_dir:
+            pipeline = JarvisVoicePipeline(
+                stt=FakeStt(),
+                llm=FakeLlm(),
+                tts=FakeTts(),
+                token=AbortController(Path(temp_dir)).token(),
+            )
+            pipeline._conversation.extend(
+                [
+                    {"role": "user", "content": "이전 요청"},
+                    {"role": "assistant", "content": "이전 응답"},
+                ]
+            )
+            pipeline._last_conversation_turn = 10.0
+
+            with mock.patch(
+                "jarvis_voice.time.monotonic",
+                return_value=10.0 + VOICE_CONTEXT_TTL_SECONDS + 1,
+            ):
+                self.assertEqual(pipeline._recent_conversation(), [])
+
+        self.assertEqual(list(pipeline._conversation), [])
+
     def test_abort_during_generation_stops_before_tts(self):
         with TemporaryDirectory() as temp_dir:
             controller = AbortController(Path(temp_dir))
@@ -517,11 +570,30 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             token = AbortController(Path(temp_dir)).token()
         with mock.patch("jarvis_voice._local_urlopen", fake_urlopen):
-            reply = LocalMlxLlm().generate("안녕", token)
+            reply = LocalMlxLlm().generate(
+                "안녕",
+                token,
+                history=[
+                    {"role": "user", "content": "첫 질문"},
+                    {"role": "assistant", "content": "첫 답변"},
+                ],
+            )
         self.assertEqual(reply, "알겠습니다.")
         self.assertEqual(captured["timeout"], 90.0)
         self.assertEqual(captured["body"]["max_tokens"], 128)
         self.assertEqual(captured["body"]["model"], "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit")
+        self.assertEqual(
+            captured["body"]["messages"][1:3],
+            [
+                {"role": "user", "content": "첫 질문"},
+                {"role": "assistant", "content": "첫 답변"},
+            ],
+        )
+        self.assertIn("스스로 질문을 만든 뒤 답하지 않는다", captured["body"]["messages"][0]["content"])
+
+    def test_voice_persona_ends_turn_without_engagement_question(self):
+        self.assertIn("스스로 질문을 만든 뒤 답하지 않는다", VOICE_PERSONA_PROMPT)
+        self.assertIn("턴을 끝낸다", VOICE_PERSONA_PROMPT)
 
     def test_generate_rejects_non_loopback_endpoint(self):
         with self.assertRaisesRegex(ValueError, "local_llm_endpoint_invalid"):
