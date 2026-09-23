@@ -42,25 +42,23 @@ INDEX_STATUS_STALE_SECONDS = 300
 
 SEARCH_INDEX_VERSION = "unit4-rrf-bm25-dense-v1"
 DENSE_INDEX_DB_NAME = "knowledge-dense-ann.sqlite3"
-DENSE_INDEX_VERSION = "bge-m3-lsh-v1"
-DENSE_EMBEDDING_MODEL = os.environ.get(
-    "OPENKAKAO_DENSE_EMBEDDING_MODEL", "BAAI/bge-m3"
-)
+DENSE_INDEX_VERSION = "local-embedding-lsh-v2"
+# An index must name the encoder the loopback server actually advertises.
+# Never label vectors as BGE-M3 merely because that name was sent in a request.
+DENSE_EMBEDDING_MODEL = os.environ.get("OPENKAKAO_DENSE_EMBEDDING_MODEL", "").strip()
 DEFAULT_DENSE_EMBEDDING_URL = MLX_GATEWAY_EMBEDDINGS_URL
 DENSE_EMBEDDING_URL = os.environ.get(
     "OPENKAKAO_LOCAL_EMBEDDING_URL", DEFAULT_DENSE_EMBEDDING_URL
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
-# The local MLX gateway advertises no embedding model of its own: it synthesises
-# embeddings from the resident chat model, so the first call after that model
-# goes cold is slow. Measured 2026-09-23 KST against the loopback endpoint:
-# 84.41s and 108.585s for a cold call, 0.11s warm, and one 60.01s request that
-# timed out under load. The two long budgets below are therefore used ONLY by
-# the background dense rebuild path; reply retrieval keeps the short timeout
-# above and stays behind the probe-success gate.
+# The query path resolves an already-loaded, explicitly embedding-capable model
+# from the loopback server before making its one short request. The two long
+# budgets below are used only by background index rebuilds.
 DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 180.0
 DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS = DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS
 DENSE_EMBEDDING_PROBE_TTL_SECONDS = 300.0
+DENSE_EMBEDDING_MODELS_TIMEOUT_SECONDS = 1.5
+DENSE_EMBEDDING_MODELS_MAX_BYTES = 64 * 1024
 DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS = 900.0
 DENSE_EMBEDDING_CYCLE_REQUEST_CAP = 64
 DENSE_STATUS_MAX_LENGTH = 400
@@ -115,7 +113,10 @@ class _DenseCycleBudget:
 
 
 _DENSE_PROBE_CACHE_LOCK = threading.Lock()
-_DENSE_PROBE_CACHE: tuple[float, str] | None = None
+_DENSE_PROBE_CACHE: tuple[float, str, str] | None = None
+_DENSE_MODEL_CACHE_LOCK = threading.Lock()
+_DENSE_MODEL_CACHE: tuple[float, str, str] | None = None
+DENSE_MODEL_CACHE_TTL_SECONDS = 10.0
 
 
 def _trace_graph(event: str, **fields: Any) -> None:
@@ -2776,9 +2777,167 @@ def _normalize_dense_vector(values: Any) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
+class _RejectLoopbackRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> urllib.request.Request:
+        raise urllib.error.HTTPError(
+            new_url,
+            code,
+            "loopback embedding redirects are disabled",
+            headers,
+            file_pointer,
+        )
+
+
+def _open_loopback_embedding_request(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+) -> Any:
+    """Use an explicit no-proxy opener and refuse every redirect."""
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _RejectLoopbackRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
+def _dense_models_url() -> str:
+    parsed = urllib.parse.urlparse(DENSE_EMBEDDING_URL)
+    host = (parsed.hostname or "").casefold()
+    if (
+        parsed.scheme != "http"
+        or host not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise _DenseEmbeddingPermanentError(
+            "dense embedding endpoint must be loopback-local"
+        )
+    parent = parsed.path.rsplit("/", 1)[0].rstrip("/")
+    return urllib.parse.urlunparse(
+        (parsed.scheme, parsed.netloc, f"{parent}/models", "", "", "")
+    )
+
+
+def _active_dense_embedding_model() -> str:
+    """Resolve one ready local model that explicitly advertises embeddings."""
+    global _DENSE_MODEL_CACHE
+    endpoint_identity = _dense_endpoint_identity()
+    now = time.monotonic()
+    with _DENSE_MODEL_CACHE_LOCK:
+        cached = _DENSE_MODEL_CACHE
+    if (
+        cached is not None
+        and now >= cached[0]
+        and now - cached[0] <= DENSE_MODEL_CACHE_TTL_SECONDS
+        and cached[1] == endpoint_identity
+        and (not DENSE_EMBEDDING_MODEL or cached[2] == DENSE_EMBEDDING_MODEL)
+    ):
+        if not cached[2]:
+            raise _DenseEmbeddingPermanentError(
+                "one ready local embedding model is required"
+            )
+        return cached[2]
+
+    models_url = _dense_models_url()
+    request = urllib.request.Request(
+        models_url,
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with _open_loopback_embedding_request(
+            request,
+            timeout=DENSE_EMBEDDING_MODELS_TIMEOUT_SECONDS,
+        ) as response:
+            raw = response.read(DENSE_EMBEDDING_MODELS_MAX_BYTES + 1)
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()
+        with _DENSE_MODEL_CACHE_LOCK:
+            _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+        raise _DenseEmbeddingPermanentError(
+            f"local embedding model list unavailable:{type(error).__name__}"
+        ) from error
+    if len(raw) > DENSE_EMBEDDING_MODELS_MAX_BYTES:
+        with _DENSE_MODEL_CACHE_LOCK:
+            _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+        raise _DenseEmbeddingPermanentError("local embedding model list too large")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        with _DENSE_MODEL_CACHE_LOCK:
+            _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+        raise _DenseEmbeddingPermanentError(
+            "local embedding model list invalid"
+        ) from error
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or len(rows) > 256:
+        with _DENSE_MODEL_CACHE_LOCK:
+            _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+        raise _DenseEmbeddingPermanentError("local embedding model list invalid")
+
+    ready: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            with _DENSE_MODEL_CACHE_LOCK:
+                _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+            raise _DenseEmbeddingPermanentError("local embedding model row invalid")
+        model_id = str(row.get("id") or "").strip()
+        capabilities = row.get("capabilities")
+        loaded = row.get("loaded")
+        state = str(row.get("state") or "").casefold()
+        supports_embeddings = isinstance(capabilities, list) and any(
+            str(value).casefold() in {"embedding", "embeddings"}
+            for value in capabilities
+        )
+        if (
+            model_id
+            and loaded is True
+            and state == "ready"
+            and supports_embeddings
+        ):
+            ready.append(model_id)
+
+    if DENSE_EMBEDDING_MODEL:
+        if DENSE_EMBEDDING_MODEL not in ready:
+            with _DENSE_MODEL_CACHE_LOCK:
+                _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+            raise _DenseEmbeddingPermanentError(
+                "configured local embedding model is not ready"
+            )
+        selected = DENSE_EMBEDDING_MODEL
+    elif len(ready) == 1:
+        selected = ready[0]
+    else:
+        with _DENSE_MODEL_CACHE_LOCK:
+            _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, "")
+        raise _DenseEmbeddingPermanentError(
+            "one ready local embedding model is required"
+        )
+    with _DENSE_MODEL_CACHE_LOCK:
+        _DENSE_MODEL_CACHE = (time.monotonic(), endpoint_identity, selected)
+    return selected
+
+
+def _dense_endpoint_identity() -> str:
+    return hashlib.sha256(DENSE_EMBEDDING_URL.encode("utf-8")).hexdigest()
+
+
 def _local_dense_embeddings(
     texts: list[str],
     *,
+    model_id: str | None = None,
     timeout_seconds: float | None = None,
     _budget: _DenseCycleBudget | None = None,
 ) -> list[tuple[float, ...]]:
@@ -2793,12 +2952,20 @@ def _local_dense_embeddings(
     normalized_texts = [str(text).strip() for text in texts]
     if any(not text for text in normalized_texts):
         raise ValueError("dense embedding input must be non-empty")
+    active_model = model_id or _active_dense_embedding_model()
     parsed = urllib.parse.urlparse(DENSE_EMBEDDING_URL)
     host = (parsed.hostname or "").casefold()
-    if parsed.scheme not in {"http", "https"} or host not in {"127.0.0.1", "localhost", "::1"}:
+    if (
+        parsed.scheme != "http"
+        or host not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ValueError("dense embedding endpoint must be loopback-local")
     payload = json.dumps(
-        {"model": DENSE_EMBEDDING_MODEL, "input": normalized_texts},
+        {"model": active_model, "input": normalized_texts},
         ensure_ascii=False,
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -2815,11 +2982,15 @@ def _local_dense_embeddings(
         else timeout_seconds
     )
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout) as response:
+        with _open_loopback_embedding_request(
+            request,
+            timeout=request_timeout,
+        ) as response:
             body = json.loads(response.read().decode("utf-8"))
     except TimeoutError as error:
         raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
     except urllib.error.HTTPError as error:
+        error.close()
         if 400 <= error.code < 500:
             raise _DenseEmbeddingPermanentError(
                 f"local dense embedding unavailable: {error}"
@@ -2831,6 +3002,9 @@ def _local_dense_embeddings(
         raise _DenseEmbeddingPermanentError("local dense embedding unavailable") from error
     except (OSError, ValueError) as error:
         raise _DenseEmbeddingPermanentError("local dense embedding unavailable") from error
+    response_model = body.get("model") if isinstance(body, dict) else None
+    if not isinstance(response_model, str) or response_model.strip() != active_model:
+        raise _DenseEmbeddingPermanentError("local dense embedding model mismatch")
     rows = body.get("data") if isinstance(body, dict) else None
     if not isinstance(rows, list) or len(rows) != len(texts):
         raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
@@ -2860,6 +3034,7 @@ def _local_dense_embeddings(
 def _local_dense_embeddings_adaptive(
     texts: list[str],
     *,
+    model_id: str,
     first_attempt_timeout_seconds: float | None = None,
     budget: _DenseCycleBudget | None = None,
 ) -> list[tuple[float, ...]]:
@@ -2878,10 +3053,15 @@ def _local_dense_embeddings_adaptive(
     if not texts:
         return []
     if first_attempt_timeout_seconds is None:
-        batch_vectors = _local_dense_embeddings(texts, _budget=budget)
+        batch_vectors = _local_dense_embeddings(
+            texts,
+            model_id=model_id,
+            _budget=budget,
+        )
     else:
         batch_vectors = _local_dense_embeddings(
             texts,
+            model_id=model_id,
             timeout_seconds=first_attempt_timeout_seconds,
             _budget=budget,
         )
@@ -2890,21 +3070,28 @@ def _local_dense_embeddings_adaptive(
     return batch_vectors
 
 
-def _dense_embedding_probe(budget: _DenseCycleBudget) -> tuple[bool, str]:
+def _dense_embedding_probe(
+    budget: _DenseCycleBudget,
+    model_id: str,
+) -> tuple[bool, str]:
     global _DENSE_PROBE_CACHE
     now = time.monotonic()
+    endpoint_identity = _dense_endpoint_identity()
     with _DENSE_PROBE_CACHE_LOCK:
         if (
             _DENSE_PROBE_CACHE is not None
             and now - _DENSE_PROBE_CACHE[0] <= DENSE_EMBEDDING_PROBE_TTL_SECONDS
+            and _DENSE_PROBE_CACHE[1] == model_id
+            and _DENSE_PROBE_CACHE[2] == endpoint_identity
         ):
             # Only successes are memoized: a cached failure would keep dense
             # disabled for the whole TTL and would also hide a later, real
             # configuration error behind a stale availability verdict.
-            return True, _DENSE_PROBE_CACHE[1]
+            return True, "probe_ok"
     try:
         _local_dense_embeddings(
             ["knowledge graph dense probe"],
+            model_id=model_id,
             timeout_seconds=DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS,
             _budget=budget,
         )
@@ -2913,23 +3100,23 @@ def _dense_embedding_probe(budget: _DenseCycleBudget) -> tuple[bool, str]:
         # endpoint was slow, rejected as non-loopback, or out of budget.
         return False, f"probe_unavailable:{error}"
     with _DENSE_PROBE_CACHE_LOCK:
-        _DENSE_PROBE_CACHE = (time.monotonic(), "probe_ok")
+        _DENSE_PROBE_CACHE = (time.monotonic(), model_id, endpoint_identity)
     return True, "probe_ok"
 
 
-def _note_dense_probe_success() -> None:
-    """Keep the reply-turn gate open while the endpoint is observed warm.
+def _note_dense_probe_success(model_id: str) -> None:
+    """Memoize a successful local request for the next background rebuild.
 
-    Reply retrieval refuses to start an embedding request unless a recent
-    success is on record, so a cold endpoint can never stall a reply turn. Only
-    the background rebuild used to refresh that record, and its interval equals
-    the probe TTL, so the gate could close between cycles while the endpoint was
-    genuinely warm. Refreshing the record here removes that gap. A timed-out
-    query never reaches this call, so it still cannot open the gate.
+    Reply workers do not depend on this process-local cache: they independently
+    check the serving model and issue one bounded query embedding request.
     """
     global _DENSE_PROBE_CACHE
     with _DENSE_PROBE_CACHE_LOCK:
-        _DENSE_PROBE_CACHE = (time.monotonic(), "probe_ok")
+        _DENSE_PROBE_CACHE = (
+            time.monotonic(),
+            model_id,
+            _dense_endpoint_identity(),
+        )
 
 
 def _ann_sign_matrix(bits_total: int, dim: int) -> tuple[bytes, ...]:
@@ -3054,9 +3241,16 @@ def refresh_dense_index(
             write_meta(kg_conn, "last_dense_indexed_at", "0")
             return {"status": "empty", "indexed": 0, "watermark": watermark}
 
+        texts = [_entity_dense_text(row) for row in rows]
+        if any(not text for text in texts):
+            raise _DenseEmbeddingPermanentError(
+                "dense embedding input must be non-empty"
+            )
+
         dense = _connect_dense_index(state_root)
         budget = _DenseCycleBudget()
-        probe_ok, probe_reason = _dense_embedding_probe(budget)
+        model_id = _active_dense_embedding_model()
+        probe_ok, probe_reason = _dense_embedding_probe(budget, model_id)
         if not probe_ok:
             raise _DenseCycleAbortError(probe_reason)
         dense.execute("BEGIN")
@@ -3069,7 +3263,8 @@ def refresh_dense_index(
         for start in range(0, len(rows), bounded_batch_size):
             batch = rows[start : start + bounded_batch_size]
             vectors = _local_dense_embeddings_adaptive(
-                [_entity_dense_text(row) for row in batch],
+                texts[start : start + bounded_batch_size],
+                model_id=model_id,
                 first_attempt_timeout_seconds=first_attempt_timeout_seconds,
                 budget=budget,
             )
@@ -3086,7 +3281,7 @@ def refresh_dense_index(
                         entity_id,
                         json.dumps(vector, separators=(",", ":")),
                         len(vector),
-                        DENSE_EMBEDDING_MODEL,
+                        model_id,
                         DENSE_INDEX_VERSION,
                         watermark,
                     ),
@@ -3107,6 +3302,16 @@ def refresh_dense_index(
             "INSERT INTO dense_meta(key,value) VALUES('watermark',?)"
             " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (watermark,),
+        )
+        dense.execute(
+            "INSERT INTO dense_meta(key,value) VALUES('model_id',?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (model_id,),
+        )
+        dense.execute(
+            "INSERT INTO dense_meta(key,value) VALUES('endpoint_identity',?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (_dense_endpoint_identity(),),
         )
         dense.commit()
         indexed_at = int(time.time())
@@ -3164,6 +3369,12 @@ def _dense_ann_query(
             read_meta(kg_conn, "last_dense_status"),
             default="",
         )
+        graph_watermark = read_meta(kg_conn, "last_indexed_at") or ""
+        if not graph_watermark:
+            row = kg_conn.execute(
+                "SELECT COALESCE(MAX(updated_at), 0) FROM kg_entities"
+            ).fetchone()
+            graph_watermark = str(int(row[0] or 0))
     finally:
         kg_conn.close()
     if not dense_status.startswith("indexed:"):
@@ -3183,16 +3394,36 @@ def _dense_ann_query(
         watermark = str(watermark_row[0]) if watermark_row else ""
         if not watermark:
             raise RuntimeError("dense index watermark missing")
-        now = time.monotonic()
-        with _DENSE_PROBE_CACHE_LOCK:
-            probe_cache = _DENSE_PROBE_CACHE
+        if watermark != graph_watermark:
+            raise RuntimeError("dense index watermark stale")
+        model_row = conn.execute(
+            "SELECT value FROM dense_meta WHERE key='model_id'"
+        ).fetchone()
+        indexed_model = str(model_row[0]).strip() if model_row else ""
+        endpoint_row = conn.execute(
+            "SELECT value FROM dense_meta WHERE key='endpoint_identity'"
+        ).fetchone()
+        indexed_endpoint = str(endpoint_row[0]).strip() if endpoint_row else ""
+        if not indexed_model or not indexed_endpoint:
+            raise RuntimeError("dense index encoder identity missing")
+        active_model = _active_dense_embedding_model()
         if (
-            probe_cache is None
-            or now - probe_cache[0] > DENSE_EMBEDDING_PROBE_TTL_SECONDS
+            indexed_model != active_model
+            or indexed_endpoint != _dense_endpoint_identity()
         ):
-            raise RuntimeError("dense probe unavailable")
-        query_vector = _local_dense_embeddings([query_text])[0]
-        _note_dense_probe_success()
+            raise RuntimeError("dense index encoder identity mismatch")
+        incompatible_rows = conn.execute(
+            "SELECT COUNT(*) FROM dense_vectors WHERE model != ?"
+            " OR index_version != ? OR watermark != ?",
+            (active_model, DENSE_INDEX_VERSION, watermark),
+        ).fetchone()
+        if incompatible_rows is None or int(incompatible_rows[0]) != 0:
+            raise RuntimeError("dense vector metadata mismatch")
+        query_vector = _local_dense_embeddings(
+            [query_text],
+            model_id=active_model,
+        )[0]
+        _note_dense_probe_success(active_model)
         clauses: list[str] = []
         params: list[Any] = []
         for band, bucket in _ann_band_keys(query_vector):

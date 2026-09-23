@@ -40,7 +40,7 @@ import {
   type SnapshotCanceller,
   type SnapshotLoader,
 } from "./runtime-poller";
-import { mainPanelMarkup, renderBackground, renderHistory, renderRooms, settingsMarkup } from "./ui";
+import { mainPanelMarkup, renderBackground, renderHistory, renderRooms, settingsMarkup, voiceErrorMessage } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
 
@@ -238,7 +238,7 @@ function wireModelSelection(): void {
 function renderVoice(snapshot: RuntimeSnapshot): void {
   const voice = snapshot.voice;
   if (!voice.available) {
-    setText("voice-status", "음성 기능을 사용할 수 없습니다.");
+    setText("voice-status", "음성 상태를 확인할 수 없습니다.");
     return;
   }
   const labels: Record<string, string> = {
@@ -252,7 +252,7 @@ function renderVoice(snapshot: RuntimeSnapshot): void {
     aborted: "음성 대화가 끝났습니다.",
     error: "음성 기능을 사용할 수 없습니다.",
   };
-  setText("voice-status", voice.errorCode ? "음성 기능을 시작하지 못했습니다." : labels[voice.state] ?? "음성 상태를 확인하고 있습니다.");
+  setText("voice-status", voiceErrorMessage(voice.errorCode) ?? labels[voice.state] ?? "음성 상태를 확인하고 있습니다.");
 }
 
 function renderSettingsUnavailable(): void {

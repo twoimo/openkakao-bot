@@ -1040,6 +1040,12 @@ class PruneTests(unittest.TestCase):
 
 class DenseRefreshBatchingTests(unittest.TestCase):
     def setUp(self):
+        self._model_patch = mock.patch.object(
+            KG,
+            "_active_dense_embedding_model",
+            return_value="mlx-test/embedder",
+        )
+        self._model_patch.start()
         self._original_probe = KG._dense_embedding_probe
         self._probe_patch = mock.patch.object(
             KG,
@@ -1050,6 +1056,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
     def tearDown(self):
         self._probe_patch.stop()
+        self._model_patch.stop()
 
     def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -1074,20 +1081,28 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
                 def read(self):
                     return json.dumps(
-                        {"data": [{"index": 0, "embedding": [3.0, 4.0]}]}
+                        {
+                            "model": "mlx/test-model",
+                            "data": [{"index": 0, "embedding": [3.0, 4.0]}],
+                        }
                     ).encode("utf-8")
 
             with mock.patch.object(
-                default_kg.urllib.request,
-                "urlopen",
+                default_kg,
+                "_active_dense_embedding_model",
+                return_value="mlx/test-model",
+            ), mock.patch.object(
+                default_kg,
+                "_open_loopback_embedding_request",
                 return_value=Response(),
-            ) as urlopen:
+            ) as open_request:
                 vectors = default_kg._local_dense_embeddings(["로컬 임베딩"])
 
-            request = urlopen.call_args.args[0]
+            request = open_request.call_args.args[0]
             self.assertEqual(request.full_url, LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL)
+            self.assertEqual(json.loads(request.data)["model"], "mlx/test-model")
             self.assertEqual(
-                urlopen.call_args.kwargs["timeout"],
+                open_request.call_args.kwargs["timeout"],
                 default_kg.DENSE_EMBEDDING_TIMEOUT_SECONDS,
             )
             self.assertEqual(vectors, [(0.6, 0.8)])
@@ -1160,6 +1175,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def read(self):
                 return json.dumps(
                     {
+                        "model": "mlx-test/embedder",
                         "data": [
                             {"index": index, "embedding": [1.0, 0.0]}
                             for index in range(count)
@@ -1182,8 +1198,8 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
             try:
                 with mock.patch.object(
-                    KG.urllib.request,
-                    "urlopen",
+                    KG,
+                    "_open_loopback_embedding_request",
                     side_effect=fake_urlopen,
                 ):
                     result = KG.refresh_dense_index(conn, root)
@@ -1217,8 +1233,8 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
             try:
                 with mock.patch.object(
-                    KG.urllib.request,
-                    "urlopen",
+                    KG,
+                    "_open_loopback_embedding_request",
                     side_effect=fake_urlopen,
                 ):
                     result = KG.refresh_dense_index(conn, root)
@@ -1248,8 +1264,8 @@ class DenseRefreshBatchingTests(unittest.TestCase):
 
             try:
                 with mock.patch.object(
-                    KG.urllib.request,
-                    "urlopen",
+                    KG,
+                    "_open_loopback_embedding_request",
                     side_effect=fake_urlopen,
                 ):
                     result = KG.refresh_dense_index(conn, root)
@@ -1285,6 +1301,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 texts,
                 *,
+                model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
             ):
@@ -1333,6 +1350,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 _texts,
                 *,
+                model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
             ):
@@ -1458,6 +1476,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 texts,
                 *,
+                model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
             ):
@@ -1483,12 +1502,19 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             {},
             None,
         )
-        with mock.patch.object(KG.urllib.request, "urlopen", side_effect=err):
+        with mock.patch.object(
+            KG,
+            "_open_loopback_embedding_request",
+            side_effect=err,
+        ):
             with self.assertRaises(KG._DenseEmbeddingPermanentError) as ctx:
-                KG._local_dense_embeddings(["테스트"])
+                KG._local_dense_embeddings(
+                    ["테스트"],
+                    model_id="mlx-test/embedder",
+                )
             self.assertIn("local dense embedding unavailable", str(ctx.exception))
 
-    def test_dense_ann_query_fails_closed_without_request_when_probe_cache_stale_or_missing(self):
+    def test_dense_ann_query_fails_closed_when_graph_watermark_is_newer(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 1)
@@ -1506,21 +1532,14 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                  mock.patch.object(KG, "_local_dense_embeddings") as mock_embed:
                 with self.assertRaises(RuntimeError) as ctx:
                     KG._dense_ann_query(root, "질의")
-                self.assertIn("dense probe unavailable", str(ctx.exception))
+                self.assertIn("dense index watermark stale", str(ctx.exception))
                 mock_embed.assert_not_called()
 
-            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", (10.0, "probe_ok")), \
-                 mock.patch.object(KG.time, "monotonic", return_value=10.0 + KG.DENSE_EMBEDDING_PROBE_TTL_SECONDS + 5.0), \
-                 mock.patch.object(KG, "_local_dense_embeddings") as mock_embed:
-                with self.assertRaises(RuntimeError) as ctx:
-                    KG._dense_ann_query(root, "질의")
-                self.assertIn("dense probe unavailable", str(ctx.exception))
-                mock_embed.assert_not_called()
-
-    def test_dense_ann_query_refreshes_probe_cache_on_success(self):
+    def test_fresh_worker_queries_dense_without_indexer_probe_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conn = self._make_graph(root, 1)
+            KG.write_meta(conn, "last_indexed_at", "100")
             KG.write_meta(conn, "last_dense_status", "indexed:1")
             dense = KG._connect_dense_index(root)
             dense.execute(
@@ -1528,24 +1547,130 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 (KG.DENSE_INDEX_VERSION,),
             )
             dense.execute(
-                "INSERT INTO dense_vectors (entity_id, vector_json, dim, model, index_version, watermark)"
-                " VALUES ('ent:test:00', '[1.0, 0.0]', 2, 'model', 'v1', '100')"
+                "INSERT INTO dense_meta (key, value) VALUES ('model_id', 'mlx-test/embedder'),"
+                " ('endpoint_identity', ?)",
+                (KG._dense_endpoint_identity(),),
             )
             dense.execute(
-                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (0, '00', 'ent:test:00')"
+                "INSERT INTO dense_vectors (entity_id, vector_json, dim, model, index_version, watermark)"
+                " VALUES ('ent:test:00', '[1.0, 0.0]', 2, 'mlx-test/embedder', ?, '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.executemany(
+                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (?,?,?)",
+                [
+                    (band, bucket, "ent:test:00")
+                    for band, bucket in KG._ann_band_keys((1.0, 0.0))
+                ],
             )
             dense.commit()
             dense.close()
             conn.close()
 
-            probe_start = 1000.0
             query_time = 1050.0
-            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", (probe_start, "probe_ok")), \
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", None), \
+                 mock.patch.object(KG, "_active_dense_embedding_model", return_value="mlx-test/embedder"), \
                  mock.patch.object(KG.time, "monotonic", return_value=query_time), \
                  mock.patch.object(KG, "_local_dense_embeddings", return_value=[(1.0, 0.0)]):
                 hits, watermark = KG._dense_ann_query(root, "질의")
                 self.assertEqual(watermark, "100")
-                self.assertEqual(KG._DENSE_PROBE_CACHE, (query_time, "probe_ok"))
+                self.assertEqual([entity_id for entity_id, _score in hits], ["ent:test:00"])
+                self.assertEqual(
+                    KG._DENSE_PROBE_CACHE,
+                    (query_time, "mlx-test/embedder", KG._dense_endpoint_identity()),
+                )
+
+
+class DenseModelIdentityTests(unittest.TestCase):
+    @staticmethod
+    def _response(payload):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self, _limit=None):
+                return json.dumps(payload).encode("utf-8")
+
+        return Response()
+
+    def test_active_model_requires_loaded_ready_embedding_capability(self):
+        models = {
+            "data": [
+                {
+                    "id": "mlx/loaded-embedder",
+                    "loaded": True,
+                    "state": "ready",
+                    "capabilities": ["chat", "embeddings"],
+                },
+                {
+                    "id": "mlx/unloaded-embedder",
+                    "loaded": False,
+                    "state": "unloaded",
+                    "capabilities": ["embeddings"],
+                },
+            ]
+        }
+        with (
+            mock.patch.object(KG, "DENSE_EMBEDDING_URL", "http://127.0.0.1:19123/v1/embeddings"),
+            mock.patch.object(KG, "DENSE_EMBEDDING_MODEL", ""),
+            mock.patch.object(KG, "_DENSE_MODEL_CACHE", None),
+            mock.patch.object(
+                KG,
+                "_open_loopback_embedding_request",
+                return_value=self._response(models),
+            ) as open_request,
+        ):
+            self.assertEqual(KG._active_dense_embedding_model(), "mlx/loaded-embedder")
+
+        request = open_request.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:19123/v1/models")
+        self.assertEqual(
+            open_request.call_args.kwargs["timeout"],
+            KG.DENSE_EMBEDDING_MODELS_TIMEOUT_SECONDS,
+        )
+
+    def test_chat_model_without_embedding_capability_is_not_used_as_encoder(self):
+        models = {
+            "data": [
+                {
+                    "id": "mlx/chat-only",
+                    "loaded": True,
+                    "state": "ready",
+                    "capabilities": ["chat", "tool_use"],
+                }
+            ]
+        }
+        with (
+            mock.patch.object(KG, "DENSE_EMBEDDING_MODEL", ""),
+            mock.patch.object(KG, "_DENSE_MODEL_CACHE", None),
+            mock.patch.object(
+                KG,
+                "_open_loopback_embedding_request",
+                return_value=self._response(models),
+            ),
+        ):
+            with self.assertRaises(KG._DenseEmbeddingPermanentError) as raised:
+                KG._active_dense_embedding_model()
+        self.assertIn("one ready local embedding model", str(raised.exception))
+
+    def test_loopback_redirect_handler_rejects_redirect_before_followup(self):
+        request = KG.urllib.request.Request(
+            "http://127.0.0.1:19123/v1/embeddings"
+        )
+        with self.assertRaises(KG.urllib.error.HTTPError) as raised:
+            KG._RejectLoopbackRedirects().redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://example.invalid/collect",
+            )
+        self.assertIn("redirects are disabled", str(raised.exception))
+        raised.exception.close()
 
 
 class NormalizeTests(unittest.TestCase):

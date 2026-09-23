@@ -140,10 +140,9 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
         identity.assert_not_called()
         advanced.assert_not_called()
 
-    def test_watermark_holds_analyze_and_process_without_model(self):
+    def test_unverifiable_watermark_retries_before_model_without_terminal_skip(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_watermark_test")
         cases = (
-            (lambda state: {**state, "last_observed_log_id": 421}, "conversation_advanced"),
             (lambda _state: {}, "context_freshness_unavailable"),
         )
         for state_builder, expected_reason in cases:
@@ -175,16 +174,19 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
                             "privacy_attestation_current",
                             return_value=True,
                         ),
-                        mock.patch.object(module, "finish_turn_policy_skip") as finish,
+                        mock.patch.object(
+                            module,
+                            "defer_processing_for_context_refresh",
+                        ) as defer,
                         mock.patch.object(module, "analyze_event") as analyze,
                         mock.patch.object(module, "generate_reply") as process_generate,
                     ):
                         module.process_job(job, "pending", None)
-                    finish.assert_called_once_with(
+                    defer.assert_called_once_with(
                         event,
                         event["event_id"],
                         None,
-                        expected_reason,
+                        reason=expected_reason,
                     )
                     analyze.assert_not_called()
                     process_generate.assert_not_called()
@@ -238,8 +240,13 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             mock.patch.object(
                 module,
                 "_reply_turn_hold_reason",
-                side_effect=(None, "conversation_advanced"),
+                side_effect=(None, "burst_superseded"),
             ) as turn_hold,
+            mock.patch.object(
+                module,
+                "stable_room_watermark_log_id",
+                return_value=511,
+            ),
             mock.patch.object(module, "analyze_event", return_value=analysis) as analyze,
             mock.patch.object(module, "update_job") as update_job,
             mock.patch.object(module, "finish_turn_policy_skip") as finish,
@@ -253,10 +260,10 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             event["event_id"], connection=None, reply="formed reply"
         )
         finish.assert_called_once_with(
-            event,
+            {**event, "analysis_watermark_log_id": 511},
             event["event_id"],
             None,
-            "conversation_advanced",
+            "burst_superseded",
         )
         send.assert_not_called()
 
@@ -380,7 +387,7 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             mock.patch.object(module, "_run_opencodex_generation") as opencodex_runner,
         ):
             for guard, expected_reason in (
-                (lambda: "conversation_advanced", "conversation_advanced"),
+                (lambda: "burst_superseded", "burst_superseded"),
                 (lambda: "unknown_hold", "context_freshness_unavailable"),
                 (broken_guard, "context_freshness_unavailable"),
             ):
@@ -414,7 +421,7 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             mock.patch.object(
                 module,
                 "_reply_turn_hold_reason",
-                return_value="conversation_advanced",
+                return_value="burst_superseded",
             ) as turn_hold,
             mock.patch.object(module, "_send_time_repeat_hold") as repeat_hold,
         ):
@@ -423,7 +430,7 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
                 event=event,
                 connection=None,
             )
-        self.assertEqual(reason, "conversation_advanced")
+        self.assertEqual(reason, "burst_superseded")
         turn_hold.assert_called_once_with(event, None)
         repeat_hold.assert_not_called()
 
@@ -525,10 +532,91 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             ):
                 self.assertIsNone(module.conversation_advanced_past_event(event))
 
-    def test_send_reply_blocks_watermark_advance_after_preflight_before_mutation(self):
+    def test_local_context_refresh_reads_bounded_rows_from_exact_chat(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_local_refresh_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, _state_path, _state = fixture
+            rows = [
+                {
+                    "log_id": 420,
+                    "chat_id": 42,
+                    "author_id": 700,
+                    "is_self": False,
+                    "sender_name": "member",
+                    "message": "question",
+                    "attachment": "",
+                    "message_type": 1,
+                    "sent_at": event["sent_at"],
+                }
+            ]
+            with mock.patch.object(
+                module,
+                "_run_bounded_process",
+                return_value=(0, json.dumps(rows).encode(), b""),
+            ) as local_read:
+                refreshed = module.refresh_recent_messages_from_local_db(event, 420)
+
+            self.assertEqual(len(refreshed), 1)
+            self.assertEqual(refreshed[0]["log_id"], 420)
+            self.assertEqual(refreshed[0]["author_nickname"], "member")
+            self.assertEqual(refreshed[0]["message"], "question")
+            command = local_read.call_args.args[0]
+            self.assertEqual(command[1:4], ["local-read", "42", "--count"])
+            self.assertEqual(command[-1], "--json")
+
+            wrong_chat = [{**rows[0], "chat_id": 43}]
+            with mock.patch.object(
+                module,
+                "_run_bounded_process",
+                return_value=(0, json.dumps(wrong_chat).encode(), b""),
+            ):
+                self.assertIsNone(
+                    module.refresh_recent_messages_from_local_db(event, 420)
+                )
+
+    def test_scheduled_draft_requeues_when_room_changes_after_analysis(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_scheduled_context_change_test")
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            event["analysis_watermark_log_id"] = 420
+            state_path.write_text(
+                json.dumps({**state, "last_observed_log_id": 421}),
+                encoding="utf-8",
+            )
+            job = {
+                "event_id": event["event_id"],
+                "event_json": json.dumps(event, ensure_ascii=False),
+                "reply": "old draft",
+            }
+            with (
+                mock.patch.object(
+                    module,
+                    "db_authoritative_event_allowed",
+                    return_value=True,
+                ),
+                mock.patch.object(module, "privacy_attestation_current", return_value=True),
+                mock.patch.object(module, "settle_processing_transition", return_value=True) as settle,
+                mock.patch.object(module, "send_reply") as send,
+                mock.patch.object(module, "analyze_event") as analyze,
+            ):
+                module.process_job(job, "scheduled", None)
+
+            settle.assert_called_once()
+            fields = settle.call_args.kwargs
+            self.assertEqual(fields["status"], "pending")
+            self.assertIsNone(fields["reply"])
+            self.assertEqual(fields["error_class"], "conversation_context_changed")
+            deferred_event = json.loads(fields["event_json"])
+            self.assertTrue(deferred_event["context_refresh_required"])
+            self.assertNotIn("analysis_watermark_log_id", deferred_event)
+            analyze.assert_not_called()
+            send.assert_not_called()
+
+    def test_send_reply_holds_for_reanalysis_when_watermark_advances_before_mutation(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_late_watermark_test")
         with self._queued_turn_with_authoritative_watermark(module) as fixture:
             event, state_path, state = fixture
+            event["analysis_watermark_log_id"] = 420
             connection = self._worker_queue_connection(module)
             try:
                 connection.execute(
@@ -540,19 +628,24 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
 
                 def fake_run(command, **_kwargs):
                     calls.append(command)
-                    self.assertIn("--preflight", command)
-                    return (
-                        0,
-                        json.dumps(
-                            {
-                                "status": "preflight_ready",
-                                "preflight_ready": True,
-                                "will_send": False,
-                                "network": False,
-                            }
-                        ).encode(),
-                        b"",
-                    )
+                    if "--preflight" in command:
+                        payload = {
+                            "status": "preflight_ready",
+                            "preflight_ready": True,
+                            "will_send": False,
+                            "network": False,
+                        }
+                    else:
+                        # Exercise the post-watermark path without performing a
+                        # local-send mutation in this unit test.
+                        payload = {
+                            "chat_name": module.CHAT,
+                            "status": "pre_send_unavailable",
+                            "mutation_started": False,
+                            "confirmed": False,
+                            "network": False,
+                        }
+                    return 0, json.dumps(payload).encode(), b""
 
                 def advance_after_preflight():
                     state_path.write_text(
@@ -607,7 +700,7 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
                     )
 
                 self.assertFalse(sent)
-                self.assertEqual(hold_reasons, ["conversation_advanced"])
+                self.assertEqual(hold_reasons, ["conversation_context_changed"])
                 self.assertEqual(sender.call_count, 1)
                 self.assertIn("--preflight", calls[0])
                 transition.assert_not_called()

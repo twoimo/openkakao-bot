@@ -55,6 +55,25 @@ class DenseUnavailable(ReferenceSearchError):
         self.detail = detail
 
 
+class _RejectEmbeddingRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> urllib.request.Request:
+        raise urllib.error.HTTPError(
+            new_url,
+            code,
+            "loopback embedding redirects are disabled",
+            headers,
+            file_pointer,
+        )
+
+
 class EmbeddingEngine(Protocol):
     model: str
 
@@ -181,11 +200,16 @@ class LoopbackOpenAIEmbeddingEngine:
         )
         # Ignore configured proxies. A loopback-only engine should never leave
         # the host through a proxy even when the shell has HTTP(S)_PROXY set.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectEmbeddingRedirects(),
+        )
         try:
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(8 * 1024 * 1024)
         except (OSError, TimeoutError, urllib.error.URLError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
             raise DenseUnavailable("embedding_engine_failed", type(exc).__name__) from exc
         try:
             body = json.loads(raw)

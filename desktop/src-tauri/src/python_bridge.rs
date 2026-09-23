@@ -4,8 +4,10 @@ use crate::resource_layout::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -48,6 +50,7 @@ const MLX_SERVER_STOP_ACTION: &str = "mlx-server-stop";
 const MODEL_SWAP_OPT_IN: &str = "qwen38-27b-explicit-v1";
 const MODEL_SWAP_CANCEL_DIR: &str = "model-swap-cancel";
 const VOICE_TTS_OUT_NAME: &str = "jarvis-voice-out.wav";
+static VOICE_SESSION_START_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum BridgeError {
@@ -83,6 +86,10 @@ pub enum BridgeError {
     VoiceEnv,
     #[error("voice_script_missing")]
     VoiceScript,
+    #[error("voice_session_already_running")]
+    VoiceSessionAlreadyRunning,
+    #[error("voice_session_process_check_failed")]
+    VoiceProcessCheck,
 }
 
 #[derive(Clone)]
@@ -472,17 +479,15 @@ impl PythonBridge {
         let cancellation_token = token_id.unwrap_or(&internal_token);
         self.begin_job(job_id, "browser", "running", 0.7);
         let result: Result<SafeBrowserToolResult, BridgeError> = (|| {
-            let bytes = self.run_python_with_output_limit(
-                PythonRun {
-                    extra: &args,
-                    timeout: BROWSER_TOOL_TIMEOUT,
-                    token_id: Some(cancellation_token),
-                    output_limit: BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
-                    stdin_payload: Some(task.as_bytes()),
-                    global_abort_grace: Some(BROWSER_TOOL_ABORT_GRACE),
-                    ..PythonRun::default()
-                },
-            )?;
+            let bytes = self.run_python_with_output_limit(PythonRun {
+                extra: &args,
+                timeout: BROWSER_TOOL_TIMEOUT,
+                token_id: Some(cancellation_token),
+                output_limit: BROWSER_TOOL_OUTPUT_LIMIT_BYTES,
+                stdin_payload: Some(task.as_bytes()),
+                global_abort_grace: Some(BROWSER_TOOL_ABORT_GRACE),
+                ..PythonRun::default()
+            })?;
             let value = parse_json_output(&bytes)?;
             Ok(sanitize_browser_tool_result(&value))
         })();
@@ -660,17 +665,19 @@ impl PythonBridge {
     }
 
     pub fn start_voice_session(&self) -> Result<(), BridgeError> {
-        let resources = self.config.resources()?;
-        resources.validate().map_err(BridgeError::from)?;
-        let plan = plan_voice_session(
-            &resources.root,
-            &self.config.state_root,
-            &self.config.voice_python,
-        )?;
-        voice_session_command(&plan, &self.config.state_root)?
-            .spawn()
-            .map(|_| ())
-            .map_err(|_| BridgeError::Spawn)
+        start_voice_session_if_absent(&self.config.state_root, voice_session_is_running, || {
+            let resources = self.config.resources()?;
+            resources.validate().map_err(BridgeError::from)?;
+            let plan = plan_voice_session(
+                &resources.root,
+                &self.config.state_root,
+                &self.config.voice_python,
+            )?;
+            voice_session_command(&plan, &self.config.state_root)?
+                .spawn()
+                .map(|_| ())
+                .map_err(|_| BridgeError::Spawn)
+        })
     }
 
     fn run_python(
@@ -1403,6 +1410,243 @@ fn valid_model_swap_token(value: &str) -> bool {
         19 => matches!(*byte, b'8' | b'9' | b'a' | b'b'),
         _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
     })
+}
+
+fn start_voice_session_if_absent(
+    state_root: &Path,
+    probe: impl FnOnce(&Path) -> Result<bool, BridgeError>,
+    spawn: impl FnOnce() -> Result<(), BridgeError>,
+) -> Result<(), BridgeError> {
+    // Serialize starts from all windows/bridge clones through spawn. A heartbeat
+    // can be stale during model loading and never grants permission to duplicate.
+    let _guard = VOICE_SESSION_START_LOCK
+        .lock()
+        .map_err(|_| BridgeError::VoiceProcessCheck)?;
+    if probe(state_root)? {
+        return Err(BridgeError::VoiceSessionAlreadyRunning);
+    }
+    spawn()
+}
+
+type VoiceProcessArgs = (PathBuf, Vec<OsString>);
+
+fn is_python_executable(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    name == "Python"
+        || name == "python"
+        || name.strip_prefix("python").is_some_and(|version| {
+            version
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+}
+
+fn voice_process_matches((executable, argv): &VoiceProcessArgs, state_root: &Path) -> bool {
+    if !is_python_executable(executable) {
+        return false;
+    }
+    let mut args = argv.iter().skip(1);
+    let script = loop {
+        let Some(arg) = args.next() else {
+            return false;
+        };
+        match arg.to_str() {
+            Some("--") => break args.next(),
+            Some("-W" | "-X" | "--check-hash-based-pycs") => {
+                if args.next().is_none() {
+                    return false;
+                }
+            }
+            Some(value) if value.starts_with("-W") || value.starts_with("-X") => {}
+            Some(value) if value.starts_with("--check-hash-based-pycs=") => {}
+            Some(value) if value.starts_with('-') => {
+                // Only interpreter flags without operands may precede the script.
+                // In particular, -c/-m (including combined flags) are not scripts.
+                if value.len() == 1
+                    || !value[1..]
+                        .chars()
+                        .all(|flag| "bBdEiIOPqRsStuUvVx".contains(flag))
+                {
+                    return false;
+                }
+            }
+            _ => break Some(arg),
+        }
+    };
+    // Match the complete script path components in either a checkout or bundle,
+    // never a substring in another script's arguments or a shell command.
+    if !script.is_some_and(|path| Path::new(path).ends_with(resource_layout::VOICE_SCRIPT)) {
+        return false;
+    }
+    let mut root = None;
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "--state-root" {
+            root = args.next().map(|value| value.as_bytes());
+        } else if let Some(value) = arg.as_bytes().strip_prefix(b"--state-root=") {
+            root = Some(value);
+        }
+    }
+    // argparse uses the final occurrence. Keep spaces and argument boundaries;
+    // a sibling directory or a longer state-root prefix is not this listener.
+    root == Some(state_root.as_os_str().as_bytes())
+}
+
+fn voice_session_is_running(state_root: &Path) -> Result<bool, BridgeError> {
+    // SAFETY: geteuid only reads this process's effective user ID.
+    let current_uid = unsafe { libc::geteuid() };
+    voice_session_from_process_table(
+        state_root,
+        current_uid,
+        Command::new("/bin/ps")
+            .args(["-ww", "-axo", "uid=,pid=,stat=,comm="])
+            .stdin(Stdio::null())
+            .output(),
+        read_voice_process_args,
+    )
+}
+
+fn voice_session_from_process_table(
+    state_root: &Path,
+    current_uid: libc::uid_t,
+    output: std::io::Result<std::process::Output>,
+    mut read_args: impl FnMut(i32) -> Result<Option<VoiceProcessArgs>, BridgeError>,
+) -> Result<bool, BridgeError> {
+    let output = output.map_err(|_| BridgeError::VoiceProcessCheck)?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return Err(BridgeError::VoiceProcessCheck);
+    }
+    let table = std::str::from_utf8(&output.stdout).map_err(|_| BridgeError::VoiceProcessCheck)?;
+    let mut matched = false;
+    for line in table.lines() {
+        let (uid, rest) = line
+            .trim()
+            .split_once(char::is_whitespace)
+            .ok_or(BridgeError::VoiceProcessCheck)?;
+        let uid = uid
+            .parse::<libc::uid_t>()
+            .map_err(|_| BridgeError::VoiceProcessCheck)?;
+        // Never read argv for another user's Python processes: macOS may deny
+        // KERN_PROCARGS2 even though ps can list them. Keep all same-user Python
+        // runtimes eligible so an installed listener also blocks a debug start.
+        if uid != current_uid {
+            continue;
+        }
+        let (pid, rest) = rest
+            .trim_start()
+            .split_once(char::is_whitespace)
+            .ok_or(BridgeError::VoiceProcessCheck)?;
+        let pid = pid
+            .parse::<i32>()
+            .ok()
+            .filter(|pid| *pid > 0)
+            .ok_or(BridgeError::VoiceProcessCheck)?;
+        let (status, executable) = rest
+            .trim_start()
+            .split_once(char::is_whitespace)
+            .ok_or(BridgeError::VoiceProcessCheck)?;
+        let executable = executable.trim_start();
+        if executable.is_empty() {
+            return Err(BridgeError::VoiceProcessCheck);
+        }
+        if !status.contains('Z') && is_python_executable(Path::new(executable)) {
+            if let Some(args) = read_args(pid)? {
+                matched |= voice_process_matches(&args, state_root);
+            }
+        }
+    }
+    Ok(matched)
+}
+
+#[cfg(target_os = "macos")]
+fn read_voice_process_args(pid: i32) -> Result<Option<VoiceProcessArgs>, BridgeError> {
+    let mut limit = 0i32;
+    let mut size = std::mem::size_of_val(&limit);
+    let mut limit_mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+    // SAFETY: each writable buffer and length describes allocated storage; the
+    // MIBs contain only read-only kernel queries. No signals are sent to any PID.
+    let result = unsafe {
+        libc::sysctl(
+            limit_mib.as_mut_ptr(),
+            2,
+            (&mut limit as *mut i32).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || limit <= 0 || limit as usize > OUTPUT_LIMIT_BYTES {
+        return Err(BridgeError::VoiceProcessCheck);
+    }
+    let mut bytes = vec![0u8; limit as usize];
+    size = bytes.len();
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    // SAFETY: bytes owns size writable bytes and mib has exactly three entries.
+    let result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 {
+        return if std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            Ok(None) // Exited since ps; permission/parse failures still block spawn.
+        } else {
+            Err(BridgeError::VoiceProcessCheck)
+        };
+    }
+    bytes.truncate(size);
+    parse_voice_process_args(&bytes).map(Some)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_voice_process_args(_pid: i32) -> Result<Option<VoiceProcessArgs>, BridgeError> {
+    Err(BridgeError::VoiceProcessCheck)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_voice_process_args(bytes: &[u8]) -> Result<VoiceProcessArgs, BridgeError> {
+    let count = bytes.get(..4).ok_or(BridgeError::VoiceProcessCheck)?;
+    let count = i32::from_ne_bytes(
+        count
+            .try_into()
+            .map_err(|_| BridgeError::VoiceProcessCheck)?,
+    );
+    if count <= 0 || count as usize > bytes.len() {
+        return Err(BridgeError::VoiceProcessCheck);
+    }
+    let mut remaining = &bytes[4..];
+    let end = remaining
+        .iter()
+        .position(|byte| *byte == 0)
+        .filter(|end| *end > 0)
+        .ok_or(BridgeError::VoiceProcessCheck)?;
+    let executable = PathBuf::from(OsString::from_vec(remaining[..end].to_vec()));
+    remaining = &remaining[end..];
+    let start = remaining
+        .iter()
+        .position(|byte| *byte != 0)
+        .ok_or(BridgeError::VoiceProcessCheck)?;
+    remaining = &remaining[start..];
+    let mut argv = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let end = remaining
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or(BridgeError::VoiceProcessCheck)?;
+        argv.push(OsString::from_vec(remaining[..end].to_vec()));
+        remaining = &remaining[end + 1..];
+    }
+    // KERN_PROCARGS2 also includes the environment; never inspect or return it.
+    Ok((executable, argv))
 }
 
 fn plan_voice_session(
@@ -4100,10 +4344,10 @@ mod tests {
 
     #[test]
     fn stale_voice_status_is_not_reported_as_a_live_listener() {
-        let temp = std::env::temp_dir()
-            .canonicalize()
-            .unwrap()
-            .join(format!("openkakao-stale-voice-status-{}", std::process::id()));
+        let temp = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "openkakao-stale-voice-status-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
         fs::write(
@@ -4190,6 +4434,457 @@ mod tests {
             Some("global_abort")
         );
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    fn voice_process_fixture(argv: &[&str]) -> VoiceProcessArgs {
+        (
+            PathBuf::from("/usr/bin/python3"),
+            argv.iter().map(|arg| OsString::from(*arg)).collect(),
+        )
+    }
+
+    fn voice_ps_output(success: bool, stdout: &[u8]) -> std::io::Result<std::process::Output> {
+        use std::os::unix::process::ExitStatusExt;
+        Ok(std::process::Output {
+            status: std::process::ExitStatus::from_raw(if success { 0 } else { 256 }),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn voice_process_matching_preserves_script_and_state_root_argument_boundaries() {
+        let root = "/Users/listener/Library/Application Support/openkakao/auto-reply";
+        let script =
+            "/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/jarvis_voice.py";
+        for argv in [
+            vec!["python3", script, "--state-root", root],
+            vec!["python3", "-E", "-B", "-s", script, "--state-root", root],
+            vec![
+                "python3",
+                "-Iu",
+                "--",
+                "scripts/jarvis_voice.py",
+                "--state-root",
+                root,
+            ],
+            vec![
+                "python3",
+                "-W",
+                "ignore",
+                "-X",
+                "utf8",
+                script,
+                "--state-root",
+                root,
+            ],
+        ] {
+            assert!(
+                voice_process_matches(&voice_process_fixture(&argv), Path::new(root)),
+                "{argv:?}"
+            );
+        }
+        let equals = format!("--state-root={root}");
+        assert!(voice_process_matches(
+            &voice_process_fixture(&["python3", script, &equals]),
+            Path::new(root)
+        ));
+
+        let sibling = format!("{root}-other");
+        let child = format!("{root}/child");
+        let script_suffix = format!("{script}.backup");
+        for argv in [
+            vec!["python3", script, "--state-root", &sibling],
+            vec!["python3", script, "--state-root", &child],
+            vec!["python3", &script_suffix, "--state-root", root],
+            vec![
+                "python3",
+                "/repo/not-scripts/jarvis_voice.py",
+                "--state-root",
+                root,
+            ],
+            vec!["python3", "/repo/other.py", script, "--state-root", root],
+            vec!["python3", "-c", script, "--state-root", root],
+            vec!["python3", "-m", script, "--state-root", root],
+            vec!["python3", "-Ic", script, "--state-root", root],
+            vec!["python3", "-", script, "--state-root", root],
+            vec!["python3", script, "--state-root"],
+            vec!["python3", script, "--state-root-prefix", root],
+            vec!["python3", script, "--", "--state-root", root],
+            vec![
+                "python3",
+                script,
+                "--state-root",
+                root,
+                "--state-root",
+                &sibling,
+            ],
+        ] {
+            assert!(
+                !voice_process_matches(&voice_process_fixture(&argv), Path::new(root)),
+                "{argv:?}"
+            );
+        }
+        let (_, argv) = voice_process_fixture(&["python3", script, "--state-root", root]);
+        for executable in [
+            "/bin/sh",
+            "/bin/echo",
+            "/bin/not-python3",
+            "/bin/python3-helper",
+        ] {
+            assert!(!voice_process_matches(
+                &(PathBuf::from(executable), argv.clone()),
+                Path::new(root)
+            ));
+        }
+        assert!(voice_process_matches(
+            &(
+                PathBuf::from("/Frameworks/Python.app/Contents/MacOS/Python"),
+                argv
+            ),
+            Path::new(root)
+        ));
+    }
+
+    #[test]
+    fn voice_process_table_ignores_unrelated_zombie_and_exited_processes() {
+        let mut inspected = Vec::new();
+        let result = voice_session_from_process_table(
+            Path::new("/state"),
+            501,
+            voice_ps_output(
+                true,
+                concat!(
+                    " 501 1 Ss /sbin/launchd\n",
+                    " 501 2 S /bin/echo\n",
+                    " 501 3 Z /usr/bin/python3\n",
+                    " 501 4 S /usr/bin/python3\n",
+                )
+                .as_bytes(),
+            ),
+            |pid| {
+                inspected.push(pid);
+                Ok(None)
+            },
+        );
+        assert!(!result.unwrap());
+        assert_eq!(inspected, vec![4]);
+    }
+
+    #[test]
+    fn voice_process_table_scopes_argv_reads_to_current_uid() {
+        let root = "/Users/listener/Library/Application Support/openkakao/bujamentor";
+        let python =
+            "/Users/listener/Library/Application Support/openkakao/runtimes/voice/bin/python3.11";
+        let args: VoiceProcessArgs = (
+            PathBuf::from(python),
+            [
+                python,
+                "-E",
+                "-B",
+                "-s",
+                "/Applications/OpenKakao Jarvis.app/Contents/Resources/scripts/jarvis_voice.py",
+                "--state-root",
+                root,
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect(),
+        );
+        // These protected foreign-user processes must never reach read_args,
+        // even when they use the same interpreter as a matching voice worker.
+        let foreign = format!("    0 40 Ss   /usr/bin/python3\n  502 41 S    {python}\n");
+        let mut inspected = Vec::new();
+        let absent = voice_session_from_process_table(
+            Path::new(root),
+            501,
+            voice_ps_output(true, foreign.as_bytes()),
+            |_| panic!("foreign-user argv must not be queried"),
+        );
+        assert!(!absent.unwrap());
+        let table = format!("{foreign}  501 25865 S    {python}\n");
+        let present = voice_session_from_process_table(
+            Path::new(root),
+            501,
+            voice_ps_output(true, table.as_bytes()),
+            |pid| {
+                assert_eq!(pid, 25865, "foreign-user argv must not be queried");
+                inspected.push(pid);
+                Ok(Some(args.clone()))
+            },
+        );
+        assert!(present.unwrap());
+        assert_eq!(inspected, vec![25865]);
+    }
+
+    #[test]
+    fn voice_session_enumeration_failures_never_spawn() {
+        let spawned = std::cell::Cell::new(0);
+        for output in [
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "ps denied",
+            )),
+            voice_ps_output(false, b"501 42 S /usr/bin/python3\n"),
+            voice_ps_output(true, b""),
+            voice_ps_output(true, b"\xff"),
+            voice_ps_output(true, b"bad 42 S /usr/bin/python3\n"),
+            voice_ps_output(true, b"501 bad S /usr/bin/python3\n"),
+            voice_ps_output(true, b"501 42 S\n"),
+            voice_ps_output(true, b"501 42 S /usr/bin/python3\n"),
+        ] {
+            let result = start_voice_session_if_absent(
+                Path::new("/state"),
+                |root| {
+                    voice_session_from_process_table(root, 501, output, |_| {
+                        Err(BridgeError::VoiceProcessCheck)
+                    })
+                },
+                || {
+                    spawned.set(spawned.get() + 1);
+                    Ok(())
+                },
+            );
+            assert!(matches!(result, Err(BridgeError::VoiceProcessCheck)));
+        }
+        assert_eq!(spawned.get(), 0);
+        assert_eq!(
+            BridgeError::VoiceProcessCheck.to_string(),
+            "voice_session_process_check_failed"
+        );
+    }
+
+    #[test]
+    fn voice_session_candidate_argument_parse_failure_never_spawns() {
+        let table = concat!(
+            "0 40 S /usr/bin/python3\n",
+            "501 41 S /usr/bin/python3\n",
+            "501 42 S /usr/bin/python3\n",
+        );
+        let valid = voice_process_fixture(&[
+            "python3",
+            "scripts/jarvis_voice.py",
+            "--state-root",
+            "/state",
+        ]);
+        let result = start_voice_session_if_absent(
+            Path::new("/state"),
+            |root| {
+                voice_session_from_process_table(
+                    root,
+                    501,
+                    voice_ps_output(true, table.as_bytes()),
+                    |pid| match pid {
+                        41 => Ok(Some(valid.clone())),
+                        42 => parse_voice_process_args(b"truncated").map(Some),
+                        _ => panic!("foreign-user argv must not be queried"),
+                    },
+                )
+            },
+            || panic!("an unparseable candidate must block spawn"),
+        );
+        assert!(matches!(result, Err(BridgeError::VoiceProcessCheck)));
+    }
+
+    #[test]
+    fn voice_session_live_process_blocks_spawn_with_missing_stale_or_fresh_heartbeat() {
+        let root =
+            std::env::temp_dir().join(format!("openkakao-voice-duplicate-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let heartbeat = root.join(VOICE_STATUS_NAME);
+        let spawned = std::cell::Cell::new(0);
+        let args = voice_process_fixture(&[
+            "python3",
+            "/another checkout/scripts/jarvis_voice.py",
+            "--state-root",
+            root.to_str().unwrap(),
+        ]);
+        for updated_at in [None, Some(1), Some(epoch_seconds() as u64)] {
+            let _ = fs::remove_file(&heartbeat);
+            if let Some(updated_at) = updated_at {
+                fs::write(
+                    &heartbeat,
+                    json!({
+                        "schema_version": 1, "state": "wake_listen", "updated_at": updated_at,
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+            }
+            let before = fs::read(&heartbeat).ok();
+            let result = start_voice_session_if_absent(
+                &root,
+                |root| {
+                    voice_session_from_process_table(
+                        root,
+                        501,
+                        voice_ps_output(true, b"501 42 S /usr/bin/python3\n"),
+                        |_| Ok(Some(args.clone())),
+                    )
+                },
+                || {
+                    spawned.set(spawned.get() + 1);
+                    Ok(())
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(BridgeError::VoiceSessionAlreadyRunning)
+            ));
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "voice_session_already_running"
+            );
+            assert_eq!(fs::read(&heartbeat).ok(), before);
+        }
+        assert_eq!(spawned.get(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn voice_session_absent_listener_allows_one_spawn_and_preserves_spawn_failure() {
+        let spawned = std::cell::Cell::new(0);
+        let result = start_voice_session_if_absent(
+            Path::new("/state"),
+            |root| {
+                voice_session_from_process_table(
+                    root,
+                    501,
+                    voice_ps_output(true, b"0 1 Ss /sbin/launchd\n"),
+                    |_| unreachable!(),
+                )
+            },
+            || {
+                spawned.set(spawned.get() + 1);
+                Err(BridgeError::Spawn)
+            },
+        );
+        assert!(matches!(result, Err(BridgeError::Spawn)));
+        assert_eq!(spawned.get(), 1);
+    }
+
+    #[test]
+    fn voice_session_concurrent_starts_probe_again_after_first_spawn() {
+        let ready = Arc::new(std::sync::Barrier::new(2));
+        let running = Arc::new(AtomicBool::new(false));
+        let workers = (0..2)
+            .map(|_| {
+                let ready = ready.clone();
+                let running = running.clone();
+                thread::spawn(move || {
+                    ready.wait();
+                    start_voice_session_if_absent(
+                        Path::new("/state"),
+                        |_| Ok(running.load(Ordering::SeqCst)),
+                        || {
+                            running.store(true, Ordering::SeqCst);
+                            Ok(())
+                        },
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(BridgeError::VoiceSessionAlreadyRunning)))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn voice_process_native_arguments_preserve_spaces_empty_args_and_omit_environment() {
+        let argv = [
+            "python3",
+            "/bundle with spaces/scripts/jarvis_voice.py",
+            "--state-root",
+            "/state with spaces",
+            "",
+        ];
+        let mut bytes = (argv.len() as i32).to_ne_bytes().to_vec();
+        bytes.extend_from_slice(b"/usr/bin/python3\0\0\0");
+        for arg in argv {
+            bytes.extend_from_slice(arg.as_bytes());
+            bytes.push(0);
+        }
+        let parsed = parse_voice_process_args(&bytes).unwrap();
+        assert_eq!(parsed, voice_process_fixture(&argv));
+        let truncated = bytes[..bytes.len() - 1].to_vec();
+        bytes.extend_from_slice(b"PRIVATE_ENV=not-an-argument\0");
+        assert_eq!(parse_voice_process_args(&bytes).unwrap(), parsed);
+        for invalid in [
+            vec![],
+            0i32.to_ne_bytes().to_vec(),
+            (-1i32).to_ne_bytes().to_vec(),
+            truncated,
+        ] {
+            assert!(matches!(
+                parse_voice_process_args(&invalid),
+                Err(BridgeError::VoiceProcessCheck)
+            ));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn voice_process_native_probe_matches_synthetic_worker_without_signaling_it() {
+        use std::io::BufRead;
+        let root =
+            std::env::temp_dir().join(format!("openkakao native voice {}", std::process::id()));
+        let script = root.join("scripts/jarvis_voice.py");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(
+            &script,
+            b"import sys\nprint('ready', flush=True)\nsys.stdin.buffer.read(1)\n",
+        )
+        .unwrap();
+        let mut child = Command::new("python3")
+            .args(["-E", "-B", "-s"])
+            .arg(&script)
+            .arg("--state-root")
+            .arg(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        let read = std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut ready);
+        // Exercise the real full macOS table shape. Read native argv only for
+        // our synthetic worker; all other processes use the fake adapter.
+        // SAFETY: geteuid only reads this process's effective user ID.
+        let current_uid = unsafe { libc::geteuid() };
+        let result = voice_session_from_process_table(
+            &root,
+            current_uid,
+            Command::new("/bin/ps")
+                .args(["-ww", "-axo", "uid=,pid=,stat=,comm="])
+                .output(),
+            |pid| {
+                if pid == child.id() as i32 {
+                    read_voice_process_args(pid)
+                } else {
+                    Ok(None)
+                }
+            },
+        );
+        let still_alive = child.try_wait();
+        // The owned fixture exits normally on EOF; it never imports voice code
+        // or opens a microphone, and neither inspection nor cleanup sends signals.
+        drop(child.stdin.take());
+        let exit = child.wait();
+        fs::remove_dir_all(root).unwrap();
+        read.unwrap();
+        assert_eq!(ready, "ready\n");
+        assert!(result.unwrap());
+        assert!(still_alive.unwrap().is_none());
+        assert!(exit.unwrap().success());
     }
 
     #[test]

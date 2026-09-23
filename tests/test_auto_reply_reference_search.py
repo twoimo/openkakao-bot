@@ -54,6 +54,22 @@ class ReferenceSearchTests(unittest.TestCase):
         self.store = load("auto_reply_reference_store_search_test", STORE_PATH)
         self.search = load("auto_reply_reference_search_test", SEARCH_PATH)
 
+    def test_loopback_embedding_redirect_is_rejected(self):
+        request = self.search.urllib.request.Request(
+            "http://127.0.0.1:19123/v1/embeddings"
+        )
+        with self.assertRaises(self.search.urllib.error.HTTPError) as raised:
+            self.search._RejectEmbeddingRedirects().redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://example.invalid/collect",
+            )
+        self.assertIn("redirects are disabled", str(raised.exception))
+        raised.exception.close()
+
     def _database(self, root: str) -> Path:
         db = Path(root) / "context.sqlite3"
         connection = sqlite3.connect(db)

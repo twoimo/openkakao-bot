@@ -4266,8 +4266,8 @@ def _superseded_by(
     return str(row["superseded_by_event_id"]) if row is not None else None
 
 
-def conversation_advanced_past_event(event: dict) -> bool | None:
-    """Only a stable, current room watermark can authorize the queued turn."""
+def stable_room_watermark_log_id(event: dict) -> int | None:
+    """Return the stable, identity-bound room watermark for this inbound."""
     tail = _fence_int(event.get("log_id"))
     if "burst_tail_log_id" in event and _fence_int(event["burst_tail_log_id"]) != tail:
         return None
@@ -4301,7 +4301,117 @@ def conversation_advanced_past_event(event: dict) -> bool | None:
         return None
     if last_observed < tail:
         return None
-    return last_observed > tail
+    return last_observed
+
+
+def conversation_advanced_past_event(event: dict) -> bool | None:
+    """Report whether the stable room watermark is newer than this event.
+
+    A later row proves that the watcher observed more of the room. It does not
+    prove that this inbound event was answered or superseded.
+    """
+    tail = _fence_int(event.get("log_id"))
+    watermark = stable_room_watermark_log_id(event)
+    if tail is None or watermark is None:
+        return None
+    return watermark > tail
+
+
+def refresh_recent_messages_from_local_db(
+    event: dict,
+    expected_watermark: int,
+) -> list[dict] | None:
+    """Read a bounded, exact-chat context window from Kakao's local database."""
+    chat_id = _fence_int(event.get("chat_id"))
+    event_log_id = _fence_int(event.get("log_id"))
+    if (
+        chat_id is None
+        or event_log_id is None
+        or chat_id != _fence_env_int(os.environ.get(TARGET_CHAT_ID_ENV, ""))
+        or isinstance(expected_watermark, bool)
+        or not isinstance(expected_watermark, int)
+        or expected_watermark < event_log_id
+    ):
+        return None
+    count = RECENT_MESSAGE_LIMIT + 1
+    command = [
+        str(BIN),
+        "local-read",
+        str(chat_id),
+        "--count",
+        str(count),
+        "--json",
+    ]
+    try:
+        returncode, stdout_bytes, _ = _run_bounded_process(
+            command,
+            cwd=ROOT,
+            env=os.environ.copy(),
+            timeout=8.0,
+            stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+            stderr_cap=MAX_MODEL_STDERR_BYTES,
+        )
+    except (OSError, subprocess.TimeoutExpired, _CaptureOverflow, _CaptureIOError):
+        return None
+    if returncode != 0:
+        return None
+    try:
+        rows = json.loads(stdout_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(rows, list) or len(rows) > count or not rows:
+        return None
+
+    refreshed: list[dict] = []
+    seen_log_ids: set[int] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        row_chat_id = _fence_int(row.get("chat_id"))
+        log_id = _fence_int(row.get("log_id"))
+        author_id = row.get("author_id")
+        sent_at = row.get("sent_at")
+        message_type = row.get("message_type")
+        message = row.get("message")
+        sender_name = row.get("sender_name")
+        is_self = row.get("is_self")
+        if (
+            row_chat_id != chat_id
+            or log_id is None
+            or log_id in seen_log_ids
+            or isinstance(author_id, bool)
+            or not isinstance(author_id, int)
+            or not 0 <= author_id < MAX_INT64
+            or isinstance(sent_at, bool)
+            or not isinstance(sent_at, int)
+            or sent_at <= 0
+            or isinstance(message_type, bool)
+            or not isinstance(message_type, int)
+            or not 0 <= message_type <= 65535
+            or not isinstance(message, str)
+            or not isinstance(sender_name, str)
+            or not isinstance(is_self, bool)
+        ):
+            return None
+        seen_log_ids.add(log_id)
+        refreshed.append(
+            {
+                "log_id": log_id,
+                "chat_id": chat_id,
+                "author_id": author_id,
+                "author_nickname": sender_name.strip()[:120],
+                "sender_name": sender_name.strip()[:120],
+                "message": message[:500],
+                "message_type": message_type,
+                "attachment": bool(str(row.get("attachment") or "").strip()),
+                "sent_at": sent_at,
+                "is_self": is_self,
+            }
+        )
+    if max(seen_log_ids) < expected_watermark:
+        return None
+    refreshed.sort(key=lambda item: (item["sent_at"], item["log_id"]))
+    return refreshed
 
 
 TURN_HOLD_REASONS = frozenset(
@@ -4415,13 +4525,11 @@ def _reply_turn_hold_reason(
                 connection = active[0]
         if connection is not None and _superseded_by(connection, event):
             return "burst_superseded"
+        # A newer room row is freshness information, not event-level
+        # supersession. The durable supersession edge above is authoritative.
         advanced = conversation_advanced_past_event(event)
-        if advanced is not False:
-            return (
-                "conversation_advanced"
-                if advanced is True
-                else "context_freshness_unavailable"
-            )
+        if advanced is None:
+            return "context_freshness_unavailable"
     except Exception:
         return "context_freshness_unavailable"
     return None
@@ -7824,8 +7932,6 @@ def run_context_reply_bundle(message: str, event: dict) -> dict:
         advanced = conversation_advanced_past_event(event)
         if advanced is None:
             raise RetrievalError("context_freshness_unavailable")
-        if advanced:
-            raise RetrievalError("conversation_advanced")
     event.setdefault("provenance", {})
     if isinstance(event.get("provenance"), dict):
         event["provenance"]["context_sync"] = {
@@ -10251,6 +10357,13 @@ def _pre_mutation_send_hold(
     if reason:
         _trace_turn_hold(event, reason)
         return reason
+    analysis_watermark = _fence_int(event.get("analysis_watermark_log_id"))
+    if analysis_watermark is not None:
+        observed_watermark = stable_room_watermark_log_id(event)
+        if observed_watermark is None or observed_watermark < analysis_watermark:
+            return "context_freshness_unavailable"
+        if observed_watermark > analysis_watermark:
+            return "conversation_context_changed"
     return _send_time_repeat_hold(
         event, reply, _event_recent_conversation(event), connection
     )
@@ -13332,7 +13445,7 @@ def send_reply(
     if (
         event is not None
         and event.get("proactive") is not True
-        and conversation_advanced_past_event(event) is not False
+        and conversation_advanced_past_event(event) is None
     ):
         return False
     command = [
@@ -13542,7 +13655,7 @@ def send_reply(
     if (
         event is not None
         and event.get("proactive") is not True
-        and conversation_advanced_past_event(event) is not False
+        and conversation_advanced_past_event(event) is None
     ):
         return False
     if (
@@ -14817,6 +14930,51 @@ def defer_scheduled_pre_send_unavailable(
     )
 
 
+def defer_processing_for_context_refresh(
+    event: dict,
+    event_id: str,
+    connection: sqlite3.Connection | None,
+    *,
+    reason: str,
+    now: float | None = None,
+) -> None:
+    """Retry without a draft when room context changed or freshness is unknown."""
+    if reason not in {"conversation_context_changed", "context_freshness_unavailable"}:
+        raise ValueError("unsupported context refresh reason")
+    current = time.time() if now is None else float(now)
+    upper = event.get("response_window_upper_seconds")
+    if upper is None:
+        upper = PRE_SEND_DEFAULT_RESPONSE_WINDOW_SECONDS
+    try:
+        deadline = response_due_at(event.get("sent_at"), upper, now=current)
+    except (TypeError, ValueError, OverflowError):
+        finish_delivery_unknown(event, event_id, connection)
+        return
+    grace_deadline = deadline + PRE_SEND_RETRY_GRACE_SECONDS
+    if current >= grace_deadline:
+        finish_scheduled_stale_backlog(event, event_id, connection)
+        return
+
+    deferred_event = dict(event)
+    deferred_event["context_refresh_required"] = True
+    deferred_event.pop("analysis_watermark_log_id", None)
+    retry_at = min(current + MODEL_MIN_DEFER_SECONDS, grace_deadline)
+    settle_processing_transition(
+        event,
+        event_id,
+        connection,
+        status="pending",
+        event_json=json.dumps(deferred_event, ensure_ascii=False),
+        due_at=retry_at,
+        decision=None,
+        reason=reason,
+        category="uncertain",
+        reply=None,
+        scheduled_delay_seconds=None,
+        error_class=reason,
+    )
+
+
 def processing_job_has_no_send_attempt(
     connection: sqlite3.Connection | None,
     event_id: str,
@@ -14972,6 +15130,14 @@ def process_job(
         return
     reason = _reply_turn_hold_reason(event, connection)
     if reason:
+        if reason == "context_freshness_unavailable":
+            defer_processing_for_context_refresh(
+                event,
+                event_id,
+                connection,
+                reason=reason,
+            )
+            return
         finish_turn_policy_skip(event, event_id, connection, reason)
         return
 
@@ -15040,21 +15206,36 @@ def process_job(
                 # either: the room has moved on and an old reply reads as a bot.
                 finish_scheduled_stale_backlog(event, event_id, connection)
                 return
-        if event.get("proactive") is True:
-            advanced = False
-        else:
-            advanced = conversation_advanced_past_event(event)
-        if advanced is None:
-            defer_scheduled_pre_send_unavailable(
+        current_watermark = (
+            None
+            if event.get("proactive") is True
+            else stable_room_watermark_log_id(event)
+        )
+        if event.get("proactive") is not True and current_watermark is None:
+            defer_processing_for_context_refresh(
                 event,
                 event_id,
                 connection,
-                error_class="context_freshness_unavailable",
+                reason="context_freshness_unavailable",
             )
             return
-        if advanced:
-            finish_conversation_advanced(event, event_id, connection)
+        analysis_watermark = _fence_int(event.get("analysis_watermark_log_id"))
+        if event.get("proactive") is not True and (
+            analysis_watermark is None or current_watermark != analysis_watermark
+        ):
+            defer_processing_for_context_refresh(
+                event,
+                event_id,
+                connection,
+                reason=(
+                    "context_freshness_unavailable"
+                    if current_watermark is None or analysis_watermark is None
+                    else "conversation_context_changed"
+                ),
+            )
             return
+        # Room activity after analysis invalidates the stored draft, not the
+        # inbound event. Requeue it for fresh local context and analysis.
         inbound_log_id = _fence_int(event.get("log_id"))
         reply = str(job.get("reply") or "").strip()
         if later_self_already_replied(inbound_log_id, reply):
@@ -15178,20 +15359,29 @@ def process_job(
                 connection,
             )
             return
-        if event.get("proactive") is True:
-            advanced = False
-        else:
-            advanced = conversation_advanced_past_event(event)
-        if advanced is None:
-            defer_scheduled_pre_send_unavailable(
+        pre_send_watermark = (
+            None
+            if event.get("proactive") is True
+            else stable_room_watermark_log_id(event)
+        )
+        analysis_watermark = _fence_int(event.get("analysis_watermark_log_id"))
+        if event.get("proactive") is not True and (
+            pre_send_watermark is None
+            or analysis_watermark is None
+            or pre_send_watermark != analysis_watermark
+        ):
+            defer_processing_for_context_refresh(
                 event,
                 event_id,
                 connection,
-                error_class="context_freshness_unavailable",
+                reason=(
+                    "conversation_context_changed"
+                    if pre_send_watermark is not None
+                    and analysis_watermark is not None
+                    and pre_send_watermark > analysis_watermark
+                    else "context_freshness_unavailable"
+                ),
             )
-            return
-        if advanced:
-            finish_conversation_advanced(event, event_id, connection)
             return
         # A new part can arrive while the scheduled reply is being checked.
         # Re-read the durable queue immediately before entering sending state.
@@ -15235,10 +15425,20 @@ def process_job(
             hold_out=hold_reasons,
         ):
             if hold_reasons:
-                # The hold fired before `sending` was committed, so this is a
-                # proven no-send: record the policy skip instead of retrying an
-                # expired or repeated draft.
                 hold_reason = hold_reasons[0]
+                if hold_reason in {
+                    "conversation_context_changed",
+                    "context_freshness_unavailable",
+                }:
+                    defer_processing_for_context_refresh(
+                        event,
+                        event_id,
+                        connection,
+                        reason=hold_reason,
+                    )
+                    return
+                # This hold fired before `sending` was committed, so it is a
+                # proven no-send policy or configuration outcome.
                 hold_category = (
                     "configuration"
                     if hold_reason == "send_allowlist_rejected"
@@ -15298,12 +15498,6 @@ def process_job(
                 return
             if connection is not None and _superseded_by(connection, event):
                 finish_burst_superseded(event, event_id, connection)
-                return
-            if (
-                event.get("proactive") is not True
-                and conversation_advanced_past_event(event) is True
-            ):
-                finish_conversation_advanced(event, event_id, connection)
                 return
             # send_reply commits ``sending`` before invoking local-send.
             # Still processing therefore proves a pre-AX failure.
@@ -15378,6 +15572,45 @@ def process_job(
         complete_event(event_id, reply)
         return
 
+    analysis_watermark: int | None = None
+    if event.get("proactive") is not True:
+        analysis_watermark = stable_room_watermark_log_id(event)
+        if analysis_watermark is None:
+            defer_processing_for_context_refresh(
+                event,
+                event_id,
+                connection,
+                reason="context_freshness_unavailable",
+            )
+            return
+        event_log_id = _fence_int(event.get("log_id"))
+        refresh_context = (
+            event.get("context_refresh_required") is True
+            or event_log_id is None
+            or analysis_watermark > event_log_id
+        )
+        if refresh_context:
+            recent_messages = refresh_recent_messages_from_local_db(
+                event,
+                analysis_watermark,
+            )
+            confirmed_watermark = stable_room_watermark_log_id(event)
+            if recent_messages is None or confirmed_watermark != analysis_watermark:
+                defer_processing_for_context_refresh(
+                    event,
+                    event_id,
+                    connection,
+                    reason=(
+                        "context_freshness_unavailable"
+                        if confirmed_watermark is None
+                        else "conversation_context_changed"
+                    ),
+                )
+                return
+            event["recent_messages"] = recent_messages
+        event.pop("context_refresh_required", None)
+        event.pop("analysis_watermark_log_id", None)
+
     analysis_event = event if event.get("proactive") is True else _coalesced_burst_event(event)
     if event.get("proactive") is not True:
         analysis_event = dict(analysis_event)
@@ -15414,8 +15647,31 @@ def process_job(
             formed = str(analysis.get("reply") or "").strip()
             if formed:
                 update_job(event_id, connection=connection, reply=formed)
+    if event.get("proactive") is not True:
+        completed_watermark = stable_room_watermark_log_id(event)
+        if completed_watermark is None or completed_watermark != analysis_watermark:
+            defer_processing_for_context_refresh(
+                event,
+                event_id,
+                connection,
+                reason=(
+                    "context_freshness_unavailable"
+                    if completed_watermark is None
+                    else "conversation_context_changed"
+                ),
+            )
+            return
+        event["analysis_watermark_log_id"] = completed_watermark
     reason = _reply_turn_hold_reason(event, connection)
     if reason:
+        if reason == "context_freshness_unavailable":
+            defer_processing_for_context_refresh(
+                event,
+                event_id,
+                connection,
+                reason=reason,
+            )
+            return
         finish_turn_policy_skip(event, event_id, connection, reason)
         return
     if analysis["decision"] != "reply":

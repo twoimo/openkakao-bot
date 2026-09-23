@@ -10830,21 +10830,21 @@ print(json.dumps({
             )
             self.assertIs(module.conversation_advanced_past_event(event), True)
 
-    def test_reply_turn_guard_holds_advanced_or_unverifiable_turn(self):
+    def test_reply_turn_guard_holds_only_unverifiable_freshness(self):
         module = self._load_auto_reply_module("auto_reply_advanced_turn_guard_test")
         with self._queued_turn_with_authoritative_watermark(module) as fixture:
             event, state_path, state = fixture
             self.assertIsNone(module._reply_turn_hold_reason(event))
-            for payload, expected_reason in (
-                ({**state, "last_observed_log_id": 421}, "conversation_advanced"),
-                ({}, "context_freshness_unavailable"),
-            ):
-                with self.subTest(state=payload):
-                    state_path.write_text(json.dumps(payload), encoding="utf-8")
-                    self.assertEqual(
-                        module._reply_turn_hold_reason(event),
-                        expected_reason,
-                    )
+            state_path.write_text(
+                json.dumps({**state, "last_observed_log_id": 421}),
+                encoding="utf-8",
+            )
+            self.assertIsNone(module._reply_turn_hold_reason(event))
+            state_path.write_text("{}", encoding="utf-8")
+            self.assertEqual(
+                module._reply_turn_hold_reason(event),
+                "context_freshness_unavailable",
+            )
 
     def test_reply_turn_guard_holds_superseded_queued_turn(self):
         module = self._load_auto_reply_module("auto_reply_superseded_turn_guard_test")
@@ -10879,7 +10879,7 @@ print(json.dumps({
             finally:
                 connection.close()
 
-    def test_process_job_cancels_when_watermark_advances_during_analysis(self):
+    def test_process_job_requeues_for_reanalysis_when_watermark_advances_during_analysis(self):
         module = self._load_auto_reply_module(
             "auto_reply_process_late_watermark_test"
         )
@@ -10893,7 +10893,6 @@ print(json.dumps({
                 )
                 self.assertIsNotNone(claimed)
                 job, previous_status = claimed
-                queued_event = json.loads(job["event_json"])
 
                 def analyze_after_newer_inbound(_event):
                     state_path.write_text(
@@ -10924,26 +10923,141 @@ print(json.dumps({
                         "analyze_event",
                         side_effect=analyze_after_newer_inbound,
                     ) as analyze,
+                    mock.patch.object(
+                        module,
+                        "sample_response_delay_for_analysis",
+                        return_value={
+                            "delay_seconds": 2.0,
+                            "sampled_delay_seconds": 2.0,
+                            "response_window_upper_seconds": 60.0,
+                        },
+                    ),
+                    mock.patch.object(module, "decision_record", return_value={}),
+                    mock.patch.object(module, "persist_reply_evidence_ledger"),
+                    mock.patch.object(module, "record_context_decision", return_value=True),
+                    mock.patch.object(
+                        module,
+                        "settle_processing_transition",
+                        return_value=True,
+                    ) as settle,
                     mock.patch.object(module, "finish_turn_policy_skip") as finish,
                     mock.patch.object(module, "send_reply") as send,
                 ):
                     module.process_job(job, previous_status, connection)
 
                 analyze.assert_called_once()
-                finish.assert_called_once_with(
-                    queued_event,
-                    event["event_id"],
-                    connection,
-                    "conversation_advanced",
-                )
+                finish.assert_not_called()
                 send.assert_not_called()
-                row = connection.execute(
-                    "SELECT status, reply FROM reply_jobs WHERE event_id = ?",
-                    (event["event_id"],),
-                ).fetchone()
-                self.assertEqual(tuple(row), ("processing", "formed reply"))
+                settle.assert_called_once()
+                fields = settle.call_args.kwargs
+                self.assertEqual(fields["status"], "pending")
+                self.assertIsNone(fields["reply"])
+                self.assertEqual(fields["error_class"], "conversation_context_changed")
+                deferred_event = json.loads(fields["event_json"])
+                self.assertTrue(deferred_event["context_refresh_required"])
+                self.assertNotIn("analysis_watermark_log_id", deferred_event)
             finally:
                 connection.close()
+
+    def test_context_refresh_reanalyzes_with_newer_local_rows(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_context_refresh_reanalysis_test"
+        )
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            state_path.write_text(
+                json.dumps({**state, "last_observed_log_id": 421}),
+                encoding="utf-8",
+            )
+            event["context_refresh_required"] = True
+            job = {
+                "event_id": event["event_id"],
+                "event_json": json.dumps(event, ensure_ascii=False),
+            }
+            local_rows = [
+                {
+                    "log_id": 420,
+                    "chat_id": 42,
+                    "author_id": 700,
+                    "is_self": False,
+                    "sender_name": "member",
+                    "message": "original question",
+                    "attachment": "",
+                    "message_type": 1,
+                    "sent_at": event["sent_at"],
+                },
+                {
+                    "log_id": 421,
+                    "chat_id": 42,
+                    "author_id": 701,
+                    "is_self": False,
+                    "sender_name": "another member",
+                    "message": "additional context",
+                    "attachment": "",
+                    "message_type": 1,
+                    "sent_at": event["sent_at"] + 1,
+                },
+            ]
+            analysis = {
+                "decision": "reply",
+                "reason": "direct_question",
+                "category": "question",
+                "reply": "formed reply",
+                "provenance": {},
+            }
+
+            def analyze_with_refreshed_context(analysis_event):
+                refreshed = analysis_event["recent_messages"]
+                self.assertEqual(
+                    [row["log_id"] for row in refreshed],
+                    [420, 421],
+                )
+                self.assertFalse(analysis_event.get("context_refresh_required", False))
+                return analysis
+
+            with (
+                mock.patch.object(module, "db_authoritative_event_allowed", return_value=True),
+                mock.patch.object(module, "privacy_attestation_current", return_value=True),
+                mock.patch.object(
+                    module,
+                    "_run_bounded_process",
+                    return_value=(0, json.dumps(local_rows).encode(), b""),
+                ) as local_read,
+                mock.patch.object(
+                    module,
+                    "analyze_event",
+                    side_effect=analyze_with_refreshed_context,
+                ) as analyze,
+                mock.patch.object(
+                    module,
+                    "sample_response_delay_for_analysis",
+                    return_value={
+                        "delay_seconds": 2.0,
+                        "sampled_delay_seconds": 2.0,
+                        "response_window_upper_seconds": 60.0,
+                    },
+                ),
+                mock.patch.object(module, "decision_record", return_value={}),
+                mock.patch.object(module, "persist_reply_evidence_ledger"),
+                mock.patch.object(module, "record_context_decision", return_value=True),
+                mock.patch.object(
+                    module,
+                    "settle_processing_transition",
+                    return_value=True,
+                ) as settle,
+                mock.patch.object(module, "send_reply") as send,
+            ):
+                module.process_job(job, "pending", None)
+
+            local_read.assert_called_once()
+            analyze.assert_called_once()
+            send.assert_not_called()
+            settle.assert_called_once()
+            fields = settle.call_args.kwargs
+            self.assertEqual(fields["status"], "scheduled")
+            scheduled_event = json.loads(fields["event_json"])
+            self.assertEqual(scheduled_event["analysis_watermark_log_id"], 421)
+            self.assertNotIn("context_refresh_required", scheduled_event)
 
     def test_stale_backlog_uses_sample_distribution_upper_before_model(self):
         module = self._load_auto_reply_module("auto_reply_stale_backlog_test")

@@ -2,6 +2,30 @@ import { LAYOUT } from "./tokens";
 import type { RuntimeSnapshot } from "./contracts";
 
 export const MAIN_PANEL_CONTROLS = Object.freeze([] as const);
+
+export function voiceErrorMessage(errorCode: string | null): string | null {
+  switch (errorCode) {
+    case "voice_memory_budget_low":
+      return "기기 메모리 여유가 부족해 음성 처리를 멈췄습니다.";
+    case "voice_memory_budget_unavailable":
+      return "기기 메모리 상태를 확인할 수 없어 음성 처리를 시작하지 않았습니다.";
+    case "mic_disconnected":
+      return "마이크를 사용할 수 없습니다. 연결을 확인해 주세요.";
+    case "stt_empty":
+      return "말씀을 알아듣지 못했습니다. 다시 말씀해 주세요.";
+    case "generation_error":
+      return "답변을 준비하지 못했습니다. 다시 말씀해 주세요.";
+    case "tts_error":
+      return "답변을 소리로 들려주지 못했습니다.";
+    case "global_abort":
+      return "음성 요청을 중단했습니다.";
+    case null:
+      return null;
+    default:
+      return "음성 기능을 시작하지 못했습니다.";
+  }
+}
+
 export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
   "settings-add-room-select",

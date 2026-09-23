@@ -128,9 +128,11 @@ fn cancel_model_swap(bridge: tauri::State<'_, PythonBridge>, token_id: String) -
 }
 
 #[tauri::command]
-fn start_voice_session(bridge: tauri::State<'_, PythonBridge>) -> Result<(), String> {
-    bridge
-        .start_voice_session()
+async fn start_voice_session(bridge: tauri::State<'_, PythonBridge>) -> Result<(), String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.start_voice_session())
+        .await
+        .map_err(|_| "voice_session_start_failed".to_string())?
         .map_err(|error| error.to_string())
 }
 
@@ -234,23 +236,21 @@ fn main() {
                 .icon(make_tray_icon())
                 .icon_as_template(true)
                 .tooltip("OpenKakao Jarvis")
-                .on_tray_icon_event(|tray, event| {
-                    match event {
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            position,
-                            ..
-                        } => toggle_panel(tray.app_handle(), position),
-                        TrayIconEvent::Click {
-                            button: MouseButton::Right,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } => {
-                            let _ = open_settings(tray.app_handle().clone());
-                        }
-                        _ => {}
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        position,
+                        ..
+                    } => toggle_panel(tray.app_handle(), position),
+                    TrayIconEvent::Click {
+                        button: MouseButton::Right,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } => {
+                        let _ = open_settings(tray.app_handle().clone());
                     }
+                    _ => {}
                 })
                 .build(&handle)?;
             Ok(())

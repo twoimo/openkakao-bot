@@ -201,7 +201,7 @@ class LiveRetrievalTests(unittest.TestCase):
                 data.append(
                     {"index": index, "embedding": [1.0, 0.0] if semantic else [-1.0, 0.0]}
                 )
-            return {"data": data}
+            return {"model": str(payload.get("model") or ""), "data": data}
 
         with tempfile.TemporaryDirectory() as tmp, _local_embedding_server(embeddings) as url:
             root = Path(tmp)
@@ -209,7 +209,11 @@ class LiveRetrievalTests(unittest.TestCase):
             conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
             KG.write_meta(conn, "last_indexed_at", "12345")
             entity_count = conn.execute("SELECT COUNT(*) FROM kg_entities").fetchone()[0]
-            with mock.patch.object(KG, "DENSE_EMBEDDING_URL", url):
+            with mock.patch.object(KG, "DENSE_EMBEDDING_URL", url), mock.patch.object(
+                KG,
+                "_active_dense_embedding_model",
+                return_value="mlx-test/embedder",
+            ):
                 result = KG.refresh_dense_index(conn, root, batch_size=3)
                 ranked = KG._query_knowledge_ranked("이번달 청구금액", state_root=root)
                 bundle = KG.retrieve_knowledge_bundle("이번달 청구금액", state_root=root)
@@ -362,13 +366,20 @@ class LiveRetrievalTests(unittest.TestCase):
     def test_dense_refresh_malformed_responses_and_timeout_fail_closed(self):
         scenarios = {
             "invalid-vector": lambda payload: {
+                "model": str(payload.get("model") or ""),
                 "data": [
                     {"index": index, "embedding": []}
                     for index, _text in enumerate(payload.get("input") or [])
                 ]
             },
-            "invalid-format": lambda _payload: {"data": "not-a-list"},
-            "count-mismatch": lambda _payload: {"data": []},
+            "invalid-format": lambda payload: {
+                "model": str(payload.get("model") or ""),
+                "data": "not-a-list",
+            },
+            "count-mismatch": lambda payload: {
+                "model": str(payload.get("model") or ""),
+                "data": [],
+            },
         }
         for name, response_factory in scenarios.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
@@ -377,6 +388,10 @@ class LiveRetrievalTests(unittest.TestCase):
                 conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
                 with _local_embedding_server(response_factory) as url, mock.patch.object(
                     KG, "DENSE_EMBEDDING_URL", url
+                ), mock.patch.object(
+                    KG,
+                    "_active_dense_embedding_model",
+                    return_value="mlx-test/embedder",
                 ):
                     result = KG.refresh_dense_index(conn, root)
                     bundle = KG.retrieve_knowledge_bundle("최연우", state_root=root)
@@ -389,6 +404,7 @@ class LiveRetrievalTests(unittest.TestCase):
         def slow_embeddings(payload):
             time.sleep(0.05)
             return {
+                "model": str(payload.get("model") or ""),
                 "data": [
                     {"index": index, "embedding": [1.0, 0.0]}
                     for index, _text in enumerate(payload.get("input") or [])
@@ -403,6 +419,10 @@ class LiveRetrievalTests(unittest.TestCase):
                 KG, "DENSE_EMBEDDING_TIMEOUT_SECONDS", 0.01
             ), mock.patch.object(
                 KG, "DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS", 0.01
+            ), mock.patch.object(
+                KG,
+                "_active_dense_embedding_model",
+                return_value="mlx-test/embedder",
             ):
                 result = KG.refresh_dense_index(conn, root)
                 bundle = KG.retrieve_knowledge_bundle("최연우", state_root=root)
@@ -422,10 +442,17 @@ class LiveRetrievalTests(unittest.TestCase):
                 ("ent:blank", "", "entity", "[]", "", "[]", 1, 1),
             )
             conn.commit()
-            with mock.patch.object(KG.urllib.request, "urlopen") as urlopen:
+            with mock.patch.object(
+                KG,
+                "_active_dense_embedding_model",
+            ) as active_model, mock.patch.object(
+                KG,
+                "_open_loopback_embedding_request",
+            ) as open_request:
                 result = KG.refresh_dense_index(conn, root)
                 bundle = KG.retrieve_knowledge_bundle("anything", state_root=root)
-            urlopen.assert_not_called()
+            active_model.assert_not_called()
+            open_request.assert_not_called()
             self.assertEqual(result["status"], "unavailable")
             self.assertIn("dense embedding input must be non-empty", KG.read_meta(conn, "last_dense_status"))
             self.assertEqual(bundle["search_mode"], KG.SEARCH_MODE_BM25_ONLY)
