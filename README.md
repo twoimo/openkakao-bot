@@ -53,6 +53,10 @@ See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.ht
 
 “Hey Jarvis” starts local speech recognition, a local model reply, and speech synthesis. Jarvis answers once and asks a follow-up only when essential information is missing. The voice pipeline keeps at most four recent question-and-answer turns in memory, up to 600 characters per message. It clears that context after ten idle minutes and resumes listening after each spoken reply.
 
+Before loading Whisper or Qwen3-TTS, a local-only admission check requires at least 8 GiB or 10 GiB of reclaimable RAM respectively and 2 GiB of free swap. If either probe is unavailable or the budget is low, the voice session reports the condition and does not load the model. A synthetic local voice run on 2026-09-24 reached the safety stop before a complete turn; end-to-end voice remains unverified on this host.
+
+The settings UI marks voice status unavailable when its heartbeat is more than five minutes old, instead of presenting a stale `wake_listen` state as live.
+
 ### Other architecture diagrams
 
 - [Tauri menu-bar architecture](docs/architecture/jarvis-openkakao-units1-4.html)

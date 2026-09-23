@@ -20,6 +20,8 @@ from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, Voice
 from jarvis_voice import VOICE_CONTEXT_TTL_SECONDS
 from jarvis_voice import VOICE_PERSONA_PROMPT
 from jarvis_voice import QWEN3_TTS_MODEL_ID, Qwen3TtsAdapter
+from jarvis_voice import MlxWhisperAdapter, VoiceMemoryBudget, VoiceMemoryBudgetError
+from jarvis_voice import _require_voice_memory_budget
 from jarvis_voice import OpenWakeVadFrontend
 from jarvis_voice import BUNDLED_CUSTOM_WAKE_MODEL, resolve_custom_wake_model
 from jarvis_voice import LocalMlxLlm
@@ -490,6 +492,7 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
             adapter = Qwen3TtsAdapter()
             with (
                 mock.patch.dict(os.environ, {"OPENKAKAO_VOICE_TTS_OUT": str(output)}),
+                mock.patch("jarvis_voice._require_voice_memory_budget"),
                 mock.patch.dict(
                     sys.modules,
                     {
@@ -532,6 +535,7 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             token = AbortController(Path(temp_dir)).token()
         with (
+            mock.patch("jarvis_voice._require_voice_memory_budget"),
             mock.patch(
                 "jarvis_voice._resolve_qwen3_tts_model_path",
                 return_value=QWEN3_TTS_MODEL_ID,
@@ -543,6 +547,98 @@ class Qwen3TtsAdapterApiTests(unittest.TestCase):
         self.assertTrue(adapter._engine.kwargs["local_files_only"])
         self.assertEqual(adapter._engine.generated["language"], "Korean")
         self.assertEqual(adapter._engine.generated["speaker"], "ryan")
+
+    def test_load_refuses_before_importing_tts_when_memory_is_low(self):
+        from unittest import mock
+
+        adapter = Qwen3TtsAdapter()
+        with mock.patch(
+            "jarvis_voice._require_voice_memory_budget",
+            side_effect=VoiceMemoryBudgetError("voice_memory_budget_low"),
+        ):
+            with self.assertRaisesRegex(VoiceMemoryBudgetError, "voice_memory_budget_low"):
+                adapter._load()
+        self.assertIsNone(adapter._engine)
+
+
+class VoiceMemoryBudgetTests(unittest.TestCase):
+    def test_tts_requires_ten_gib_reclaimable_and_two_gib_swap(self):
+        from unittest import mock
+
+        enough = VoiceMemoryBudget(10 * 1024**3, 2 * 1024**3)
+        with mock.patch("jarvis_voice._read_voice_memory_budget", return_value=enough):
+            self.assertEqual(_require_voice_memory_budget("tts"), enough)
+
+        low_swap = VoiceMemoryBudget(32 * 1024**3, 2 * 1024**3 - 1)
+        with mock.patch("jarvis_voice._read_voice_memory_budget", return_value=low_swap):
+            with self.assertRaisesRegex(VoiceMemoryBudgetError, "voice_memory_budget_low"):
+                _require_voice_memory_budget("tts")
+
+    def test_whisper_refuses_when_reclaimable_ram_is_below_eight_gib(self):
+        from unittest import mock
+
+        low_ram = VoiceMemoryBudget(8 * 1024**3 - 1, 4 * 1024**3)
+        with mock.patch("jarvis_voice._read_voice_memory_budget", return_value=low_ram):
+            with self.assertRaisesRegex(VoiceMemoryBudgetError, "voice_memory_budget_low"):
+                _require_voice_memory_budget("stt")
+
+    def test_unavailable_memory_probe_fails_closed_before_whisper_import(self):
+        from unittest import mock
+
+        adapter = MlxWhisperAdapter()
+        with TemporaryDirectory() as temp_dir:
+            token = AbortController(Path(temp_dir)).token()
+            with mock.patch(
+                "jarvis_voice._require_voice_memory_budget",
+                side_effect=VoiceMemoryBudgetError("voice_memory_budget_unavailable"),
+            ):
+                with self.assertRaisesRegex(
+                    VoiceMemoryBudgetError, "voice_memory_budget_unavailable"
+                ):
+                    adapter.transcribe(b"\0\0" * 320, 16_000, token)
+
+
+class VoiceMemoryBudgetPipelineTests(unittest.TestCase):
+    def test_stt_budget_error_stops_before_llm_or_tts(self):
+        class DeniedStt:
+            def transcribe(self, _pcm16, _sample_rate, _token):
+                raise VoiceMemoryBudgetError("voice_memory_budget_low")
+
+        llm = FakeLlm()
+        tts = FakeTts()
+        with TemporaryDirectory() as temp_dir:
+            pipeline = JarvisVoicePipeline(
+                stt=DeniedStt(),
+                llm=llm,
+                tts=tts,
+                token=AbortController(Path(temp_dir)).token(),
+            )
+            result = pipeline.process_utterance(b"\0\0")
+
+        self.assertEqual(result.state, VoiceState.ERROR)
+        self.assertEqual(result.error_code, "voice_memory_budget_low")
+        self.assertEqual(llm.calls, [])
+        self.assertEqual(tts.calls, 0)
+
+    def test_tts_budget_error_is_reported_without_retaining_turn(self):
+        class DeniedTts:
+            def speak(self, _text, _token):
+                raise VoiceMemoryBudgetError("voice_memory_budget_low")
+
+        llm = FakeLlm()
+        with TemporaryDirectory() as temp_dir:
+            pipeline = JarvisVoicePipeline(
+                stt=FakeStt(),
+                llm=llm,
+                tts=DeniedTts(),
+                token=AbortController(Path(temp_dir)).token(),
+            )
+            result = pipeline.process_utterance(b"\0\0")
+
+        self.assertEqual(result.state, VoiceState.ERROR)
+        self.assertEqual(result.error_code, "voice_memory_budget_low")
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(pipeline._recent_conversation(), [])
 
 
 class LocalMlxLlmRequestTests(unittest.TestCase):

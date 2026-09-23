@@ -31,6 +31,7 @@ const JOB_EVENT_CAP: usize = 8;
 const JOB_EVENT_MAX_AGE_SECS: f64 = 300.0;
 const ABORT_STATE_NAME: &str = "jarvis-abort.json";
 const VOICE_STATUS_NAME: &str = "jarvis-voice-status.json";
+const VOICE_STATUS_MAX_AGE_SECS: u64 = 5 * 60;
 const STATE_FILE_LIMIT_BYTES: u64 = 4096;
 const WAKE_PHRASE: &str = "헤이 자비스";
 const WAKE_THRESHOLD: f64 = 0.65;
@@ -1576,13 +1577,21 @@ fn read_voice_status(state_root: &Path, repo_root: &Path) -> SafeVoiceStatus {
         Some("custom") => "custom",
         _ => "none",
     };
+    let updated_at = as_u64(root.get("updated_at"));
+    let now = epoch_seconds() as u64;
+    if updated_at == 0
+        || updated_at > now.saturating_add(5)
+        || now.saturating_sub(updated_at) > VOICE_STATUS_MAX_AGE_SECS
+    {
+        return default_voice_status(repo_root);
+    }
     SafeVoiceStatus {
         available: true,
         state,
         rms: clamp01(root.get("rms").and_then(Value::as_f64).unwrap_or(0.0)),
         error_code,
         wake_source: wake_source.to_string(),
-        updated_at: as_u64(root.get("updated_at")),
+        updated_at,
         wake_phrase: root
             .get("wake_phrase")
             .and_then(Value::as_str)
@@ -4066,7 +4075,15 @@ mod tests {
         fs::create_dir_all(&temp).unwrap();
         fs::write(
             temp.join(VOICE_STATUS_NAME),
-            br#"{"schema_version":1,"state":"speaking","rms":2.0,"error_code":"","wake_source":"stock","updated_at":7}"#,
+            json!({
+                "schema_version": 1,
+                "state": "speaking",
+                "rms": 2.0,
+                "error_code": "",
+                "wake_source": "stock",
+                "updated_at": epoch_seconds() as u64
+            })
+            .to_string(),
         )
         .unwrap();
         let status = read_voice_status(&temp, &temp.join("repo-without-bundle"));
@@ -4074,10 +4091,40 @@ mod tests {
         assert_eq!(status.state, "speaking");
         assert_eq!(status.rms, 1.0);
         assert_eq!(status.wake_source, "stock");
-        assert_eq!(status.updated_at, 7);
+        assert!(status.updated_at > 0);
         assert_eq!(status.wake_phrase, WAKE_PHRASE);
         assert_eq!(status.threshold, WAKE_THRESHOLD);
         assert!(!status.custom_model_selected);
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn stale_voice_status_is_not_reported_as_a_live_listener() {
+        let temp = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("openkakao-stale-voice-status-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(
+            temp.join(VOICE_STATUS_NAME),
+            json!({
+                "schema_version": 1,
+                "state": "wake_listen",
+                "rms": 0.0,
+                "error_code": "",
+                "wake_source": "none",
+                "updated_at": (epoch_seconds() as u64).saturating_sub(VOICE_STATUS_MAX_AGE_SECS + 1)
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let status = read_voice_status(&temp, &temp.join("repo-without-bundle"));
+        assert!(!status.available);
+        assert_eq!(status.state, "unavailable");
+        assert_eq!(status.updated_at, 0);
+
         let _ = fs::remove_dir_all(&temp);
     }
 

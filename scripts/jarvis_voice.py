@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -45,6 +46,13 @@ VOICE_CONTEXT_TURNS = 4
 VOICE_CONTEXT_ITEM_MAX_CHARS = 600
 VOICE_CONTEXT_TTL_SECONDS = 10 * 60
 VOICE_WAKE_RESUME_DELAY_SECONDS = 0.5
+# The last bounded host run began with 1.65 GiB of swap headroom and crossed
+# the 512 MiB emergency stop while a voice model stage was still running.
+# Keep 2 GiB free before starting either large local voice model, plus enough
+# reclaimable RAM for the model and its temporary inference buffers.
+VOICE_MIN_SWAP_FREE_BYTES = 2 * 1024**3
+VOICE_STT_MIN_RECLAIMABLE_BYTES = 8 * 1024**3
+VOICE_TTS_MIN_RECLAIMABLE_BYTES = 10 * 1024**3
 VOICE_PERSONA_PROMPT = (
     "당신은 건조하고 절제된 영국식 집사 말투의 Jarvis다. "
     "항상 한국어로 짧고 정확하게 답한다. 과장된 감탄이나 아첨은 하지 않는다. "
@@ -58,6 +66,75 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         del req, fp, code, msg, headers, newurl
         return None
+
+
+@dataclass(frozen=True)
+class VoiceMemoryBudget:
+    reclaimable_bytes: int
+    swap_free_bytes: int
+
+
+class VoiceMemoryBudgetError(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def _read_voice_memory_budget() -> VoiceMemoryBudget:
+    """Read reclaimable macOS pages and swap headroom without network access."""
+
+    if sys.platform != "darwin":
+        raise VoiceMemoryBudgetError("voice_memory_budget_unavailable")
+    try:
+        vm = subprocess.run(
+            ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=2.0, check=False
+        )
+        swap = subprocess.run(
+            ["/usr/sbin/sysctl", "vm.swapusage"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise VoiceMemoryBudgetError("voice_memory_budget_unavailable") from exc
+    if vm.returncode != 0 or swap.returncode != 0:
+        raise VoiceMemoryBudgetError("voice_memory_budget_unavailable")
+
+    page_match = re.search(r"page size of\s+(\d+) bytes", vm.stdout)
+    swap_match = re.search(r"free\s*=\s*([0-9]+(?:\.[0-9]+)?)M", swap.stdout)
+    if page_match is None or swap_match is None:
+        raise VoiceMemoryBudgetError("voice_memory_budget_unavailable")
+    page_size = int(page_match.group(1))
+    pages = 0
+    for label in ("Pages free", "Pages inactive", "Pages speculative"):
+        match = re.search(rf"^{re.escape(label)}:\s+(\d+)\.", vm.stdout, re.MULTILINE)
+        if match is None:
+            raise VoiceMemoryBudgetError("voice_memory_budget_unavailable")
+        pages += int(match.group(1))
+    reclaimable = pages * page_size
+    swap_free = int(float(swap_match.group(1)) * 1024**2)
+    if reclaimable <= 0 or swap_free < 0:
+        raise VoiceMemoryBudgetError("voice_memory_budget_unavailable")
+    return VoiceMemoryBudget(reclaimable, swap_free)
+
+
+def _require_voice_memory_budget(stage: str) -> VoiceMemoryBudget:
+    """Fail closed before STT/TTS loads when the host lacks measured headroom."""
+
+    minimum_reclaimable = {
+        "stt": VOICE_STT_MIN_RECLAIMABLE_BYTES,
+        "tts": VOICE_TTS_MIN_RECLAIMABLE_BYTES,
+    }.get(stage)
+    if minimum_reclaimable is None:
+        raise ValueError("voice_memory_stage_invalid")
+    budget = _read_voice_memory_budget()
+    if (
+        budget.reclaimable_bytes < minimum_reclaimable
+        or budget.swap_free_bytes < VOICE_MIN_SWAP_FREE_BYTES
+    ):
+        raise VoiceMemoryBudgetError("voice_memory_budget_low")
+    return budget
 
 
 def _force_local_model_cache() -> None:
@@ -618,6 +695,8 @@ class JarvisVoicePipeline:
                 return self._end(VoiceState.ERROR, "stt_empty")
         except JarvisCancelled:
             return self._end(VoiceState.ABORTED, "global_abort")
+        except VoiceMemoryBudgetError as exc:
+            return self._end(VoiceState.ERROR, exc.code)
         except Exception:
             return self._end(VoiceState.ERROR, "stt_error")
 
@@ -645,6 +724,8 @@ class JarvisVoicePipeline:
             self.token.raise_if_cancelled()
         except JarvisCancelled:
             return self._end(VoiceState.ABORTED, "global_abort")
+        except VoiceMemoryBudgetError as exc:
+            return self._end(VoiceState.ERROR, exc.code)
         except Exception:
             return self._end(VoiceState.ERROR, "tts_error")
 
@@ -717,6 +798,7 @@ class MlxWhisperAdapter:
 
     def transcribe(self, pcm16: bytes, sample_rate: int, token: AbortToken) -> str:
         token.raise_if_cancelled()
+        _require_voice_memory_budget("stt")
         _force_local_model_cache()
         import numpy as np
         import mlx_whisper
@@ -741,6 +823,7 @@ class Qwen3TtsAdapter:
 
     def _load(self) -> Any:
         if self._engine is None:
+            _require_voice_memory_budget("tts")
             _force_local_model_cache()
             from qwen_tts import Qwen3TTSModel
             import torch
