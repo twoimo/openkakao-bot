@@ -61,7 +61,7 @@ See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.ht
 
 ## Current runtime check
 
-Read-only status on 2026-09-23 reported a 128 GiB Mac. Flash-Next and the Krea-2 image model were resident (91,121,203,437 bytes combined); Qwen3.8 27B was unloaded. A 30-second localhost reply-generation request returned no bytes and timed out, so a successful reply is unverified. The speech listener reported `wake_listen`; a complete voice conversation is unverified. The Tauri app has been rebuilt and installed locally. The current runtime measurements and their limits are recorded in [engineering status](docs/engineering-status.md).
+Read-only status on 2026-09-23 reported a 128 GiB Mac. After a local MLX process-owner repair, Flash-Next alone is resident (75,303,252,216 bytes); Krea-2 and Qwen3.8 27B are unloaded. Two bounded localhost generations succeeded in 1.338 s and 3.679 s. The 27B swap path and a complete wake→STT→LLM→TTS conversation remain unverified. The Tauri app is rebuilt and installed locally. See [engineering status](docs/engineering-status.md) for measurements and limits.
 
 The detailed implementation notes and dated verification records are kept in [engineering status](docs/engineering-status.md). They describe source checks, automated tests, and live runtime observations separately.
 
