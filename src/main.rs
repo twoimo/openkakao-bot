@@ -1087,7 +1087,8 @@ enum Commands {
         /// when KakaoTalk leaves a group room's local database name empty.
         #[arg(long = "chat")]
         chat: Vec<String>,
-        /// Resolve and validate targets without starting workers or sending.
+        /// Resolve and validate targets without probing the model, starting
+        /// workers, or sending replies.
         #[arg(long)]
         check: bool,
         /// Override the configured self nickname for this foreground run.
@@ -4857,18 +4858,6 @@ fn run_auto_reply(
         json_output,
     )?;
     choice.apply(&mut effective_config);
-    if let Err(error) = probe_auto_reply_llm(&effective_config, choice) {
-        emit_auto_reply_preflight(
-            json_output,
-            check,
-            &[],
-            &auto_reply_state_root(&effective_config).unwrap_or_else(|_| PathBuf::from(".")),
-            false,
-            Some(&error.to_string()),
-            false,
-        );
-        return Err(error);
-    }
     let reply_author_override_active = !reply_author_overrides.is_empty();
     if self_nickname_override.is_some() {
         effective_config.auto_reply.self_nickname = self_nickname_override;
@@ -5144,6 +5133,19 @@ fn run_auto_reply(
         }
         emit_auto_reply_preflight(json_output, true, &targets, &root, true, None, false);
         return Ok(());
+    }
+
+    if let Err(error) = probe_auto_reply_llm(config, choice) {
+        emit_auto_reply_preflight(
+            json_output,
+            false,
+            &targets,
+            &root,
+            false,
+            Some(&error.to_string()),
+            false,
+        );
+        return Err(error);
     }
 
     auto_reply_legacy_conflict(&root)?;
