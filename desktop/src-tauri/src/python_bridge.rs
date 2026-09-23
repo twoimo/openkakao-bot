@@ -1382,7 +1382,7 @@ fn settings_action_args(
                 "chat_id": id,
                 "title": title,
                 "auto_reply": true,
-                "geeknews": true,
+                "geeknews": false,
             });
             args.extend(["--catalog-upsert".to_string(), payload.to_string()]);
         }
@@ -3414,7 +3414,7 @@ mod tests {
         assert_eq!(parsed["chat_id"], 123456);
         assert_eq!(parsed["title"], "테스트 방");
         assert_eq!(parsed["auto_reply"], true);
-        assert_eq!(parsed["geeknews"], true);
+        assert_eq!(parsed["geeknews"], false);
 
         let sanitized = sanitize_room_upsert(&json!({"ok": true, "action": "room-upsert"}));
         assert_eq!(sanitized["ok"], true);

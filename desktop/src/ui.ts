@@ -21,6 +21,7 @@ export const SETTINGS_IDS = Object.freeze([
   "settings-dream-rsi-card",
   "settings-knowledge-card",
   "knowledge-graph-canvas",
+  "knowledge-accessible-nodes",
   "knowledge-expand-hop",
   "knowledge-focus-title",
   "knowledge-focus-meta",
@@ -100,6 +101,7 @@ export function settingsMarkup(): string {
       <p id="knowledge-summary">E-R-E 그래프를 읽는 중입니다. 메시지는 노드로 만들지 않습니다.</p>
       <div class="knowledge-hologram-shell">
         <canvas id="knowledge-graph-canvas" width="1280" height="640" aria-label="Knowledge E-R-E hologram graph"></canvas>
+        <div id="knowledge-accessible-nodes" class="sr-only" role="region" aria-label="지식 그래프 노드 접근성 목록"></div>
         <div class="knowledge-hologram-toolbar">
           <span id="knowledge-hop-label">overview · 최대 24 nodes</span>
           <button id="knowledge-expand-hop" type="button" disabled>+1 hop</button>

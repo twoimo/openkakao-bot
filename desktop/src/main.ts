@@ -386,6 +386,8 @@ function setupKnowledgeGraph(
   );
   setText("knowledge-mode", payload?.stale === true ? "GraphRAG · stale" : "GraphRAG · ready");
 
+  const a11yContainer = document.querySelector<HTMLDivElement>("#knowledge-accessible-nodes");
+
   let activeNodeId = "";
   const hologram = new KnowledgeHologram(canvas, graph, ({ node, view }) => {
     activeNodeId = node.id;
@@ -425,6 +427,23 @@ function setupKnowledgeGraph(
     expand.disabled = view.hops >= MAX_FOCUS_HOPS;
     renderKnowledgeRelations(graph, node, view);
   });
+
+  if (a11yContainer) {
+    a11yContainer.replaceChildren();
+    graph.nodes.slice(0, ON_SCREEN_NODE_CAP).forEach((node) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "knowledge-a11y-node";
+      btn.dataset.nodeId = node.id;
+      btn.textContent = node.label;
+      btn.setAttribute("aria-label", `${node.label} (${node.category}) 노드 선택`);
+      btn.addEventListener("click", () => {
+        hologram.clickNode(node.id);
+      });
+      a11yContainer.append(btn);
+    });
+  }
+
   return hologram;
 }
 

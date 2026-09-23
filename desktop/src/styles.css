@@ -124,6 +124,25 @@ body.settings-view { min-width: 600px; min-height: 700px; overflow-y: auto; }
 .model-row strong { font-size: 12px; }
 .model-id { margin-top: 3px; color: var(--muted); font-size: 10.5px; line-height: 1.48; overflow-wrap: anywhere; }
 .knowledge-accent { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.knowledge-a11y-node {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+}
 .knowledge-hologram-shell {
   position: relative;
   margin-top: 11px;
