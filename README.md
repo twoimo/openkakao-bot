@@ -65,7 +65,7 @@ The settings UI marks voice status unavailable when its heartbeat is more than f
 
 ## Current runtime check
 
-Read-only status on 2026-09-23 reported a 128 GiB Mac. After a local MLX process-owner repair, Flash-Next alone is resident (75,303,252,216 bytes); Krea-2 and Qwen3.8 27B are unloaded. Two bounded localhost generations succeeded in 1.338 s and 3.679 s. The 27B swap path and a complete wake→STT→LLM→TTS conversation remain unverified. The Tauri app is rebuilt and installed locally. See [engineering status](docs/engineering-status.md) for measurements and limits.
+Read-only host checks on 2026-09-24 report a 128 GiB Mac with Flash-Next loaded and ready. The latest synthetic generation probe timed out at 60.009 s, so current generation is not verified. Qwen3.8 27B and Qwen3-TTS are unloaded; the 27B readiness probe returned `model_not_ready` while the MLX server owner is `model_owner_unmanaged`. Free swap was 1,178.44 MiB, below the 2,048 MiB voice admission threshold, so Whisper/TTS loading is blocked and a complete wake→STT→LLM→TTS turn remains unverified. The loaded model does not advertise embeddings; GraphRAG search is BM25-only and dense/RRF is unavailable. No model load or server takeover was performed in this readback. See [engineering status](docs/engineering-status.md) for measurements and limits.
 
 The detailed implementation notes and dated verification records are kept in [engineering status](docs/engineering-status.md). They describe source checks, automated tests, and live runtime observations separately.
 
