@@ -1,17 +1,24 @@
 # Jarvis desktop design contract
 
+## Experience
+
+Jarvis should feel like a quiet instrument panel: warm, legible, and composed. A new user should understand each setting without knowing model, retrieval, or runtime terminology. Status copy gives one useful next step; diagnostic detail stays in developer documentation. The trade-off is deliberate: expert users see fewer live counters in the settings window.
+
 ## Decision table
 
 | Constraint | Decision | Review check |
 | --- | --- | --- |
+| First-use comprehension | Plain Korean labels and one short status per task | User-facing settings contain no model IDs or diagnostic acronyms. |
+| Visual character | Ivory and warm black surfaces; champagne marks selection; amber marks caution | No neon, bloom, glow, or decorative shadow. |
+| Reading width | 960px window, 912px content area, 58:42 columns with a 16px gap; one column below 700px | Long labels wrap without forcing horizontal scrolling; the settings window uses its available width. |
 | Live panel geometry | 276×260 panel, 12 inset, 236 core | Main panel constants are tested. |
 | Main-panel hierarchy | Spherical Jarvis core only; settings open from a right-click on the menu-bar tray icon | No health/jobs/bulk/permission chrome. |
-| Settings | One unified, single-column window, max 720px | Rooms → AI model → voice → knowledge → history. |
+| Settings | One unified 960×880 window; two-column desktop grid and a single narrow-screen column | Rooms and AI answers, then voice and conversation status, then conversation search beside recent replies. |
 | Motion | Physical damping and capped rendering | Idle ≤15fps, busy ≤30fps, dt clamp, hidden/close/lock stop. |
 | Color | Warm neutral canvas/surface with restrained gold | Champagne/gold is reserved for core and selection; amber is warning. |
 | Retrieval language | Knowledge GraphRAG shell only | Hash-cosine is never labeled RRF. |
 
-`https://style.gallery/` was re-fetched on 2026-09-20 (HTTP 200) and inspected before implementation. The page's Layout, Motion, Design Engineering, and platform-comparison references informed the compact hierarchy and motion review; no external visual style was copied verbatim.
+The decision → token → component → rendered-review sequence follows the contract-first approach in [oh-my-design](https://github.com/kwakseongjae/oh-my-design). The layout and motion review also draws on the previously reviewed [style.gallery](https://style.gallery/) reference. These sources guide the method; no third-party visual style is copied verbatim.
 
 ## Tokens
 
@@ -25,9 +32,8 @@ Spacing uses 4/8/12/16/24px steps. Settings cards use an 11px radius, a 1px warm
 
 - `JarvisPanel`: opaque 276×260 root. The Three.js canvas is transparent and exactly 236×236. The panel has no interactive controls; settings open from a right-click on the menu-bar tray icon.
 - `JarvisCore`: three independently damped gimbal rings, 96 neuron points, three synapses per neuron, 30 particles, a spring nucleus, and an acoustic wire lattice. GPU buffers are allocated once and updated in place.
-- `UnifiedSettings`: rooms, AI model, voice, knowledge, history. `settings-sync-card` precedes `settings-dream-rsi-card`. Existing AX ids are preserved as DOM ids.
+- `UnifiedSettings`: target rooms, two plain-language AI choices, voice start, one conversation status, holographic conversation search, and recent replies. There are no bulk-verification, feature-checklist, permission, model-owner, hardware, index, or training-status controls in this window.
 - AI models: Flash-Next is the default resident choice; the 27B model is shown as an on-demand swap target and is never prepared or loaded by this unit.
-- DREAM-RSI: checkpoint provenance read from `--action dream-rsi-status`; it is not presented as a trainer.
 
 ## Bundle contract
 
@@ -44,5 +50,6 @@ LaunchAgent is bootstrapped.
 - Opaque warm panel, transparent WebGL canvas only; no transparent window.
 - No cyberpunk neon, bloom, glowing text, or Gemma recommendation.
 - Core motion is legible at low frame rates and resumes without a jump.
-- Settings remain one column and keep sync before DREAM-RSI.
-- Knowledge copy says GraphRAG/drilldown readiness and does not claim BM25+Dense+RRF.
+- Settings use a 58:42 split with a 16px gap in the 960px desktop window and return to one column below 700px.
+- The conversation graph shares its row with recent replies; narrow layouts keep the graph readable and stack the sections.
+- Knowledge copy uses everyday Korean and does not expose retrieval implementation details.

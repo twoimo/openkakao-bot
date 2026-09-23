@@ -19,7 +19,7 @@ import {
 } from "../runtime";
 import { RuntimeSnapshotPoller } from "../runtime-poller";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, renderRooms, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHistory, renderRooms, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -435,13 +435,13 @@ describe("history settings card", () => {
       }],
     });
     renderHistory(snapshot);
-    expect(document.getElementById("history-list")?.textContent).toContain("scheduled");
+    expect(document.getElementById("history-list")?.textContent).toContain("예약됨");
   });
 
   it("renders the unavailable state", () => {
     document.body.innerHTML = settingsMarkup();
     renderHistory(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
-    expect(document.getElementById("history-summary")?.textContent).toBe("기록을 확인할 수 없습니다.");
+    expect(document.getElementById("history-summary")?.textContent).toBe("최근 답변 기록을 불러오지 못했습니다.");
   });
 });
 
@@ -463,13 +463,13 @@ describe("background settings activity", () => {
     });
     renderBackground(active);
     expect(document.getElementById("settings-activity-source")?.textContent)
-      .toBe("백그라운드 · 답변 대기 2 · 긱뉴스 sending · DB 동기화 behind · 예약 작업 처리 중");
+      .toBe("작업 현황 · 답변 대기 2건 · 긱뉴스 전송 중 · 대화 준비 새로 확인 필요");
 
     renderBackground(parseRuntimeSnapshot({ available: true, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
     expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 활동이 없습니다.");
 
     renderBackground(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
-    expect(document.getElementById("settings-activity-source")?.textContent).toBe("백그라운드 상태를 확인할 수 없습니다.");
+    expect(document.getElementById("settings-activity-source")?.textContent).toBe("앱의 작업 상태를 불러오지 못했습니다.");
   });
 
   it("shows the safe pipeline stage only while the pipeline is active", () => {
@@ -492,7 +492,7 @@ describe("background settings activity", () => {
       },
     });
     renderBackground(active);
-    expect(document.getElementById("settings-activity-source")?.textContent).toContain("파이프라인 model");
+    expect(document.getElementById("settings-activity-source")?.textContent).toContain("답변 준비 중");
 
     const inactive = parseRuntimeSnapshot({
       available: true,
@@ -503,7 +503,7 @@ describe("background settings activity", () => {
       pipeline: { active_index: null, outcome: "none", stages: [{ id: "detect", state: "idle" }] },
     });
     renderBackground(inactive);
-    expect(document.getElementById("settings-activity-source")?.textContent).not.toContain("파이프라인");
+    expect(document.getElementById("settings-activity-source")?.textContent).not.toContain("답변 준비 중");
   });
 
   it("shows the count of in-flight bridge jobs", () => {
@@ -518,71 +518,7 @@ describe("background settings activity", () => {
       context_sync: { mode: "async", waited: false },
     });
     renderBackground(snapshot);
-    expect(document.getElementById("settings-activity-source")?.textContent).toContain("진행 중 작업 2");
-  });
-});
-
-describe("on-device hardware settings", () => {
-  it("renders the bounded status label without raw fields", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({
-      available: true,
-      rooms: [],
-      jobs: [],
-      context_sync: { mode: "async", waited: false },
-      ondevice_hardware: {
-        hardware: { chip: "Apple M5 Max", cores: 16, memory_gb: 128, memory_bytes: 123456 },
-        recommendation: {
-          primary_engine: "mlx-serve",
-          recommended_model: "safe-model",
-          recommended_quant: "4bit",
-          reason: "RAW_REASON_SHOULD_NOT_RENDER",
-          engine_paths: ["RAW_ENGINE_PATH"],
-          fallback_models: ["RAW_FALLBACK"],
-          worker_model_id: "RAW_WORKER_ID",
-        },
-        verification: { ok: true },
-        last_probe: { model: "RAW_PROBE_MODEL" },
-        status_label: "온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve",
-        status_detail: "RAW_DETAIL_SHOULD_NOT_RENDER",
-      },
-    });
-    renderHardware(snapshot);
-    expect(document.getElementById("settings-hardware-status")?.textContent)
-      .toBe("온디바이스: 온디바이스 감지: Apple M5 Max (128GB RAM) · MLX Core/Serve");
-    for (const forbidden of [
-      "RAW_REASON_SHOULD_NOT_RENDER",
-      "RAW_ENGINE_PATH",
-      "RAW_FALLBACK",
-      "RAW_WORKER_ID",
-      "RAW_PROBE_MODEL",
-      "RAW_DETAIL_SHOULD_NOT_RENDER",
-      "123456",
-    ]) {
-      expect(document.body.textContent).not.toContain(forbidden);
-    }
-  });
-
-  it("renders chip and memory fallback when the safe label is empty", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({
-      available: true,
-      rooms: [],
-      jobs: [],
-      context_sync: { mode: "async", waited: false },
-      onDevice: { available: true, chip: "Apple M5 Max", memoryGb: 128 },
-    });
-    renderHardware(snapshot);
-    expect(document.getElementById("settings-hardware-status")?.textContent)
-      .toBe("온디바이스: Apple M5 Max · 128.0GB");
-  });
-
-  it("renders unavailable state", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } });
-    renderHardware(snapshot);
-    expect(document.getElementById("settings-hardware-status")?.textContent)
-      .toBe("하드웨어 정보를 확인할 수 없습니다.");
+    expect(document.getElementById("settings-activity-source")?.textContent).toContain("다른 작업 2건 진행 중");
   });
 });
 
@@ -677,53 +613,37 @@ describe("layout and settings contract", () => {
     expect((mainPanelMarkup().match(/<button\b/g) ?? []).length).toBe(0);
   });
 
-  it("keeps sync card before DREAM-RSI and preserves AX ids", () => {
+  it("keeps the beginner settings sections and accessible controls", () => {
     const markup = settingsMarkup();
-    expect(markup.indexOf('id="settings-sync-card"')).toBeLessThan(markup.indexOf('id="settings-dream-rsi-card"'));
     for (const id of [
-      "settings-room-popup", "settings-sync-source", "settings-sync-copy", "settings-sync-mode", "settings-sync-index", "settings-sync-dense",
+      "settings-room-popup", "settings-sync-source",
       "settings-activity-source",
-      "settings-sync-card", "settings-dream-rsi-status", "settings-dream-rsi-gold", "settings-dream-rsi-card",
-      "settings-slot-morning", "settings-slot-lunch", "settings-slot-evening",
+      "settings-sync-card", "settings-knowledge-card",
     ]) expect(markup).toContain(`id="${id}"`);
     expect(markup).toContain('id="voice-status"');
-    expect(markup).toContain('id="voice-phrase"');
-    expect(markup).toContain('id="voice-threshold"');
-    expect(markup).toContain('id="voice-custom"');
+    expect(markup).toContain('“헤이 자비스”라고 부른 뒤 말씀해 주세요.');
     expect(markup).toContain('id="voice-start"');
     expect(mainPanelMarkup()).not.toContain('id="voice-start"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
+    for (const technical of ["Qwen3", "MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "permission", "BM25", "RRF"]) {
+      expect(markup).not.toContain(technical);
+    }
   });
 
-  it("renders dense status and closes unavailable knowledge safely", () => {
+  it("exposes only plain-language model choices without backend identifiers", () => {
     document.body.innerHTML = settingsMarkup();
-    renderDenseStatus({
-      dense_status: "unavailable:RuntimeError:local dense embedding unavailable",
-      dense_indexed_at: 12345,
-    });
-    expect(document.getElementById("settings-sync-dense")?.textContent)
-      .toBe("dense: unavailable:RuntimeError:local dense embedding unavailable · indexed_at 12345");
-
-    renderDenseStatus(null);
-    expect(document.getElementById("settings-sync-dense")?.textContent).toBe("dense: 확인 불가");
-
-    const invalidStatus = { toString: () => { throw new Error("invalid status"); } };
-    expect(() => renderDenseStatus({ dense_status: invalidStatus, dense_indexed_at: { invalid: true } })).not.toThrow();
-    expect(document.getElementById("settings-sync-dense")?.textContent).toBe("dense: unknown");
-  });
-
-  it("renders both local models as keyboard-native buttons with explicit selection state", () => {
     const markup = settingsMarkup();
-    expect(markup).toContain(`data-model-id="${RESIDENT_MODEL_ID}"`);
-    expect(markup).toContain(`data-model-id="${SWAP_MODEL_ID}"`);
+    expect(markup).toContain('data-model-choice="fast"');
+    expect(markup).toContain('data-model-choice="deep"');
     expect(markup).toContain('class="model-row selection" type="button"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('class="model-row" type="button"');
     expect(markup).toContain('aria-pressed="false"');
-    expect(markup).toContain('id="model-status" class="muted" role="status" aria-live="polite"');
-    expect(markup).toContain('id="model-owner-state" class="muted"');
-    expect(markup).toContain("모델 소유권을 확인 중입니다.");
+    expect(markup).toContain('id="model-status" class="model-status-highlight" role="status" aria-live="polite"');
+    expect(markup).not.toContain("data-model-id");
+    expect(markup).not.toContain(RESIDENT_MODEL_ID);
+    expect(markup).not.toContain(SWAP_MODEL_ID);
   });
 
   it("renders enrolled rooms and populates add-room selector with un-enrolled chats", () => {

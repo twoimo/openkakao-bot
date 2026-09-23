@@ -36,12 +36,11 @@ const REMOVED_TOKENS = [
 
 const SETTINGS_SECTIONS = [
   "대상 채팅방",
-  "AI 모델",
-  "Voice",
-  "카카오 DB 동기화 · 색인",
-  "DREAM-RSI",
-  "Knowledge",
-  "History",
+  "AI 답변",
+  "음성",
+  "카카오톡 대화",
+  "대화에서 찾기",
+  "최근 답변",
 ];
 
 const offending = (text: string): string[] =>
@@ -70,6 +69,9 @@ describe("removed UI surfaces stay removed", () => {
 
   it("reintroduces no removed control in the settings markup", () => {
     expect(offending(SETTINGS)).toEqual([]);
+    for (const technical of ["Qwen3", "MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "BM25", "RRF", "threshold", "RMS"]) {
+      expect(SETTINGS).not.toContain(technical);
+    }
   });
 
   it("reintroduces no removed control in the stylesheet", () => {

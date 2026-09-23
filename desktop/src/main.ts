@@ -6,7 +6,6 @@ import {
   type CancellationToken,
   type RuntimeSnapshot,
 } from "./contracts";
-import { JarvisCore } from "./core/jarvis-core";
 import type { SourceLoads } from "./core/load-mapping";
 import { RenderLifecycle } from "./core/lifecycle";
 import {
@@ -16,7 +15,7 @@ import {
   type VisibilityReader,
   type VisibilitySubscriber,
 } from "./core/lifecycle-wiring";
-import { KnowledgeHologram } from "./knowledge/hologram";
+import type { KnowledgeHologram } from "./knowledge/hologram";
 import {
   MAX_FOCUS_HOPS,
   ON_SCREEN_NODE_CAP,
@@ -41,7 +40,7 @@ import {
   type SnapshotCanceller,
   type SnapshotLoader,
 } from "./runtime-poller";
-import { mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, renderRooms, settingsMarkup } from "./ui";
+import { mainPanelMarkup, renderBackground, renderHistory, renderRooms, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
 
@@ -110,8 +109,7 @@ function wireRoomAdd(loadSnapshot: SnapshotLoader, loadAction: typeof fetchSetti
         const updatedSnapshot = await loadSnapshot(token);
         renderRooms(updatedSnapshot);
       } else {
-        const reason = typeof res?.reason === "string" ? res.reason : "등록 실패";
-        setText("room-summary", `등록 실패: ${reason}`);
+        setText("room-summary", "채팅방을 등록하지 못했습니다. 확인 후 다시 시도해 주세요.");
       }
     } catch {
       setText("room-summary", "채팅방 등록 중 오류가 발생했습니다.");
@@ -122,7 +120,8 @@ function wireRoomAdd(loadSnapshot: SnapshotLoader, loadAction: typeof fetchSetti
 }
 
 function modelButton(modelId: string): HTMLButtonElement | null {
-  return document.querySelector<HTMLButtonElement>(`button[data-model-id="${modelId}"]`);
+  const choice = modelId === RESIDENT_MODEL_ID ? "fast" : "deep";
+  return document.querySelector<HTMLButtonElement>(`button[data-model-choice="${choice}"]`);
 }
 
 function setModelSelection(modelId: string | null): void {
@@ -146,82 +145,40 @@ function clearModelFailures(): void {
   modelButton(SWAP_MODEL_ID)?.classList.remove("model-failed");
 }
 
-function renderModels(payload: Record<string, unknown> | null, snapshot: RuntimeSnapshot): void {
-  const current = typeof payload?.model === "string" ? payload.model : snapshot.replyModelId;
+function renderModels(snapshot: RuntimeSnapshot): void {
+  const current = snapshot.replyModelId;
   const normalized = current?.replace(/^mlx\//, "") ?? null;
   const selected = normalized === RESIDENT_MODEL_ID || normalized === SWAP_MODEL_ID
     ? normalized
     : normalized === null ? RESIDENT_MODEL_ID : null;
   setModelSelection(selected);
-  setText("model-status", normalized
-    ? `현재 선택: ${normalized}`
-    : "현재 모델 ID를 확인할 수 없습니다. 27B는 명시적 선택과 안전 게이트가 필요합니다.");
-}
-
-function renderModelOwnerState(payload: Record<string, unknown> | null): void {
-  const ownerState = typeof payload?.owner_state === "string" ? payload.owner_state : "";
-  if (ownerState === "app_owned") {
-    setText("model-owner-state", "앱 소유 확인됨");
-    return;
-  }
-  if (ownerState === "model_owner_unmanaged") {
-    setText("model-owner-state", "외부 소유 · 27B 전환 차단");
-    return;
-  }
-  setText("model-owner-state", "소유권 미확인 · 27B 전환 차단");
-}
-
-/**
- * Show who owns the MLX gateway port.
- *
- * A foreign listener is reported, never adopted: the app only ever starts or
- * stops a server it can prove it started, so this line must not suggest that
- * an external MLX Core was taken over.
- */
-function renderMlxServerState(payload: Record<string, unknown> | null): void {
-  const ownerState = typeof payload?.owner_state === "string" ? payload.owner_state : "";
-  const model = typeof payload?.model === "string" && payload.model ? ` · ${payload.model}` : "";
-  if (ownerState === "app_owned") {
-    setText("mlx-server-state", `앱 소유 서버 실행 중${model}`);
-    return;
-  }
-  if (ownerState === "foreign_listener") {
-    setText("mlx-server-state", "외부 런타임이 11234 포트를 점유 중 · 앱은 시작/중지하지 않습니다");
-    return;
-  }
-  if (ownerState === "state_stale") {
-    setText("mlx-server-state", "소유 기록이 프로세스와 불일치 · 27B 전환 차단");
-    return;
-  }
-  if (ownerState === "state_invalid") {
-    setText("mlx-server-state", "소유 기록을 신뢰할 수 없음 · 27B 전환 차단");
-    return;
-  }
-  setText("mlx-server-state", "앱 소유 서버 없음");
+  setText("model-status", selected === RESIDENT_MODEL_ID
+    ? "빠른 대화가 선택되어 있습니다."
+    : selected === SWAP_MODEL_ID
+      ? "깊은 분석이 선택되어 있습니다."
+      : "AI 답변 설정을 확인할 수 없습니다.");
 }
 
 export function modelSwapFailureText(reason: string): string {
   if (reason === "model_residency_uncertain") {
-    return "27B 전환 결과를 확인하지 못했습니다. 재시도 전에 상주 모델과 진행 중인 요청을 점검해 주세요.";
+    return "AI 설정 변경을 확인하지 못했습니다. 현재 설정을 유지했습니다.";
   }
-  if (reason === "model_swap_busy") return "다른 모델 전환이 진행 중입니다. 결과를 기다려 주세요.";
-  if (reason === "cancelled") return "27B 전환을 취소했습니다. 기존 모델 상태를 유지합니다.";
+  if (reason === "model_swap_busy") return "다른 설정 변경이 끝난 뒤 다시 시도해 주세요.";
+  if (reason === "cancelled") return "요청을 취소했습니다. 기존 설정을 유지했습니다.";
   if (reason === "insufficient_free_memory" || reason === "memory_budget_unavailable") {
-    return "27B 전환 중단 · 안전한 메모리 여유를 확인하지 못했습니다.";
+    return "안전하게 사용할 수 있는 메모리가 부족해 설정을 바꾸지 않았습니다.";
   }
-  if (reason === "model_owner_unmanaged") {
-    return "27B 전환 차단 · 외부 MLX Core가 게이트웨이를 소유 중이라 앱이 안전하게 27B로 전환할 수 없습니다. 외부 MLX Core를 종료한 뒤 다시 시도하세요.";
-  }
+  if (reason === "model_owner_unmanaged") return "현재 사용 중인 AI와 안전하게 바꿀 수 없어 기존 설정을 유지했습니다.";
   if (reason === "model_owner_unknown" || reason === "model_owner_state_invalid" || reason === "model_owner_state_stale") {
-    return "27B 전환 중단 · 상주 모델의 소유권을 증명할 수 없습니다.";
+    return "AI 실행 상태를 확인하지 못해 기존 설정을 유지했습니다.";
   }
   if (reason.includes("rollback_failed")) {
-    return "27B 전환 실패 · 복구도 확인되지 않았습니다. 모델 상태를 점검해 주세요.";
+    return "AI 설정을 바꾸지 못했습니다. 현재 상태를 확인한 뒤 다시 시도해 주세요.";
   }
   if (reason === "load_failed" || reason === "probe_failed" || reason === "unload_failed") {
-    return "27B 전환 실패 · 상주 모델 상태를 확인해 주세요.";
+    return "깊은 분석을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.";
   }
-  return "27B 전환 실패 · 기존 선택을 유지합니다.";
+  return "깊은 분석을 준비하지 못했습니다. 기존 설정을 유지했습니다.";
 }
 
 function wireModelSelection(): void {
@@ -241,17 +198,17 @@ function wireModelSelection(): void {
       clearModelFailures();
       setModelBusy(true);
       resident.setAttribute("aria-busy", "true");
-      setText("model-status", "Flash-Next 기본 모델을 저장 중입니다…");
+      setText("model-status", "빠른 대화를 선택하고 있습니다…");
       const result = await setResidentModel();
       resident.removeAttribute("aria-busy");
       setModelBusy(false);
       if (!result.ok) {
         resident.classList.add("model-failed");
-        setText("model-status", "모델 전환 실패 · 기존 선택 상태를 유지합니다.");
+        setText("model-status", "빠른 대화를 선택하지 못했습니다. 기존 설정을 유지했습니다.");
         return;
       }
       setModelSelection(RESIDENT_MODEL_ID);
-      setText("model-status", `현재 선택: ${RESIDENT_MODEL_ID} · 저장 완료`);
+      setText("model-status", "빠른 대화가 선택되어 있습니다.");
     })();
   });
 
@@ -260,7 +217,7 @@ function wireModelSelection(): void {
       clearModelFailures();
       setModelBusy(true);
       swap.setAttribute("aria-busy", "true");
-      setText("model-status", "사용자 요청으로 Qwen3.8 27B 안전 전환을 확인 중입니다…");
+      setText("model-status", "깊은 분석을 준비하고 있습니다…");
       const token = createCancellationToken();
       activeSwap = token;
       const result = await swapToLargeModel(token);
@@ -273,27 +230,29 @@ function wireModelSelection(): void {
         return;
       }
       setModelSelection(SWAP_MODEL_ID);
-      setText("model-status", "Qwen3.8 27B 전환 완료 · 로컬 probe와 저장을 확인했습니다.");
+      setText("model-status", "깊은 분석을 사용할 준비가 되었습니다.");
     })();
   });
 }
 
 function renderVoice(snapshot: RuntimeSnapshot): void {
   const voice = snapshot.voice;
-  const customWakeText = voice.customModelSelected
-    ? "한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)"
-    : "한국어 커스텀 헤드: 없음 · 영어 스톡만 사용 중, 한국어 호출은 실패합니다.";
   if (!voice.available) {
-    setText("voice-status", "음성 런타임 상태를 아직 받지 못했습니다.");
-    setText("voice-phrase", `호출어: ${voice.wakePhrase || "헤이 자비스"}`);
-    setText("voice-threshold", `임계값: ${voice.threshold.toFixed(2)} 고정`);
+    setText("voice-status", "음성 기능을 사용할 수 없습니다.");
     return;
   }
-  const suffix = voice.errorCode ? ` · ${voice.errorCode}` : "";
-  setText("voice-status", `상태 ${voice.state} · wake ${voice.wakeSource} · RMS ${voice.rms.toFixed(3)}${suffix}`);
-  setText("voice-phrase", `호출어: ${voice.wakePhrase || "헤이 자비스"}`);
-  setText("voice-threshold", `임계값: ${voice.threshold.toFixed(2)} 고정`);
-  setText("voice-custom", customWakeText);
+  const labels: Record<string, string> = {
+    idle: "마이크가 대기 중입니다.",
+    wake_listen: "호출어를 기다리고 있습니다.",
+    user_listen: "말씀을 듣고 있습니다.",
+    transcribing: "말씀을 정리하고 있습니다.",
+    generating: "답변을 준비하고 있습니다.",
+    speaking: "답변을 말하고 있습니다.",
+    ended: "음성 대화가 끝났습니다.",
+    aborted: "음성 대화가 끝났습니다.",
+    error: "음성 기능을 사용할 수 없습니다.",
+  };
+  setText("voice-status", voice.errorCode ? "음성 기능을 시작하지 못했습니다." : labels[voice.state] ?? "음성 상태를 확인하고 있습니다.");
 }
 
 function renderSettingsUnavailable(): void {
@@ -301,43 +260,44 @@ function renderSettingsUnavailable(): void {
   app.dataset.state = "unavailable";
   const snapshot = unavailableSnapshot("desktop_boot_failed");
   renderRooms(snapshot);
-  renderModels(null, snapshot);
-  renderModelOwnerState(null);
-  renderMlxServerState(null);
+  renderModels(snapshot);
   renderVoice(snapshot);
   renderHistory(snapshot);
   renderBackground(snapshot);
-  renderHardware(snapshot);
-  setText("model-status", "모델 상태를 확인할 수 없습니다. 기존 선택은 변경하지 않습니다.");
-  setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
-  setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
-  setText("settings-sync-source", "동기화: 확인 불가");
-  setText("settings-sync-copy", "격리 복제: 확인 불가");
-  setText("settings-sync-mode", "색인 모드: 확인 불가");
-  setText("settings-sync-index", "마지막 색인: 확인 불가");
-  renderDenseStatus(null);
-  setText("knowledge-summary", "지식 그래프 상태를 확인할 수 없습니다.");
-  setText("knowledge-mode", "unavailable");
-  setText("settings-slot-morning", "미확인");
-  setText("settings-slot-lunch", "미확인");
-  setText("settings-slot-evening", "미확인");
+  setText("model-status", "AI 답변 설정을 확인할 수 없습니다.");
+  setText("settings-sync-source", "대화 준비 상태를 확인할 수 없습니다.");
+  setText("knowledge-summary", "대화에서 찾은 연결 정보를 확인할 수 없습니다.");
+  setText("knowledge-mode", "확인 필요");
   document.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
     button.disabled = true;
   });
 }
 
-function relationMeta(edge: KnowledgeEdge): string {
-  const room = edge.roomId || edge.evidence.chatId || "room ?";
-  const time = edge.validFrom
-    ? `${edge.validFrom}${edge.validTo ? ` → ${edge.validTo}` : ""}`
-    : "time ?";
-  const evidence = edge.evidenceMessageId
-    || edge.evidence.sourceEventIds[0]
-    || edge.evidence.kind;
-  return `${room} · ${time} · evidence ${evidence}`;
+function relationLabel(relation: string): string {
+  switch (relation.trim().toUpperCase().replace(/[\s-]+/g, "_")) {
+    case "MENTIONS": return "언급";
+    case "PARTICIPATES":
+    case "PARTICIPATES_IN": return "참여";
+    case "MEMBER_OF": return "소속";
+    case "OCCURRED_IN": return "발생";
+    case "RELATED_TO":
+    case "ABOUT": return "관련";
+    default: return "연결";
+  }
 }
 
-function renderKnowledgeRelations(graph: KnowledgeGraph, node: KnowledgeNode, view: KnowledgeView): void {
+function relationMeta(edge: KnowledgeEdge, snapshot: RuntimeSnapshot): string {
+  const roomId = edge.roomId || edge.evidence.chatId;
+  const room = snapshot.rooms.find((candidate) => String(candidate.chatId) === roomId)?.title;
+  return room ? `대화방 · ${room}` : "대화에서 확인한 관계";
+}
+
+function renderKnowledgeRelations(
+  graph: KnowledgeGraph,
+  node: KnowledgeNode,
+  view: KnowledgeView,
+  snapshot: RuntimeSnapshot,
+): void {
   const container = document.getElementById("knowledge-relations");
   if (!container) return;
   container.replaceChildren();
@@ -350,7 +310,7 @@ function renderKnowledgeRelations(graph: KnowledgeGraph, node: KnowledgeNode, vi
   if (related.length === 0) {
     const empty = document.createElement("p");
     empty.className = "knowledge-empty";
-    empty.textContent = "이 범위에 연결된 E-R-E 관계가 없습니다.";
+    empty.textContent = "아직 연결된 항목이 없습니다.";
     container.append(empty);
     return;
   }
@@ -359,44 +319,43 @@ function renderKnowledgeRelations(graph: KnowledgeGraph, node: KnowledgeNode, vi
     const row = document.createElement("div");
     row.className = "knowledge-relation-row";
     const triple = document.createElement("strong");
-    triple.textContent = `${labels.get(edge.source) ?? edge.source} —${edge.relation || "RELATED"}→ ${labels.get(edge.target) ?? edge.target}`;
+    triple.textContent = `${labels.get(edge.source) ?? "항목"} —${relationLabel(edge.relation)}→ ${labels.get(edge.target) ?? "항목"}`;
     const meta = document.createElement("span");
-    meta.textContent = relationMeta(edge);
+    meta.textContent = relationMeta(edge, snapshot);
     row.append(triple, meta);
     container.append(row);
   });
 }
 
-function setupKnowledgeGraph(
+async function setupKnowledgeGraph(
   payload: Record<string, unknown> | null,
   snapshot: RuntimeSnapshot,
-): KnowledgeHologram | null {
+): Promise<KnowledgeHologram | null> {
   const graph = parseKnowledgeGraph(payload);
   const canvas = document.querySelector<HTMLCanvasElement>("#knowledge-graph-canvas");
   const expand = document.querySelector<HTMLButtonElement>("#knowledge-expand-hop");
   if (!canvas || !expand || graph.nodes.length === 0) {
-    setText("knowledge-summary", "지식 그래프 payload를 읽지 못했거나 노드가 없습니다.");
-    setText("knowledge-mode", "unavailable");
+    setText("knowledge-summary", "아직 연결된 대화가 없습니다.");
+    setText("knowledge-mode", "준비 중");
     return null;
   }
 
   setText(
     "knowledge-summary",
-    `E-R-E ${graph.nodes.length} nodes · ${graph.edges.length} relations · 화면 최대 ${ON_SCREEN_NODE_CAP} nodes`,
+    `대화에서 찾은 연결 항목 ${graph.nodes.length}개`,
   );
-  setText("knowledge-mode", payload?.stale === true ? "GraphRAG · stale" : "GraphRAG · ready");
+  setText("knowledge-mode", payload?.stale === true ? "자료 확인 필요" : "연결된 주제");
 
   const a11yContainer = document.querySelector<HTMLDivElement>("#knowledge-accessible-nodes");
 
   let activeNodeId = "";
+  const { KnowledgeHologram } = await import("./knowledge/hologram");
   const hologram = new KnowledgeHologram(canvas, graph, ({ node, view }) => {
     activeNodeId = node.id;
     setText("knowledge-focus-title", node.label);
-    setText("knowledge-focus-meta", `${view.hops}-hop · ${view.nodes.length} nodes · ${view.edges.length} relations`);
-    setText("knowledge-hop-label", `${view.hops}-hop · ${view.nodes.length}/${ON_SCREEN_NODE_CAP} nodes`);
     expand.disabled = view.hops >= MAX_FOCUS_HOPS;
-    renderKnowledgeRelations(graph, node, view);
-    setText("knowledge-retrieve", "GraphRAG retrieve 확인 중…");
+    renderKnowledgeRelations(graph, node, view, snapshot);
+    setText("knowledge-retrieve", "관련 대화를 찾고 있습니다…");
 
     const localRoom = view.edges.find((edge) => edge.source === node.id || edge.target === node.id)?.roomId
       || node.evidence.chatId
@@ -408,12 +367,14 @@ function setupKnowledgeGraph(
     }).then((focus) => {
       if (activeNodeId !== node.id) return;
       if (!focus || focus.ok !== true) {
-        setText("knowledge-retrieve", "GraphRAG retrieve: 확인 불가");
+        setText("knowledge-retrieve", "관련 대화를 찾지 못했습니다.");
         return;
       }
       const facts = Array.isArray(focus.facts) ? focus.facts.filter((item): item is string => typeof item === "string") : [];
-      const mode = typeof focus.search_mode === "string" && focus.search_mode ? focus.search_mode : "unknown";
-      setText("knowledge-retrieve", `retrieve ${mode} · facts ${facts.length}${facts[0] ? ` · ${facts[0]}` : ""}`);
+      const firstFact = facts[0]?.slice(0, 180);
+      setText("knowledge-retrieve", facts.length
+        ? `관련 정보 ${facts.length}건을 찾았습니다.${firstFact ? ` ${firstFact}` : ""}`
+        : "관련 대화를 찾지 못했습니다.");
     });
   });
 
@@ -422,10 +383,8 @@ function setupKnowledgeGraph(
     if (!view.focusId) return;
     const node = graph.nodes.find((candidate) => candidate.id === view.focusId);
     if (!node) return;
-    setText("knowledge-focus-meta", `${view.hops}-hop · ${view.nodes.length} nodes · ${view.edges.length} relations`);
-    setText("knowledge-hop-label", `${view.hops}-hop · ${view.nodes.length}/${ON_SCREEN_NODE_CAP} nodes`);
     expand.disabled = view.hops >= MAX_FOCUS_HOPS;
-    renderKnowledgeRelations(graph, node, view);
+    renderKnowledgeRelations(graph, node, view, snapshot);
   });
 
   if (a11yContainer) {
@@ -436,7 +395,7 @@ function setupKnowledgeGraph(
       btn.className = "knowledge-a11y-node";
       btn.dataset.nodeId = node.id;
       btn.textContent = node.label;
-      btn.setAttribute("aria-label", `${node.label} (${node.category}) 노드 선택`);
+      btn.setAttribute("aria-label", `${node.label} 선택`);
       btn.addEventListener("click", () => {
         hologram.clickNode(node.id);
       });
@@ -476,75 +435,35 @@ export async function bootSettings(
     const token = createCancellationToken();
     const results = await Promise.allSettled([
       dependencies.loadSnapshot(token),
-      dependencies.loadAction("models"),
-      dependencies.loadAction("model-owner-status"),
-      dependencies.loadAction("mlx-server-status"),
-      dependencies.loadAction("dream-rsi-status"),
       dependencies.loadAction("knowledge-graph-status"),
       dependencies.loadAction("knowledge-graph"),
     ] as const);
-    const [
-      snapshotResult,
-      modelsResult,
-      ownerResult,
-      mlxServerResult,
-      dreamResult,
-      knowledgeResult,
-      graphResult,
-    ] = results;
+    const [snapshotResult, knowledgeResult, graphResult] = results;
     const snapshot = snapshotResult.status === "fulfilled"
       ? snapshotResult.value
       : unavailableSnapshot("settings_snapshot_unavailable");
-    const models = modelsResult.status === "fulfilled" ? modelsResult.value : null;
-    const owner = ownerResult.status === "fulfilled" ? ownerResult.value : null;
-    const mlxServer = mlxServerResult.status === "fulfilled" ? mlxServerResult.value : null;
-    const dream = dreamResult.status === "fulfilled" ? dreamResult.value : null;
     const knowledge = knowledgeResult.status === "fulfilled" ? knowledgeResult.value : null;
     const graphPayload = graphResult.status === "fulfilled" ? graphResult.value : null;
     const degraded = results.some((result) => result.status === "rejected") || !snapshot.available;
 
     renderRooms(snapshot);
     wireRoomAdd(dependencies.loadSnapshot, dependencies.loadAction);
-    renderModels(models, snapshot);
-    renderModelOwnerState(owner);
-    renderMlxServerState(mlxServer);
+    renderModels(snapshot);
     wireModelSelection();
     renderVoice(snapshot);
     renderHistory(snapshot);
     renderBackground(snapshot);
-    renderHardware(snapshot);
     dependencies.wireVoice(document, dependencies.invokeCommand);
 
-    if (dream) {
-      setText("settings-dream-rsi-status", `status: ${String(dream.status ?? "unknown")} · selected_policy: ${String(dream.selected_policy ?? "none")}`);
-      setText("settings-dream-rsi-gold", `gold_rows: ${String(dream.gold_rows ?? "unknown")} · gold_source_policy: ${String(dream.gold_source_policy ?? "unknown")}`);
-    } else {
-      setText("settings-dream-rsi-status", "status: 확인 불가 · selected_policy: 확인 불가");
-      setText("settings-dream-rsi-gold", "gold_rows: 확인 불가 · gold_source_policy: 확인 불가");
-    }
-
     if (knowledge) {
-      const stale = knowledge.stale === true ? "stale" : "ready";
-      setText("settings-sync-source", `동기화: ${stale}`);
-      setText("settings-sync-copy", `격리 복제: ${String(knowledge.snapshot_status ?? "unknown")}`);
-      setText("settings-sync-mode", `색인 모드: ${String(knowledge.indexing_mode ?? "unknown")}`);
-      setText("settings-sync-index", `마지막 색인: ${String(knowledge.indexed_at ?? "unknown")} · indexed ${String(knowledge.indexed_count ?? 0)}`);
-      renderDenseStatus(knowledge);
+      setText("settings-sync-source", knowledge.stale === true
+        ? "대화 자료를 새로 확인해야 합니다."
+        : "대화 자료가 준비되었습니다.");
     } else {
-      setText("settings-sync-source", "동기화: 확인 불가");
-      setText("settings-sync-copy", "격리 복제: 확인 불가");
-      setText("settings-sync-mode", "색인 모드: 확인 불가");
-      setText("settings-sync-index", "마지막 색인: 확인 불가");
-      renderDenseStatus(null);
+      setText("settings-sync-source", "대화 준비 상태를 확인하지 못했습니다.");
     }
 
-    const room = snapshot.rooms[0];
-    const slots = room ? ["대기", "대기", "대기"] : ["미확인", "미확인", "미확인"];
-    setText("settings-slot-morning", slots[0]);
-    setText("settings-slot-lunch", slots[1]);
-    setText("settings-slot-evening", slots[2]);
-
-    hologram = setupKnowledgeGraph(graphPayload, snapshot);
+    hologram = await setupKnowledgeGraph(graphPayload, snapshot);
     app.dataset.state = degraded ? "unavailable" : "ready";
     if (hologram) {
       const graph = hologram;
@@ -575,7 +494,7 @@ export async function bootSettings(
 type CommandInvoker = (command: string) => Promise<unknown>;
 
 interface PanelBootDependencies {
-  createCore: (canvas: HTMLCanvasElement) => JarvisCoreControl;
+  createCore: (canvas: HTMLCanvasElement) => JarvisCoreControl | Promise<JarvisCoreControl>;
   loadSnapshot: SnapshotLoader;
   cancelSnapshot: SnapshotCanceller;
   makeToken: () => CancellationToken;
@@ -590,7 +509,10 @@ export async function bootPanel(
   overrides: Partial<PanelBootDependencies> = {},
 ): Promise<void> {
   const dependencies: PanelBootDependencies = {
-    createCore: (canvas) => new JarvisCore(canvas),
+    createCore: async (canvas) => {
+      const { JarvisCore } = await import("./core/jarvis-core");
+      return new JarvisCore(canvas);
+    },
     loadSnapshot: fetchRuntimeSnapshot,
     cancelSnapshot: cancelRuntimeRequest,
     makeToken: createCancellationToken,
@@ -611,7 +533,7 @@ export async function bootPanel(
   let core: JarvisCoreControl | null = null;
   let closePanel: (() => void) | null = null;
   try {
-    core = dependencies.createCore(canvas);
+    core = await dependencies.createCore(canvas);
     const activeCore = core;
     Object.defineProperty(window, "__jarvisRenderCount", { configurable: true, get: () => activeCore.renderCount });
     const polling = new RuntimeSnapshotPoller(

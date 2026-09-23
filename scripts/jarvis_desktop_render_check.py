@@ -48,34 +48,8 @@ DEFAULT_TAURI_MAIN = ROOT / "desktop" / "src-tauri" / "src" / "main.rs"
 DEFAULT_OUT = ROOT / "docs" / "architecture"
 DEFAULT_PORT = 8712
 
-# The on-device status line is produced by the product, not written here. The
-# TypeScript contract cannot see text the Tauri bridge injects as status_label,
-# and the installed settings window once rendered a banned token exactly that
-# way, so the stub feeds the real formatter and the scan below sees its output.
-sys.path.insert(0, str(ROOT / "scripts"))
-from auto_reply_ondevice import ondevice_status_strings  # noqa: E402
-
-STUB_ONDEVICE_MODEL = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
-STUB_ONDEVICE_PROBE = {
-    "ok": True,
-    "engine": "mlx-serve-gateway",
-    "model": STUB_ONDEVICE_MODEL,
-    "latency_ms": 15617,
-    "preview": "OK",
-}
-STUB_ONDEVICE_STATUS_BITS, STUB_ONDEVICE_DETAIL_BITS = ondevice_status_strings(
-    chip="Apple M5 Max",
-    memory_gb=128.0,
-    reason="Apple Silicon MLX Core/Serve 경로를 사용합니다",
-    recommended_model=STUB_ONDEVICE_MODEL,
-    verified=True,
-    last_probe=STUB_ONDEVICE_PROBE,
-)
-STUB_ONDEVICE_STATUS_LABEL = " · ".join(STUB_ONDEVICE_STATUS_BITS)
-STUB_ONDEVICE_STATUS_DETAIL = " · ".join(bit for bit in STUB_ONDEVICE_DETAIL_BITS if bit)
-
 PANEL_SIZE = (276, 260)
-SETTINGS_SIZE = (760, 760)
+SETTINGS_SIZE = (960, 880)
 CONTRACT_INTERACTIVE_TAGS = "button,select,input,textarea,a,details,summary"
 # The Rust shell's window-visibility event. desktop/src/core/lifecycle-wiring.ts
 # exports this as VISIBILITY_EVENT, and the contract tests pin the two together
@@ -200,13 +174,6 @@ IDLE_SNAPSHOT: dict[str, Any] = {
         "geeknews": {"state": "idle", "activity": 0.0, "caption": ""},
         "dbSync": {"state": "ready", "activity": 0.0, "caption": ""},
     },
-    "onDevice": {
-        "hardware": {"chip": "Apple M5 Max", "cores": 18, "memory_gb": 128.0, "is_apple_silicon": True},
-        "recommendation": {"primary_engine": "MLX Core/Serve", "recommended_model": "Qwen3.8 Flash-Next", "recommended_quant": "4-8bit"},
-        "verification": {"ok": True},
-        "status_label": STUB_ONDEVICE_STATUS_LABEL,
-        "status_detail": STUB_ONDEVICE_STATUS_DETAIL,
-    },
     "pipeline": {"active": False, "stage": "none", "stageIndex": 0, "stageTotal": 8, "outcome": "none"},
     "terminal_counts": {"sent": 12, "skipped": 1, "delivery_unknown": 0, "burst_superseded": 1},
     "context_sync": {"mode": "async", "waited": False},
@@ -258,15 +225,11 @@ KNOWLEDGE_GRAPH: dict[str, Any] = {
 }
 
 SETTINGS_ACTIONS: dict[str, Any] = {
-    "models": {"model": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"},
     # The three model actions below report the state this host is really in: an
     # external mlx-serve owns port 11234, so the app refuses the 27B swap.
     "model-set": {"ok": True, "action": "model-set", "model": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit", "stored": True, "prepared": False, "needs_prepare": True},
     "model-prepare": {"ok": True, "action": "model-prepare", "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit", "stored": True, "prepared": True, "needs_prepare": False},
     "model-swap": {"ok": False, "action": "model-swap", "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit", "stage": "failed", "reason": "model_owner_unmanaged", "stages": [], "stored": False, "prepared": False},
-    "model-owner-status": {"owner_state": "foreign_listener"},
-    "mlx-server-status": {"owner_state": "foreign_listener", "model": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"},
-    "dream-rsi-status": {"status": "evaluated", "selected_policy": "mirror_prompt_tail", "gold_rows": 400, "gold_source_policy": "human_only"},
     "room-upsert": {"ok": True, "action": "room-upsert"},
     "knowledge-graph-status": {
         "stale": False,
@@ -406,12 +369,9 @@ PROBE_SOURCE = r"""
     text: String(document.body.innerText || ""),
     html: String(document.body.innerHTML || ""),
     focusTitle: text(document.getElementById("knowledge-focus-title")).trim(),
-    focusMeta: text(document.getElementById("knowledge-focus-meta")).trim(),
-    hopLabel: text(document.getElementById("knowledge-hop-label")).trim(),
     retrieve: text(document.getElementById("knowledge-retrieve")).trim(),
     relationRows: all("#knowledge-relations .knowledge-relation-row").length,
-    expandDisabled: document.getElementById("knowledge-expand-hop") ? document.getElementById("knowledge-expand-hop").disabled === true : null,
-    slotMorning: text(document.getElementById("settings-slot-morning")).trim()
+    expandDisabled: document.getElementById("knowledge-expand-hop") ? document.getElementById("knowledge-expand-hop").disabled === true : null
   };
 })()
 """
@@ -557,8 +517,6 @@ def drive_drilldown(page: Any, log: Callable[[str], None]) -> dict[str, Any]:
         return result
     probe = page.evaluate(PROBE_SOURCE)
     result["focus_title"] = probe["focusTitle"]
-    result["focus_meta"] = probe["focusMeta"]
-    result["hop_label"] = probe["hopLabel"]
     result["relation_rows"] = probe["relationRows"]
     result["retrieve"] = probe["retrieve"]
     result["expand_disabled"] = probe["expandDisabled"]
@@ -567,13 +525,11 @@ def drive_drilldown(page: Any, log: Callable[[str], None]) -> dict[str, Any]:
     if result["expand_disabled"] is False:
         page.click("#knowledge-expand-hop")
         page.wait_for_timeout(300)
-        result["hop_label_after_expand"] = page.evaluate("() => ((document.getElementById('knowledge-hop-label') || {}).textContent || '')")
-        result["focus_meta_after_expand"] = page.evaluate("() => ((document.getElementById('knowledge-focus-meta') || {}).textContent || '')")
         result["expand_disabled_after_expand"] = page.evaluate("() => document.getElementById('knowledge-expand-hop').disabled === true")
     page.wait_for_timeout(700)
     result["frames_after_focus"] = sample_frames(page, 1.5, "__knowledgeRenderCount")
     log("drilldown: " + json.dumps(
-        {key: result[key] for key in ("focused", "probes", "focus_title", "focus_meta", "relation_rows", "hop_label", "retrieve_after_settle") if key in result},
+        {key: result[key] for key in ("focused", "probes", "focus_title", "relation_rows", "retrieve_after_settle") if key in result},
         ensure_ascii=False,
     ))
     return result
@@ -647,17 +603,19 @@ def assertions(receipt: dict[str, Any], contract: dict[str, Any]) -> list[dict[s
     checks.append(check("settings.no_iframe", settings["iframes"] == 0, settings["iframes"]))
     checks.append(check("settings.knowledge_canvas_present", any(item["id"] == "knowledge-graph-canvas" for item in settings["canvases"]), settings["canvases"]))
     checks.append(check("settings.no_removed_control_tokens", scan_banned_tokens([settings["text"], settings["html"]], contract["banned_tokens"]) == [], scan_banned_tokens([settings["text"], settings["html"]], contract["banned_tokens"])))
-    checks.append(check(
-        "settings.ondevice_status_is_product_formatted",
-        STUB_ONDEVICE_STATUS_LABEL in settings["text"],
-        {"product_label": STUB_ONDEVICE_STATUS_LABEL[:160]},
-    ))
+    visible_details = [
+        "MLX Core/Serve", "Qwen3.8", "128GB RAM", "DREAM-RSI", "GraphRAG",
+        "BM25", "RRF", "E-R-E", "threshold", "indexed:50", "Qwen3-TTS",
+    ]
+    leaked_details = [item for item in visible_details if item in settings["text"]]
+    checks.append(check("settings.hides_hardware_and_model_diagnostics", not leaked_details, leaked_details))
 
     checks.append(check("knowledge.hologram_renders_frames", (knowledge.get("render_count_after_focus") or 0) > 0, knowledge.get("render_count_after_focus")))
     checks.append(check("knowledge.drilldown_focuses_a_node", bool(knowledge.get("focused")), {"probes": knowledge.get("probes"), "title": knowledge.get("focus_title")}))
-    checks.append(check("knowledge.focus_meta_reports_hops", "2-hop" in str(knowledge.get("focus_meta", "")), knowledge.get("focus_meta")))
     checks.append(check("knowledge.relations_listed", (knowledge.get("relation_rows") or 0) > 0, knowledge.get("relation_rows")))
-    checks.append(check("knowledge.retrieve_answered", "retrieve rrf" in str(knowledge.get("retrieve_after_settle", "")), knowledge.get("retrieve_after_settle")))
+    checks.append(check("knowledge.retrieve_answered_in_plain_language", "관련 정보" in str(knowledge.get("retrieve_after_settle", "")), knowledge.get("retrieve_after_settle")))
+    if "expand_disabled_after_expand" in knowledge:
+        checks.append(check("knowledge.expansion_respects_limit", knowledge["expand_disabled_after_expand"] is True, knowledge["expand_disabled_after_expand"]))
     return checks
 
 
@@ -843,7 +801,6 @@ def render_check(
                     "unmasked_renderer": settings_probe["glUnmaskedRenderer"],
                     "gl_error": settings_probe["glError"],
                 },
-                "slot_morning": settings_probe["slotMorning"],
                 "captures": {"light": settings_light, "dark": settings_dark},
                 "text": settings_probe["text"],
                 "html": settings_probe["html"],

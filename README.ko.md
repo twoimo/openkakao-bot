@@ -229,7 +229,7 @@ sh scripts/install-jarvis-desktop.sh
 sh scripts/start-auto-reply-menubar.command
 ```
 
-`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 패널에는 골드 코어만 보입니다. 방 선택, 모델, 시작/중지, 동기화 상태, DREAM-RSI receipt는 메뉴바 트레이 아이콘을 우클릭해 여는 통합 설정에서 다룹니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
+`/Applications/OpenKakao Jarvis.app`이 메뉴바 앱으로 실행되며, 패널에는 골드 코어만 보입니다. 방 선택, 쉬운 답변 모드, 음성 시작, 대화 검색, 최근 답변은 메뉴바 트레이 아이콘을 우클릭해 여는 960×880 설정 창에서 다룹니다. 넓은 화면은 58:42 두 열과 16px 간격으로 배치하고, 700px 아래에서는 한 열로 바뀝니다. 기술 진단·권한·대량 점검 화면은 두지 않습니다. 기존 Swift Extra는 설치 시 백업 후 비활성화됩니다.
 
 온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
@@ -239,7 +239,7 @@ sh scripts/start-auto-reply-menubar.command
 
 ## Jarvis Tauri와 지식 그래프
 
-Tauri 메뉴바 창은 골드 홀로그램 코어만 두며 인터랙티브 요소는 없습니다. 대량 검증, 기능 점검, 권한 설정 UI도 없습니다. 제어는 메뉴바 트레이 아이콘을 우클릭해 여는 통합 설정으로 모읍니다. 설정에는 동기화 카드(`settings-sync-card`) 뒤에 DREAM-RSI 카드(`settings-dream-rsi-card`)가 있습니다. DREAM-RSI는 정답지 체크포인트 출처(receipt)만 표시하며, 이 카드가 학습을 시작하지는 않습니다.
+Tauri 메뉴바 창은 골드 홀로그램 코어만 두며 인터랙티브 요소는 없습니다. 설정은 960×880 창에서 채팅방·답변 선택, 음성·대화 상태, 대화 찾기·최근 답변을 58:42 비율과 16px 간격으로 나란히 배치하고, 700px 아래 화면에서는 한 열로 전환합니다. 전문 용어와 모델 식별자는 숨기고, 모델 전환 안전 확인은 사용자가 선택했을 때 내부에서 수행합니다. 첫 화면 진입은 기존 7개 병렬 호출에서 스냅샷과 검색 자료를 포함한 3개로 줄었습니다(57.1%).
 
 카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
 

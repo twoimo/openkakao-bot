@@ -1,4 +1,4 @@
-import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
+import { LAYOUT } from "./tokens";
 import type { RuntimeSnapshot } from "./contracts";
 
 export const MAIN_PANEL_CONTROLS = Object.freeze([] as const);
@@ -6,44 +6,30 @@ export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
   "settings-add-room-select",
   "settings-add-room-button",
-  "model-owner-state",
-  "mlx-server-state",
-  "settings-hardware-status",
   "settings-sync-source",
   "settings-activity-source",
-  "settings-sync-copy",
-  "settings-sync-mode",
-  "settings-sync-index",
-  "settings-sync-dense",
   "settings-sync-card",
-  "settings-dream-rsi-status",
-  "settings-dream-rsi-gold",
-  "settings-dream-rsi-card",
   "settings-knowledge-card",
   "knowledge-graph-canvas",
   "knowledge-accessible-nodes",
   "knowledge-expand-hop",
   "knowledge-focus-title",
-  "knowledge-focus-meta",
   "knowledge-relations",
   "knowledge-retrieve",
-  "settings-slot-morning",
-  "settings-slot-lunch",
-  "settings-slot-evening",
 ] as const);
 
 export function mainPanelMarkup(): string {
-  return `<main class="jarvis-panel" aria-label="Jarvis">
-    <canvas class="jarvis-core" width="${LAYOUT.coreSize}" height="${LAYOUT.coreSize}" aria-label="Jarvis core"></canvas>
+  return `<main class="jarvis-panel" aria-label="자비스">
+    <canvas class="jarvis-core" width="${LAYOUT.coreSize}" height="${LAYOUT.coreSize}" aria-label="자비스 화면"></canvas>
   </main>`;
 }
 
 export function settingsMarkup(): string {
   return `<main class="settings-shell">
     <header class="settings-header">
-      <p class="eyebrow">OPENKAKAO · LOCAL</p>
-      <h1>Jarvis 설정</h1>
-      <p>하나의 창에서 대상 방과 로컬 AI, 지식 상태를 확인합니다.</p>
+      <p class="eyebrow">카카오톡 · 내 컴퓨터에서 실행</p>
+      <h1>자비스 설정</h1>
+      <p>대상 채팅방과 답변 상태를 확인합니다.</p>
     </header>
 
     <section class="settings-card" aria-labelledby="rooms-title">
@@ -55,78 +41,54 @@ export function settingsMarkup(): string {
         <select id="settings-add-room-select" aria-label="추가할 채팅방 선택"><option value="">추가할 채팅방 선택</option></select>
         <button id="settings-add-room-button" type="button">추가</button>
       </div>
-      <p id="room-summary" class="muted">snapshot에서 안전한 방 상태만 불러옵니다.</p>
+      <p id="room-summary" class="muted">등록된 채팅방을 불러오는 중입니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="model-title">
-      <div class="section-heading"><h2 id="model-title">AI 모델</h2><span class="tag">온디바이스</span></div>
-      <button class="model-row selection" type="button" data-model-id="${RESIDENT_MODEL_ID}" aria-pressed="true" disabled>
-        <span class="model-copy"><strong>Flash-Next</strong><span class="model-desc">빠른 응답 · 기본 대화 상주 추론</span><span class="model-id">${RESIDENT_MODEL_ID}</span></span><span class="tag">기본 상주</span>
+      <div class="section-heading"><h2 id="model-title">AI 답변</h2><span class="tag">이 기기에서 실행</span></div>
+      <button class="model-row selection" type="button" data-model-choice="fast" aria-pressed="true" disabled>
+        <span class="model-copy"><strong>빠른 대화</strong><span class="model-desc">일상적인 질문에 빠르게 답합니다.</span></span><span class="tag">기본 사용</span>
       </button>
-      <button class="model-row" type="button" data-model-id="${SWAP_MODEL_ID}" aria-pressed="false" disabled>
-        <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-desc">심층 추론 · 필요 시 온디맨드 스왑</span><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
+      <button class="model-row" type="button" data-model-choice="deep" aria-pressed="false" disabled>
+        <span class="model-copy"><strong>깊은 분석</strong><span class="model-desc">어려운 질문에 답할 때 사용합니다.</span></span><span class="tag muted-tag">필요할 때 사용</span>
       </button>
-      <div class="meta-status-block">
-        <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
-        <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
-        <p id="mlx-server-state" class="muted">앱 소유 MLX 서버 상태를 확인 중입니다.</p>
-        <p id="settings-hardware-status" class="muted" role="status" aria-live="polite">온디바이스 하드웨어를 확인 중입니다.</p>
-      </div>
+      <p id="model-status" class="model-status-highlight" role="status" aria-live="polite">AI 답변 상태를 확인하고 있습니다.</p>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">
-      <div class="section-heading"><h2 id="voice-title">Voice</h2><span class="tag muted-tag">로컬 전용</span></div>
-      <p id="voice-status">음성 런타임 상태를 확인 중입니다.</p>
-      <p id="voice-phrase">호출어: 헤이 자비스</p>
-      <p id="voice-threshold">임계값: 0.65 고정</p>
-      <p id="voice-custom">한국어 커스텀 헤드: bundled ONNX 선택됨 (TTS 보정, 사람 음성 일반화 아님)</p>
-      <p class="muted">RMS는 acoustic pulse lattice 진폭에만 반영됩니다. 영어 스톡 모델은 한국어 호출을 놓칩니다.</p>
-      <button id="voice-start" type="button">마이크 세션 시작</button>
+      <div class="section-heading"><h2 id="voice-title">음성</h2><span class="tag muted-tag">이 기기에서 처리</span></div>
+      <p id="voice-status">음성 기능 상태를 확인하고 있습니다.</p>
+      <p class="muted">“헤이 자비스”라고 부른 뒤 말씀해 주세요.</p>
+      <button id="voice-start" type="button">마이크 켜기</button>
     </section>
 
     <section id="settings-sync-card" class="settings-card knowledge-accent" aria-labelledby="sync-title">
-      <div class="section-heading"><h2 id="sync-title">카카오 DB 동기화 · 색인</h2><span class="tag">GraphRAG 준비</span></div>
-      <p id="settings-sync-source">동기화: 확인 중</p>
-      <p id="settings-activity-source" class="muted">백그라운드 활동을 확인 중입니다.</p>
-      <p id="settings-sync-copy">격리 복제: 확인 중</p>
-      <p id="settings-sync-mode">색인 모드: 확인 중</p>
-      <p id="settings-sync-index">마지막 색인: 확인 중</p>
-      <p id="settings-sync-dense">dense: 확인 중</p>
-    </section>
-
-    <section id="settings-dream-rsi-card" class="settings-card" aria-labelledby="dream-title">
-      <div class="section-heading"><h2 id="dream-title">DREAM-RSI</h2><span class="tag muted-tag">체크포인트 provenance</span></div>
-      <p id="settings-dream-rsi-status">status: 확인 중 · selected_policy: 확인 중</p>
-      <p id="settings-dream-rsi-gold">gold_rows: 확인 중 · gold_source_policy: 확인 중</p>
+      <div class="section-heading"><h2 id="sync-title">카카오톡 대화</h2><span class="tag">내 기기에서 처리</span></div>
+      <p id="settings-sync-source" role="status" aria-live="polite">대화 준비 상태를 확인하고 있습니다.</p>
+      <p id="settings-activity-source" class="muted">앱의 작업 상태를 확인하고 있습니다.</p>
     </section>
 
     <section id="settings-knowledge-card" class="settings-card knowledge-accent" aria-labelledby="knowledge-title">
-      <div class="section-heading"><h2 id="knowledge-title">Knowledge</h2><span id="knowledge-mode" class="tag">GraphRAG</span></div>
-      <p id="knowledge-summary">E-R-E 그래프를 읽는 중입니다. 메시지는 노드로 만들지 않습니다.</p>
+      <div class="section-heading"><h2 id="knowledge-title">대화에서 찾기</h2><span id="knowledge-mode" class="tag">연결된 주제</span></div>
+      <p id="knowledge-summary">대화에 나온 사람과 주제를 살펴봅니다.</p>
       <div class="knowledge-hologram-shell">
-        <canvas id="knowledge-graph-canvas" width="1280" height="640" aria-label="Knowledge E-R-E hologram graph"></canvas>
-        <div id="knowledge-accessible-nodes" class="sr-only" role="region" aria-label="지식 그래프 노드 접근성 목록"></div>
+        <canvas id="knowledge-graph-canvas" width="1280" height="640" aria-label="대화 속 이름과 주제의 연결 그림"></canvas>
+        <div id="knowledge-accessible-nodes" class="sr-only" role="region" aria-label="대화 검색 항목 목록"></div>
         <div class="knowledge-hologram-toolbar">
-          <span id="knowledge-hop-label">overview · 최대 24 nodes</span>
-          <button id="knowledge-expand-hop" type="button" disabled>+1 hop</button>
+          <span>연결된 항목</span>
+          <button id="knowledge-expand-hop" type="button" disabled>더 보기</button>
         </div>
       </div>
       <div class="knowledge-focus-card" aria-live="polite">
-        <strong id="knowledge-focus-title">노드를 선택하면 2-hop으로 집중합니다.</strong>
-        <p id="knowledge-focus-meta">subject · relation · object / room · time · evidence</p>
+        <strong id="knowledge-focus-title">항목을 선택하면 관련 정보를 보여드립니다.</strong>
         <div id="knowledge-relations" class="knowledge-relations"></div>
-        <p id="knowledge-retrieve">선택 시 기존 read-only GraphRAG retrieve를 사용합니다.</p>
-      </div>
-      <div class="slot-grid" aria-label="GeekNews 슬롯">
-        <span>아침 <b id="settings-slot-morning">대기</b></span>
-        <span>점심 <b id="settings-slot-lunch">대기</b></span>
-        <span>저녁 <b id="settings-slot-evening">대기</b></span>
+        <p id="knowledge-retrieve">항목을 선택하면 관련 대화를 찾아 보여드립니다.</p>
       </div>
     </section>
 
     <section class="settings-card" aria-labelledby="history-title">
-      <div class="section-heading"><h2 id="history-title">History</h2><span class="tag muted-tag">안전 요약</span></div>
-      <p id="history-summary" class="muted" role="status" aria-live="polite">최근 기록을 확인 중입니다.</p>
+      <div class="section-heading"><h2 id="history-title">최근 답변</h2><span class="tag muted-tag">요약만 표시</span></div>
+      <p id="history-summary" class="muted" role="status" aria-live="polite">최근 답변을 확인하고 있습니다.</p>
       <div id="history-list" class="knowledge-relations" role="list" aria-label="최근 답변 기록"></div>
     </section>
   </main>`;
@@ -139,7 +101,7 @@ export function renderHistory(snapshot: RuntimeSnapshot, root: Document = docume
   list.replaceChildren();
 
   if (!snapshot.available) {
-    summary.textContent = "기록을 확인할 수 없습니다.";
+    summary.textContent = "최근 답변 기록을 불러오지 못했습니다.";
     return;
   }
   if (snapshot.recentReceipts.length === 0) {
@@ -147,7 +109,7 @@ export function renderHistory(snapshot: RuntimeSnapshot, root: Document = docume
     return;
   }
 
-  summary.textContent = `최근 ${snapshot.recentReceipts.length}건 · 본문·프롬프트 제외`;
+  summary.textContent = `최근 ${snapshot.recentReceipts.length}건 · 메시지 내용은 표시하지 않습니다.`;
   snapshot.recentReceipts.forEach((receipt) => {
     const row = root.createElement("div");
     row.className = "history-receipt-card";
@@ -162,24 +124,67 @@ export function renderHistory(snapshot: RuntimeSnapshot, root: Document = docume
 
     const badge = root.createElement("span");
     badge.className = "history-receipt-badge";
-    badge.textContent = receipt.outcomeText || receipt.outcome || "기록";
+    badge.textContent = receipt.outcomeText || receiptOutcomeLabel(receipt.outcome);
 
     header.append(heading, badge);
 
     const detail = root.createElement("span");
     detail.className = "history-receipt-detail";
-    detail.textContent = `${receipt.outcomeText || receipt.outcome} · ${receipt.reasonText || receipt.reasonCode} · 검색 ${receipt.retrievalState}`;
+    const reason = receipt.reasonText || receiptReasonLabel(receipt.reasonCode);
+    detail.textContent = `${receipt.outcomeText || receiptOutcomeLabel(receipt.outcome)} · ${reason} · 대화 찾기 ${retrievalLabel(receipt.retrievalState)}`;
 
     row.append(header, detail);
     list.append(row);
   });
 }
 
+function receiptOutcomeLabel(outcome: string): string {
+  switch (outcome) {
+    case "sent": return "답변 완료";
+    case "deferred": return "나중에 처리";
+    case "scheduled": return "예약됨";
+    case "skipped": return "건너뜀";
+    default: return "기록됨";
+  }
+}
+
+function receiptReasonLabel(reasonCode: string): string {
+  switch (reasonCode) {
+    case "already_commented": return "이미 답변한 대화";
+    case "low_information": return "답변할 정보가 부족한 대화";
+    case "uncertain": return "판단을 보류한 대화";
+    case "direct_question": return "질문에 답변";
+    default: return "사유가 기록되지 않았습니다";
+  }
+}
+
+function retrievalLabel(state: string): string {
+  switch (state) {
+    case "ok": return "자료 확인됨";
+    case "empty": return "관련 자료 없음";
+    case "skipped": return "확인하지 않음";
+    case "error": return "자료를 확인하지 못함";
+    case "index_not_ready": return "자료 준비 중";
+    default: return "상태 확인 중";
+  }
+}
+
+function activityStateLabel(value: unknown): string {
+  const state = safeDisplayString(value, "").toLowerCase();
+  if (["active", "running", "in_progress", "processing"].includes(state)) return "진행 중";
+  if (["ready", "complete", "completed", "done", "ok", "success"].includes(state)) return "완료";
+  if (["queued", "pending", "waiting"].includes(state)) return "대기 중";
+  if (["sending", "send", "publishing"].includes(state)) return "전송 중";
+  if (["behind", "stale"].includes(state)) return "새로 확인 필요";
+  if (["error", "failed", "unavailable", "blocked"].includes(state)) return "확인 필요";
+  return "확인 중";
+}
+
 export function renderBackground(snapshot: RuntimeSnapshot, root: Document = document): void {
   const target = root.getElementById("settings-activity-source");
   if (!target) return;
   if (!snapshot.available) {
-    target.textContent = "백그라운드 상태를 확인할 수 없습니다.";
+    target.textContent = "앱의 작업 상태를 불러오지 못했습니다.";
     return;
   }
 
@@ -199,27 +204,9 @@ export function renderBackground(snapshot: RuntimeSnapshot, root: Document = doc
   }
 
   const pendingReplies = Math.round(Math.min(1, Math.max(0, background.replyLoad)) * 4);
-  const caption = background.caption ? ` · ${background.caption.slice(0, 120)}` : "";
-  const pipeline = snapshot.pipeline.active ? ` · 파이프라인 ${snapshot.pipeline.stage}` : "";
-  const jobs = snapshot.jobs.length > 0 ? ` · 진행 중 작업 ${snapshot.jobs.length}` : "";
-  target.textContent = `백그라운드 · 답변 대기 ${pendingReplies} · 긱뉴스 ${background.geeknews.state} · DB 동기화 ${background.dbSync.state}${pipeline}${jobs}${caption}`;
-}
-
-export function renderHardware(snapshot: RuntimeSnapshot, root: Document = document): void {
-  const target = root.getElementById("settings-hardware-status");
-  if (!target) return;
-  if (!snapshot.onDevice.available) {
-    target.textContent = "하드웨어 정보를 확인할 수 없습니다.";
-    return;
-  }
-
-  const statusLabel = snapshot.onDevice.statusLabel.slice(0, 240);
-  if (statusLabel) {
-    target.textContent = `온디바이스: ${statusLabel}`;
-    return;
-  }
-  const chip = snapshot.onDevice.chip || "칩 미확인";
-  target.textContent = `온디바이스: ${chip} · ${snapshot.onDevice.memoryGb.toFixed(1)}GB`;
+  const pipeline = snapshot.pipeline.active ? " · 답변 준비 중" : "";
+  const jobs = snapshot.jobs.length > 0 ? ` · 다른 작업 ${snapshot.jobs.length}건 진행 중` : "";
+  target.textContent = `작업 현황 · 답변 대기 ${pendingReplies}건 · 긱뉴스 ${activityStateLabel(background.geeknews.state)} · 대화 준비 ${activityStateLabel(background.dbSync.state)}${pipeline}${jobs}`;
 }
 
 function safeDisplayString(value: unknown, fallback: string): string {
@@ -231,38 +218,19 @@ function safeDisplayString(value: unknown, fallback: string): string {
   }
 }
 
-export function renderDenseStatus(
-  knowledge: Record<string, unknown> | null | undefined,
-  root: Document = document,
-): void {
-  const target = root.getElementById("settings-sync-dense");
-  if (!target) return;
-  if (!knowledge || Array.isArray(knowledge)) {
-    target.textContent = "dense: 확인 불가";
-    return;
-  }
-
-  const status = safeDisplayString(knowledge.dense_status, "unknown").slice(0, 400);
-  const indexedAt = safeDisplayString(knowledge.dense_indexed_at, "0");
-  const validIndexedAt = /^\d+$/.test(indexedAt)
-    && Number.isSafeInteger(Number(indexedAt))
-    && Number(indexedAt) > 0;
-  target.textContent = validIndexedAt
-    ? `dense: ${status} · indexed_at ${indexedAt}`
-    : `dense: ${status}`;
-}
-
 export function renderRooms(snapshot: RuntimeSnapshot, root: Document = document): void {
   const popup = root.querySelector<HTMLSelectElement>("#settings-room-popup");
   if (popup) {
     popup.replaceChildren();
     if (snapshot.rooms.length === 0) {
       const option = document.createElement("option");
-      option.textContent = snapshot.available ? "등록된 방 없음" : "snapshot 확인 불가";
+      option.textContent = snapshot.available ? "등록된 채팅방이 없습니다." : "채팅방 목록을 불러오지 못했습니다.";
       option.value = "";
       popup.append(option);
       const summary = root.getElementById("room-summary");
-      if (summary) summary.textContent = "방 목록이 비어 있거나 snapshot을 읽지 못했습니다.";
+      if (summary) summary.textContent = snapshot.available
+        ? "등록된 채팅방이 없습니다."
+        : "채팅방 목록을 불러오지 못했습니다. 다시 확인해 주세요.";
     } else {
       snapshot.rooms.forEach((room) => {
         const option = document.createElement("option");
@@ -272,7 +240,7 @@ export function renderRooms(snapshot: RuntimeSnapshot, root: Document = document
       });
       const live = snapshot.rooms.filter((room) => room.live).length;
       const summary = root.getElementById("room-summary");
-      if (summary) summary.textContent = `등록 ${snapshot.rooms.length} · live ${live} · 본문 미전달`;
+      if (summary) summary.textContent = `등록된 채팅방 ${snapshot.rooms.length}개 · 연결됨 ${live}개`;
     }
   }
 

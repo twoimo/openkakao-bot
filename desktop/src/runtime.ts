@@ -4,10 +4,6 @@ import { parseRuntimeSnapshot, unavailableSnapshot } from "./contracts";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 
 type SettingsAction =
-  | "models"
-  | "model-owner-status"
-  | "mlx-server-status"
-  | "dream-rsi-status"
   | "knowledge-graph-status"
   | "knowledge-graph"
   | "knowledge-graph-focus"
