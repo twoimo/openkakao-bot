@@ -31,6 +31,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+try:  # Tests import scripts.*, while direct runs resolve sibling modules.
+    from scripts.local_mlx_gateway import (
+        MlxRequestAdmissionClosed,
+        mlx_model_request_lease,
+    )
+except ImportError:  # pragma: no cover - flat script import path
+    from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
+
 try:
     # The golden extractor owns the transcript clock format, so its parser is
     # reused instead of re-implemented: a session bucket that disagrees with
@@ -812,7 +820,7 @@ def _capture_failure(reason: str, *, model: str = "") -> dict[str, Any]:
     }
 
 
-def _post_local_json(
+def _post_local_json_unleased(
     url: str, payload: dict[str, Any], *, timeout: float
 ) -> tuple[dict[str, Any] | None, str]:
     """로컬 게이트웨이에 한 번 POST하고 (본문, 오류코드)를 돌려준다."""
@@ -841,6 +849,32 @@ def _post_local_json(
     if not isinstance(parsed, dict):
         return None, "malformed_response"
     return parsed, ""
+
+
+def _post_local_json(
+    url: str, payload: dict[str, Any], *, timeout: float
+) -> tuple[dict[str, Any] | None, str]:
+    """Coordinate MLX DPO probes with the managed model-swap drain gate."""
+
+    parsed = urllib.parse.urlsplit(url)
+    try:
+        managed_gateway = (
+            parsed.scheme == "http"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port == 11234
+            and parsed.path.startswith("/v1/")
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        managed_gateway = False
+    if not managed_gateway:
+        return _post_local_json_unleased(url, payload, timeout=timeout)
+    try:
+        with mlx_model_request_lease():
+            return _post_local_json_unleased(url, payload, timeout=timeout)
+    except MlxRequestAdmissionClosed as exc:
+        return None, exc.code
 
 
 def _bounded_timeout(timeout: Any) -> float | None:

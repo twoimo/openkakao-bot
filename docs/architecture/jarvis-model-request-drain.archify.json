@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Jarvis MLX 요청 배수와 모델 교체",
+    "output": "docs/architecture/jarvis-model-request-drain.html",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1080, 540],
+    "views": [
+      {
+        "id": "request-lease",
+        "label": "요청 공유 lease",
+        "focus": ["callers", "gate", "mlx"],
+        "note": "생성·임베딩·준비 조회는 HTTP 요청 전체에서 LOCK_SH를 보유합니다."
+      },
+      {
+        "id": "exclusive-swap",
+        "label": "교체 배타 lease",
+        "focus": ["swap", "gate", "mlx", "state"],
+        "note": "LOCK_EX 확보와 실제 owner/catalog 확인이 모두 끝나야 모델을 바꿉니다."
+      },
+      {
+        "id": "resume-requests",
+        "label": "요청 재개",
+        "focus": ["callers", "gate", "swap", "state"],
+        "note": "교체 중 요청은 재시도 가능한 코드로 닫고, 배타 lease 해제 뒤 다시 받습니다."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "callers", "type": "frontend", "label": "앱 요청", "sublabel": "자동답장 · 음성 · 검색 · Browser-Use" },
+    { "id": "gate", "type": "security", "label": "공유 lease", "sublabel": "mlx-model-swap.lock" },
+    { "id": "swap", "type": "backend", "label": "모델 교체", "sublabel": "명시적 사용자 요청" },
+    { "id": "mlx", "type": "backend", "label": "MLX gateway", "sublabel": "127.0.0.1:11234" },
+    { "id": "state", "type": "database", "label": "owner 기록", "sublabel": "실제 PID · ready 모델" }
+  ],
+  "segments": [
+    { "from": 150, "to": 215, "label": "요청 진행" },
+    { "from": 225, "to": 310, "label": "활성 요청 보호" },
+    { "from": 320, "to": 450, "label": "배수 확인 후 교체" }
+  ],
+  "messages": [
+    { "from": "callers", "to": "gate", "y": 160, "label": "요청: LOCK_SH 확보", "variant": "emphasis" },
+    { "from": "callers", "to": "mlx", "y": 195, "label": "loopback 생성·임베딩 HTTP", "variant": "default" },
+    { "from": "swap", "to": "gate", "y": 230, "label": "LOCK_EX | LOCK_NB 시도", "variant": "security" },
+    { "from": "gate", "to": "swap", "y": 265, "label": "model_swap_busy · 변경 전 종료", "variant": "return", "note": "공유 요청이 진행 중이면 unload/load를 시작하지 않습니다." },
+    { "from": "mlx", "to": "callers", "y": 300, "label": "응답 완료 · LOCK_SH 해제", "variant": "return" },
+    { "from": "swap", "to": "gate", "y": 335, "label": "재시도: LOCK_EX 확보", "variant": "security" },
+    { "from": "swap", "to": "mlx", "y": 370, "label": "PID/catalog 확인 → unload·load·probe", "variant": "emphasis", "note": "실제 owner와 단일 ready 모델을 확인한 뒤 메모리 기준을 통과해야 변경합니다." },
+    { "from": "mlx", "to": "swap", "y": 405, "label": "대상 모델 loaded/ready 확인", "variant": "return" },
+    { "from": "swap", "to": "state", "y": 440, "label": "accepting=true 저장 · LOCK_EX 해제", "variant": "default", "note": "저장 필드는 drain 증거가 아닙니다. 평시 drain_verified=false이며, 이후 요청은 LOCK_SH로 재개합니다." }
+  ]
+}

@@ -29,6 +29,7 @@ from typing import Any, Protocol
 
 from auto_reply_ondevice import FLASH_NEXT_MODEL_ID
 from jarvis_abort import AbortToken, JarvisCancelled
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 
 WAKE_PHRASE = "헤이 자비스"
@@ -735,9 +736,16 @@ class JarvisVoicePipeline:
 
 
 class LocalMlxLlm:
-    def __init__(self, base_url: str = LOCAL_LLM_BASE_URL, model: str = FLASH_NEXT_MODEL_ID):
+    def __init__(
+        self,
+        base_url: str = LOCAL_LLM_BASE_URL,
+        model: str = FLASH_NEXT_MODEL_ID,
+        *,
+        state_root: Path | None = None,
+    ):
         self.base_url = _validate_local_llm_base_url(base_url)
         self.model = model
+        self.state_root = state_root
 
     def generate(
         self,
@@ -776,8 +784,11 @@ class LocalMlxLlm:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
         try:
-            with _local_urlopen(request, timeout=90.0) as response:
-                raw = response.read(LOCAL_LLM_MAX_RESPONSE_BYTES + 1)
+            with mlx_model_request_lease(self.state_root):
+                with _local_urlopen(request, timeout=90.0) as response:
+                    raw = response.read(LOCAL_LLM_MAX_RESPONSE_BYTES + 1)
+        except MlxRequestAdmissionClosed as exc:
+            raise RuntimeError(exc.code) from exc
         except (OSError, urllib.error.URLError, ValueError) as exc:
             raise RuntimeError("local_llm_request_failed") from exc
         if len(raw) > LOCAL_LLM_MAX_RESPONSE_BYTES:
@@ -967,7 +978,7 @@ def run_microphone_session(
     status = VoiceStatusStore(state_root)
     pipeline = JarvisVoicePipeline(
         stt=MlxWhisperAdapter(),
-        llm=LocalMlxLlm(),
+        llm=LocalMlxLlm(state_root=state_root),
         tts=Qwen3TtsAdapter(),
         token=token,
         status=status,
@@ -1072,7 +1083,7 @@ def run_file_pipeline(
     tts = _FileTts()
     pipeline = JarvisVoicePipeline(
         stt=MlxWhisperAdapter(model=os.environ.get("OPENKAKAO_WHISPER_MODEL", WHISPER_MODEL_ID)),
-        llm=LocalMlxLlm(),
+        llm=LocalMlxLlm(state_root=state_root),
         tts=tts,
         token=token,
         status=status,

@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 import urllib.error
 import urllib.request
@@ -74,6 +75,16 @@ class _FakeOpener:
 
 
 class VerifyLocalModelsTests(unittest.TestCase):
+    def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.state_dir.cleanup)
+        patcher = mock.patch(
+            "local_mlx_gateway.resolve_mlx_state_root",
+            return_value=Path(self.state_dir.name),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def _ready_catalog():
         return {

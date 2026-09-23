@@ -16,6 +16,8 @@ from itertools import islice
 from pathlib import Path
 from typing import Any, Callable, Iterable, TextIO
 
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
+
 
 RESIDENT_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
 SWAP_MODEL_ID = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
@@ -284,6 +286,7 @@ def verify_local_model(
     timeout: float = DEFAULT_TIMEOUT_SECS,
     base_url: str = LOCAL_BASE_URL,
     clock: Callable[[], float] = time.monotonic,
+    state_root: Path | str | None = None,
 ) -> VerificationResult:
     started = clock()
     model = canonical_fixed_model_id(requested_model)
@@ -308,49 +311,58 @@ def verify_local_model(
     deadline = started + bounded_timeout
     readiness = False
     try:
-        models_request = urllib.request.Request(
-            MODELS_URL,
-            method="GET",
-            headers={"Accept": "application/json"},
-        )
-        models_payload = _read_json_response(
-            models_request,
-            opener=opener,
-            deadline=deadline,
-            clock=clock,
-            stage="models",
-        )
-        _require_ready_model(models_payload, model)
-        readiness = True
+        with mlx_model_request_lease(state_root):
+            models_request = urllib.request.Request(
+                MODELS_URL,
+                method="GET",
+                headers={"Accept": "application/json"},
+            )
+            models_payload = _read_json_response(
+                models_request,
+                opener=opener,
+                deadline=deadline,
+                clock=clock,
+                stage="models",
+            )
+            _require_ready_model(models_payload, model)
+            readiness = True
 
-        body = json.dumps(
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": DIAGNOSTIC_PROMPT}],
-                "max_tokens": DIAGNOSTIC_MAX_TOKENS,
-                "temperature": 0,
-                "stream": False,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        generation_request = urllib.request.Request(
-            CHAT_COMPLETIONS_URL,
-            data=body,
-            method="POST",
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            body = json.dumps(
+                {
+                    "model": model,
+                    "messages": [{"role": "user", "content": DIAGNOSTIC_PROMPT}],
+                    "max_tokens": DIAGNOSTIC_MAX_TOKENS,
+                    "temperature": 0,
+                    "stream": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            generation_request = urllib.request.Request(
+                CHAT_COMPLETIONS_URL,
+                data=body,
+                method="POST",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+            )
+            generation_payload = _read_json_response(
+                generation_request,
+                opener=opener,
+                deadline=deadline,
+                clock=clock,
+                stage="generation",
+            )
+            _require_generation(generation_payload)
+    except MlxRequestAdmissionClosed as exc:
+        return VerificationResult(
+            model,
+            False,
+            False,
+            exc.code,
+            _elapsed_ms(started, clock),
         )
-        generation_payload = _read_json_response(
-            generation_request,
-            opener=opener,
-            deadline=deadline,
-            clock=clock,
-            stage="generation",
-        )
-        _require_generation(generation_payload)
     except _ProbeFailure as exc:
         return VerificationResult(
             model,
@@ -372,6 +384,7 @@ def verify_local_models(
     timeout: float = DEFAULT_TIMEOUT_SECS,
     base_url: str = LOCAL_BASE_URL,
     clock: Callable[[], float] = time.monotonic,
+    state_root: Path | str | None = None,
 ) -> list[VerificationResult]:
     selected = list(islice(models, MAX_SELECTED_MODELS + 1))
     if not selected:
@@ -385,6 +398,7 @@ def verify_local_models(
             timeout=timeout,
             base_url=base_url,
             clock=clock,
+            state_root=state_root,
         )
         for model in selected
     ]
@@ -477,6 +491,7 @@ def main(
         opener=opener,
         timeout=args.timeout,
         clock=clock,
+        state_root=(Path(args.state_root).expanduser() if args.state_root else _default_state_root()),
     )
     ok = all(result.ok for result in results)
     output = stdout if stdout is not None else sys.stdout

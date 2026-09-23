@@ -29,7 +29,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
-from local_mlx_gateway import MLX_GATEWAY_BASE_URL
+from local_mlx_gateway import (
+    MLX_GATEWAY_BASE_URL,
+    MlxRequestAdmissionClosed,
+    mlx_model_request_lease,
+)
 
 
 MLX_GATEWAY_CANDIDATES = (MLX_GATEWAY_BASE_URL,)
@@ -1369,6 +1373,35 @@ def probe_ondevice_generation(
     timeout: float = PROBE_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Run one bounded local generation against an already present MLX runtime."""
+    effective_root = Path(state_root) if state_root is not None else _default_state_root()
+    started = time.monotonic()
+    try:
+        with mlx_model_request_lease(effective_root):
+            return _probe_ondevice_generation_locked(
+                rec,
+                state_root=effective_root,
+                prompt=prompt,
+                timeout=timeout,
+            )
+    except MlxRequestAdmissionClosed as exc:
+        return _finish_probe(
+            started=started,
+            engine="mlx-serve-gateway",
+            model="",
+            ok=False,
+            errors=[exc.code],
+            state_root=effective_root,
+        )
+
+
+def _probe_ondevice_generation_locked(
+    rec: EngineRecommendation | None = None,
+    *,
+    state_root: Path | None = None,
+    prompt: str = "LOCAL_OK 한 단어로 답하세요",
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run the probe while the caller holds the shared model-request lease."""
     started = time.monotonic()
     safe_prompt = _sanitize_probe_text(prompt, PROBE_PROMPT_MAX_CHARS) or "LOCAL_OK"
     effective_timeout = max(

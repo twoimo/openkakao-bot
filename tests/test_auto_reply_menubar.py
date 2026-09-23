@@ -22,6 +22,7 @@ for path in (str(TESTS), str(SCRIPTS)):
         sys.path.insert(0, path)
 
 import test_auto_reply_tui as _tui_tests
+from local_mlx_gateway import mlx_model_request_lease
 
 
 def load(name: str):
@@ -2217,7 +2218,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_model_swap_requires_opt_in_and_verified_owner_before_gateway(self):
         module = load("auto_reply_menubar_model_swap_gates")
-        token = "123e4567-e89b-42d3-a456-426614174000"
+        token = "00000000-0000-4000-8000-000000000001"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
@@ -2246,7 +2247,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_external_owner_is_reported_without_touching_the_gateway(self):
         module = load("auto_reply_menubar_model_swap_external_owner")
-        token = "123e4567-e89b-42d3-a456-426614174000"
+        token = "00000000-0000-4000-8000-000000000001"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
@@ -2264,6 +2265,44 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(external["stage"], "aborted")
             self.assertEqual(external["reason"], "model_owner_unmanaged")
             gateway_factory.assert_not_called()
+
+    def test_model_swap_rejects_an_active_request_before_gateway_creation(self):
+        module = load("auto_reply_menubar_model_swap_waits_for_requests")
+        token = "00000000-0000-4000-8000-000000000001"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            gateway_factory = mock.Mock(side_effect=AssertionError("swap must not start"))
+            with mlx_model_request_lease(root):
+                result = module.swap_reply_model(
+                    root,
+                    module.JARVIS_SWAP_MODEL_ID,
+                    explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                    request_token=token,
+                    gateway_factory=gateway_factory,
+                )
+            self.assertEqual(result["reason"], "model_swap_busy")
+            gateway_factory.assert_not_called()
+
+    def test_model_swap_reports_an_unavailable_request_gate(self):
+        module = load("auto_reply_menubar_model_swap_gate_unavailable")
+        token = "00000000-0000-4000-8000-000000000001"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with mock.patch.object(
+                module,
+                "mlx_model_swap_lease",
+                side_effect=module.MlxRequestAdmissionClosed(
+                    "mlx_request_gate_unavailable"
+                ),
+            ):
+                result = module.swap_reply_model(
+                    root,
+                    module.JARVIS_SWAP_MODEL_ID,
+                    explicit_opt_in=module.MODEL_SWAP_OPT_IN,
+                    request_token=token,
+                )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "mlx_request_gate_unavailable")
 
     def test_main_dispatches_model_owner_status_read_only(self):
         module = load(f"auto_reply_menubar_owner_dispatch_{id(self)}")
@@ -2308,11 +2347,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
     def test_model_swap_fake_failures_cancellation_and_safe_success(self):
         module = load("auto_reply_menubar_model_swap_fakes")
-        token = "123e4567-e89b-42d3-a456-426614174000"
+        token = "00000000-0000-4000-8000-000000000001"
         previous = f"mlx/{module.JARVIS_RESIDENT_MODEL_ID}"
         target = module.QWEN38_27B_MODEL_ID
         residency = module.ManagedModelResidency(
-            previous, (previous,), 4242, True, True, "ready"
+            previous, (previous,), 4242, True, False, "model_drain_unverified"
         )
 
         class FakeGateway:
@@ -2336,6 +2375,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 self.calls.append(("probe", model_id))
                 return self.probe_results.get(model_id, True)
 
+        persisted_states = []
+
+        def persist_state(_root, _snapshot, **kwargs):
+            persisted_states.append(kwargs)
+
         def run(root, gateway, memory_bytes=120 * 1024**3, cancel_check=None):
             return module.swap_reply_model(
                 root,
@@ -2345,7 +2389,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 residency_probe=lambda _root: residency,
                 memory_probe=lambda: module.MemoryBudget(memory_bytes),
                 gateway_factory=lambda: gateway,
-                persist_residency=lambda *_args, **_kwargs: None,
+                persist_residency=persist_state,
                 cancel_check=cancel_check,
                 now=123.0,
             )
@@ -2401,6 +2445,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertTrue(success["ok"])
             self.assertTrue(success["stored"])
             self.assertTrue(success["prepared"])
+            self.assertTrue(persisted_states)
+            self.assertTrue(all(item["accepting_requests"] for item in persisted_states))
             encoded = json.dumps(success, sort_keys=True)
             self.assertNotIn("prompt", encoded)
             self.assertNotIn("secret", encoded)
@@ -5156,6 +5202,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
         )
         self.assertEqual(spec.host, "127.0.0.1")
         self.assertEqual(spec.port, 11234)
+        self.assertEqual(spec.minimum_free_bytes, module.QWEN38_27B_REQUIRED_BYTES)
         self.assertEqual(spec.validate(), "")
 
     def test_launch_accepts_the_prefixed_model_id_and_rejects_anything_else(self):
@@ -5169,6 +5216,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
             prefixed.resident_model_dir.name,
             "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
         )
+        self.assertEqual(prefixed.minimum_free_bytes, module.FLASH_NEXT_REQUIRED_BYTES)
         for candidate in (None, "", "remote/arbitrary", "ddalcu/../../etc/passwd"):
             self.assertIsNone(
                 module._mlx_app_owned_spec(Path("/tmp/jarvis-mlx-state"), candidate),
@@ -5191,6 +5239,74 @@ class JarvisMlxServerActionTests(unittest.TestCase):
         )
         self.assertEqual(payload["reason"], "mlx_model_not_supported")
         launched.assert_not_called()
+
+    def test_launch_residency_seed_requires_exact_ready_catalog_and_owner_readback(self):
+        module = load(f"auto_reply_menubar_mlx_residency_seed_{id(self)}")
+        pid = 4242
+        current = f"mlx/{module.FLASH_NEXT_MODEL_ID.removeprefix('mlx/')}"
+        residency = module.ManagedModelResidency(
+            current,
+            (module.FLASH_NEXT_MODEL_ID, module.QWEN38_27B_MODEL_ID),
+            pid,
+            True,
+            False,
+            "model_drain_unverified",
+        )
+        catalog = [
+            {
+                "id": module.FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
+                "loaded": True,
+                "state": "ready",
+            },
+            {
+                "id": module.QWEN38_27B_MODEL_ID,
+                "loaded": False,
+                "state": "unloaded",
+            },
+            {
+                "id": "mlx/catalog-only-unowned-model",
+                "loaded": False,
+                "state": "unloaded",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            spec = module._mlx_app_owned_spec(root, module.FLASH_NEXT_MODEL_ID)
+            with mock.patch.object(
+                module, "_read_mlx_gateway_models", return_value=(True, catalog)
+            ), mock.patch.object(
+                module, "write_managed_model_residency"
+            ) as write_state, mock.patch.object(
+                module, "read_managed_model_residency", return_value=residency
+            ):
+                self.assertTrue(module._seed_launched_model_residency(root, spec, pid))
+
+        write_state.assert_called_once()
+        self.assertTrue(write_state.call_args.kwargs["accepting_requests"])
+        self.assertEqual(write_state.call_args.kwargs["in_flight"], 0)
+
+    def test_launch_residency_seed_rejects_wrong_or_unready_model_before_write(self):
+        module = load(f"auto_reply_menubar_mlx_residency_seed_reject_{id(self)}")
+        catalog = [
+            {
+                "id": module.FLASH_NEXT_MODEL_ID,
+                "loaded": False,
+                "state": "unloaded",
+            },
+            {
+                "id": module.QWEN38_27B_MODEL_ID,
+                "loaded": True,
+                "state": "ready",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            spec = module._mlx_app_owned_spec(root, module.FLASH_NEXT_MODEL_ID)
+            with mock.patch.object(
+                module, "_read_mlx_gateway_models", return_value=(True, catalog)
+            ), mock.patch.object(module, "write_managed_model_residency") as write_state:
+                self.assertFalse(module._seed_launched_model_residency(root, spec, 4242))
+        write_state.assert_not_called()
 
     def test_stop_reports_the_owner_mismatch_without_signalling(self):
         from mlx_serve_lifecycle import StopResult

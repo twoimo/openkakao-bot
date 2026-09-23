@@ -1,10 +1,13 @@
 import json
 import sys
+import tempfile
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest import mock
+
+from local_mlx_gateway import mlx_model_swap_lease
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +42,16 @@ class _Response:
 
 
 class LocalMlxModelReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.state_dir.cleanup)
+        patcher = mock.patch(
+            "local_mlx_gateway.resolve_mlx_state_root",
+            return_value=Path(self.state_dir.name),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_default_opener_disables_proxy_and_redirects(self):
         request = urllib.request.Request(MLX_MODELS_URL, method="GET")
         director = mock.Mock()
@@ -101,6 +114,14 @@ class LocalMlxModelReadinessTests(unittest.TestCase):
         self.assertTrue(result.prepared)
         self.assertEqual(result.reason, "ready")
         self.assertEqual(calls, [(MLX_MODELS_URL, "GET", 2.0)])
+
+    def test_readiness_does_not_contact_gateway_during_swap(self):
+        opener = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
+        with mlx_model_swap_lease(Path(self.state_dir.name)):
+            result = read_fixed_local_mlx_readiness(SWAP_MODEL_ID, opener=opener)
+        self.assertFalse(result.prepared)
+        self.assertEqual(result.reason, "model_swap_in_progress")
+        opener.assert_not_called()
 
     def test_unloaded_27b_fails_closed(self):
         result = read_fixed_local_mlx_readiness(

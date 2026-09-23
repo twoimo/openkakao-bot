@@ -8,7 +8,10 @@ import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable
+
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 
 RESIDENT_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
@@ -82,6 +85,7 @@ def read_fixed_local_mlx_readiness(
     *,
     opener: Callable[..., Any] = _local_only_urlopen,
     timeout: float = MLX_MODELS_TIMEOUT_SECS,
+    state_root: Path | str | None = None,
 ) -> MlxReadiness:
     """Read exact 27B readiness from the localhost gateway without loading it."""
 
@@ -95,8 +99,11 @@ def read_fixed_local_mlx_readiness(
         headers={"Accept": "application/json"},
     )
     try:
-        with opener(request, timeout=float(timeout)) as response:
-            raw = response.read(MLX_MODELS_MAX_BYTES + 1)
+        with mlx_model_request_lease(state_root):
+            with opener(request, timeout=float(timeout)) as response:
+                raw = response.read(MLX_MODELS_MAX_BYTES + 1)
+    except MlxRequestAdmissionClosed as exc:
+        return MlxReadiness(False, exc.code)
     except Exception as exc:
         reason = "mlx_gateway_timeout" if _timeout_error(exc) else "mlx_gateway_unavailable"
         return MlxReadiness(False, reason)

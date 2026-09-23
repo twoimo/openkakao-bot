@@ -91,6 +91,7 @@ class JarvisToolRuntimeBrowserTests(unittest.IsolatedAsyncioTestCase):
                     token,
                     context_factory=lambda: owned,
                     agent_factory=agent,
+                    state_root=Path(temp_dir),
                 )
 
             runtime = JarvisToolRuntime(
@@ -136,6 +137,7 @@ class JarvisToolRuntimeBrowserTests(unittest.IsolatedAsyncioTestCase):
                     token,
                     context_factory=lambda: owned,
                     agent_factory=agent,
+                    state_root=Path(temp_dir),
                 ),
             )
             result = await runtime.run_browser(BrowserToolJob("browser-failure", "safe task"))
