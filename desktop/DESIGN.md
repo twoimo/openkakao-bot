@@ -22,9 +22,11 @@ The decision → token → component → rendered-review sequence follows the co
 
 ## Tokens
 
-Light: canvas `#F7F4EE`, surface `#FFFCF7`, text `#241F1A`, muted `#6D655B`, champagne `#B88A45`, warning `#92540E`.
+Light: canvas `#F7F4EE`, surface `#FFFCF7`, text `#241F1A`, muted `#6D655B`, champagne `#B88A45`, accessible champagne text `#73501F`, warning `#92540E`.
 
-Dark: canvas `#12100D`, surface `#191611`, text `#F1EBE1`, muted `#B7AEA1`, gold `#D5B36E`, amber `#E5A04B`.
+Dark: canvas `#12100D`, surface `#191611`, text `#F1EBE1`, muted `#B7AEA1`, gold and its accessible text color `#D5B36E`, amber `#E5A04B`.
+
+Small champagne-colored text uses the accessible text token while borders, fills, and motion marks keep the brighter accent. On the light selection surface `#F7EFE3`, the accessible text contrast is **6.36:1** (the previous `#B88A45` text was **2.72:1**).
 
 Spacing uses 4/8/12/16/24px steps. Settings cards use an 11px radius, a 1px warm border, and no decorative shadow.
 

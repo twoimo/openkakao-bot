@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DARK_TOKENS, LIGHT_TOKENS } from "../tokens";
+import { DARK_TOKENS, LAYOUT, LIGHT_TOKENS } from "../tokens";
 
 const read = (relative: string): string =>
   readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
@@ -27,6 +27,30 @@ const paletteLine = (label: string): string[] => {
 const DESIGN_LIGHT = paletteLine("Light");
 const DESIGN_DARK = paletteLine("Dark");
 const DESIGN_PALETTE = new Set([...DESIGN_LIGHT, ...DESIGN_DARK]);
+
+const linearChannel = (value: number): number => {
+  const channel = value / 255;
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+};
+
+const luminance = (hex: string): number => {
+  const channels = [1, 3, 5].map((index) => linearChannel(Number.parseInt(hex.slice(index, index + 2), 16)));
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+};
+
+const contrastRatio = (first: string, second: string): number => {
+  const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const composite = (foreground: string, background: string, alpha: number): string => {
+  const channels = [1, 3, 5].map((index) => {
+    const front = Number.parseInt(foreground.slice(index, index + 2), 16);
+    const back = Number.parseInt(background.slice(index, index + 2), 16);
+    return Math.round(front * alpha + back * (1 - alpha)).toString(16).padStart(2, "0");
+  });
+  return `#${channels.join("")}`.toUpperCase();
+};
 
 describe("design contract", () => {
   it("DESIGN.md light palette matches LIGHT_TOKENS", () => {
@@ -60,6 +84,16 @@ describe("design contract", () => {
     expect(hexCodes(STYLES).filter((value) => !DESIGN_PALETTE.has(value))).toEqual([]);
   });
 
+  it("uses readable champagne text on light and dark selected surfaces", () => {
+    const lightSelection = composite(LIGHT_TOKENS.accent, LIGHT_TOKENS.surface, 0.11);
+    const darkSelection = composite(DARK_TOKENS.accent, DARK_TOKENS.surface, 0.13);
+    expect(contrastRatio(LIGHT_TOKENS.accentInk, lightSelection)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(DARK_TOKENS.accentInk, darkSelection)).toBeGreaterThanOrEqual(4.5);
+    expect(STYLES).not.toMatch(/color:\s*var\(--accent\)\s*[!;]/);
+    expect(STYLES).toContain("--selection: rgba(184, 138, 69, 0.11)");
+    expect(STYLES).toContain("--selection: rgba(213, 179, 110, 0.13)");
+  });
+
   it("the shell and the 3D core introduce no color outside the DESIGN.md palette", () => {
     const offenders = [...hexCodes(CORE), ...hexCodes(HOLOGRAM)].filter(
       (value) => !DESIGN_PALETTE.has(value)
@@ -87,6 +121,7 @@ describe("design contract", () => {
   });
 
   it("uses the settings window width on desktop and keeps a single column on narrow screens", () => {
+    expect(LAYOUT.settingsMaxWidth).toBe(1040);
     expect(STYLES).toContain("width: min(1040px, calc(100% - 48px))");
     expect(STYLES).toMatch(/@media \(min-width: 800px\)[\s\S]*grid-template-columns: minmax\(0, 58fr\) minmax\(300px, 42fr\)/);
     expect(STYLES).toMatch(/@media \(max-width: 799px\)[\s\S]*\.settings-shell \{ width: calc\(100% - 32px\)/);
