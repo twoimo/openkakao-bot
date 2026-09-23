@@ -233,6 +233,8 @@ sh scripts/start-auto-reply-menubar.command
 
 온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
+2026-09-24 읽기 전용 호스트 확인에서 Flash-Next는 `ready/loaded`였지만 최신 합성 생성 확인은 60.009초에 시간 초과했습니다. Qwen3.8 27B와 Qwen3-TTS는 내려가 있으며, 27B 준비 상태는 `model_not_ready`, MLX 서버 소유권은 `model_owner_unmanaged`였습니다. 남은 swap은 1,178.44 MiB로 음성 모델 적재 기준 2,048 MiB보다 낮아 Whisper/TTS 적재가 차단됩니다. 전체 호출어→STT→LLM→TTS 대화는 검증되지 않았습니다. 현재 적재 모델은 임베딩 기능을 알리지 않으므로 GraphRAG 검색은 BM25만 가능하고 dense/RRF는 사용할 수 없습니다. 이 확인 중 모델을 적재하거나 서버 소유권을 넘기지 않았습니다. 측정 근거와 한계는 [engineering status](docs/engineering-status.md)에 기록합니다.
+
 무인 실행(launchd)은 `docs/auto-reply-launchd-supervision.md`와 `scripts/install-auto-reply-launchd.sh`를 보세요. 처음이면 메뉴바부터 시작하는 편이 안전합니다.
 
 ---
@@ -243,9 +245,13 @@ Tauri 메뉴바 창은 골드 홀로그램 코어만 두며 인터랙티브 요�
 
 음성 대화는 최근 4번의 질문과 답변(메시지당 최대 600자)을 프로세스 메모리에 보관하며, 10분 동안 새 대화가 없으면 비웁니다. 답을 말한 뒤에는 호출어를 다시 기다립니다.
 
+현재 호스트의 음성 하트비트는 5분 신선도 기준을 넘겨 오래된 상태로 판단되며, UI는 이를 실시간 청취로 표시하지 않습니다. 음성 런타임 검증은 별도입니다.
+
 카카오톡 DB 색인은 임시 복사본을 `mode=ro`와 `PRAGMA query_only`로만 엽니다. 복사에 실패하면 원본을 열지 않습니다.
 
 노드 클릭은 `knowledge-graph-focus`만 호출하고, 이미 있는 `knowledge-graph.sqlite3`에서 k-hop `2/3/10` 번들을 읽습니다. 클릭 경로에는 원본 복사와 재색인이 없습니다. 조회 실패 시 `facts`는 빈 배열이고 `관련 사실·관계`만 갱신합니다.
+
+현재 로컬 모델은 임베딩을 제공하지 않아 검색이 BM25 모드로 제한됩니다. dense/RRF는 실제 ready 상태의 로컬 임베딩 모델이 확인된 뒤에만 사용할 수 있습니다.
 
 다이어그램 본문(노드·카드·레이블)은 한국어로 작성했습니다. Archify Viewer UI와 `<html lang>`은 영어 폴백입니다. 이 HTML은 로컬 showcase validate / deliver / visual-check를 통과한 산출물이며, 지각적 AHP나 설치된 앱 재빌드를 증명하지 않습니다.
 
