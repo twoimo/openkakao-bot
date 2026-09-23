@@ -158,6 +158,14 @@ pub struct SafeRoom {
     open_jobs: u64,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
+pub struct SafeAvailableChat {
+    chat_id: i64,
+    title: String,
+    catalog: bool,
+    live: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SafeJobEvent {
     #[serde(rename = "jobId")]
@@ -217,6 +225,8 @@ impl Default for SafeVoiceStatus {
 pub struct SafeRuntimeSnapshot {
     available: bool,
     rooms: Vec<SafeRoom>,
+    #[serde(rename = "availableChats")]
+    available_chats: Vec<SafeAvailableChat>,
     jobs: Vec<SafeJobEvent>,
     recent_receipts: Vec<SafeRecentReceipt>,
     job_load: f64,
@@ -437,6 +447,7 @@ impl PythonBridge {
                 "model-set" => sanitize_model_action(&value, action, RESIDENT_MODEL_ID),
                 "model-prepare" => sanitize_model_action(&value, action, SWAP_MODEL_ID),
                 "model-swap" => sanitize_model_swap_action(&value),
+                "room-upsert" => sanitize_room_upsert(&value),
                 _ => return Err(BridgeError::ActionNotAllowed),
             })
         })();
@@ -1361,6 +1372,20 @@ fn settings_action_args(
                 token_id.unwrap().to_string(),
             ]);
         }
+        "room-upsert" => {
+            let id = chat_id
+                .and_then(|v| v.parse::<i64>().ok())
+                .filter(|id| *id > 0)
+                .ok_or(BridgeError::ActionNotAllowed)?;
+            let title = bounded_arg(query, 128).unwrap_or_default();
+            let payload = serde_json::json!({
+                "chat_id": id,
+                "title": title,
+                "auto_reply": true,
+                "geeknews": true,
+            });
+            args.extend(["--catalog-upsert".to_string(), payload.to_string()]);
+        }
         _ => return Err(BridgeError::ActionNotAllowed),
     }
     Ok(args)
@@ -1771,6 +1796,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         return SafeRuntimeSnapshot {
             available: false,
             rooms: Vec::new(),
+            available_chats: Vec::new(),
             jobs: Vec::new(),
             recent_receipts: Vec::new(),
             job_load: 0.0,
@@ -1789,6 +1815,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     };
 
     let mut titles = HashMap::<i64, String>::new();
+    let mut available_chats = Vec::new();
     if let Some(chats) = root.get("available_chats").and_then(Value::as_array) {
         for chat in chats {
             let Some(obj) = chat.as_object() else {
@@ -1800,7 +1827,19 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
             ) else {
                 continue;
             };
-            titles.insert(id, title.chars().take(120).collect());
+            if id <= 0 {
+                continue;
+            }
+            let title_clean: String = title.chars().take(120).collect();
+            titles.insert(id, title_clean.clone());
+            let catalog = obj.get("catalog").and_then(Value::as_bool).unwrap_or(false);
+            let live = obj.get("live").and_then(Value::as_bool).unwrap_or(false);
+            available_chats.push(SafeAvailableChat {
+                chat_id: id,
+                title: title_clean,
+                catalog,
+                live,
+            });
         }
     }
 
@@ -1891,6 +1930,7 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
     SafeRuntimeSnapshot {
         available: true,
         rooms,
+        available_chats,
         jobs: Vec::new(),
         recent_receipts,
         job_load,
@@ -1913,6 +1953,15 @@ fn sanitize_snapshot(value: &Value) -> SafeRuntimeSnapshot {
         voice: SafeVoiceStatus::default(),
         error_code: None,
     }
+}
+
+fn sanitize_room_upsert(value: &Value) -> Value {
+    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
+    let reason = value.get("reason").and_then(Value::as_str).unwrap_or("");
+    serde_json::json!({
+        "ok": ok,
+        "reason": reason,
+    })
 }
 
 fn sanitize_models(value: &Value) -> Value {
@@ -3318,12 +3367,57 @@ mod tests {
         }));
         assert!(safe.available);
         assert!(safe.rooms.is_empty());
+        assert!(safe.available_chats.is_empty());
         assert!(safe.jobs.is_empty());
         assert!(safe.recent_receipts.is_empty());
         assert!(safe.reply_model_id.is_none());
         assert_eq!(safe.terminal_counts.delivery_unknown, 1);
         assert_eq!(safe.context_sync.mode, "async");
         assert!(!safe.context_sync.waited);
+    }
+
+    #[test]
+    fn snapshot_parses_and_bounds_available_chats() {
+        let safe = sanitize_snapshot(&json!({
+            "available_chats": [
+                {"chat_id": 417780809780519_i64, "title": "부자멘토멘티", "catalog": true, "live": true},
+                {"chat_id": 999_i64, "title": "새로운 방", "catalog": false, "live": false},
+                {"chat_id": -1, "title": "invalid"},
+            ]
+        }));
+        assert_eq!(safe.available_chats.len(), 2);
+        assert_eq!(safe.available_chats[0].chat_id, 417780809780519);
+        assert_eq!(safe.available_chats[0].title, "부자멘토멘티");
+        assert!(safe.available_chats[0].catalog);
+        assert!(safe.available_chats[0].live);
+        assert_eq!(safe.available_chats[1].chat_id, 999);
+        assert_eq!(safe.available_chats[1].title, "새로운 방");
+        assert!(!safe.available_chats[1].catalog);
+    }
+
+    #[test]
+    fn room_upsert_action_args_and_sanitization() {
+        let args = settings_action_args(
+            "room-upsert",
+            Some("테스트 방"),
+            None,
+            Some("123456"),
+            None,
+            None,
+            None,
+        )
+        .expect("valid room-upsert");
+        assert_eq!(args[0], "--action");
+        assert_eq!(args[1], "room-upsert");
+        assert_eq!(args[2], "--catalog-upsert");
+        let parsed: Value = serde_json::from_str(&args[3]).unwrap();
+        assert_eq!(parsed["chat_id"], 123456);
+        assert_eq!(parsed["title"], "테스트 방");
+        assert_eq!(parsed["auto_reply"], true);
+        assert_eq!(parsed["geeknews"], true);
+
+        let sanitized = sanitize_room_upsert(&json!({"ok": true, "action": "room-upsert"}));
+        assert_eq!(sanitized["ok"], true);
     }
 
     #[test]

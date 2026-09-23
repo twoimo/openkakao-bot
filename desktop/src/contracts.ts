@@ -20,6 +20,13 @@ export interface RoomSummary {
   openJobs: number;
 }
 
+export interface AvailableChatSummary {
+  chatId: number;
+  title: string;
+  catalog: boolean;
+  live: boolean;
+}
+
 export type BackgroundSourceState =
   | "sending"
   | "confirmed"
@@ -92,6 +99,7 @@ export interface PipelineStatus {
 export interface RuntimeSnapshot {
   available: boolean;
   rooms: RoomSummary[];
+  availableChats: AvailableChatSummary[];
   jobs: JobEvent[];
   recentReceipts: RecentReceipt[];
   jobLoad: number;
@@ -371,6 +379,7 @@ export function unavailableSnapshot(errorCode: string | null = "snapshot_unavail
   return {
     available: false,
     rooms: [],
+    availableChats: [],
     jobs: [],
     recentReceipts: [],
     jobLoad: 0,
@@ -435,6 +444,22 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
     }];
   });
 
+  const availableChatsRaw = Array.isArray(input.availableChats ?? input.available_chats)
+    ? (input.availableChats ?? input.available_chats)
+    : [];
+  const availableChats = (availableChatsRaw as unknown[]).flatMap((item): AvailableChatSummary[] => {
+    const chat = record(item);
+    if (!chat) return [];
+    const chatId = finiteNumber(chat.chat_id ?? chat.chatId, -1);
+    if (!Number.isInteger(chatId) || chatId <= 0) return [];
+    return [{
+      chatId,
+      title: text(chat.title, "id:" + chatId),
+      catalog: chat.catalog === true,
+      live: chat.live === true,
+    }];
+  });
+
   const jobsRaw = Array.isArray(input.jobs) ? input.jobs : [];
   const jobs = jobsRaw.map(parseJobEvent).filter((item): item is JobEvent => item !== null);
   const receiptsRaw = Array.isArray(input.recent_receipts)
@@ -454,6 +479,7 @@ export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
   return {
     available: input.available !== false && contextValid,
     rooms,
+    availableChats,
     jobs,
     recentReceipts,
     jobLoad: Math.min(1, Math.max(0, finiteNumber(input.job_load ?? input.jobLoad, 0))),

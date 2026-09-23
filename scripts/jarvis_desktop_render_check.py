@@ -267,6 +267,7 @@ SETTINGS_ACTIONS: dict[str, Any] = {
     "model-owner-status": {"owner_state": "foreign_listener"},
     "mlx-server-status": {"owner_state": "foreign_listener", "model": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"},
     "dream-rsi-status": {"status": "evaluated", "selected_policy": "mirror_prompt_tail", "gold_rows": 400, "gold_source_policy": "human_only"},
+    "room-upsert": {"ok": True, "action": "room-upsert"},
     "knowledge-graph-status": {
         "stale": False,
         "snapshot_status": "copy_ok",

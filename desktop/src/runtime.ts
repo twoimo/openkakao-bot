@@ -10,7 +10,8 @@ type SettingsAction =
   | "dream-rsi-status"
   | "knowledge-graph-status"
   | "knowledge-graph"
-  | "knowledge-graph-focus";
+  | "knowledge-graph-focus"
+  | "room-upsert";
 
 export interface SettingsActionInput {
   query?: string;

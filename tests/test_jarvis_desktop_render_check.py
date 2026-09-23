@@ -183,6 +183,7 @@ class BridgeStub(unittest.TestCase):
                 "knowledge-graph-status",
                 "knowledge-graph",
                 "knowledge-graph-focus",
+                "room-upsert",
             },
         )
         extra = {"model-set", "model-prepare", "model-swap"}

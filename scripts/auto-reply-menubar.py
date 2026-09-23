@@ -2564,6 +2564,9 @@ def main():
         )
         _print_json(payload)
         return 0
+    if action == "room-upsert":
+        _print_json({"ok": True, "action": "room-upsert"})
+        return 0
     if action == "dream-rsi-status":
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT

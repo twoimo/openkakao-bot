@@ -41,7 +41,7 @@ import {
   type SnapshotCanceller,
   type SnapshotLoader,
 } from "./runtime-poller";
-import { mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, settingsMarkup } from "./ui";
+import { mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, renderRooms, settingsMarkup } from "./ui";
 import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 import { wireVoiceStart } from "./voice-controls";
 
@@ -89,26 +89,36 @@ function renderPanelUnavailable(): void {
   showPanelUnavailable("Jarvis 상태를 확인할 수 없습니다.");
 }
 
-function renderRooms(snapshot: RuntimeSnapshot): void {
-  const popup = document.querySelector<HTMLSelectElement>("#settings-room-popup");
-  if (!popup) return;
-  popup.replaceChildren();
-  if (snapshot.rooms.length === 0) {
-    const option = document.createElement("option");
-    option.textContent = snapshot.available ? "등록된 방 없음" : "snapshot 확인 불가";
-    option.value = "";
-    popup.append(option);
-    setText("room-summary", "방 목록이 비어 있거나 snapshot을 읽지 못했습니다.");
-    return;
-  }
-  snapshot.rooms.forEach((room) => {
-    const option = document.createElement("option");
-    option.value = String(room.chatId);
-    option.textContent = room.title;
-    popup.append(option);
+function wireRoomAdd(loadSnapshot: SnapshotLoader, loadAction: typeof fetchSettingsAction): void {
+  const addBtn = document.querySelector<HTMLButtonElement>("#settings-add-room-button");
+  const addSelect = document.querySelector<HTMLSelectElement>("#settings-add-room-select");
+  if (!addBtn || !addSelect) return;
+  addBtn.addEventListener("click", async () => {
+    const selectedId = addSelect.value;
+    if (!selectedId) return;
+    const selectedTitle = addSelect.selectedOptions[0]?.textContent || "";
+    addBtn.disabled = true;
+    setText("room-summary", "채팅방을 등록하는 중...");
+    try {
+      const res = await loadAction("room-upsert", {
+        chatId: selectedId,
+        query: selectedTitle,
+      });
+      if (res && res.ok === true) {
+        setText("room-summary", `채팅방이 등록되었습니다: ${selectedTitle}`);
+        const token = createCancellationToken();
+        const updatedSnapshot = await loadSnapshot(token);
+        renderRooms(updatedSnapshot);
+      } else {
+        const reason = typeof res?.reason === "string" ? res.reason : "등록 실패";
+        setText("room-summary", `등록 실패: ${reason}`);
+      }
+    } catch {
+      setText("room-summary", "채팅방 등록 중 오류가 발생했습니다.");
+    } finally {
+      addBtn.disabled = false;
+    }
   });
-  const live = snapshot.rooms.filter((room) => room.live).length;
-  setText("room-summary", `등록 ${snapshot.rooms.length} · live ${live} · 본문 미전달`);
 }
 
 function modelButton(modelId: string): HTMLButtonElement | null {
@@ -475,6 +485,7 @@ export async function bootSettings(
     const degraded = results.some((result) => result.status === "rejected") || !snapshot.available;
 
     renderRooms(snapshot);
+    wireRoomAdd(dependencies.loadSnapshot, dependencies.loadAction);
     renderModels(models, snapshot);
     renderModelOwnerState(owner);
     renderMlxServerState(mlxServer);

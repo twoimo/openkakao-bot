@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
 import { JarvisCore } from "../core/jarvis-core";
 import { RenderLifecycle } from "../core/lifecycle";
-import { parseBackground, parseJobEvent, parseOnDevice, parsePipeline, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent } from "../contracts";
+import { parseBackground, parseJobEvent, parseOnDevice, parsePipeline, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent, unavailableSnapshot } from "../contracts";
 import {
   KnowledgeDrilldown,
   ON_SCREEN_NODE_CAP,
@@ -19,7 +19,7 @@ import {
 } from "../runtime";
 import { RuntimeSnapshotPoller } from "../runtime-poller";
 import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, settingsMarkup } from "../ui";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderDenseStatus, renderHardware, renderHistory, renderRooms, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -724,6 +724,30 @@ describe("layout and settings contract", () => {
     expect(markup).toContain('id="model-status" class="muted" role="status" aria-live="polite"');
     expect(markup).toContain('id="model-owner-state" class="muted"');
     expect(markup).toContain("모델 소유권을 확인 중입니다.");
+  });
+
+  it("renders enrolled rooms and populates add-room selector with un-enrolled chats", () => {
+    document.body.innerHTML = settingsMarkup();
+    const snapshot = unavailableSnapshot();
+    snapshot.available = true;
+    snapshot.rooms = [
+      { chatId: 417780809780519, title: "부자멘토멘티", live: true, autoReply: true, openJobs: 0 },
+    ];
+    snapshot.availableChats = [
+      { chatId: 417780809780519, title: "부자멘토멘티", catalog: true, live: true },
+      { chatId: 1234567890, title: "새로운 카카오방", catalog: false, live: false },
+    ];
+    renderRooms(snapshot);
+
+    const enrolledSelect = document.getElementById("settings-room-popup") as HTMLSelectElement;
+    expect(enrolledSelect.options.length).toBe(1);
+    expect(enrolledSelect.options[0].value).toBe("417780809780519");
+    expect(enrolledSelect.options[0].textContent).toBe("부자멘토멘티");
+
+    const addSelect = document.getElementById("settings-add-room-select") as HTMLSelectElement;
+    expect(addSelect.options.length).toBe(2);
+    expect(addSelect.options[1].value).toBe("1234567890");
+    expect(addSelect.options[1].textContent).toBe("새로운 카카오방");
   });
 });
 

@@ -4,6 +4,8 @@ import type { RuntimeSnapshot } from "./contracts";
 export const MAIN_PANEL_CONTROLS = Object.freeze([] as const);
 export const SETTINGS_IDS = Object.freeze([
   "settings-room-popup",
+  "settings-add-room-select",
+  "settings-add-room-button",
   "model-owner-state",
   "mlx-server-state",
   "settings-hardware-status",
@@ -46,6 +48,10 @@ export function settingsMarkup(): string {
     <section class="settings-card" aria-labelledby="rooms-title">
       <div class="section-heading"><h2 id="rooms-title">대상 채팅방</h2><span class="status-dot" aria-hidden="true"></span></div>
       <select id="settings-room-popup" aria-label="대상 채팅방"><option value="">확인 중</option></select>
+      <div class="room-action-row">
+        <select id="settings-add-room-select" aria-label="추가할 채팅방 선택"><option value="">추가할 채팅방 선택</option></select>
+        <button id="settings-add-room-button" type="button">추가</button>
+      </div>
       <p id="room-summary" class="muted">snapshot에서 안전한 방 상태만 불러옵니다.</p>
     </section>
 
@@ -227,4 +233,46 @@ export function renderDenseStatus(
   target.textContent = validIndexedAt
     ? `dense: ${status} · indexed_at ${indexedAt}`
     : `dense: ${status}`;
+}
+
+export function renderRooms(snapshot: RuntimeSnapshot, root: Document = document): void {
+  const popup = root.querySelector<HTMLSelectElement>("#settings-room-popup");
+  if (popup) {
+    popup.replaceChildren();
+    if (snapshot.rooms.length === 0) {
+      const option = document.createElement("option");
+      option.textContent = snapshot.available ? "등록된 방 없음" : "snapshot 확인 불가";
+      option.value = "";
+      popup.append(option);
+      const summary = root.getElementById("room-summary");
+      if (summary) summary.textContent = "방 목록이 비어 있거나 snapshot을 읽지 못했습니다.";
+    } else {
+      snapshot.rooms.forEach((room) => {
+        const option = document.createElement("option");
+        option.value = String(room.chatId);
+        option.textContent = room.title;
+        popup.append(option);
+      });
+      const live = snapshot.rooms.filter((room) => room.live).length;
+      const summary = root.getElementById("room-summary");
+      if (summary) summary.textContent = `등록 ${snapshot.rooms.length} · live ${live} · 본문 미전달`;
+    }
+  }
+
+  const addSelect = root.querySelector<HTMLSelectElement>("#settings-add-room-select");
+  if (addSelect) {
+    addSelect.replaceChildren();
+    const enrolledIds = new Set(snapshot.rooms.map((r) => r.chatId));
+    const candidates = (snapshot.availableChats || []).filter((c) => !enrolledIds.has(c.chatId));
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = candidates.length > 0 ? "추가할 채팅방 선택" : "추가 가능한 새 채팅방 없음";
+    addSelect.append(defaultOpt);
+    candidates.forEach((chat) => {
+      const opt = document.createElement("option");
+      opt.value = String(chat.chatId);
+      opt.textContent = chat.title;
+      addSelect.append(opt);
+    });
+  }
 }
