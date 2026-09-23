@@ -257,3 +257,8 @@ The diagrams are architectural references, not a live generation trace. On-devic
 - Hardware readback: `hw.memsize = 137438953472` bytes (128 GiB). Read-only `GET /health` returned 200. `GET /v1/models` reported Flash-Next `loaded=true`, `state=ready`, `bytes_resident=75303252216`; Qwen3.8 27B was unloaded with zero resident bytes. `/metrics` showed 1,326 cumulative successful requests, 8 cancellations, and zero currently running or queued requests; process-wide average time-to-first-token was 5.01 s and average end-to-end latency 6.60 s. These counters are process aggregates, not a fresh benchmark.
 - A single synthetic loopback completion request with an eight-token output limit timed out after 45 seconds. It produced no new success/cancellation counter and no reply result, so a current successful generation is unverified. No model reload, service restart, or second inference attempt was made.
 - The voice process was running and its status file had just updated to `wake_listen` with RMS 0.0. This confirms the listener's reported state, not a completed wake→STT→LLM→TTS conversation.
+
+## Installed desktop app readback — 2026-09-23 KST
+
+- `sh scripts/build-jarvis-desktop.sh` and `sh scripts/install-jarvis-desktop.sh` completed. The app was installed at `/Applications/OpenKakao Jarvis.app`; a subsequent process readback showed its packaged executable running from that path.
+- This confirms a local build, installation, and running process. It does not verify signing or notarization, a successful local-model reply, or a complete voice conversation.

@@ -61,7 +61,7 @@ See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.ht
 
 ## Current runtime check
 
-Read-only status on 2026-09-23 reported a 128 GiB Mac and the fast model loaded with 75.3 GB resident. The larger model was not loaded. The latest reply-generation check timed out, so the app is not yet verified to produce a successful reply. The speech listener reported that it was waiting for its wake phrase; a complete voice conversation was not verified.
+Read-only status on 2026-09-23 reported a 128 GiB Mac and the fast model loaded with 75.3 GB resident. The larger model was not loaded. The latest reply-generation check timed out, so the app is not yet verified to produce a successful reply. The speech listener reported that it was waiting for its wake phrase; a complete voice conversation was not verified. A native Tauri build and local install have since completed, and process readback showed the installed app running.
 
 The detailed implementation notes and dated verification records are kept in [engineering status](docs/engineering-status.md). They describe source checks, automated tests, and live runtime observations separately.
 
