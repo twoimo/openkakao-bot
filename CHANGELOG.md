@@ -131,6 +131,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build
 - `main.rs`가 `lib.rs`와 같은 모듈 8개(`ax_send`, `error`, `local_db`, `loco`, `media`, `message_db`, `model`, `room_catalog`)를 `mod`로 다시 선언해 두 번 컴파일하던 구조를 없앴습니다. 12,322줄이 한 번만 컴파일되고, 중복 실행되던 테스트 171건과 컴파일러 dead-code 경고가 사라졌습니다.
 
+## [1.8.1] - 2026-09-24
+
+### Fixed
+- A newer KakaoTalk room watermark no longer terminally discards an unanswered inbound. Drafts are tied to the watermark used for analysis; changed or unavailable context clears the stale draft and requeues a bounded refresh.
+- Fresh reply workers now verify the loaded loopback embedding model and the dense index identity before using RRF. Missing embedding capability fails closed to BM25.
+- Jarvis voice startup now avoids duplicate local sessions, treats stale heartbeats as unavailable, and blocks Whisper/TTS loads when memory and swap headroom are insufficient.
+
+### Jarvis Desktop
+- Bumped the Tauri app version to 0.1.1 for the installed desktop update. The GitHub release workflow still publishes CLI assets only; the local app bundle is not part of the release assets.
+
 ## [1.8.0] - 2026-09-01
 
 First GitHub release of the private `openkakao-bot` agent snapshot. Tag `v1.8.0` matches `Cargo.toml`. Release assets are produced by `.github/workflows/release.yml` (tag SHA + checksum evidence, same shape as Gajae Code / tzudong: no draft, verify assets after publish). Homebrew tap publish from the public CLI workflow is not used here.
