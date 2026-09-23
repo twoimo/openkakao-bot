@@ -717,25 +717,51 @@ class Qwen3TtsAdapter:
         return audio, int(sample_rate)
 
     def write_wav(self, text: str, path: Path, token: AbortToken) -> dict[str, Any]:
-        import numpy as np
         import wave
 
         audio, sample_rate = self.synthesize(text, token)
-        if hasattr(audio, "detach"):
-            audio = audio.detach().cpu().numpy()
-        samples = np.asarray(audio).squeeze().astype(np.float32)
-        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-        if peak > 1.0:
-            samples = samples / peak
-        pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+        try:
+            import numpy as np
+
+            if hasattr(audio, "detach"):
+                audio = audio.detach().cpu().numpy()
+            samples = np.asarray(audio).squeeze().astype(np.float32)
+            peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+            if peak > 1.0:
+                samples = samples / peak
+            pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+            pcm_bytes = pcm.tobytes()
+            nframes = int(pcm.size)
+        except ImportError:
+            def _flatten(a: Any) -> list[float]:
+                out: list[float] = []
+                if hasattr(a, "tolist"):
+                    a = a.tolist()
+                if isinstance(a, (list, tuple)):
+                    for item in a:
+                        out.extend(_flatten(item))
+                else:
+                    out.append(float(a))
+                return out
+
+            samples_list = _flatten(audio)
+            peak = max((abs(x) for x in samples_list), default=0.0)
+            if peak > 1.0:
+                samples_list = [x / peak for x in samples_list]
+            from array import array
+
+            pcm_arr = array("h", [int(max(-32768, min(32767, round(x * 32767.0)))) for x in samples_list])
+            pcm_bytes = pcm_arr.tobytes()
+            nframes = len(pcm_arr)
+
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(path), "wb") as handle:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(sample_rate)
-            handle.writeframes(pcm.tobytes())
-        return {"path": str(path), "bytes": path.stat().st_size, "sample_rate": sample_rate, "nframes": int(pcm.size)}
+            handle.writeframes(pcm_bytes)
+        return {"path": str(path), "bytes": path.stat().st_size, "sample_rate": sample_rate, "nframes": nframes}
 
     def speak(self, text: str, token: AbortToken) -> None:
         token.raise_if_cancelled()
