@@ -3,7 +3,7 @@ export const LAYOUT = Object.freeze({
   panelHeight: 260,
   panelInset: 12,
   coreSize: 236,
-  settingsMaxWidth: 1040,
+  settingsMaxWidth: 912,
 });
 
 export const LIGHT_TOKENS = Object.freeze({
