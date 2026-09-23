@@ -1475,6 +1475,78 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             self.assertEqual(vector_count, entity_count)
             self.assertEqual(bucket_count, entity_count * KG.ANN_BANDS)
 
+    def test_http_4xx_raises_permanent_dense_error(self):
+        err = KG.urllib.error.HTTPError(
+            "http://127.0.0.1:11234/v1/embeddings",
+            400,
+            "Bad Request",
+            {},
+            None,
+        )
+        with mock.patch.object(KG.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(KG._DenseEmbeddingPermanentError) as ctx:
+                KG._local_dense_embeddings(["테스트"])
+            self.assertIn("local dense embedding unavailable", str(ctx.exception))
+
+    def test_dense_ann_query_fails_closed_without_request_when_probe_cache_stale_or_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            KG.write_meta(conn, "last_dense_status", "indexed:1")
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_meta (key, value) VALUES ('index_version', ?), ('watermark', '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.commit()
+            dense.close()
+            conn.close()
+
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", None), \
+                 mock.patch.object(KG, "_local_dense_embeddings") as mock_embed:
+                with self.assertRaises(RuntimeError) as ctx:
+                    KG._dense_ann_query(root, "질의")
+                self.assertIn("dense probe unavailable", str(ctx.exception))
+                mock_embed.assert_not_called()
+
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", (10.0, "probe_ok")), \
+                 mock.patch.object(KG.time, "monotonic", return_value=10.0 + KG.DENSE_EMBEDDING_PROBE_TTL_SECONDS + 5.0), \
+                 mock.patch.object(KG, "_local_dense_embeddings") as mock_embed:
+                with self.assertRaises(RuntimeError) as ctx:
+                    KG._dense_ann_query(root, "질의")
+                self.assertIn("dense probe unavailable", str(ctx.exception))
+                mock_embed.assert_not_called()
+
+    def test_dense_ann_query_refreshes_probe_cache_on_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = self._make_graph(root, 1)
+            KG.write_meta(conn, "last_dense_status", "indexed:1")
+            dense = KG._connect_dense_index(root)
+            dense.execute(
+                "INSERT INTO dense_meta (key, value) VALUES ('index_version', ?), ('watermark', '100')",
+                (KG.DENSE_INDEX_VERSION,),
+            )
+            dense.execute(
+                "INSERT INTO dense_vectors (entity_id, vector_json, dim, model, index_version, watermark)"
+                " VALUES ('ent:test:00', '[1.0, 0.0]', 2, 'model', 'v1', '100')"
+            )
+            dense.execute(
+                "INSERT INTO ann_buckets (band, bucket, entity_id) VALUES (0, '00', 'ent:test:00')"
+            )
+            dense.commit()
+            dense.close()
+            conn.close()
+
+            probe_start = 1000.0
+            query_time = 1050.0
+            with mock.patch.object(KG, "_DENSE_PROBE_CACHE", (probe_start, "probe_ok")), \
+                 mock.patch.object(KG.time, "monotonic", return_value=query_time), \
+                 mock.patch.object(KG, "_local_dense_embeddings", return_value=[(1.0, 0.0)]):
+                hits, watermark = KG._dense_ann_query(root, "질의")
+                self.assertEqual(watermark, "100")
+                self.assertEqual(KG._DENSE_PROBE_CACHE, (query_time, "probe_ok"))
+
 
 class NormalizeTests(unittest.TestCase):
     def test_normalize_rejects_a_non_dict(self):

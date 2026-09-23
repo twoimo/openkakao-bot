@@ -51,10 +51,17 @@ DENSE_EMBEDDING_URL = os.environ.get(
     "OPENKAKAO_LOCAL_EMBEDDING_URL", DEFAULT_DENSE_EMBEDDING_URL
 )
 DENSE_EMBEDDING_TIMEOUT_SECONDS = 4.0
-DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 30.0
+# The local MLX gateway advertises no embedding model of its own: it synthesises
+# embeddings from the resident chat model, so the first call after that model
+# goes cold is slow. Measured 2026-09-23 KST against the loopback endpoint:
+# 84.41s and 108.585s for a cold call, 0.11s warm, and one 60.01s request that
+# timed out under load. The two long budgets below are therefore used ONLY by
+# the background dense rebuild path; reply retrieval keeps the short timeout
+# above and stays behind the probe-success gate.
+DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS = 180.0
 DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS = DENSE_EMBEDDING_FIRST_ATTEMPT_TIMEOUT_SECONDS
 DENSE_EMBEDDING_PROBE_TTL_SECONDS = 300.0
-DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS = 60.0
+DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS = 900.0
 DENSE_EMBEDDING_CYCLE_REQUEST_CAP = 64
 DENSE_STATUS_MAX_LENGTH = 400
 RRF_K = 60
@@ -2812,6 +2819,12 @@ def _local_dense_embeddings(
             body = json.loads(response.read().decode("utf-8"))
     except TimeoutError as error:
         raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
+    except urllib.error.HTTPError as error:
+        if 400 <= error.code < 500:
+            raise _DenseEmbeddingPermanentError(
+                f"local dense embedding unavailable: {error}"
+            ) from error
+        raise _DenseEmbeddingPermanentError("local dense embedding unavailable") from error
     except urllib.error.URLError as error:
         if isinstance(error.reason, TimeoutError):
             raise _DenseEmbeddingTimeoutError("local dense embedding unavailable") from error
@@ -2902,6 +2915,21 @@ def _dense_embedding_probe(budget: _DenseCycleBudget) -> tuple[bool, str]:
     with _DENSE_PROBE_CACHE_LOCK:
         _DENSE_PROBE_CACHE = (time.monotonic(), "probe_ok")
     return True, "probe_ok"
+
+
+def _note_dense_probe_success() -> None:
+    """Keep the reply-turn gate open while the endpoint is observed warm.
+
+    Reply retrieval refuses to start an embedding request unless a recent
+    success is on record, so a cold endpoint can never stall a reply turn. Only
+    the background rebuild used to refresh that record, and its interval equals
+    the probe TTL, so the gate could close between cycles while the endpoint was
+    genuinely warm. Refreshing the record here removes that gap. A timed-out
+    query never reaches this call, so it still cannot open the gate.
+    """
+    global _DENSE_PROBE_CACHE
+    with _DENSE_PROBE_CACHE_LOCK:
+        _DENSE_PROBE_CACHE = (time.monotonic(), "probe_ok")
 
 
 def _ann_sign_matrix(bits_total: int, dim: int) -> tuple[bytes, ...]:
@@ -3155,7 +3183,16 @@ def _dense_ann_query(
         watermark = str(watermark_row[0]) if watermark_row else ""
         if not watermark:
             raise RuntimeError("dense index watermark missing")
+        now = time.monotonic()
+        with _DENSE_PROBE_CACHE_LOCK:
+            probe_cache = _DENSE_PROBE_CACHE
+        if (
+            probe_cache is None
+            or now - probe_cache[0] > DENSE_EMBEDDING_PROBE_TTL_SECONDS
+        ):
+            raise RuntimeError("dense probe unavailable")
         query_vector = _local_dense_embeddings([query_text])[0]
+        _note_dense_probe_success()
         clauses: list[str] = []
         params: list[Any] = []
         for band, bucket in _ann_band_keys(query_vector):
