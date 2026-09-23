@@ -387,6 +387,7 @@ class ModelRetryPolicyTests(unittest.TestCase):
             "event_id": f"db:1:{log_id}",
             "chat_id": 1,
             "log_id": log_id,
+            "analysis_watermark_log_id": log_id,
             "source_epoch": 1,
             "owner_id": "owner",
             "author_nickname": "member",
@@ -422,7 +423,7 @@ class ModelRetryPolicyTests(unittest.TestCase):
         return event, job, connection
 
     @contextlib.contextmanager
-    def _scheduled_delivery_patches(self, advanced, *, preflight=None, sender=None):
+    def _scheduled_delivery_patches(self, watermarks, *, preflight=None, sender=None):
         m = self.module
         sender = sender or mock.Mock(return_value=True)
         with contextlib.ExitStack() as stack:
@@ -442,37 +443,39 @@ class ModelRetryPolicyTests(unittest.TestCase):
             ))
             stack.enter_context(mock.patch.object(
                 m,
-                "conversation_advanced_past_event",
-                side_effect=advanced,
+                "stable_room_watermark_log_id",
+                side_effect=watermarks,
             ))
             stack.enter_context(mock.patch.object(m, "send_reply", sender))
             yield sender
 
     def test_context_freshness_unknown_defers_at_both_send_boundaries(self):
         m = self.module
-        cases = {
-            "before_preflight": [None],
-            "after_preflight": [False, None],
-        }
-        for offset, (site, advanced) in enumerate(cases.items(), start=1):
+        for offset, site in enumerate(("before_preflight", "after_preflight"), start=1):
             with self.subTest(site=site):
                 event, job, connection = self._delivery_fixture(900 + offset)
+                watermarks = (
+                    [None]
+                    if site == "before_preflight"
+                    else [event["analysis_watermark_log_id"], None]
+                )
                 try:
-                    with self._scheduled_delivery_patches(advanced) as sender, \
+                    with self._scheduled_delivery_patches(watermarks) as sender, \
                          mock.patch.object(m, "finish_delivery_unknown") as unknown:
                         m.process_job(job, "scheduled", connection)
                     sender.assert_not_called()
                     unknown.assert_not_called()
                     row = connection.execute(
                         """
-                        SELECT status,due_at,reply,error_class
+                        SELECT status,due_at,reason,reply,error_class
                         FROM reply_jobs WHERE event_id=?
                         """,
                         (event["event_id"],),
                     ).fetchone()
-                    self.assertEqual(row["status"], "scheduled")
+                    self.assertEqual(row["status"], "pending")
                     self.assertIsNotNone(row["due_at"])
-                    self.assertEqual(row["reply"], "answer")
+                    self.assertEqual(row["reason"], "context_freshness_unavailable")
+                    self.assertIsNone(row["reply"])
                     self.assertEqual(row["error_class"], "context_freshness_unavailable")
                 finally:
                     connection.close()
@@ -550,28 +553,34 @@ class ModelRetryPolicyTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_context_freshness_known_true_and_false_keep_existing_behavior(self):
+    def test_newer_context_requeues_and_stable_context_sends(self):
         m = self.module
         event, job, connection = self._delivery_fixture(930)
         try:
-            with self._scheduled_delivery_patches([True]) as sender, \
+            with self._scheduled_delivery_patches([event["log_id"] + 1]) as sender, \
                  mock.patch.object(m, "_coalesced_burst_event", side_effect=lambda value: value), \
                  mock.patch.object(m, "durable_policy_skip", return_value=True), \
                  mock.patch.object(m, "complete_event"):
                 m.process_job(job, "scheduled", connection)
             sender.assert_not_called()
             row = connection.execute(
-                "SELECT status,reason FROM reply_jobs WHERE event_id=?",
+                "SELECT status,due_at,reason,reply,error_class FROM reply_jobs WHERE event_id=?",
                 (event["event_id"],),
             ).fetchone()
-            self.assertEqual(tuple(row), ("skipped", "conversation_advanced"))
+            self.assertEqual(row["status"], "pending")
+            self.assertIsNotNone(row["due_at"])
+            self.assertEqual(row["reason"], "conversation_context_changed")
+            self.assertIsNone(row["reply"])
+            self.assertEqual(row["error_class"], "conversation_context_changed")
         finally:
             connection.close()
 
         event, job, connection = self._delivery_fixture(931)
         sender = mock.Mock(return_value=True)
         try:
-            with self._scheduled_delivery_patches([False, False], sender=sender), \
+            with self._scheduled_delivery_patches(
+                [event["log_id"], event["log_id"]], sender=sender
+            ), \
                  mock.patch.object(m, "update_context_decision", return_value=True), \
                  mock.patch.object(m, "record_delivery_ledger"), \
                  mock.patch.object(m, "complete_event"):
