@@ -130,7 +130,7 @@ function report(name: string, run: () => void): void {
 }
 
 const scratch = [0, 0, 0];
-const pulseOut: LatticePulse = { frequency: 0, amplitude: 0, opacity: 0 };
+const pulseOut: LatticePulse = { frequency: 0, amplitude: 0, opacity: 0, density: 0 };
 const legacyFrame = new LegacyFrame();
 legacyFrame.targetSources.reply = LOADS.reply;
 legacyFrame.targetSources.geeknews = LOADS.geeknews;

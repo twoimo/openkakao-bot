@@ -18,7 +18,7 @@ export class AnimationLoop {
   private lastTickMs = 0;
   private lastRenderMs = 0;
   private busyLoad = 0;
-  private readonly maxDtSeconds = 0.05;
+  private readonly maxDtSeconds = 0.25;
   renderCount = 0;
 
   constructor(
@@ -27,7 +27,7 @@ export class AnimationLoop {
   ) {}
 
   setLoad(load: number): void {
-    this.busyLoad = Math.min(1, Math.max(0, load));
+    this.busyLoad = Number.isFinite(load) ? Math.min(1, Math.max(0, load)) : 0;
   }
 
   start(): void {
@@ -64,7 +64,7 @@ export class AnimationLoop {
     if (!this.running) return;
     const elapsedRender = nowMs - this.lastRenderMs;
     if (elapsedRender >= this.frameIntervalMs()) {
-      const rawDt = Math.max(0, nowMs - this.lastTickMs) / 1000;
+      const rawDt = Number.isFinite(nowMs) ? Math.max(0, nowMs - this.lastTickMs) / 1000 : 0;
       const dt = Math.min(this.maxDtSeconds, rawDt);
       this.lastTickMs = nowMs;
       this.lastRenderMs = nowMs;

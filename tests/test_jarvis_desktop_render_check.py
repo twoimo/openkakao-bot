@@ -61,12 +61,11 @@ class SharedExpectations(unittest.TestCase):
             self.contract["settings_sections"],
             [
                 "\ub300\uc0c1 \ucc44\ud305\ubc29",
-                "AI \ubaa8\ub378",
-                "Voice",
-                "\uce74\uce74\uc624 DB \ub3d9\uae30\ud654 \u00b7 \uc0c9\uc778",
-                "DREAM-RSI",
-                "Knowledge",
-                "History",
+                "AI \ub2f5\ubcc0",
+                "\uc74c\uc131",
+                "\uce74\uce74\uc624\ud1a1 \ub300\ud654",
+                "\ub300\ud654\uc5d0\uc11c \ucc3e\uae30",
+                "\ucd5c\uadfc \ub2f5\ubcc0",
             ],
         )
 
@@ -176,10 +175,6 @@ class BridgeStub(unittest.TestCase):
         self.assertEqual(
             declared,
             {
-                "models",
-                "model-owner-status",
-                "mlx-server-status",
-                "dream-rsi-status",
                 "knowledge-graph-status",
                 "knowledge-graph",
                 "knowledge-graph-focus",
@@ -286,50 +281,18 @@ class PauseOnHideContract(unittest.TestCase):
         self.assertEqual(check.verdict(check.pause_checks({})), "fail")
 
 
-class ProductSuppliedStatusText(unittest.TestCase):
-    """The stub must render the product's own on-device status text.
+class ProductSurfaceContract(unittest.TestCase):
+    """The renderer stub follows the simplified settings surface."""
 
-    The markup contract cannot see text the Tauri bridge injects as
-    status_label, so the browser scan only has teeth if the stub carries what
-    the product actually builds.
-    """
+    def test_snapshots_include_voice_activity_without_hardware_diagnostics(self) -> None:
+        self.assertEqual(check.IDLE_SNAPSHOT["voice"]["rms"], 0.0)
+        self.assertEqual(check.BUSY_SNAPSHOT["voice"]["rms"], 0.42)
+        self.assertNotIn("onDevice", check.IDLE_SNAPSHOT)
+        self.assertNotIn("onDevice", check.BUSY_SNAPSHOT)
 
-    REASON = "Apple Silicon MLX Core/Serve 경로를 사용합니다"
-
-    def bits(self):
-        return check.ondevice_status_strings(
-            chip="Apple M5 Max",
-            memory_gb=128.0,
-            reason=self.REASON,
-            recommended_model=check.STUB_ONDEVICE_MODEL,
-            verified=True,
-            last_probe=check.STUB_ONDEVICE_PROBE,
-        )
-
-    def test_stub_label_is_the_factory_output(self) -> None:
-        status_bits, detail_bits = self.bits()
-        self.assertEqual(check.STUB_ONDEVICE_STATUS_LABEL, " · ".join(status_bits))
-        self.assertEqual(
-            check.STUB_ONDEVICE_STATUS_DETAIL,
-            " · ".join(bit for bit in detail_bits if bit),
-        )
-
-    def test_stub_status_text_avoids_the_banned_tokens(self) -> None:
-        contract = check.parse_contract(CONTRACT_SOURCE)
-        haystacks = [check.STUB_ONDEVICE_STATUS_LABEL, check.STUB_ONDEVICE_STATUS_DETAIL]
-        self.assertEqual(check.scan_banned_tokens(haystacks, contract["banned_tokens"]), [])
-
-    def test_stub_snapshot_uses_the_factory_output(self) -> None:
-        ondevice = check.IDLE_SNAPSHOT["onDevice"]
-        self.assertEqual(ondevice["status_label"], check.STUB_ONDEVICE_STATUS_LABEL)
-        self.assertEqual(ondevice["status_detail"], check.STUB_ONDEVICE_STATUS_DETAIL)
-        self.assertEqual(ondevice["verification"], {"ok": True})
-
-    def test_busy_snapshot_carries_the_same_status_text(self) -> None:
-        self.assertEqual(
-            check.BUSY_SNAPSHOT["onDevice"]["status_label"],
-            check.STUB_ONDEVICE_STATUS_LABEL,
-        )
+    def test_stub_has_no_removed_diagnostic_status_actions(self) -> None:
+        removed = {"model-owner-status", "mlx-server-status", "dream-rsi-status"}
+        self.assertTrue(removed.isdisjoint(check.SETTINGS_ACTIONS))
 
 
 if __name__ == "__main__":

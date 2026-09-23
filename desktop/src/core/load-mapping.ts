@@ -18,12 +18,16 @@ export interface SourceLoads {
   geeknews: number;
   dbSync: number;
   total: number;
+  /** Normalized microphone activity; it boosts motion without owning a ring. */
+  voice?: number;
 }
 
 export interface LatticePulse {
   frequency: number;
   amplitude: number;
   opacity: number;
+  /** Normalized activity used to select a prebuilt lattice density tier. */
+  density: number;
 }
 
 // Active reply phases map to bounded load: detect .10, authorize .15,
@@ -63,7 +67,9 @@ export function pipelineLoad(status: PipelineStatus): number {
 
 export function sourceLoads(background: BackgroundStatus, pipeline: PipelineStatus): SourceLoads {
   return {
-    reply: clamp01(Math.max(background.replyLoad, pipelineLoad(pipeline))),
+    // Clamp each side before max: Math.max(NaN, valid) would otherwise erase
+    // the valid signal when the final clamp converts NaN to zero.
+    reply: Math.max(clamp01(background.replyLoad), pipelineLoad(pipeline)),
     geeknews: clamp01(background.geeknews.activity),
     dbSync: clamp01(background.dbSync.activity),
     total: clamp01(background.activity),
@@ -71,8 +77,9 @@ export function sourceLoads(background: BackgroundStatus, pipeline: PipelineStat
 }
 
 export function totalFor(background: BackgroundStatus, jobs: readonly JobEvent[]): number {
-  const jobLoad = jobs.reduce((maximum, job) => Math.max(maximum, clamp01(job.load)), 0);
-  return clamp01(Math.max(background.activity, jobLoad));
+  let jobLoad = 0;
+  for (const job of jobs) jobLoad = Math.max(jobLoad, clamp01(job.load));
+  return Math.max(clamp01(background.activity), jobLoad);
 }
 
 export function ringTargetVelocities(
@@ -85,7 +92,8 @@ export function ringTargetVelocities(
 
 /**
  * Ring i follows v_i = base_i * (1 + gain_i * clamp01(source_i))
- * * (1 + 0.35 * clamp01(total)). The last factor is exactly 1 at zero total.
+ * * (1 + 0.35 * max(clamp01(total), clamp01(voice))). The last factor is
+ * exactly 1 when both global signals are zero.
  *
  * The render loop owns one scratch array and writes into it, so a 15-30fps
  * loop stops allocating a fresh array per frame (2026-09-22).
@@ -96,7 +104,8 @@ export function writeRingTargetVelocities(
   loads: SourceLoads,
   gain: readonly number[],
 ): number[] {
-  const globalBoost = 1 + TOTAL_BOOST * clamp01(loads.total);
+  const globalLoad = Math.max(clamp01(loads.total), clamp01(loads.voice ?? 0));
+  const globalBoost = 1 + TOTAL_BOOST * globalLoad;
   for (let index = 0; index < out.length; index += 1) {
     const velocity = base[index];
     const safeBase = Number.isFinite(velocity) ? velocity : 0;
@@ -107,7 +116,7 @@ export function writeRingTargetVelocities(
 }
 
 export function latticePulse(total: number, seconds: number): LatticePulse {
-  return writeLatticePulse({ frequency: 0, amplitude: 0, opacity: 0 }, total, seconds);
+  return writeLatticePulse({ frequency: 0, amplitude: 0, opacity: 0, density: 0 }, total, seconds);
 }
 
 /** Write the lattice pulse into a reused object. F = F0*(1+0.8L), A = 0.05+0.05L, O = 0.06+0.12L. */
@@ -116,5 +125,6 @@ export function writeLatticePulse(out: LatticePulse, total: number, _seconds: nu
   out.frequency = 1.0 * (1 + 0.8 * load);
   out.amplitude = 0.05 + 0.05 * load;
   out.opacity = 0.06 + 0.12 * load;
+  out.density = load;
   return out;
 }

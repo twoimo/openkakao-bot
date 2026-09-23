@@ -91,6 +91,9 @@ describe("source load mapping", () => {
     expect(totalFor(background(), jobs)).toBe(0.9);
     expect(totalFor(background({ activity: 0.95 }), jobs)).toBe(0.95);
     expect(totalFor(background(), [{ ...jobs[0], load: 7 }])).toBe(1);
+    const brokenLoad = { ...jobs[0], load: Number.NaN };
+    const validLoad = { ...jobs[1], load: 0.4 };
+    expect(totalFor(background(), [brokenLoad, validLoad])).toBe(0.4);
   });
 
   it("applies the bounded global boost and leaves zero-total velocities unchanged", () => {
@@ -102,8 +105,8 @@ describe("source load mapping", () => {
   });
 
   it("keeps lattice pulse parameters bounded and deterministic", () => {
-    expect(latticePulse(-4, 0)).toEqual({ frequency: 1, amplitude: 0.05, opacity: 0.06 });
-    expect(latticePulse(1, 10)).toEqual({ frequency: 1.8, amplitude: 0.1, opacity: 0.18 });
+    expect(latticePulse(-4, 0)).toEqual({ frequency: 1, amplitude: 0.05, opacity: 0.06, density: 0 });
+    expect(latticePulse(1, 10)).toEqual({ frequency: 1.8, amplitude: 0.1, opacity: 0.18, density: 1 });
     expect(latticePulse(5, 999)).toEqual(latticePulse(1, 1));
   });
 });

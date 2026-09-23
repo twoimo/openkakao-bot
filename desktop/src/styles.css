@@ -320,7 +320,7 @@ body.settings-view { min-width: 0; min-height: 700px; overflow-y: auto; line-hei
 .slot-grid b { display: block; margin-top: 2px; color: var(--text); font-weight: 600; }
 .muted { color: var(--muted); }
 
-@media (min-width: 700px) {
+@media (min-width: 800px) {
   .settings-shell {
     grid-template-columns: minmax(0, 58fr) minmax(300px, 42fr);
     align-items: start;
@@ -332,7 +332,7 @@ body.settings-view { min-width: 0; min-height: 700px; overflow-y: auto; line-hei
   section[aria-labelledby="history-title"] { align-self: stretch; }
 }
 
-@media (max-width: 699px) {
+@media (max-width: 799px) {
   .settings-shell { width: calc(100% - 32px); gap: 12px; }
   .settings-card { padding: 16px; }
 }

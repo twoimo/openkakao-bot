@@ -9,6 +9,7 @@ import {
   type SourceLoads,
 } from "../core/load-mapping";
 import { CoreRenderState, ringTilt } from "../core/render-state";
+import { buildPulseLattice, pulseLatticeTier } from "../core/pulse-lattice";
 
 const BASE = [0.17, -0.12, 0.09] as const;
 const GAIN = [1.4, 1.65, 1.9] as const;
@@ -45,7 +46,7 @@ describe("reused render scratch space", () => {
   });
 
   it("writes the lattice pulse into the caller's object", () => {
-    const out: LatticePulse = { frequency: 0, amplitude: 0, opacity: 0 };
+    const out: LatticePulse = { frequency: 0, amplitude: 0, opacity: 0, density: 0 };
     for (const total of [-4, 0, 0.5, 1, 5, Number.NaN]) {
       expect(writeLatticePulse(out, total, 0)).toBe(out);
       expect(out).toEqual(latticePulse(total, 0));
@@ -70,7 +71,7 @@ describe("core render state", () => {
     let smoothVoice = 0;
     let scale = 1;
     let velocity = 0;
-    const smoothSources = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
+    const smoothSources = { reply: 0, geeknews: 0, dbSync: 0, total: 0, voice: 0 };
     const ringVelocity = [0, 0, 0];
     let frame: CoreRenderState | undefined;
     for (let index = 0; index < 150; index += 1) {
@@ -79,7 +80,8 @@ describe("core render state", () => {
       smoothSources.reply = damp(smoothSources.reply, 0.3, 4.2);
       smoothSources.geeknews = damp(smoothSources.geeknews, 0.6, 4.2);
       smoothSources.dbSync = damp(smoothSources.dbSync, 0.9, 4.2);
-      smoothSources.total = damp(smoothSources.total, 0.7, 4.2);
+      smoothSources.total = damp(smoothSources.total, 0.8, 4.2);
+      smoothSources.voice = smoothVoice;
       const desiredScale = 1 + smoothLoad * 0.2 + smoothVoice * 0.12;
       const acceleration = (desiredScale - scale) * 18 - velocity * 7.5;
       velocity += acceleration * dt;
@@ -153,7 +155,7 @@ describe("core render state", () => {
     const state = new CoreRenderState();
     state.setSignals(1, 1, loads(1, 1, 1, 1));
     const resumed = state.step(10, 1_000_000, BASE, GAIN);
-    expect(resumed.dt).toBe(0.05);
+    expect(resumed.dt).toBe(0.25);
     expect(resumed.smoothLoad).toBeLessThan(1);
     expect(Number.isFinite(resumed.nucleusScale)).toBe(true);
 
@@ -192,5 +194,39 @@ describe("core render state", () => {
     expect(frame.ringVelocities.length).toBe(4);
     expect(frame.ringTargets.length).toBe(4);
     expect([...frame.ringTargets].every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  it("preserves 15fps elapsed time and lets voice activity drive global motion", () => {
+    const state = new CoreRenderState();
+    state.setSignals(0, 0.8, loads(0, 0, 0, 0));
+    const frame = state.step(1 / 15, 0, BASE, GAIN);
+    expect(frame.dt).toBeCloseTo(1 / 15, 12);
+    expect(frame.jobLoad).toBe(0.8);
+    expect(frame.pulse.density).toBeGreaterThan(0);
+    expect(frame.ringTargets[0]).toBeGreaterThan(BASE[0]);
+    expect(frame.ringTargets[1]).toBeLessThan(BASE[1]);
+  });
+
+  it("accumulates pulse phase continuously as load changes", () => {
+    const state = new CoreRenderState();
+    state.setSignals(0, 0, loads(0, 0, 0, 0));
+    const first = state.step(0.05, 0, BASE, GAIN).latticeScale;
+    state.setSignals(1, 0, loads(0, 0, 0, 1));
+    const second = state.step(0.05, 50, BASE, GAIN).latticeScale;
+    expect(first).toBeGreaterThan(1);
+    expect(second).toBeGreaterThan(1);
+    expect(Math.abs(second - first)).toBeLessThan(0.1);
+  });
+
+  it("uses bounded prebuilt pulse-lattice density tiers", () => {
+    const lattice = buildPulseLattice(1.08);
+    expect(lattice.positions.length % 6).toBe(0);
+    expect(lattice.drawCounts[0]).toBeGreaterThan(0);
+    expect(lattice.drawCounts[1]).toBeGreaterThan(lattice.drawCounts[0]);
+    expect(lattice.drawCounts[2]).toBe(lattice.positions.length / 3);
+    expect(pulseLatticeTier(0)).toBe(0);
+    expect(pulseLatticeTier(0.4)).toBe(1);
+    expect(pulseLatticeTier(1)).toBe(2);
+    expect(pulseLatticeTier(Number.NaN)).toBe(0);
   });
 });

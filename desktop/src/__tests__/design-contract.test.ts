@@ -88,8 +88,8 @@ describe("design contract", () => {
 
   it("uses the settings window width on desktop and keeps a single column on narrow screens", () => {
     expect(STYLES).toContain("width: min(1040px, calc(100% - 48px))");
-    expect(STYLES).toMatch(/@media \(min-width: 700px\)[\s\S]*grid-template-columns: minmax\(0, 58fr\) minmax\(300px, 42fr\)/);
-    expect(STYLES).toMatch(/@media \(max-width: 699px\)[\s\S]*\.settings-shell \{ width: calc\(100% - 32px\)/);
+    expect(STYLES).toMatch(/@media \(min-width: 800px\)[\s\S]*grid-template-columns: minmax\(0, 58fr\) minmax\(300px, 42fr\)/);
+    expect(STYLES).toMatch(/@media \(max-width: 799px\)[\s\S]*\.settings-shell \{ width: calc\(100% - 32px\)/);
     expect(STYLES).toContain("font-size: 16px; line-height: 1.3");
     expect(STYLES).toContain("font-size: 14px; line-height: 1.5");
     expect(STYLES).toContain("#knowledge-graph-canvas { height: 230px; }");

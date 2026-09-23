@@ -92,7 +92,24 @@ describe("render lifecycle", () => {
     loop.start();
     scheduler.step(10_000);
     expect(dts).toHaveLength(1);
-    expect(dts[0]).toBeLessThanOrEqual(0.05);
+    expect(dts[0]).toBe(0.25);
+  });
+
+  it("preserves idle 15fps time and selects busy 30fps from sanitized load", () => {
+    const scheduler = new FakeScheduler();
+    const dts: number[] = [];
+    const loop = new AnimationLoop((dt) => dts.push(dt), scheduler);
+    loop.start();
+    scheduler.step(66.67);
+    expect(dts[0]).toBeCloseTo(0.06667, 4);
+    loop.setLoad(0.5);
+    scheduler.step(100.01);
+    expect(dts).toHaveLength(2);
+    expect(dts[1]).toBeCloseTo(0.03334, 4);
+    loop.setLoad(Number.NaN);
+    scheduler.step(166.68);
+    expect(dts).toHaveLength(3);
+    expect(dts[2]).toBeCloseTo(0.06667, 4);
   });
 
   it("JarvisCore reports zero renders while stopped", () => {
