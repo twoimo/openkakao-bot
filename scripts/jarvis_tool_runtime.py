@@ -173,11 +173,21 @@ class JarvisToolRuntime:
         self._abort = AbortController(Path(state_root))
         self._event_sink = event_sink
         self._clock = clock
-        self._browser_runner_factory = _browser_runner_factory or self._owned_browser_runner
+        self._browser_runner_factory = _browser_runner_factory or (
+            lambda token: self._owned_browser_runner(token, state_root=Path(state_root))
+        )
 
     @staticmethod
-    def _owned_browser_runner(token: AbortToken) -> BrowserUseRunner:
-        return BrowserUseRunner(token, context_factory=DedicatedPlaywrightContext)
+    def _owned_browser_runner(
+        token: AbortToken,
+        *,
+        state_root: Path | None = None,
+    ) -> BrowserUseRunner:
+        return BrowserUseRunner(
+            token,
+            context_factory=DedicatedPlaywrightContext,
+            state_root=state_root,
+        )
 
     def _time(self) -> float:
         try:

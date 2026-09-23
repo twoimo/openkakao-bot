@@ -284,7 +284,9 @@ class DedicatedContextTests(unittest.IsolatedAsyncioTestCase):
             owned = DedicatedPlaywrightContext()
             modules = _fake_modules_with_agent(_AgentDeclaringOnlyCatchAll, recorder)
 
-            runner = BrowserUseRunner(token, context_factory=lambda: owned)
+            runner = BrowserUseRunner(
+                token, context_factory=lambda: owned, state_root=Path(temp_dir)
+            )
             with mock.patch.dict(sys.modules, modules):
                 result = await runner.run("local-only task")
 
@@ -302,7 +304,9 @@ class DedicatedContextTests(unittest.IsolatedAsyncioTestCase):
             owned = DedicatedPlaywrightContext()
             modules = _fake_modules_with_agent(_AgentDeclaringVisionSwitches, recorder)
 
-            runner = BrowserUseRunner(token, context_factory=lambda: owned)
+            runner = BrowserUseRunner(
+                token, context_factory=lambda: owned, state_root=Path(temp_dir)
+            )
             with mock.patch.dict(sys.modules, modules):
                 result = await runner.run("local-only task")
 
@@ -322,4 +326,3 @@ class DedicatedContextTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

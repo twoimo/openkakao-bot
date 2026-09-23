@@ -30,7 +30,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from local_mlx_gateway import MLX_GATEWAY_EMBEDDINGS_URL
+from local_mlx_gateway import (
+    MLX_GATEWAY_EMBEDDINGS_URL,
+    MlxRequestAdmissionClosed,
+    mlx_model_request_lease,
+)
 
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
@@ -2934,12 +2938,13 @@ def _dense_endpoint_identity() -> str:
     return hashlib.sha256(DENSE_EMBEDDING_URL.encode("utf-8")).hexdigest()
 
 
-def _local_dense_embeddings(
+def _local_dense_embeddings_unleased(
     texts: list[str],
     *,
     model_id: str | None = None,
     timeout_seconds: float | None = None,
     _budget: _DenseCycleBudget | None = None,
+    state_root: Path | None = None,
 ) -> list[tuple[float, ...]]:
     """Embed text through a loopback-only multilingual embedding endpoint.
 
@@ -3031,12 +3036,56 @@ def _local_dense_embeddings(
     return [vector for vector in ordered if vector is not None]
 
 
+def _local_dense_embeddings(
+    texts: list[str],
+    *,
+    model_id: str | None = None,
+    timeout_seconds: float | None = None,
+    _budget: _DenseCycleBudget | None = None,
+    state_root: Path | None = None,
+) -> list[tuple[float, ...]]:
+    """Share the model-request lease when embeddings use the managed MLX port."""
+
+    parsed = urllib.parse.urlsplit(DENSE_EMBEDDING_URL)
+    try:
+        managed_gateway = (
+            parsed.scheme == "http"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port == 11234
+            and parsed.path == "/v1/embeddings"
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        managed_gateway = False
+    if not managed_gateway:
+        return _local_dense_embeddings_unleased(
+            texts,
+            model_id=model_id,
+            timeout_seconds=timeout_seconds,
+            _budget=_budget,
+            state_root=state_root,
+        )
+    try:
+        with mlx_model_request_lease(state_root):
+            return _local_dense_embeddings_unleased(
+                texts,
+                model_id=model_id,
+                timeout_seconds=timeout_seconds,
+                _budget=_budget,
+                state_root=state_root,
+            )
+    except MlxRequestAdmissionClosed as exc:
+        raise _DenseEmbeddingPermanentError(exc.code) from exc
+
+
 def _local_dense_embeddings_adaptive(
     texts: list[str],
     *,
     model_id: str,
     first_attempt_timeout_seconds: float | None = None,
     budget: _DenseCycleBudget | None = None,
+    state_root: Path | None = None,
 ) -> list[tuple[float, ...]]:
     """Embed one batch without retrying it into an even slower shape.
 
@@ -3057,6 +3106,7 @@ def _local_dense_embeddings_adaptive(
             texts,
             model_id=model_id,
             _budget=budget,
+            state_root=state_root,
         )
     else:
         batch_vectors = _local_dense_embeddings(
@@ -3064,6 +3114,7 @@ def _local_dense_embeddings_adaptive(
             model_id=model_id,
             timeout_seconds=first_attempt_timeout_seconds,
             _budget=budget,
+            state_root=state_root,
         )
     if len(batch_vectors) != len(texts):
         raise _DenseEmbeddingPermanentError("local dense embedding response mismatch")
@@ -3073,6 +3124,7 @@ def _local_dense_embeddings_adaptive(
 def _dense_embedding_probe(
     budget: _DenseCycleBudget,
     model_id: str,
+    state_root: Path | None = None,
 ) -> tuple[bool, str]:
     global _DENSE_PROBE_CACHE
     now = time.monotonic()
@@ -3094,6 +3146,7 @@ def _dense_embedding_probe(
             model_id=model_id,
             timeout_seconds=DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS,
             _budget=budget,
+            state_root=state_root,
         )
     except Exception as error:  # noqa: BLE001 - probe failure keeps dense disabled
         # Carry the original message: it is what tells an operator whether the
@@ -3250,7 +3303,11 @@ def refresh_dense_index(
         dense = _connect_dense_index(state_root)
         budget = _DenseCycleBudget()
         model_id = _active_dense_embedding_model()
-        probe_ok, probe_reason = _dense_embedding_probe(budget, model_id)
+        probe_ok, probe_reason = _dense_embedding_probe(
+            budget,
+            model_id,
+            state_root=state_root,
+        )
         if not probe_ok:
             raise _DenseCycleAbortError(probe_reason)
         dense.execute("BEGIN")
@@ -3267,6 +3324,7 @@ def refresh_dense_index(
                 model_id=model_id,
                 first_attempt_timeout_seconds=first_attempt_timeout_seconds,
                 budget=budget,
+                state_root=state_root,
             )
             first_attempt_timeout_seconds = None
             if len(vectors) != len(batch):
@@ -3422,6 +3480,7 @@ def _dense_ann_query(
         query_vector = _local_dense_embeddings(
             [query_text],
             model_id=active_model,
+            state_root=state_root,
         )[0]
         _note_dense_probe_success(active_model)
         clauses: list[str] = []

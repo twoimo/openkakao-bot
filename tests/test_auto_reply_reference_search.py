@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,8 @@ SEARCH_PATH = SCRIPTS / "auto_reply_reference_search.py"
 
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+from local_mlx_gateway import mlx_model_swap_lease
 
 
 def load(name: str, path: Path):
@@ -69,6 +72,24 @@ class ReferenceSearchTests(unittest.TestCase):
             )
         self.assertIn("redirects are disabled", str(raised.exception))
         raised.exception.close()
+
+    def test_managed_mlx_embedding_is_rejected_before_http_during_swap(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            engine = self.search.LoopbackOpenAIEmbeddingEngine(
+                "http://127.0.0.1:11234/v1/embeddings",
+                "mlx/local-embedder",
+                state_root=root,
+            )
+            with mlx_model_swap_lease(root), mock.patch.object(
+                self.search.urllib.request,
+                "build_opener",
+                side_effect=AssertionError("embedding HTTP must not start during swap"),
+            ) as build_opener:
+                with self.assertRaises(self.search.DenseUnavailable) as raised:
+                    engine.embed(["query"])
+            self.assertEqual(raised.exception.code, "model_swap_in_progress")
+            build_opener.assert_not_called()
 
     def _database(self, root: str) -> Path:
         db = Path(root) / "context.sqlite3"

@@ -38,9 +38,12 @@ from local_mlx_model_readiness import (
 )
 from auto_reply_ondevice import (
     FLASH_NEXT_MODEL_ID,
+    FLASH_NEXT_REQUIRED_BYTES,
     MLX_GATEWAY_BASE_URL,
     QWEN38_27B_MODEL_ID,
     QWEN38_27B_REQUIRED_BYTES,
+    _canonical_managed_model_id,
+    _read_mlx_gateway_models,
     HttpMlxModelGateway,
     ManagedModelResidency,
     MemoryBudget,
@@ -56,6 +59,11 @@ from mlx_serve_lifecycle import (
     launch_app_owned_server,
     ownership_status,
     stop_app_owned_server,
+)
+from local_mlx_gateway import (
+    MlxModelSwapLeaseBusy,
+    MlxRequestAdmissionClosed,
+    mlx_model_swap_lease,
 )
 
 _FROZEN = Path(__file__).resolve().with_name(
@@ -1941,7 +1949,10 @@ def prepare_reply_model(state_root: Path, model: str):
             "warnings": ["Flash-Next는 27B 준비 확인 대상으로 사용할 수 없습니다."],
         }
     if local_wanted == JARVIS_SWAP_MODEL_ID:
-        readiness = read_fixed_local_mlx_readiness(local_wanted)
+        readiness = read_fixed_local_mlx_readiness(
+            local_wanted,
+            state_root=state_root,
+        )
         return {
             "ok": readiness.prepared,
             "action": "model-prepare",
@@ -2033,29 +2044,24 @@ def swap_reply_model(
             ok=False, stage="aborted", reason="explicit_opt_in_required"
         )
 
-    # Serialize the entire read/modify/persist transaction across IPC children.
-    # This lock does not attest or drain gateway requests; the owner gate below
-    # must already have that independent evidence.
+    # The exclusive lease waits for participating local MLX requests to finish
+    # and prevents new requests through this gateway until the swap ends.
     try:
-        descriptor = os.open(root / "mlx-model-swap.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    except OSError:
-        return _model_swap_result(ok=False, stage="aborted", reason="model_owner_unknown")
-    try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return _model_swap_result(ok=False, stage="aborted", reason="model_swap_busy")
-        return _swap_reply_model_locked(
-            root, token, residency_probe=residency_probe, memory_probe=memory_probe,
-            gateway_factory=gateway_factory, persist_residency=persist_residency,
-            cancel_check=cancel_check, now=now,
-        )
-    finally:
-        os.close(descriptor)
+        with mlx_model_swap_lease(root):
+            return _swap_reply_model_locked(
+                root, token, drain_lease_verified=True,
+                residency_probe=residency_probe, memory_probe=memory_probe,
+                gateway_factory=gateway_factory, persist_residency=persist_residency,
+                cancel_check=cancel_check, now=now,
+            )
+    except MlxModelSwapLeaseBusy:
+        return _model_swap_result(ok=False, stage="aborted", reason="model_swap_busy")
+    except MlxRequestAdmissionClosed as exc:
+        return _model_swap_result(ok=False, stage="aborted", reason=exc.code)
 
 
 def _swap_reply_model_locked(
-    root: Path, token: str, *, residency_probe, memory_probe,
+    root: Path, token: str, *, drain_lease_verified: bool, residency_probe, memory_probe,
     gateway_factory, persist_residency, cancel_check, now,
 ) -> dict[str, Any]:
     probe = residency_probe or read_managed_model_residency
@@ -2080,7 +2086,7 @@ def _swap_reply_model_locked(
         return _model_swap_result(
             ok=False, stage="aborted", reason="model_owner_unknown"
         )
-    if not residency.drain_verified:
+    if not drain_lease_verified:
         return _model_swap_result(
             ok=False, stage="aborted", reason="model_drain_unverified"
         )
@@ -2137,8 +2143,8 @@ def _swap_reply_model_locked(
             tuple(sorted(manager.owned_models)),
             residency.owner_pid,
             True,
-            True,
-            "ready",
+            False,
+            "model_drain_unverified",
             residency.kv_cache_bytes,
             residency.voice_models_bytes,
             residency.other_resident_bytes,
@@ -2147,7 +2153,7 @@ def _swap_reply_model_locked(
             persist(
                 root,
                 snapshot,
-                accepting_requests=False,
+                accepting_requests=True,
                 in_flight=0,
                 updated_at=time.time() if now is None else float(now),
             )
@@ -2177,8 +2183,8 @@ def _swap_reply_model_locked(
         commit=commit_selection,
     )
     if not result.ok:
-        # Do not refresh an untouched ownership/drain attestation on preflight
-        # failure. After mutation, record restored or explicitly unknown state.
+        # Do not refresh an untouched ownership attestation on preflight
+        # failure. After mutation, record the resumable owner state.
         if "unload" in result.stages or "load" in result.stages:
             persist_manager_state()
         return _model_swap_result(
@@ -2486,11 +2492,75 @@ def _mlx_app_owned_spec(state_root: Path, model_id: str | None) -> MlxLaunchSpec
     resident = _mlx_app_owned_model_dir(model_id)
     if resident is None:
         return None
+    required_bytes = (
+        QWEN38_27B_REQUIRED_BYTES
+        if resident.name == JARVIS_SWAP_MODEL_ID.rsplit("/", 1)[-1]
+        else FLASH_NEXT_REQUIRED_BYTES
+    )
     return MlxLaunchSpec(
         executable=_MLX_APP_OWNED_BINARY,
         resident_model_dir=resident,
         models_dir=_MLX_APP_OWNED_MODELS_DIR,
         log_path=state_root / "mlx-app-owned-server.log",
+        minimum_free_bytes=required_bytes,
+    )
+
+
+def _seed_launched_model_residency(state_root: Path, spec: MlxLaunchSpec, pid: int) -> bool:
+    """Persist owner facts only after catalog and process ownership agree."""
+
+    current = canonical_fixed_local_mlx_model_id(
+        f"ddalcu/{spec.resident_model_dir.name}"
+    )
+    if current is None or pid <= 1:
+        return False
+    answered, models = _read_mlx_gateway_models(
+        base_url=MLX_GATEWAY_BASE_URL,
+        timeout=1.5,
+    )
+    if not answered:
+        return False
+    loaded: list[str] = []
+    seen: set[str] = set()
+    for item in models:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            return False
+        model_id = _canonical_managed_model_id(item["id"])
+        identity = item["id"].removeprefix("mlx/")
+        if not identity or identity in seen:
+            return False
+        seen.add(identity)
+        if item.get("loaded") is True and item.get("state") == "ready":
+            if not model_id:
+                return False
+            loaded.append(model_id)
+        elif item.get("loaded") is not False or item.get("state") != "unloaded":
+            return False
+    if loaded != [f"mlx/{current}"]:
+        return False
+    try:
+        write_managed_model_residency(
+            state_root,
+            ManagedModelResidency(
+                f"mlx/{current}",
+                (FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID),
+                pid,
+                True,
+                False,
+                "model_drain_unverified",
+            ),
+            accepting_requests=True,
+            in_flight=0,
+        )
+        confirmed = read_managed_model_residency(Path(state_root))
+    except Exception:
+        return False
+    return bool(
+        isinstance(confirmed, ManagedModelResidency)
+        and confirmed.owner_verified
+        and not confirmed.drain_verified
+        and confirmed.current_model == f"mlx/{current}"
+        and confirmed.owner_pid == pid
     )
 
 
@@ -2526,7 +2596,13 @@ def _mlx_lifecycle_payload(action: str, state_root: Path) -> dict:
     spec = _mlx_app_owned_spec(state_root, _argv_flag_value("--model"))
     if spec is None:
         return {"ok": False, "action": action, "reason": "mlx_model_not_supported"}
-    return launch_app_owned_server(spec, state_root).report()
+    result = launch_app_owned_server(spec, state_root)
+    report = result.report()
+    if result.ok and type(result.pid) is int and result.pid > 1:
+        report["residency_seeded"] = _seed_launched_model_residency(
+            state_root, spec, result.pid
+        )
+    return report
 
 
 def main():

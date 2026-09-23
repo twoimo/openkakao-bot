@@ -11619,7 +11619,7 @@ def _generation_reply_model(has_images: bool) -> str:
     return _active_reply_model()
 
 
-def _run_opencodex_generation(
+def _run_opencodex_generation_unleased(
     model: str,
     system_prompt: str,
     prompt_bytes: bytes,
@@ -11759,6 +11759,40 @@ def _run_opencodex_generation(
         return exc.code, b"", err_bytes
     except Exception as exc:
         return 1, b"", str(exc).encode("utf-8")
+
+
+def _run_opencodex_generation(
+    model: str,
+    system_prompt: str,
+    prompt_bytes: bytes,
+    *,
+    image_paths: list[Path] | None = None,
+    timeout: float = 30.0,
+    base_url: str = "http://127.0.0.1:11234/v1",
+) -> tuple[int, bytes, bytes]:
+    """Keep local inference inside the same lease used by model swaps."""
+
+    if not _is_mlx_serve_text_model(model):
+        return _run_opencodex_generation_unleased(
+            model,
+            system_prompt,
+            prompt_bytes,
+            image_paths=image_paths,
+            timeout=timeout,
+            base_url=base_url,
+        )
+    try:
+        with auto_reply_ondevice.mlx_model_request_lease(_operator_state_root()):
+            return _run_opencodex_generation_unleased(
+                model,
+                system_prompt,
+                prompt_bytes,
+                image_paths=image_paths,
+                timeout=timeout,
+                base_url=base_url,
+            )
+    except auto_reply_ondevice.MlxRequestAdmissionClosed as exc:
+        return 1, b"", exc.code.encode("ascii", "replace")
 
 def _run_generation_candidate(
     model: str,

@@ -60,12 +60,13 @@ The settings UI marks voice status unavailable when its heartbeat is more than f
 ### Other architecture diagrams
 
 - [Tauri menu-bar architecture](docs/architecture/jarvis-openkakao-units1-4.html)
+- [Local MLX request drain and model swap](docs/architecture/jarvis-model-request-drain.html)
 - [Offline DREAM-RSI review loop](docs/architecture/dream-rsi-provenance-loop.html)
 - [Browser-use lifecycle](docs/architecture/jarvis-browser-use-lifecycle.html)
 
 ## Current runtime check
 
-Read-only host checks on 2026-09-24 report a 128 GiB Mac with Flash-Next loaded and ready. The latest synthetic generation probe timed out at 60.009 s, so current generation is not verified. Qwen3.8 27B and Qwen3-TTS are unloaded; the 27B readiness probe returned `model_not_ready` while the MLX server owner is `model_owner_unmanaged`. Free swap was 1,178.44 MiB, below the 2,048 MiB voice admission threshold, so Whisper/TTS loading is blocked and a complete wake→STT→LLM→TTS turn remains unverified. The loaded model does not advertise embeddings; GraphRAG search is BM25-only and dense/RRF is unavailable. No model load or server takeover was performed in this readback. See [engineering status](docs/engineering-status.md) for measurements and limits.
+Read-only host checks on 2026-09-24 report a 128 GiB Mac with Flash-Next loaded and ready. The latest synthetic generation probe timed out at 60.009 s, so current generation is not verified. Qwen3.8 27B and Qwen3-TTS are unloaded; the 27B readiness probe returned `model_not_ready` while the MLX server owner is `model_owner_unmanaged`. Free swap was 1,178.44 MiB, below the 2,048 MiB voice admission threshold, so Whisper/TTS loading is blocked and a complete wake→STT→LLM→TTS turn remains unverified. The loaded model does not advertise embeddings; GraphRAG search is BM25-only and dense/RRF is unavailable. The request lock coordinates participating OpenKakao clients only; it does not fence external MLX clients or prove server-side cancellation after a client disconnects. No model load or server takeover was performed in this readback. See [engineering status](docs/engineering-status.md) for measurements and limits.
 
 The detailed implementation notes and dated verification records are kept in [engineering status](docs/engineering-status.md). They describe source checks, automated tests, and live runtime observations separately.
 

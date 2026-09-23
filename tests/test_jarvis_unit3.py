@@ -6,6 +6,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
 from auto_reply_ax_ui import AX_ABORT_FOCUS_REQUIRED, AX_ABORT_GLOBAL, background_virtual_cursor_action
 from jarvis_abort import AbortController, AbortableJobQueue, JarvisCancelled
 from jarvis_browser_use import BrowserUseRunner
+from local_mlx_gateway import mlx_model_swap_lease
 from jarvis_voice import CUSTOM_WAKE_MODEL_MAX_BYTES, JarvisVoicePipeline, VoiceState, WakePhraseGate
 from jarvis_voice import VOICE_CONTEXT_TTL_SECONDS
 from jarvis_voice import VOICE_PERSONA_PROMPT
@@ -346,11 +348,37 @@ class JarvisBrowserAbortTests(unittest.IsolatedAsyncioTestCase):
                 controller.token(),
                 context_factory=lambda: owned,
                 agent_factory=agent,
+                state_root=Path(temp_dir),
             )
             result = await runner.run("local-only test")
             self.assertFalse(result.ok)
             self.assertEqual(result.error_code, "global_abort")
             self.assertTrue(owned.closed)
+
+    async def test_browser_use_does_not_start_an_agent_during_model_swap(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            controller = AbortController(root)
+            owned = FakeOwnedContext()
+            calls = []
+
+            async def agent(*_args):
+                calls.append(True)
+                return "unexpected"
+
+            runner = BrowserUseRunner(
+                controller.token(),
+                context_factory=lambda: owned,
+                agent_factory=agent,
+                state_root=root,
+            )
+            with mlx_model_swap_lease(root):
+                result = await runner.run("local-only task")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "model_swap_in_progress")
+        self.assertEqual(calls, [])
+        self.assertTrue(owned.closed)
 
 
 class Qwen3TtsModelPathTests(unittest.TestCase):
@@ -665,15 +693,15 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp_dir:
             token = AbortController(Path(temp_dir)).token()
-        with mock.patch("jarvis_voice._local_urlopen", fake_urlopen):
-            reply = LocalMlxLlm().generate(
-                "안녕",
-                token,
-                history=[
-                    {"role": "user", "content": "첫 질문"},
-                    {"role": "assistant", "content": "첫 답변"},
-                ],
-            )
+            with mock.patch("jarvis_voice._local_urlopen", fake_urlopen):
+                reply = LocalMlxLlm(state_root=Path(temp_dir)).generate(
+                    "안녕",
+                    token,
+                    history=[
+                        {"role": "user", "content": "첫 질문"},
+                        {"role": "assistant", "content": "첫 답변"},
+                    ],
+                )
         self.assertEqual(reply, "알겠습니다.")
         self.assertEqual(captured["timeout"], 90.0)
         self.assertEqual(captured["body"]["max_tokens"], 128)
@@ -686,6 +714,18 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
             ],
         )
         self.assertIn("스스로 질문을 만든 뒤 답하지 않는다", captured["body"]["messages"][0]["content"])
+
+    def test_voice_generation_does_not_contact_mlx_during_model_swap(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            token = AbortController(root).token()
+            with mlx_model_swap_lease(root), mock.patch(
+                "jarvis_voice._local_urlopen",
+                side_effect=AssertionError("gateway must stay closed"),
+            ) as opener:
+                with self.assertRaisesRegex(RuntimeError, "model_swap_in_progress"):
+                    LocalMlxLlm(state_root=root).generate("안녕", token)
+            opener.assert_not_called()
 
     def test_voice_persona_ends_turn_without_engagement_question(self):
         self.assertIn("스스로 질문을 만든 뒤 답하지 않는다", VOICE_PERSONA_PROMPT)

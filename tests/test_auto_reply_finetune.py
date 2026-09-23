@@ -446,7 +446,19 @@ def _capture_ok(text: str, logprobs) -> dict:
     }
 
 
-class DpoCaptureTests(unittest.TestCase):
+class _IsolatedMlxLeaseTestCase(unittest.TestCase):
+    def setUp(self):
+        self._lease_state = tempfile.TemporaryDirectory()
+        self.addCleanup(self._lease_state.cleanup)
+        patcher = mock.patch(
+            "scripts.local_mlx_gateway.resolve_mlx_state_root",
+            return_value=Path(self._lease_state.name),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class DpoCaptureTests(_IsolatedMlxLeaseTestCase):
     def test_real_logprobs_are_summed(self):
         with mock.patch.object(
             F, "_open_local_only", return_value=_FakeResponse(_logprob_body([-0.5, -0.25]))
@@ -827,7 +839,7 @@ class DpoPairCaptureTests(unittest.TestCase):
         self.assertAlmostEqual(result["candidates"][0]["sum"], -0.3)
 
 
-class DpoScoringProbeTests(unittest.TestCase):
+class DpoScoringProbeTests(_IsolatedMlxLeaseTestCase):
     def test_echo_unsupported_is_measured(self):
         body = json.dumps({"choices": [{"text": " epsilon"}]}).encode("utf-8")
         with mock.patch.object(F, "_open_local_only", return_value=_FakeResponse(body)):

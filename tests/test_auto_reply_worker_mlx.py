@@ -14,6 +14,8 @@ WORKER = SCRIPTS / "auto-reply-worker.py"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+from local_mlx_gateway import mlx_model_swap_lease
+
 
 class _Response:
     def __init__(self, payload: dict):
@@ -37,6 +39,17 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
         assert spec.loader is not None
         spec.loader.exec_module(module)
         cls.module = module
+
+    def setUp(self):
+        self.state_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.state_dir.cleanup)
+        patcher = mock.patch.object(
+            self.module,
+            "_operator_state_root",
+            return_value=Path(self.state_dir.name),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @staticmethod
     def _advertised_models():
@@ -98,6 +111,20 @@ class AutoReplyWorkerMlxTests(unittest.TestCase):
                 self.assertTrue(all("10100" not in url for url, _data, _timeout in calls))
                 self.assertTrue(all("/load" not in url for url, _data, _timeout in calls))
                 direct_urlopen.assert_not_called()
+
+    def test_mlx_generation_fails_before_gateway_when_swap_owns_exclusive_lease(self):
+        module = self.module
+        with mlx_model_swap_lease(Path(self.state_dir.name)):
+            with mock.patch(
+                "auto_reply_ondevice._local_only_urlopen",
+                side_effect=AssertionError("gateway must not be called during swap"),
+            ):
+                result = module._run_opencodex_generation(
+                    "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+                    "system",
+                    b"hello",
+                )
+        self.assertEqual(result, (1, b"", b"model_swap_in_progress"))
 
     def test_stale_operator_prompt_cannot_restore_ai_accusation_probe(self):
         module = self.module

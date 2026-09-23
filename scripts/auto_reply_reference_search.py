@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Sequence
 
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
+
 PACK_TABLE = "context_reference_packs"
 FTS_TABLE = "context_reference_search_fts"
 DENSE_TABLE = "context_reference_dense_lsh"
@@ -160,7 +162,14 @@ def _is_loopback_endpoint(endpoint: str) -> bool:
 class LoopbackOpenAIEmbeddingEngine:
     """OpenAI-compatible embeddings restricted to a loopback HTTP endpoint."""
 
-    def __init__(self, endpoint: str, model: str, *, timeout: float = 15.0) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        model: str,
+        *,
+        timeout: float = 15.0,
+        state_root: Path | str | None = None,
+    ) -> None:
         endpoint = str(endpoint or "").strip()
         model = str(model or "").strip()
         if not endpoint or not _is_loopback_endpoint(endpoint):
@@ -173,9 +182,14 @@ class LoopbackOpenAIEmbeddingEngine:
         self.endpoint = endpoint
         self.model = model
         self.timeout = max(0.5, min(float(timeout), 60.0))
+        self.state_root = state_root
 
     @classmethod
-    def from_environment(cls) -> "LoopbackOpenAIEmbeddingEngine | None":
+    def from_environment(
+        cls,
+        *,
+        state_root: Path | str | None = None,
+    ) -> "LoopbackOpenAIEmbeddingEngine | None":
         endpoint = (
             os.environ.get("OPENKAKAO_EMBEDDING_ENDPOINT", "").strip()
             or os.environ.get("OPENKAKAO_EMBEDDING_URL", "").strip()
@@ -183,9 +197,27 @@ class LoopbackOpenAIEmbeddingEngine:
         model = os.environ.get("OPENKAKAO_EMBEDDING_MODEL", "").strip()
         if not endpoint or not model:
             return None
-        return cls(endpoint, model)
+        return cls(endpoint, model, state_root=state_root)
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        parsed = urllib.parse.urlsplit(self.endpoint)
+        managed_gateway = (
+            parsed.scheme == "http"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port == 11234
+            and parsed.path == "/v1/embeddings"
+            and not parsed.query
+            and not parsed.fragment
+        )
+        if not managed_gateway:
+            return self._embed_unleased(texts)
+        try:
+            with mlx_model_request_lease(self.state_root):
+                return self._embed_unleased(texts)
+        except MlxRequestAdmissionClosed as exc:
+            raise DenseUnavailable(exc.code) from exc
+
+    def _embed_unleased(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
         payload = json.dumps(
@@ -749,6 +781,7 @@ def search_reference_packs(
     embedding_engine: EmbeddingEngine | None = None,
     dense_index: DenseIndex | None = None,
     use_environment: bool = True,
+    state_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Search reference packs and expose degradation instead of hiding it."""
     connection = sqlite3.connect(str(db_path), timeout=30.0)
@@ -795,7 +828,9 @@ def search_reference_packs(
         dense: list[dict[str, Any]] = []
         if engine is None and use_environment:
             try:
-                engine = LoopbackOpenAIEmbeddingEngine.from_environment()
+                engine = LoopbackOpenAIEmbeddingEngine.from_environment(
+                    state_root=state_root
+                )
             except DenseUnavailable as exc:
                 dense_state = {
                     "available": False,

@@ -1040,6 +1040,13 @@ class PruneTests(unittest.TestCase):
 
 class DenseRefreshBatchingTests(unittest.TestCase):
     def setUp(self):
+        self._lease_state = tempfile.TemporaryDirectory()
+        self.addCleanup(self._lease_state.cleanup)
+        self._lease_state_patch = mock.patch(
+            "local_mlx_gateway.resolve_mlx_state_root",
+            return_value=Path(self._lease_state.name),
+        )
+        self._lease_state_patch.start()
         self._model_patch = mock.patch.object(
             KG,
             "_active_dense_embedding_model",
@@ -1057,6 +1064,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
     def tearDown(self):
         self._probe_patch.stop()
         self._model_patch.stop()
+        self._lease_state_patch.stop()
 
     def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -1304,6 +1312,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
+                state_root=None,
             ):
                 calls.append((len(texts), timeout_seconds))
                 raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
@@ -1353,6 +1362,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
+                state_root=None,
             ):
                 nonlocal calls
                 calls += 1
@@ -1479,6 +1489,7 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
+                state_root=None,
             ):
                 return [(1.0, 0.0)] * len(texts)
 
@@ -1512,7 +1523,27 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                     ["테스트"],
                     model_id="mlx-test/embedder",
                 )
-            self.assertIn("local dense embedding unavailable", str(ctx.exception))
+        self.assertIn("local dense embedding unavailable", str(ctx.exception))
+
+    def test_managed_dense_embedding_is_rejected_before_http_during_swap(self):
+        root = Path(self._lease_state.name)
+        with mock.patch.object(
+            KG,
+            "DENSE_EMBEDDING_URL",
+            "http://127.0.0.1:11234/v1/embeddings",
+        ), LOCAL_MLX.mlx_model_swap_lease(root), mock.patch.object(
+            KG,
+            "_open_loopback_embedding_request",
+            side_effect=AssertionError("embedding HTTP must stay closed"),
+        ) as open_request:
+            with self.assertRaises(KG._DenseEmbeddingPermanentError) as raised:
+                KG._local_dense_embeddings(
+                    ["query"],
+                    model_id="mlx-test/embedder",
+                    state_root=root,
+                )
+        self.assertEqual(str(raised.exception), "model_swap_in_progress")
+        open_request.assert_not_called()
 
     def test_dense_ann_query_fails_closed_when_graph_watermark_is_newer(self):
         with tempfile.TemporaryDirectory() as tmp:

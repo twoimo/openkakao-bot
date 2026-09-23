@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable
 
 from auto_reply_ondevice import FLASH_NEXT_MODEL_ID
 from jarvis_abort import AbortToken, JarvisCancelled
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 
 LOCAL_MLX_BASE_URL = "http://127.0.0.1:11234/v1"
@@ -213,10 +214,12 @@ class BrowserUseRunner:
         *,
         context_factory: Callable[[], DedicatedPlaywrightContext] = DedicatedPlaywrightContext,
         agent_factory: Callable[[str, Any, str, str], Awaitable[str]] | None = None,
+        state_root: Path | None = None,
     ) -> None:
         self.token = token
         self.context_factory = context_factory
         self.agent_factory = agent_factory or self._run_browser_use_agent
+        self.state_root = state_root
         self._owned_context: DedicatedPlaywrightContext | None = None
 
     async def _run_browser_use_agent(
@@ -253,14 +256,17 @@ class BrowserUseRunner:
         try:
             context = await _cancelable(owned.start(), self.token)
             self.token.raise_if_cancelled()
-            result = await _cancelable(
-                self.agent_factory(task, context, FLASH_NEXT_MODEL_ID, LOCAL_MLX_BASE_URL),
-                self.token,
-            )
+            with mlx_model_request_lease(self.state_root):
+                result = await _cancelable(
+                    self.agent_factory(task, context, FLASH_NEXT_MODEL_ID, LOCAL_MLX_BASE_URL),
+                    self.token,
+                )
             self.token.raise_if_cancelled()
             return BrowserJobResult(True, result=result)
         except JarvisCancelled:
             return BrowserJobResult(False, "global_abort")
+        except MlxRequestAdmissionClosed as exc:
+            return BrowserJobResult(False, exc.code)
         except Exception:
             return BrowserJobResult(False, "browser_job_failed")
         finally:
@@ -268,4 +274,3 @@ class BrowserUseRunner:
                 await owned.close()
             finally:
                 self._owned_context = None
-
