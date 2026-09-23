@@ -47,8 +47,10 @@ export function settingsMarkup(): string {
     </header>
 
     <section class="settings-card" aria-labelledby="rooms-title">
-      <div class="section-heading"><h2 id="rooms-title">대상 채팅방</h2><span class="status-dot" aria-hidden="true"></span></div>
+      <div class="section-heading"><h2 id="rooms-title">대상 채팅방</h2><span class="status-tag">등록 관리</span></div>
+      <label class="field-label" for="settings-room-popup">등록된 채팅방</label>
       <select id="settings-room-popup" aria-label="대상 채팅방"><option value="">확인 중</option></select>
+      <label class="field-label" for="settings-add-room-select">새 채팅방 등록</label>
       <div class="room-action-row">
         <select id="settings-add-room-select" aria-label="추가할 채팅방 선택"><option value="">추가할 채팅방 선택</option></select>
         <button id="settings-add-room-button" type="button">추가</button>
@@ -59,15 +61,17 @@ export function settingsMarkup(): string {
     <section class="settings-card" aria-labelledby="model-title">
       <div class="section-heading"><h2 id="model-title">AI 모델</h2><span class="tag">온디바이스</span></div>
       <button class="model-row selection" type="button" data-model-id="${RESIDENT_MODEL_ID}" aria-pressed="true" disabled>
-        <span class="model-copy"><strong>Flash-Next</strong><span class="model-id">${RESIDENT_MODEL_ID}</span></span><span class="tag">기본 상주</span>
+        <span class="model-copy"><strong>Flash-Next</strong><span class="model-desc">빠른 응답 · 기본 대화 상주 추론</span><span class="model-id">${RESIDENT_MODEL_ID}</span></span><span class="tag">기본 상주</span>
       </button>
       <button class="model-row" type="button" data-model-id="${SWAP_MODEL_ID}" aria-pressed="false" disabled>
-        <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
+        <span class="model-copy"><strong>Qwen3.8 27B</strong><span class="model-desc">심층 추론 · 필요 시 온디맨드 스왑</span><span class="model-id">${SWAP_MODEL_ID}</span></span><span class="tag muted-tag">온디맨드 스왑 · 미로딩</span>
       </button>
-      <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
-      <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
-      <p id="mlx-server-state" class="muted">앱 소유 MLX 서버 상태를 확인 중입니다.</p>
-      <p id="settings-hardware-status" class="muted" role="status" aria-live="polite">온디바이스 하드웨어를 확인 중입니다.</p>
+      <div class="meta-status-block">
+        <p id="model-status" class="muted" role="status" aria-live="polite">모델 목록을 확인 중입니다. 27B는 사용자가 선택하고 안전 게이트를 통과할 때만 전환합니다.</p>
+        <p id="model-owner-state" class="muted">모델 소유권을 확인 중입니다.</p>
+        <p id="mlx-server-state" class="muted">앱 소유 MLX 서버 상태를 확인 중입니다.</p>
+        <p id="settings-hardware-status" class="muted" role="status" aria-live="polite">온디바이스 하드웨어를 확인 중입니다.</p>
+      </div>
     </section>
 
     <section class="settings-card" aria-labelledby="voice-title">
@@ -146,16 +150,27 @@ export function renderHistory(snapshot: RuntimeSnapshot, root: Document = docume
   summary.textContent = `최근 ${snapshot.recentReceipts.length}건 · 본문·프롬프트 제외`;
   snapshot.recentReceipts.forEach((receipt) => {
     const row = root.createElement("div");
-    row.className = "knowledge-relation-row";
+    row.className = "history-receipt-card";
     row.setAttribute("role", "listitem");
 
+    const header = root.createElement("div");
+    header.className = "history-receipt-header";
+
     const heading = root.createElement("strong");
+    heading.className = "history-receipt-title";
     heading.textContent = `${receipt.displayTime || receipt.clock || "시간 미기록"} · ${receipt.title}`;
 
+    const badge = root.createElement("span");
+    badge.className = "history-receipt-badge";
+    badge.textContent = receipt.outcomeText || receipt.outcome || "기록";
+
+    header.append(heading, badge);
+
     const detail = root.createElement("span");
+    detail.className = "history-receipt-detail";
     detail.textContent = `${receipt.outcomeText || receipt.outcome} · ${receipt.reasonText || receipt.reasonCode} · 검색 ${receipt.retrievalState}`;
 
-    row.append(heading, detail);
+    row.append(header, detail);
     list.append(row);
   });
 }
