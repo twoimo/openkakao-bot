@@ -2853,6 +2853,8 @@ pub fn index_csv_with_queue(
     }
     tx.commit()?;
     rebuild_retrieval_index(&conn)?;
+    checkpoint_context_wal_truncate(&conn)?;
+    set_context_db_permissions(db_path)?;
     Ok(count)
 }
 fn response_delay_percentile(sorted: &[f64], ratio: f64) -> f64 {
@@ -5250,6 +5252,63 @@ pub fn get_reply_decision(db_path: &Path, event_id: &str) -> Result<Option<Reply
 /// exits its watcher, so wait the contention out instead.
 const CONTEXT_DB_BUSY_TIMEOUT_SECS: u64 = 30;
 
+fn set_context_db_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                .with_context(|| format!("secure context database directory {}", parent.display()))?;
+        }
+
+        for file in [
+            path.to_path_buf(),
+            sqlite_sidecar_path(path, "-wal"),
+            sqlite_sidecar_path(path, "-shm"),
+        ] {
+            let metadata = match fs::symlink_metadata(&file) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("inspect context database file {}", file.display())
+                    })
+                }
+            };
+            if !metadata.file_type().is_file() {
+                anyhow::bail!(
+                    "context database path is not a regular file: {}",
+                    file.display()
+                );
+            }
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("secure context database file {}", file.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = path.as_os_str().to_os_string();
+    sidecar.push(suffix);
+    PathBuf::from(sidecar)
+}
+
+fn checkpoint_context_wal_truncate(conn: &Connection) -> Result<()> {
+    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) = conn.query_row(
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    if busy != 0 {
+        anyhow::bail!(
+            "context WAL truncate checkpoint remained busy ({checkpointed_frames}/{log_frames} frames checkpointed)"
+        );
+    }
+    Ok(())
+}
+
 fn open_db_readonly(path: &Path) -> Result<Connection> {
     if path.is_symlink() || !path.is_file() {
         anyhow::bail!("{CONTEXT_RETRIEVAL_MIGRATION_REQUIRED}");
@@ -5300,24 +5359,30 @@ fn open_db(path: &Path) -> Result<Connection> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
+    set_context_db_permissions(path)?;
     let was_missing = !path.exists();
     let conn = Connection::open(path)?;
     conn.busy_timeout(Duration::from_secs(CONTEXT_DB_BUSY_TIMEOUT_SECS))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-        if let Some(parent) = path.parent() {
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+    // Workers open read-only context snapshots while the watcher updates the
+    // shared index. WAL keeps those readers on their committed snapshot.
+    let journal_mode: String = conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        let enabled_mode: String =
+            conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+        if !enabled_mode.eq_ignore_ascii_case("wal") {
+            anyhow::bail!("context database could not enter WAL mode");
         }
     }
+    set_context_db_permissions(path)?;
     // Owner-scope rename (R10.6): before the `CREATE TABLE IF NOT EXISTS owner_*`
     // statements run, rename any legacy `choi_yeonwoo_*` tables so an upgrading
     // database keeps its style/context data instead of orphaning it under the
     // old names. `profile::migrate_owner_scope` later adds the `owner_key`
     // column and records the migration marker once the owner is confirmed.
     rename_legacy_owner_tables(&conn)?;
-    conn.execute_batch("PRAGMA journal_mode = DELETE; PRAGMA secure_delete = ON;
+    conn.execute_batch("PRAGMA secure_delete = ON;
+        PRAGMA journal_size_limit = 0;
+        PRAGMA wal_autocheckpoint = 1000;
         CREATE TABLE IF NOT EXISTS context_messages(id INTEGER PRIMARY KEY, source TEXT NOT NULL, chat TEXT NOT NULL, date TEXT NOT NULL, user_name TEXT NOT NULL, message TEXT NOT NULL, vector BLOB NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_context_messages_chat_source ON context_messages(chat, source);
         CREATE TABLE IF NOT EXISTS context_retrieval_meta(
@@ -5454,6 +5519,7 @@ fn open_db(path: &Path) -> Result<Connection> {
     migrate_live_context_schema(&conn)?;
     migrate_style_policy(&conn)?;
     migrate_response_time_distribution_schema(&conn)?;
+    set_context_db_permissions(path)?;
     Ok(conn)
 }
 
@@ -6290,6 +6356,85 @@ mod tests {
 
     const TEST_ACCOUNT_FINGERPRINT: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn context_database_wal_allows_readers_during_a_writer_transaction() -> Result<()> {
+        let dir = tempdir()?;
+        let db = dir.path().join("context-wal.sqlite3");
+        let writer = open_db(&db)?;
+        let journal_mode: String =
+            writer.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+
+        writer.execute_batch("BEGIN EXCLUSIVE")?;
+        let reader = open_db_readonly(&db)?;
+        let messages: i64 = reader.query_row(
+            "SELECT COUNT(*) FROM context_messages",
+            [],
+            |row| row.get(0),
+        )?;
+        writer.execute_batch("ROLLBACK")?;
+        assert_eq!(messages, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn context_wal_truncate_checkpoint_clears_deleted_message_pages() -> Result<()> {
+        let dir = tempdir()?;
+        let db = dir.path().join("context-wal-private.sqlite3");
+        let conn = open_db(&db)?;
+        let retired_message = "retired-message-marker-7d28b";
+        conn.execute(
+            "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
+             VALUES ('source', 'chat', '2026-09-24', 'user', ?1, ?2)",
+            params![retired_message, vector_to_bytes(&encode_vector(retired_message))],
+        )?;
+        checkpoint_context_wal_truncate(&conn)?;
+
+        conn.execute(
+            "DELETE FROM context_messages WHERE message = ?1",
+            [retired_message],
+        )?;
+        checkpoint_context_wal_truncate(&conn)?;
+
+        let wal = fs::read(sqlite_sidecar_path(&db, "-wal")).unwrap_or_default();
+        let main_db = fs::read(&db)?;
+        assert_eq!(wal.len(), 0);
+        assert!(!wal.windows(retired_message.len()).any(|w| w == retired_message.as_bytes()));
+        assert!(!main_db
+            .windows(retired_message.len())
+            .any(|w| w == retired_message.as_bytes()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn context_database_and_wal_sidecars_use_private_permissions() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir()?;
+        let db = dir.path().join("permissions.sqlite3");
+        let conn = open_db(&db)?;
+        conn.execute(
+            "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
+             VALUES ('source', 'chat', '2026-09-24', 'user', 'permission probe', ?1)",
+            [vector_to_bytes(&encode_vector("permission probe"))],
+        )?;
+        set_context_db_permissions(&db)?;
+
+        assert_eq!(fs::metadata(dir.path())?.permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(&db)?.permissions().mode() & 0o777, 0o600);
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = sqlite_sidecar_path(&db, suffix);
+            if sidecar.exists() {
+                assert_eq!(
+                    fs::metadata(sidecar)?.permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        Ok(())
+    }
 
     fn style_profile_with_stats(
         common_endings: &[(&str, usize)],

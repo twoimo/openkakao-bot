@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -6,6 +7,47 @@ use openkakao_cli::local_db::{LocalDbReader, LocalDbReplicaSource};
 use tempfile::TempDir;
 
 const CONTEXT_SYNC_REPLICA_COPY_ATTEMPTS: usize = 3;
+
+#[cfg(target_os = "macos")]
+#[link(name = "System")]
+extern "C" {
+    fn clonefile(
+        source: *const std::ffi::c_char,
+        destination: *const std::ffi::c_char,
+        flags: i32,
+    ) -> i32;
+}
+
+/// Use an isolated APFS copy-on-write clone for the large database file.
+/// The caller compares source signatures before and after the clone and
+/// sidecar copies. Filesystems without `clonefile` support use a byte copy.
+fn clone_main_database(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let source_c = CString::new(source.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "database path contains NUL")
+        })?;
+        let destination_c = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "replica path contains NUL")
+        })?;
+        let result = unsafe { clonefile(source_c.as_ptr(), destination_c.as_ptr(), 0) };
+        if result == 0 {
+            return Ok(());
+        }
+        // The destination lives in a private temp directory. Remove a failed
+        // partial clone before preserving the existing full-copy fallback.
+        match fs::remove_file(destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    fs::copy(source, destination).map(|_| ())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileSignature {
@@ -113,17 +155,22 @@ fn remove_previous_attempt(tmpdir: &Path, source: &[FileSignature; 3]) -> Result
 
 fn copy_signature_set(tmpdir: &Path, source: &[FileSignature; 3]) -> Result<PathBuf> {
     remove_previous_attempt(tmpdir, source)?;
-    for item in source.iter().filter(|item| item.exists) {
+    for (index, item) in source.iter().enumerate().filter(|(_, item)| item.exists) {
         let name = item
             .path
             .file_name()
             .context("context sync SQLite source has no file name")?;
         let destination = tmpdir.join(name);
-        fs::copy(&item.path, &destination).with_context(|| {
+        let copy_result = if index == 0 {
+            clone_main_database(&item.path, &destination)
+        } else {
+            fs::copy(&item.path, &destination).map(|_| ())
+        };
+        copy_result.with_context(|| {
             format!(
-                "failed to copy context sync SQLite source {} to {}",
-                item.path.display(),
-                destination.display()
+                "failed to create isolated context sync SQLite replica {} from {}",
+                destination.display(),
+                item.path.display()
             )
         })?;
         let copied = fs::metadata(&destination)
@@ -258,6 +305,21 @@ mod tests {
              INSERT INTO messages(body) VALUES ('first');",
         )?;
         Ok((tempdir, db_path, connection))
+    }
+
+    #[test]
+    fn context_sync_replica_main_file_remains_isolated_after_source_write() -> Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let source = tempdir.path().join("source.sqlite3");
+        let replica = tempdir.path().join("replica.sqlite3");
+        fs::write(&source, b"snapshot-before-write")?;
+
+        clone_main_database(&source, &replica)?;
+        fs::write(&source, b"source-after-write")?;
+
+        assert_eq!(fs::read(&replica)?, b"snapshot-before-write");
+        assert_eq!(fs::read(&source)?, b"source-after-write");
+        Ok(())
     }
 
     #[test]
