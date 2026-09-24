@@ -8,7 +8,9 @@ This appendix preserves the repository's detailed implementation notes and point
 
 The Tauri menu-bar panel is a core-only gold hologram with no interactive controls. Right-click the menu-bar tray icon to open the 960×880 settings window. Its desktop layout uses 58:42 columns with a 16px gap and switches to one column below 800px. Settings use plain Korean labels and contain no bulk-verification, feature-checklist, permission, model-owner, hardware, or index-diagnostic controls.
 
-![Jarvis champagne-gold spherical core panel](../docs/architecture/jarvis-core-panel.png)
+Source-rendered capture (latest dark-theme source render; not a live installed-app capture):
+
+![Jarvis champagne-gold spherical core panel](../docs/architecture/jarvis-render-panel.dark.png)
 
 GraphRAG indexing and production `context-sync-local` both copy the live KakaoTalk database plus WAL/SHM sidecars into a consistent temp snapshot, then open only that copy read-only with `PRAGMA query_only`; copy instability or failure fails closed without opening the source database. GraphRAG drill-down reads the existing `knowledge-graph.sqlite3` only; a node click does not copy KakaoTalk or reindex.
 

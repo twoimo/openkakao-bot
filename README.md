@@ -40,7 +40,9 @@ See the [end-to-end local system map](docs/architecture/jarvis-system.html) and 
 
 See the [render lifecycle](docs/architecture/jarvis-three-render-lifecycle.html) and [activity-to-motion map](docs/architecture/jarvis-core-load-mapping.html).
 
-![Jarvis champagne-gold spherical core](docs/architecture/jarvis-core-panel.png)
+Source-rendered capture (latest dark-theme source render; not a live installed-app capture):
+
+![Jarvis champagne-gold spherical core](docs/architecture/jarvis-render-panel.dark.png)
 
 ### Finding related conversations
 
