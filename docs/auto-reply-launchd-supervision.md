@@ -150,13 +150,15 @@ historical response samples. It clusters `log1p` delays into immediate, short,
 and delayed modes, selects a mode by its empirical weight, and draws a bounded
 Gaussian inside that mode. The empirical p90 is stored separately as the stale
 cutoff. The chosen mode, policy version, delay, and message-anchored due time are
-persisted once, so restart never resamples an existing job. If another room row
-advances the conversation before delivery, the old plain-text reply is durably
-skipped as `conversation_advanced`. Structured reply decisions persist
-reply/skip, category, reason, similarity evidence, scheduled delay, and
-delivery state for later retrieval. Same-author contiguous messages within
-eight seconds are coalesced up to six messages, with superseded jobs recorded
-durably.
+persisted once, so restart never resamples an existing job. A newer room
+watermark is freshness information: the worker refreshes recent context from
+the local database before retrieval and send checks. It does not, by itself,
+prove that an individual event was answered or superseded. A durable
+event-level supersession edge is authoritative for burst supersession.
+Structured reply decisions persist reply/skip, category, reason, similarity
+evidence, scheduled delay, and delivery state for later retrieval. Same-author
+contiguous messages within eight seconds are coalesced up to six messages, with
+superseded jobs recorded durably.
 
 Recipient-linked 최연우 replies build separate register profiles. A direct
 profile is used only with at least three samples and confidence sum at least
