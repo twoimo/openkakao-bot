@@ -1,6 +1,6 @@
 [package]
 name = "openkakao-cli"
-version = "1.8.2"
+version = "1.8.3"
 edition = "2021"
 description = "KakaoTalk macOS auto-reply agent — local DB, Accessibility send, and menubar operations"
 license = "MIT"

@@ -167,6 +167,9 @@ jobs:
           tests.test_auto_reply_turn_holds
           tests.test_auto_reply_worker_mlx
           tests.test_auto_reply_retry_policy
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_send_uses_bounded_exact_room_readback
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_does_not_confirm_an_old_matching_message_in_same_second
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_does_not_send_without_a_room_baseline
           tests.test_auto_reply_fallback_lease
           tests.test_auto_reply_reference_store
           tests.test_auto_reply_session_monitor
