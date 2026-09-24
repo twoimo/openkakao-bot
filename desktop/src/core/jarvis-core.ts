@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { AnimationLoop } from "./animation-loop";
 import type { SourceLoads } from "./load-mapping";
+import { createNucleusMaterial } from "./nucleus-material";
 import { buildPulseLattice, pulseLatticeTier } from "./pulse-lattice";
 import { CoreRenderState, ringTilt } from "./render-state";
 
@@ -103,13 +104,9 @@ export class JarvisCore {
 
     this.nucleus = new THREE.Mesh(
       new THREE.SphereGeometry(0.27, 28, 18),
-      new THREE.MeshStandardMaterial({ color: accent, roughness: 0.7, metalness: 0.08 }),
+      createNucleusMaterial(accent),
     );
     this.root.add(this.nucleus);
-    this.scene.add(new THREE.AmbientLight(0xffffff, 1.35));
-    const key = new THREE.DirectionalLight(0xffffff, 1.8);
-    key.position.set(2, 3, 4);
-    this.scene.add(key);
 
     this.loop = new AnimationLoop((dt, nowMs) => this.render(dt, nowMs));
   }

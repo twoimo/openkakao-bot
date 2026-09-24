@@ -33,6 +33,7 @@ from local_mlx_gateway import (
     MLX_GATEWAY_BASE_URL,
     MlxRequestAdmissionClosed,
     mlx_model_request_lease,
+    mlx_response_model_conflicts,
 )
 
 
@@ -1455,6 +1456,15 @@ def _probe_ondevice_generation_locked(
                 if len(raw) > MLX_GATEWAY_MAX_RESPONSE_BYTES:
                     raise ValueError("mlx_gateway_response_too_large")
                 body = json.loads(raw.decode("utf-8", "replace"))
+                if mlx_response_model_conflicts(model, body.get("model")):
+                    return _finish_probe(
+                        started=started,
+                        engine="mlx-serve-gateway",
+                        model=model,
+                        ok=False,
+                        errors=["model_mismatch"],
+                        state_root=state_root,
+                    )
                 content = str(body["choices"][0]["message"]["content"] or "").strip()
                 if not content:
                     return _finish_probe(

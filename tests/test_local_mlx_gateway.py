@@ -13,6 +13,7 @@ from scripts.local_mlx_gateway import (
     MlxRequestAdmissionClosed,
     mlx_model_request_lease,
     mlx_model_swap_lease,
+    mlx_response_model_conflicts,
     resolve_mlx_state_root,
 )
 
@@ -84,6 +85,22 @@ class MlxModelRequestLeaseTests(unittest.TestCase):
             with self.assertRaises(MlxModelSwapLeaseBusy):
                 with mlx_model_swap_lease(self.state_root):
                     self.fail("swap entered while an inference request was active")
+
+    def test_response_model_conflict_ignores_only_the_mlx_transport_prefix(self) -> None:
+        requested = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+        self.assertFalse(
+            mlx_response_model_conflicts(
+                requested,
+                "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+            )
+        )
+        self.assertFalse(mlx_response_model_conflicts(requested, ""))
+        self.assertTrue(
+            mlx_response_model_conflicts(
+                requested,
+                "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+            )
+        )
 
 
 if __name__ == "__main__":

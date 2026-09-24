@@ -1142,6 +1142,28 @@ class TestProbe(unittest.TestCase):
         self.assertLessEqual(float(captured["timeout"]), 90.0)
         self.assertNotIn("`", result["preview"])
 
+    def test_probe_rejects_explicit_response_from_another_model(self):
+        rec = _gateway_rec()
+
+        def fake_urlopen(request, timeout):
+            if request.full_url.endswith("/models"):
+                return _HTTPResponse({"data": _gateway_models()})
+            return _HTTPResponse(
+                {
+                    "model": QWEN38_27B_ADVERTISED_ID,
+                    "choices": [{"message": {"content": "WRONG_MODEL_REPLY"}}],
+                }
+            )
+
+        with TemporaryDirectory() as temp_dir, patch(
+            "scripts.auto_reply_ondevice._local_only_urlopen", side_effect=fake_urlopen
+        ):
+            result = probe_ondevice_generation(rec, state_root=Path(temp_dir), timeout=1)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["errors"], ["model_mismatch"])
+        self.assertEqual(result["preview"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
