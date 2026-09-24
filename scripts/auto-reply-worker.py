@@ -6734,8 +6734,8 @@ def _is_contextless_confusion_reply(reply: str) -> bool:
     compact = re.sub(r"[\s.!?…。~]+", "", str(reply or ""))
     return bool(
         re.fullmatch(
-            r"(?:무슨말인지|무슨뜻인지)모르겠(?:네요|어요|네|어)?|"
-            r"이해가안되(?:네요|어요|네|어)?",
+            r"(?:무슨|뭔)(?:말|뜻|소리)인지모르겠(?:네요|어요|네|어)?|"
+            r"(?:잘)?이해가(?:잘)?안되(?:네요|어요|네|어)?",
             compact,
         )
     )
@@ -6752,22 +6752,31 @@ def _contextual_clarification_reply(
     if not _is_context_pointer(inbound):
         return ""
     topic = ""
+    topic_is_self = False
     for row in reversed(list(recent_conversation or [])):
-        if not isinstance(row, dict) or _is_self_chat_row(row):
+        if not isinstance(row, dict):
             continue
+        is_self = _is_self_chat_row(row)
         message = " ".join(str(row.get("message") or "").split())
         message = re.sub(r"https?://\S+", "", message).strip(" \t\r\n.,!?~…。、")
         message = re.sub(r"\s+", " ", message)
         if not message or re.fullmatch(r"[ㅋㅎㅠㅜㄷㅁㅇ!?~.…。、\s]+", message):
+            continue
+        if is_self and _is_contextless_confusion_reply(message):
             continue
         if len(re.sub(r"[\W_]+", "", message, flags=re.UNICODE)) < 3:
             continue
         if len(message) > 42:
             message = message[:41].rstrip() + "…"
         topic = message
+        topic_is_self = is_self
         break
     if not topic:
         return ""
+    if topic_is_self:
+        if _recipient_requires_honorific(recipient, register):
+            return f"제가 말한 “{topic}” 부분 말씀하시는 거예요?"
+        return f"내가 말한 “{topic}” 부분이야?"
     ending = "얘기예요?" if _recipient_requires_honorific(recipient, register) else "얘기야?"
     return f"아까 “{topic}” {ending}"
 

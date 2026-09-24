@@ -2,6 +2,10 @@
 
 This appendix preserves the repository's detailed implementation notes and point-in-time checks. A recorded check is historical evidence, not a claim about the current runtime.
 
+## Punctuation-only follow-up context — 2026-09-24 KST
+
+When the new inbound is only punctuation, the contextual fallback now considers the latest substantive message from either speaker. A prior self-authored confusion line is skipped; the fallback then clarifies the nearest grounded turn with casual or honorific wording. The confusion matcher covers common `무슨/뭔 말·뜻·소리인지 모르겠…` and `이해가 안 되…` forms. Two focused regression tests pass, Python compilation succeeds, and `git diff --check` is clean. This verifies source policy only; no KakaoTalk reply was sent or live replay performed. The wider runtime module invokes local Flash-Next generation and was stopped after repeated 90-second inference timeouts.
+
 ## Previous architecture summary
 
 <h2 id="architecture">Architecture</h2>
