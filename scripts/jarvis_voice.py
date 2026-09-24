@@ -51,6 +51,10 @@ VOICE_CONTEXT_TURNS = 4
 VOICE_CONTEXT_ITEM_MAX_CHARS = 600
 VOICE_CONTEXT_TTL_SECONDS = 10 * 60
 VOICE_WAKE_RESUME_DELAY_SECONDS = 0.5
+VOICE_STATUS_HEARTBEAT_SECONDS = 5.0
+VOICE_MIC_POLL_SECONDS = 0.02
+VOICE_MIC_STALE_SECONDS = 15.0
+VOICE_MIC_FRAME_SAMPLES = 320
 # The last bounded host run began with 1.65 GiB of swap headroom and crossed
 # the 512 MiB emergency stop while a voice model stage was still running.
 # Keep 2 GiB free before starting either large local voice model, plus enough
@@ -504,6 +508,8 @@ class VoiceStatusStore:
     def __init__(self, state_root: Path):
         self.path = state_root / VOICE_STATUS_NAME
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._last_signature: tuple[str, str, str, bool] | None = None
+        self._last_write_monotonic = float("-inf")
 
     def write(
         self,
@@ -514,13 +520,30 @@ class VoiceStatusStore:
         wake_source: str = "stock",
         custom_model_selected: bool = False,
     ) -> None:
+        normalized_error = str(error_code or "")[:96]
+        normalized_wake_source = (
+            wake_source if wake_source in {"stock", "custom", "none"} else "none"
+        )
+        signature = (
+            state.value,
+            normalized_error,
+            normalized_wake_source,
+            bool(custom_model_selected),
+        )
+        now = time.monotonic()
+        if (
+            state == VoiceState.WAKE_LISTEN
+            and signature == self._last_signature
+            and now - self._last_write_monotonic < VOICE_STATUS_HEARTBEAT_SECONDS
+        ):
+            return
         payload = {
             "schema_version": VOICE_STATUS_SCHEMA_VERSION,
             "state": state.value,
             "rms": round(max(0.0, min(float(rms), 1.0)), 4),
-            "error_code": str(error_code or "")[:96],
+            "error_code": normalized_error,
             "wake_phrase": WAKE_PHRASE,
-            "wake_source": wake_source if wake_source in {"stock", "custom", "none"} else "none",
+            "wake_source": normalized_wake_source,
             "threshold": WAKE_THRESHOLD,
             "custom_model_selected": bool(custom_model_selected),
             "updated_at": int(time.time()),
@@ -536,6 +559,8 @@ class VoiceStatusStore:
                 temp.unlink()
             except FileNotFoundError:
                 pass
+        self._last_signature = signature
+        self._last_write_monotonic = now
 
 
 class JarvisVoicePipeline:
@@ -614,6 +639,9 @@ class JarvisVoicePipeline:
 
     def mic_disconnected(self) -> VoiceResult:
         return self._end(VoiceState.ERROR, "mic_disconnected")
+
+    def mic_unavailable(self) -> VoiceResult:
+        return self._end(VoiceState.ERROR, "mic_unavailable")
 
     def model_swap_failed(self) -> VoiceResult:
         return self._end(VoiceState.ERROR, "model_swap_failed")
@@ -972,6 +1000,55 @@ def assert_isolated_voice_environment() -> None:
         raise RuntimeError("voice_environment_not_isolated")
 
 
+class _MicrophoneDisconnected(RuntimeError):
+    pass
+
+
+class _MicrophoneFramePoller:
+    """Read one complete frame only when PortAudio reports it is available."""
+
+    def __init__(
+        self,
+        stream: Any,
+        *,
+        frame_samples: int = VOICE_MIC_FRAME_SAMPLES,
+        stale_seconds: float = VOICE_MIC_STALE_SECONDS,
+    ) -> None:
+        self.stream = stream
+        self.frame_samples = max(1, int(frame_samples))
+        self.frame_bytes = self.frame_samples * 2
+        self.stale_seconds = max(VOICE_MIC_POLL_SECONDS, float(stale_seconds))
+        self._last_frame_at = time.monotonic()
+
+    def poll(self) -> tuple[bytes, bool] | None:
+        try:
+            if not bool(self.stream.active):
+                raise _MicrophoneDisconnected("microphone stream is inactive")
+            available = int(self.stream.read_available)
+        except _MicrophoneDisconnected:
+            raise
+        except Exception as exc:
+            raise _MicrophoneDisconnected("microphone availability check failed") from exc
+
+        now = time.monotonic()
+        if available < 0:
+            raise _MicrophoneDisconnected("microphone availability is invalid")
+        if available < self.frame_samples:
+            if now - self._last_frame_at >= self.stale_seconds:
+                raise _MicrophoneDisconnected("microphone input stalled")
+            return None
+
+        try:
+            raw, overflowed = self.stream.read(self.frame_samples)
+            frame = bytes(raw)
+        except Exception as exc:
+            raise _MicrophoneDisconnected("microphone read failed") from exc
+        if len(frame) != self.frame_bytes:
+            raise _MicrophoneDisconnected("microphone returned a partial frame")
+        self._last_frame_at = time.monotonic()
+        return frame, bool(overflowed)
+
+
 def run_microphone_session(
     *,
     state_root: Path,
@@ -1001,31 +1078,51 @@ def run_microphone_session(
         pipeline._custom_model_selected = selected is not None
         pipeline._publish()
         frontend = OpenWakeVadFrontend(custom_wake_model=selected)
-        # Blocking reads keep capture bounded to one 20 ms frame. When STT/LLM/TTS
-        # runs, the stream is not read; after TTS, a short suppression interval
-        # prevents its tail from becoming a fresh wake/user utterance.
+        # Poll frame availability so an idle device cannot block status heartbeats
+        # or global abort checks. STT/LLM/TTS ordering remains synchronous; after
+        # TTS, a short suppression interval prevents its tail becoming a new wake.
         wake_suppressed_until = 0.0
-        with sd.RawInputStream(
-            samplerate=16_000,
-            channels=1,
-            dtype="int16",
-            blocksize=320,
-        ) as stream:
-            while True:
-                if token.is_cancelled():
-                    return pipeline._end(VoiceState.ABORTED, "global_abort")
-                raw, overflowed = stream.read(320)
-                if overflowed:
-                    pipeline._noise_frames += 1
-                if time.monotonic() < wake_suppressed_until:
-                    continue
-                result = pipeline.feed_frontend_frame(frontend, bytes(raw))
-                if result is None:
-                    continue
-                if result.state == VoiceState.ENDED and pipeline.state == VoiceState.WAKE_LISTEN:
-                    wake_suppressed_until = time.monotonic() + VOICE_WAKE_RESUME_DELAY_SECONDS
-                    continue
-                return result
+        stream_entered = False
+        try:
+            with sd.RawInputStream(
+                samplerate=16_000,
+                channels=1,
+                dtype="int16",
+                blocksize=VOICE_MIC_FRAME_SAMPLES,
+            ) as stream:
+                stream_entered = True
+                poller = _MicrophoneFramePoller(stream)
+                while True:
+                    if token.is_cancelled():
+                        return pipeline._end(VoiceState.ABORTED, "global_abort")
+                    try:
+                        polled = poller.poll()
+                    except _MicrophoneDisconnected:
+                        return pipeline.mic_disconnected()
+                    if polled is None:
+                        if pipeline.state == VoiceState.WAKE_LISTEN:
+                            pipeline._publish()
+                        time.sleep(VOICE_MIC_POLL_SECONDS)
+                        continue
+                    raw, overflowed = polled
+                    if overflowed:
+                        pipeline._noise_frames += 1
+                    if time.monotonic() < wake_suppressed_until:
+                        pipeline._publish()
+                        continue
+                    result = pipeline.feed_frontend_frame(frontend, raw)
+                    if result is None:
+                        continue
+                    if result.state == VoiceState.ENDED and pipeline.state == VoiceState.WAKE_LISTEN:
+                        wake_suppressed_until = time.monotonic() + VOICE_WAKE_RESUME_DELAY_SECONDS
+                        continue
+                    return result
+        except JarvisCancelled:
+            raise
+        except Exception:
+            if not stream_entered:
+                return pipeline.mic_unavailable()
+            return pipeline.mic_disconnected()
     except JarvisCancelled:
         return pipeline._end(VoiceState.ABORTED, "global_abort")
     except Exception:

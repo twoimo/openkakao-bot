@@ -104,6 +104,53 @@ describe("source load mapping", () => {
     expect(boosted).toEqual(base.map((value) => value * 1.35));
   });
 
+  it.each([
+    ["reply", 0], ["geeknews", 1], ["dbSync", 2],
+  ] as const)("keeps %s activity local to ring %i when total is unchanged", (source, ring) => {
+    const base = [0.17, -0.12, 0.09];
+    const targets = ringTargetVelocities(base, {
+      reply: 0, geeknews: 0, dbSync: 0, total: 0, [source]: 0.5,
+    }, [1.4, 1.65, 1.9]);
+    for (let index = 0; index < base.length; index += 1) {
+      if (index === ring) expect(Math.abs(targets[index])).toBeGreaterThan(Math.abs(base[index]));
+      else expect(targets[index]).toBe(base[index]);
+      expect(Math.sign(targets[index])).toBe(Math.sign(base[index]));
+    }
+  });
+
+  it("keeps voice as a separate bounded global boost without adding it to total", () => {
+    const base = [0.17, -0.12, 0.09];
+    const gain = [1.4, 1.65, 1.9];
+    const idle = { reply: 0, geeknews: 0, dbSync: 0, total: 0 };
+    expect(ringTargetVelocities(base, { ...idle, voice: 1 }, gain))
+      .toEqual(base.map((value) => value * 1.35));
+    expect(ringTargetVelocities(base, { ...idle, total: 0.6, voice: 0.8 }, gain))
+      .toEqual(ringTargetVelocities(base, { ...idle, total: 0.8 }, gain));
+    for (const voice of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(ringTargetVelocities(base, { ...idle, voice }, gain)).toEqual(base);
+    }
+  });
+
+  it("preserves monotonic speed magnitude, directions, and the existing maximum targets", () => {
+    const base = [0.17, -0.12, 0.09];
+    const gain = [1.4, 1.65, 1.9];
+    const maxima = [0.5508, 0.4293, 0.35235];
+    let previous = base;
+    for (let step = 0; step <= 100; step += 1) {
+      const load = step / 100;
+      const targets = ringTargetVelocities(base, {
+        reply: load, geeknews: load, dbSync: load, total: load, voice: load,
+      }, gain);
+      for (let ring = 0; ring < base.length; ring += 1) {
+        expect(Math.sign(targets[ring])).toBe(Math.sign(base[ring]));
+        expect(Math.abs(targets[ring])).toBeGreaterThanOrEqual(Math.abs(previous[ring]));
+        expect(Math.abs(targets[ring])).toBeLessThanOrEqual(maxima[ring] + 1e-12);
+      }
+      previous = targets;
+    }
+    previous.forEach((value, index) => expect(Math.abs(value)).toBeCloseTo(maxima[index], 12));
+  });
+
   it("keeps lattice pulse parameters bounded and deterministic", () => {
     expect(latticePulse(-4, 0)).toEqual({ frequency: 1, amplitude: 0.05, opacity: 0.06, density: 0 });
     expect(latticePulse(1, 10)).toEqual({ frequency: 1.8, amplitude: 0.1, opacity: 0.18, density: 1 });

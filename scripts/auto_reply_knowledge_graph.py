@@ -1018,7 +1018,7 @@ def _synapse_weight(count: int) -> int:
     return max(30, min(99, 30 + int(round(20 * math.log10(count + 1)))))
 
 
-def _topic_terms(topic: str, samples: list[tuple[str, str, str]]) -> list[str]:
+def _topic_terms(topic: str) -> list[str]:
     """Aliases that let a later turn find this neuron.
 
     The topic key is an English slug, so matching it against Korean chat would
@@ -1399,11 +1399,11 @@ def index_topic_entities(
     chat: str = "",
     limit: int = 40,
 ) -> dict[str, int]:
-    """Turn indexed topics into neurons, with a sample of real messages.
+    """Turn indexed topics into compact derived nodes.
 
-    Each neuron carries the message count, the span of dates it covers, and up
-    to three recent lines so the model sees what the room actually said rather
-    than a summary someone typed once (2026-09-16).
+    The source message stays in the canonical conversation index. A graph node
+    stores topic metadata and later receives bounded evidence IDs, rather than
+    copying recent message bodies into a second store.
     """
     stats = {"topics": 0, "written": 0, "with_samples": 0}
     index_path = _index_db_path(state_root)
@@ -1426,17 +1426,6 @@ def index_topic_entities(
                     facts.append(f"이 방에서 {count}건의 메시지가 이 주제로 묶였습니다")
                 if span:
                     facts.append(f"기록된 기간: {span}")
-                # Recent lines, newest first, deduplicated, and short enough to
-                # keep the prompt small.
-                seen: set[str] = set()
-                for _date, user, message in reversed(samples):
-                    line = " ".join(message.split())
-                    if not _sample_is_conversation(user, line) or line in seen:
-                        continue
-                    seen.add(line)
-                    facts.append(f"{user or '누군가'}: {line[:90]}")
-                    if len(facts) >= 6:
-                        break
                 if samples:
                     stats["with_samples"] += 1
                 conn.execute(
@@ -1458,8 +1447,8 @@ def index_topic_entities(
                         f"topic:{topic}",
                         f"{label} (대화 주제)",
                         "대화 주제",
-                        json.dumps(_topic_terms(topic, samples), ensure_ascii=False),
-                        f"색인된 대화에서 {count}건이 묶인 주제입니다. 최근 대화가 이 주제 위에 있습니다.",
+                        json.dumps(_topic_terms(topic), ensure_ascii=False),
+                        f"색인된 대화에서 {count}건이 묶인 주제입니다. 원문은 대화 색인에서 확인합니다.",
                         json.dumps(facts, ensure_ascii=False),
                         min(99, 40 + count // 200),
                         now,

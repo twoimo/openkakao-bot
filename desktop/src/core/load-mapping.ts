@@ -26,7 +26,7 @@ export interface LatticePulse {
   frequency: number;
   amplitude: number;
   opacity: number;
-  /** Normalized activity used to select a prebuilt lattice density tier. */
+  /** Normalized activity used to reveal prebuilt lattice segments. */
   density: number;
 }
 

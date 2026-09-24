@@ -1746,6 +1746,68 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(ranked.get("reply"), "몇 명인진 안 나와서 모르겠네")
         self.assertNotEqual(ranked.get("reply"), "모르겠다")
         self.assertTrue(ranked.get("reply"))
+
+    def test_punctuation_followup_uses_recent_topic_instead_of_generic_confusion(self):
+        module = self._load_auto_reply_module("auto_reply_context_pointer_test")
+        recent = [
+            {
+                "evidence_id": "recent:10",
+                "author_nickname": "다른 참여자",
+                "message": "https://example.com/story",
+                "is_self": False,
+            },
+            {
+                "evidence_id": "recent:11",
+                "author_nickname": "다른 참여자",
+                "message": "둘다 해병대네",
+                "is_self": False,
+            },
+        ]
+        self.assertTrue(module._is_context_pointer(" ??? "))
+        self.assertFalse(module._is_context_pointer("몇 명이야?"))
+        self.assertTrue(
+            module._is_contextless_confusion_reply("무슨 말인지 모르겠네요")
+        )
+
+        reasons = []
+        self.assertFalse(
+            module._policy_valid_draft(
+                "무슨 말인지 모르겠네요",
+                "???",
+                recent,
+                reasons_out=reasons,
+            )
+        )
+        self.assertEqual(reasons, ["contextless_confusion"])
+
+        result = module.select_ranked_reply(
+            "???",
+            "무슨 말인지 모르겠네요",
+            ["무슨 말인지 모르겠어요"],
+            {"author_nickname": "MOM"},
+            recent,
+        )
+        self.assertEqual(result["fallback"], "contextual_clarification")
+        self.assertEqual(result["reply"], "아까 “둘다 해병대네” 얘기야?")
+        self.assertEqual(
+            module._contextual_clarification_reply("???", recent, recipient="현준"),
+            "아까 “둘다 해병대네” 얘기예요?",
+        )
+        with mock.patch.object(
+            module,
+            "_load_operator_reply_prompts",
+            return_value={"system": [], "instruction": ["Keep replies short."]},
+        ):
+            self.assertTrue(
+                any(
+                    "If incoming_message is only punctuation (for example ???)" in item
+                    for item in module._reply_decision_instructions()
+                )
+            )
+        unknown = module.select_ranked_reply("사람은 몇 명이야?", "", [], {}, [])
+        self.assertEqual(unknown["fallback"], "question_unknown")
+        self.assertEqual(unknown["reply"], "몇 명인진 안 나와서 모르겠네")
+
     def test_outbound_question_follows_inbound_register(self):
         module = self._load_auto_reply_module("auto_reply_question_register_test")
         self.assertTrue(module._inbound_asks_question("이거 답변해줘"))

@@ -6,7 +6,7 @@ This appendix preserves the repository's detailed implementation notes and point
 
 <h2 id="architecture">Architecture</h2>
 
-The Tauri menu-bar panel is a core-only gold hologram with no interactive controls. Right-click the menu-bar tray icon to open the 960×880 settings window. Its desktop layout uses 58:42 columns with a 16px gap and switches to one column below 800px. Settings use plain Korean labels and contain no bulk-verification, feature-checklist, permission, model-owner, hardware, or index-diagnostic controls.
+The Tauri menu-bar panel is a core-only gold hologram with no interactive controls. Right-click the menu-bar tray icon to open the 960×880 settings window. Its desktop layout uses 61.8:38.2 columns with a 16px gap and switches to one column below 800px; content is capped at 912px. Settings use plain Korean labels and contain no bulk-verification, feature-checklist, permission, model-owner, hardware, or index-diagnostic controls.
 
 Source-rendered capture (latest dark-theme source render; not a live installed-app capture):
 
@@ -47,6 +47,13 @@ Interactive diagrams (the Archify Viewer UI and `<html lang>` fall back to Engli
 - [Jarvis 27B model swap lifecycle](../docs/architecture/jarvis-model-swap-lifecycle.html)
 
 The diagrams are architectural references, not a live generation trace. On-device generation still fails closed when a probe times out.
+
+## 2026-09-24 follow-up
+
+- Topic graph nodes now retain message counts and date spans while leaving full message bodies in the canonical conversation index. The graph uses bounded evidence IDs; the regression test confirms a sampled private message is not copied into the knowledge graph.
+- The voice listener polls `RawInputStream.read_available` every 20 ms, reports a disconnected stream after 15 seconds without a complete frame, and distinguishes microphone startup failure. Unchanged `wake_listen` status writes are limited to one every five seconds while state transitions remain immediate. That changes steady idle writes from 50/s to 0.2/s (250× fewer, 99.6% by the configured interval); this is a code-path calculation, not an on-device disk benchmark. The new fake-stream tests and existing voice abort/context tests passed (19 total). The desktop microphone error label tests passed (7); physical microphone integration and installation were not performed.
+- A 2026-09-24 receipt audit found a punctuation-only inbound turn answered with “무슨 말인지 모르겠네요” even though six prior conversation rows and all 14 retrieved evidence IDs fit in a 23,670-byte prompt; generation recorded `unclear_inbound` and took 32.79 seconds. This points to a context-interpretation failure rather than prompt truncation. The worker now instructs the model to resolve punctuation-only turns against recent context and rejects generic confusion lines when a recent topic exists, replacing them with a short clarification tied to the latest substantive message. The focused regression test passes; no live model replay or KakaoTalk send was performed.
+- A read-only queue snapshot contained 125 rows (119 skipped, 6 sent), but its latest job update was 2026-08-12; these rows do not establish a current skip rate. The aggregate status was refreshed on 2026-09-24 and reported 3/3 rooms ready, while the persisted supervisor record was last updated on 2026-08-12 and reported `stopped`, `db_watch_exited`, and `db_unavailable`. The current session monitor reports `watchdog_running / owner_lock_held`. No queue, worker, or launchd state was changed; reconciling these status sources remains open.
 
 ## Jarvis local-AI implementation status
 

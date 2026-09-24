@@ -11,6 +11,8 @@ export function voiceErrorMessage(errorCode: string | null): string | null {
       return "기기 메모리 상태를 확인할 수 없어 음성 처리를 시작하지 않았습니다.";
     case "mic_disconnected":
       return "마이크를 사용할 수 없습니다. 연결을 확인해 주세요.";
+    case "mic_unavailable":
+      return "마이크를 열 수 없습니다. 연결 상태를 확인해 주세요.";
     case "stt_empty":
       return "말씀을 알아듣지 못했습니다. 다시 말씀해 주세요.";
     case "generation_error":
