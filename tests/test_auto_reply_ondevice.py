@@ -1027,6 +1027,50 @@ class TestProbe(unittest.TestCase):
         self.assertNotIn("errors", persisted)
         self.assertEqual(urlopen.call_count, 2)
 
+    def test_probe_does_not_post_for_flash_without_exact_loaded_ready_state(self):
+        rec = _gateway_rec()
+        cases = (
+            ({"state": "ready"}, "missing loaded flag"),
+            ({"loaded": False, "state": "ready"}, "explicitly unloaded"),
+            ({"loaded": True, "state": "loading"}, "not ready"),
+        )
+
+        for readiness, label in cases:
+            with self.subTest(label=label), TemporaryDirectory() as temp_dir:
+                seen_urls: list[str] = []
+                models = [
+                    {
+                        "id": FLASH_NEXT_ADVERTISED_ID,
+                        "owned_by": "mlx-serve",
+                        **readiness,
+                    }
+                ]
+
+                def fake_urlopen(request, timeout):
+                    seen_urls.append(request.full_url)
+                    if request.full_url.endswith("/models"):
+                        return _HTTPResponse({"data": models})
+                    return _HTTPResponse(
+                        {"choices": [{"message": {"content": "must not generate"}}]}
+                    )
+
+                with patch(
+                    "scripts.auto_reply_ondevice._local_only_urlopen",
+                    side_effect=fake_urlopen,
+                ):
+                    result = probe_ondevice_generation(
+                        rec,
+                        state_root=Path(temp_dir),
+                        timeout=1,
+                    )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["errors"], ["flash_next_not_ready"])
+            self.assertEqual(
+                seen_urls,
+                ["http://127.0.0.1:11234/v1/models"],
+            )
+
     def test_probe_missing_engine_fails_closed(self):
         rec = EngineRecommendation(
             primary_engine="mlx-serve",
@@ -1116,7 +1160,7 @@ class TestProbe(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             if request.full_url.endswith("/models"):
-                return _HTTPResponse({"data": _gateway_models()})
+                return _HTTPResponse({"data": _prefixless_gateway_models()})
             payload = json.loads(request.data.decode("utf-8"))
             captured["prompt"] = payload["messages"][1]["content"]
             captured["timeout"] = str(timeout)
@@ -1147,7 +1191,7 @@ class TestProbe(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             if request.full_url.endswith("/models"):
-                return _HTTPResponse({"data": _gateway_models()})
+                return _HTTPResponse({"data": _prefixless_gateway_models()})
             return _HTTPResponse(
                 {
                     "model": QWEN38_27B_ADVERTISED_ID,
