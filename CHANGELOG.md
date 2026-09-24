@@ -131,6 +131,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build
 - `main.rs`가 `lib.rs`와 같은 모듈 8개(`ax_send`, `error`, `local_db`, `loco`, `media`, `message_db`, `model`, `room_catalog`)를 `mod`로 다시 선언해 두 번 컴파일하던 구조를 없앴습니다. 12,322줄이 한 번만 컴파일되고, 중복 실행되던 테스트 171건과 컴파일러 dead-code 경고가 사라졌습니다.
 
+## [1.8.3] - 2026-09-24
+
+### Fixed
+- GeekNews post confirmation now establishes an exact-room log-ID baseline before sending, then uses a bounded room readback to match a newer self-authored message by timestamp and content. A failed baseline prevents sending; the former unbounded cross-chat `local-search` confirmation could remain stuck after a successful send and leave the feed cursor uncommitted.
+
+### Jarvis Desktop
+- Bumped the installed Tauri app bundle to 0.1.3. The GitHub release workflow still publishes CLI assets only; the local app bundle is not part of the release assets.
+
 ## [1.8.2] - 2026-09-24
 
 ### Fixed

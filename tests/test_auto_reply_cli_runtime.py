@@ -17527,6 +17527,149 @@ print(json.dumps({"stdin_eof": value == b""}), flush=True)
         self.assertTrue(first["message"].startswith("GeekNews TOP5 ·"))
         self.assertIn("\n\n1. ", first["message"])
 
+    def test_geeknews_operator_send_uses_bounded_exact_room_readback(self):
+        module = self._load_auto_reply_module("auto_reply_geeknews_exact_readback")
+        message = "GeekNews TOP5 · 2026-09-24 08:40 KST\n\n1. item https://news.hada.io/topic?id=10"
+        queue = Path("/tmp/geeknews-test/rooms/325472527151234/reply-queue.sqlite3")
+        baseline_rows = [
+            {
+                "chat_id": 325472527151234,
+                "log_id": 8999,
+                "sent_at": 999,
+                "is_self": True,
+                "message": "prior message",
+            }
+        ]
+        rows = [
+            {
+                "chat_id": 325472527151234,
+                "log_id": 9001,
+                "sent_at": 1000,
+                "is_self": True,
+                "message": message,
+            }
+        ]
+        with (
+            mock.patch.object(
+                module, "_next_geeknews_digest", return_value={"message": message, "ids": [10, 11]}
+            ),
+            mock.patch.object(module.subprocess, "run", return_value=mock.Mock(returncode=0)) as send,
+            mock.patch.object(
+                module,
+                "_run_bounded_process",
+                side_effect=[
+                    (0, json.dumps(baseline_rows).encode("utf-8"), b""),
+                    (0, json.dumps(rows).encode("utf-8"), b""),
+                ],
+            ) as readback,
+            mock.patch.object(module, "_load_geeknews_seen_ids", return_value={7}),
+            mock.patch.object(module, "_store_geeknews_seen_ids") as store,
+            mock.patch.object(module.time, "time", return_value=1000.0),
+        ):
+            result = module.geeknews_operator_cli(
+                [
+                    "--geeknews",
+                    "--send",
+                    "--bin",
+                    "/fake/openkakao-cli",
+                    "--chat",
+                    "NIMDA room",
+                    "--queue",
+                    str(queue),
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0][1], "local-send")
+        self.assertEqual(readback.call_args.args[0], [
+            "/fake/openkakao-cli",
+            "local-read",
+            "325472527151234",
+            "--count",
+            "100",
+            "--json",
+        ])
+        self.assertEqual(readback.call_count, 2)
+        self.assertEqual(readback.call_args_list[1].kwargs["timeout"], 8.0)
+        store.assert_called_once_with({7, 10, 11}, 11, mark_posted_slot=False)
+
+    def test_geeknews_operator_does_not_confirm_an_old_matching_message_in_same_second(self):
+        module = self._load_auto_reply_module("auto_reply_geeknews_old_readback")
+        message = "GeekNews TOP5 · 2026-09-24 08:40 KST\n\n1. item https://news.hada.io/topic?id=10"
+        queue = Path("/tmp/geeknews-test/rooms/325472527151234/reply-queue.sqlite3")
+        rows = [
+            {
+                "chat_id": 325472527151234,
+                "log_id": 8999,
+                "sent_at": 1000,
+                "is_self": True,
+                "message": message,
+            }
+        ]
+        with (
+            mock.patch.object(
+                module, "_next_geeknews_digest", return_value={"message": message, "ids": [10]}
+            ),
+            mock.patch.object(module.subprocess, "run", return_value=mock.Mock(returncode=0)),
+            mock.patch.object(
+                module,
+                "_run_bounded_process",
+                side_effect=[
+                    (0, json.dumps(rows).encode("utf-8"), b""),
+                    (0, json.dumps(rows).encode("utf-8"), b""),
+                ],
+            ),
+            mock.patch.object(module, "_store_geeknews_seen_ids") as store,
+            mock.patch.object(module.time, "time", return_value=1000.0),
+            mock.patch.object(module.sys, "stderr"),
+        ):
+            result = module.geeknews_operator_cli(
+                [
+                    "--geeknews",
+                    "--send",
+                    "--bin",
+                    "/fake/openkakao-cli",
+                    "--chat",
+                    "NIMDA room",
+                    "--queue",
+                    str(queue),
+                ]
+            )
+
+        self.assertEqual(result, 3)
+        store.assert_not_called()
+
+    def test_geeknews_operator_does_not_send_without_a_room_baseline(self):
+        module = self._load_auto_reply_module("auto_reply_geeknews_missing_baseline")
+        message = "GeekNews TOP5 · 2026-09-24 08:40 KST\n\n1. item https://news.hada.io/topic?id=10"
+        queue = Path("/tmp/geeknews-test/rooms/325472527151234/reply-queue.sqlite3")
+        with (
+            mock.patch.object(
+                module, "_next_geeknews_digest", return_value={"message": message, "ids": [10]}
+            ),
+            mock.patch.object(module.subprocess, "run") as send,
+            mock.patch.object(module, "_run_bounded_process", return_value=(1, b"", b"")),
+            mock.patch.object(module, "_store_geeknews_seen_ids") as store,
+            mock.patch.object(module.sys, "stderr"),
+        ):
+            result = module.geeknews_operator_cli(
+                [
+                    "--geeknews",
+                    "--send",
+                    "--bin",
+                    "/fake/openkakao-cli",
+                    "--chat",
+                    "NIMDA room",
+                    "--queue",
+                    str(queue),
+                ]
+            )
+
+        self.assertEqual(result, 4)
+        send.assert_not_called()
+        store.assert_not_called()
+
     def test_pre_send_usage_limit_unknown_heals_to_skip_without_retransmit(self):
         module = self._load_auto_reply_module("auto_reply_usage_limit_leftover_heal")
         previous = os.environ.get("OPENKAKAO_TARGET_CHAT_ID")

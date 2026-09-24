@@ -15914,6 +15914,8 @@ GEEKNEWS_MAX_ITEMS = 5
 GEEKNEWS_MAX_SUMMARY_CHARS = 90
 GEEKNEWS_FEED_MAX_BYTES = 400_000
 GEEKNEWS_FEED_TIMEOUT_SECONDS = 8.0
+GEEKNEWS_CONFIRMATION_READ_COUNT = 100
+GEEKNEWS_CONFIRMATION_TIMEOUT_SECONDS = 8.0
 GEEKNEWS_SLOT_TZ = ZoneInfo("Asia/Seoul")
 GEEKNEWS_DAILY_SLOTS = (
     ("morning", 8, 40, 20),
@@ -17366,6 +17368,76 @@ def main() -> int:
     return ack_return("accepted", fingerprint)
 
 
+def _geeknews_confirmation_chat_id(chat: str, queue_path: Path) -> int | None:
+    """Resolve a numeric readback target from the explicit chat or queue path."""
+
+    def parse(value: object) -> int | None:
+        raw = str(value or "").strip()
+        if raw.startswith("id:"):
+            raw = raw[3:]
+        if not re.fullmatch(r"[1-9][0-9]*", raw):
+            return None
+        try:
+            parsed = int(raw, 10)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return parsed if parsed < MAX_INT64 else None
+
+    requested = parse(chat)
+    queue = Path(queue_path)
+    queued = parse(queue.parent.name) if queue.parent.parent.name == "rooms" else None
+    if requested is not None and queued is not None and requested != queued:
+        return None
+    return requested or queued
+
+
+def _geeknews_confirmation_rows(bin_path: str, chat_id: int) -> list[dict] | None:
+    """Read one room with bounded work; None means the snapshot was unusable."""
+    try:
+        returncode, stdout_bytes, _ = _run_bounded_process(
+            [
+                str(Path(bin_path)),
+                "local-read",
+                str(chat_id),
+                "--count",
+                str(GEEKNEWS_CONFIRMATION_READ_COUNT),
+                "--json",
+            ],
+            cwd=ROOT,
+            env=os.environ.copy(),
+            timeout=GEEKNEWS_CONFIRMATION_TIMEOUT_SECONDS,
+            stdout_cap=MAX_MODEL_OUTPUT_BYTES,
+            stderr_cap=MAX_MODEL_STDERR_BYTES,
+        )
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        _CaptureOverflow,
+        _CaptureIOError,
+    ):
+        return None
+    if returncode != 0:
+        return None
+    try:
+        rows = json.loads(stdout_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or isinstance(row.get("chat_id"), bool)
+            or not isinstance(row.get("chat_id"), int)
+            or row["chat_id"] != chat_id
+            or isinstance(row.get("log_id"), bool)
+            or not isinstance(row.get("log_id"), int)
+            or row["log_id"] <= 0
+        ):
+            return None
+    return rows
+
+
 def geeknews_operator_cli(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="auto-reply-worker.py --geeknews")
     parser.add_argument("--geeknews", action="store_true", required=True)
@@ -17395,33 +17467,38 @@ def geeknews_operator_cli(arguments: list[str]) -> int:
         print(message)
         print(f"# ids={ids}", file=sys.stderr)
         return 0
+    confirmation_chat_id = _geeknews_confirmation_chat_id(args.chat, QUEUE)
+    if confirmation_chat_id is None:
+        print("unable to identify exact room; not sent", file=sys.stderr)
+        return 4
+    baseline_rows = _geeknews_confirmation_rows(args.bin, confirmation_chat_id)
+    if baseline_rows is None:
+        print("unable to establish room readback baseline; not sent", file=sys.stderr)
+        return 4
+    baseline_log_id = max((row["log_id"] for row in baseline_rows), default=0)
+    send_started_at = int(time.time())
     completed = subprocess.run(
         [str(Path(args.bin)), "local-send", str(args.chat), message, "-y", "--json"],
         check=False,
     )
     if completed.returncode != 0:
         return completed.returncode or 1
-    confirm = subprocess.run(
-        [str(Path(args.bin)), "local-search", "GeekNews TOP5", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
     confirmation_log_id = None
-    if confirm.returncode == 0 and confirm.stdout.strip():
-        try:
-            rows = json.loads(confirm.stdout)
-        except json.JSONDecodeError:
-            rows = []
-        if isinstance(rows, list):
-            for row in rows:
-                if (
-                    isinstance(row, dict)
-                    and _is_self_chat_row(row)
-                    and str(row.get("message") or "") == message
-                ):
-                    confirmation_log_id = row.get("log_id")
-                    break
+    rows = _geeknews_confirmation_rows(args.bin, confirmation_chat_id)
+    if rows is not None:
+        for row in rows:
+            row_log_id = row.get("log_id")
+            sent_at = row.get("sent_at")
+            if (
+                row.get("is_self") is True
+                and row_log_id > baseline_log_id
+                and isinstance(sent_at, int)
+                and not isinstance(sent_at, bool)
+                and sent_at >= send_started_at
+                and str(row.get("message") or "") == message
+            ):
+                confirmation_log_id = row_log_id
+                break
     if confirmation_log_id is None:
         print("sent but not locally confirmed; cursor unchanged", file=sys.stderr)
         return 3
