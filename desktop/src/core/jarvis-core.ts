@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { AnimationLoop } from "./animation-loop";
 import type { SourceLoads } from "./load-mapping";
 import { createNucleusMaterial } from "./nucleus-material";
-import { buildPulseLattice, pulseLatticeTier } from "./pulse-lattice";
+import { buildPulseLattice, pulseLatticeDrawCount } from "./pulse-lattice";
 import { CoreRenderState, ringTilt } from "./render-state";
 
 const NEURON_COUNT = 96;
@@ -32,7 +32,7 @@ export class JarvisCore {
   private readonly lattice: THREE.LineSegments;
   private readonly latticeMaterial: THREE.LineBasicMaterial;
   private readonly latticeDrawCounts: readonly [number, number, number];
-  private latticeTier = 0;
+  private latticeDrawCount: number;
   private readonly nucleus: THREE.Mesh;
   private readonly loop: AnimationLoop;
 
@@ -98,6 +98,7 @@ export class JarvisCore {
     latticeGeometry.setAttribute("position", new THREE.BufferAttribute(latticeData.positions, 3));
     latticeGeometry.setDrawRange(0, latticeData.drawCounts[0]);
     this.latticeDrawCounts = latticeData.drawCounts;
+    this.latticeDrawCount = latticeData.drawCounts[0];
     this.latticeMaterial = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.09 });
     this.lattice = new THREE.LineSegments(latticeGeometry, this.latticeMaterial);
     this.root.add(this.lattice);
@@ -156,10 +157,10 @@ export class JarvisCore {
     this.nucleus.scale.setScalar(frame.nucleusScale);
     this.lattice.scale.setScalar(frame.latticeScale);
     this.latticeMaterial.opacity = frame.latticeOpacity;
-    const latticeTier = pulseLatticeTier(frame.pulse.density);
-    if (latticeTier !== this.latticeTier) {
-      this.latticeTier = latticeTier;
-      this.lattice.geometry.setDrawRange(0, this.latticeDrawCounts[latticeTier]);
+    const latticeDrawCount = pulseLatticeDrawCount(frame.pulse.density, this.latticeDrawCounts);
+    if (latticeDrawCount !== this.latticeDrawCount) {
+      this.latticeDrawCount = latticeDrawCount;
+      this.lattice.geometry.setDrawRange(0, latticeDrawCount);
     }
     this.neuronsMaterial.size = 0.036 + frame.smoothLoad * 0.012;
     this.synapsesMaterial.opacity = 0.09 + frame.smoothLoad * 0.16;

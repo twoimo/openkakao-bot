@@ -9,7 +9,7 @@ import {
   type SourceLoads,
 } from "../core/load-mapping";
 import { CoreRenderState, ringTilt } from "../core/render-state";
-import { buildPulseLattice, pulseLatticeTier } from "../core/pulse-lattice";
+import { buildPulseLattice, pulseLatticeDrawCount } from "../core/pulse-lattice";
 
 const BASE = [0.17, -0.12, 0.09] as const;
 const GAIN = [1.4, 1.65, 1.9] as const;
@@ -218,15 +218,25 @@ describe("core render state", () => {
     expect(Math.abs(second - first)).toBeLessThan(0.1);
   });
 
-  it("uses bounded prebuilt pulse-lattice density tiers", () => {
+  it.each([15, 30])("smoothly reveals and retracts prebuilt segments at %i fps", (fps) => {
     const lattice = buildPulseLattice(1.08);
-    expect(lattice.positions.length % 6).toBe(0);
-    expect(lattice.drawCounts[0]).toBeGreaterThan(0);
-    expect(lattice.drawCounts[1]).toBeGreaterThan(lattice.drawCounts[0]);
-    expect(lattice.drawCounts[2]).toBe(lattice.positions.length / 3);
-    expect(pulseLatticeTier(0)).toBe(0);
-    expect(pulseLatticeTier(0.4)).toBe(1);
-    expect(pulseLatticeTier(1)).toBe(2);
-    expect(pulseLatticeTier(Number.NaN)).toBe(0);
+    const state = new CoreRenderState();
+    let previous = lattice.drawCounts[0];
+    for (const target of [1, 0]) {
+      // Background-only activity must reach the lattice even with no job load.
+      state.setSignals(0, 0, loads(0, 0, 0, target));
+      const counts = new Set<number>();
+      for (let frame = 0; frame < fps * 3; frame += 1) {
+        const density = state.step(1 / fps, frame * 1000 / fps, BASE, GAIN).pulse.density;
+        const count = pulseLatticeDrawCount(density, lattice.drawCounts);
+        expect(target === 1 ? count >= previous : count <= previous).toBe(true);
+        // Even the first frame of a full step is smaller than the old tier jump.
+        expect(Math.abs(count - previous)).toBeLessThan(448);
+        counts.add(count);
+        previous = count;
+      }
+      expect(counts.size).toBeGreaterThan(3);
+      expect(previous).toBe(target === 1 ? lattice.drawCounts[2] : lattice.drawCounts[0]);
+    }
   });
 });

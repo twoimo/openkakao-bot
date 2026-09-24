@@ -98,6 +98,8 @@ describe("settings voice start control", () => {
   it("explains local voice memory blocks in plain Korean without exposing codes", () => {
     expect(voiceErrorMessage("voice_memory_budget_low")).toBe("기기 메모리 여유가 부족해 음성 처리를 멈췄습니다.");
     expect(voiceErrorMessage("voice_memory_budget_unavailable")).toBe("기기 메모리 상태를 확인할 수 없어 음성 처리를 시작하지 않았습니다.");
+    expect(voiceErrorMessage("mic_unavailable")).toBe("마이크를 열 수 없습니다. 연결 상태를 확인해 주세요.");
+    expect(voiceErrorMessage("mic_disconnected")).toBe("마이크를 사용할 수 없습니다. 연결을 확인해 주세요.");
     expect(voiceErrorMessage("voice_session_process_check_failed")).toBe("음성 기능을 시작하지 못했습니다.");
     expect(voiceErrorMessage(null)).toBeNull();
   });

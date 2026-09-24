@@ -2,19 +2,18 @@ const LATITUDE_RINGS = 12;
 const LONGITUDE_RINGS = 24;
 const LATITUDE_SEGMENTS = 24;
 const LONGITUDE_SEGMENTS = 16;
-const DENSITY_THRESHOLDS = [0.22, 0.62] as const;
 const TAU = Math.PI * 2;
 
 export interface PulseLatticeData {
-  /** Packed line-segment vertices, grouped into three cumulative density tiers. */
+  /** Packed line-segment vertices in the original three cumulative groups. */
   readonly positions: Float32Array;
-  /** THREE.BufferGeometry draw counts, measured in vertices. */
+  /** Cumulative vertex-count anchors; the first and last bound the draw range. */
   readonly drawCounts: readonly [number, number, number];
 }
 
 /**
  * Build a bounded wire sphere once. Idle uses one third of the lines; activity
- * reveals evenly distributed additions without allocating geometry per frame.
+ * reveals more prebuilt segments without allocating geometry per frame.
  */
 export function buildPulseLattice(radius: number): PulseLatticeData {
   const segmentCount = LATITUDE_RINGS * LATITUDE_SEGMENTS
@@ -61,10 +60,16 @@ export function buildPulseLattice(radius: number): PulseLatticeData {
   return { positions, drawCounts };
 }
 
-/** Select a precomputed density band without introducing frame-time geometry work. */
-export function pulseLatticeTier(load: number): 0 | 1 | 2 {
+/**
+ * Reveal complete segments in proportion to the already-smoothed load:
+ * count = idle + 2 * round((full - idle) * clamp01(load) / 2).
+ * The existing geometry spans 448..1344 vertices (224..672 segments).
+ * Boundaries add/remove one segment instead of 224; rounding error is at most
+ * half a segment relative to the ideal linear density.
+ * Only the draw range changes; no geometry or frame-time containers are built.
+ */
+export function pulseLatticeDrawCount(load: number, drawCounts: PulseLatticeData["drawCounts"]): number {
   const safeLoad = Number.isFinite(load) ? Math.min(1, Math.max(0, load)) : 0;
-  if (safeLoad < DENSITY_THRESHOLDS[0]) return 0;
-  if (safeLoad < DENSITY_THRESHOLDS[1]) return 1;
-  return 2;
+  const idle = drawCounts[0];
+  return idle + 2 * Math.round((drawCounts[2] - idle) * safeLoad / 2);
 }

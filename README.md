@@ -51,6 +51,8 @@ Source-rendered capture (latest dark-theme source render; not a live installed-a
 3. It normalizes shortened names and searches by both words and meaning. When both searches are available, reciprocal-rank fusion (RRF) combines their results; otherwise it keeps the working word-search results.
 4. It stores people, topics, and their relationships as three-part facts (person — relationship — topic). Selecting a person or topic smoothly focuses nearby items, with at most 24 visible at once. This reads the existing index and does not start a new database copy or reindex.
 
+The graph follows the human-readable, source-backed design in the [Threads reference](https://www.threads.com/share/BBIeDkkHei/) and its linked [OSK System](https://github.com/lpaiu-cs/osk-system): preserve each message in the local conversation index, keep derived knowledge as canonical entities and unique subject–relation–object triples, and retain bounded message evidence IDs for traceability. Room, person, and topic nodes provide navigable neighborhoods. Drill-down starts at two relationship steps, limits each step to ten neighbors, and caps the view at 24 nodes (up to three steps when expanded). BM25 remains available when local embeddings are unavailable; RRF is used when both ranked candidate lists are ready.
+
 See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.html) and [conversation-map drill-down](docs/architecture/openkakao-graphrag.html).
 
 ### KakaoTalk reply turns
@@ -58,6 +60,8 @@ See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.ht
 Each incoming KakaoTalk row remains a durable queue item. Consecutive rows from the same room and numeric author, no more than 15 seconds apart, are assembled into one reply turn, capped at six rows and 8 KiB. The 15-second settle interval lets the newest fragment arrive before inference; a successor supersedes an earlier job only when its saved burst IDs include that earlier row. The assembled prompt keeps each included message in order. Author changes, older attachments, and size/count limits end the burst. Legacy v1 queue records retain their original 2-second interpretation.
 
 Empty Kakao emoticon rows (message types 12, 20, and 22) enter the same durable queue as `[이모티콘]` instead of being acknowledged as empty input.
+
+Punctuation-only follow-ups such as `???` are treated as pointers to the current thread. When recent messages give a topic, the model must answer from that context or ask one brief, topic-specific clarification; a generic “I don't understand” reply is rejected. Factual questions whose answer is absent keep the existing explicit unknown-answer path.
 
 ### Voice conversation
 

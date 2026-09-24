@@ -529,6 +529,38 @@ class RealIndexPathTests(unittest.TestCase):
         self.assertIn("chat:부자멘토멘티", chats, "방 뉴런이 실제 색인에서 서야 한다")
         self.assertTrue(people, "사람 뉴런이 실제 색인에서 서야 한다")
 
+    def test_topic_nodes_keep_metadata_and_do_not_copy_source_message_bodies(self):
+        raw_message = "PRIVATE_SENTINEL raw conversation text must remain canonical"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self._write_index(base)
+            root = self._state_root(base)
+            kg = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                with (
+                    mock.patch.object(KG, "_index_topic_rows", return_value=[("topic-example", 30)]),
+                    mock.patch.object(
+                        KG,
+                        "_index_topic_samples",
+                        return_value=[("2026-09-21 10:00:00", "Alice", raw_message)],
+                    ),
+                ):
+                    stats = KG.index_topic_entities(kg, root)
+                row = kg.execute(
+                    "SELECT aliases_json, description, key_facts_json FROM kg_entities"
+                    " WHERE entity_id = 'topic:topic-example'"
+                ).fetchone()
+            finally:
+                kg.close()
+        self.assertEqual(stats["written"], 1)
+        self.assertEqual(stats["with_samples"], 1)
+        self.assertIsNotNone(row)
+        stored = json.dumps(row, ensure_ascii=False)
+        self.assertNotIn(raw_message, stored)
+        facts = json.loads(row[2])
+        self.assertIn("30건", facts[0])
+        self.assertIn("2026-09-21", facts[1])
+
     def test_person_indexer_reads_while_source_database_is_exclusively_locked(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
