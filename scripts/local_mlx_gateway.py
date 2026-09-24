@@ -14,6 +14,14 @@ MLX_GATEWAY_EMBEDDINGS_URL = f"{MLX_GATEWAY_BASE_URL}/embeddings"
 MLX_MODEL_SWAP_LOCK_NAME = "mlx-model-swap.lock"
 
 
+def mlx_response_model_conflicts(requested_model: object, response_model: object) -> bool:
+    """Return whether an explicit gateway model identity contradicts the request."""
+
+    requested = str(requested_model or "").strip().removeprefix("mlx/")
+    reported = str(response_model or "").strip().removeprefix("mlx/")
+    return bool(requested and reported and requested != reported)
+
+
 class MlxRequestAdmissionClosed(RuntimeError):
     """A model mutation owns the exclusive gateway lease, or the gate is unsafe."""
 

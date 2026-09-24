@@ -29,7 +29,11 @@ from typing import Any, Protocol
 
 from auto_reply_ondevice import FLASH_NEXT_MODEL_ID
 from jarvis_abort import AbortToken, JarvisCancelled
-from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
+from local_mlx_gateway import (
+    MlxRequestAdmissionClosed,
+    mlx_model_request_lease,
+    mlx_response_model_conflicts,
+)
 
 
 WAKE_PHRASE = "헤이 자비스"
@@ -799,6 +803,8 @@ class LocalMlxLlm:
             content = message.get("content") or message.get("reasoning_content") or ""
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError("local_llm_response_invalid") from exc
+        if mlx_response_model_conflicts(self.model, body.get("model")):
+            raise RuntimeError("local_llm_model_mismatch")
         token.raise_if_cancelled()
         return str(content).strip()
 

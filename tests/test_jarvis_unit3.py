@@ -727,6 +727,31 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
                     LocalMlxLlm(state_root=root).generate("안녕", token)
             opener.assert_not_called()
 
+    def test_generate_rejects_explicit_response_from_another_model(self):
+        import json
+
+        class FakeResp:
+            def read(self, _limit: int = -1) -> bytes:
+                return json.dumps(
+                    {
+                        "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+                        "choices": [{"message": {"content": "wrong model"}}],
+                    }
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> bool:
+                return False
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            token = AbortController(root).token()
+            with mock.patch("jarvis_voice._local_urlopen", return_value=FakeResp()):
+                with self.assertRaisesRegex(RuntimeError, "local_llm_model_mismatch"):
+                    LocalMlxLlm(state_root=root).generate("안녕", token)
+
     def test_voice_persona_ends_turn_without_engagement_question(self):
         self.assertIn("스스로 질문을 만든 뒤 답하지 않는다", VOICE_PERSONA_PROMPT)
         self.assertIn("턴을 끝낸다", VOICE_PERSONA_PROMPT)

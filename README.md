@@ -29,10 +29,12 @@
 
 Jarvis is a macOS menu-bar assistant. Its compact display is drawn with Tauri v2 and Three.js. KakaoTalk messages, local search, and model requests stay on this Mac; sending a reply uses the installed KakaoTalk app.
 
+See the [end-to-end local system map](docs/architecture/jarvis-system.html) and its [Archify source](docs/architecture/jarvis-system.architecture.json). The map shows the desktop shell, local tools, model boundary, and read-only conversation index in one view.
+
 ### The animated core
 
 1. Tauri reports when the small Jarvis panel is visible.
-2. Three.js draws the warm gold core and updates its rings while the panel is open.
+2. Three.js draws the warm gold core and updates its rings while the panel is open. The center sphere uses a fixed-light `ShaderMaterial`; a paired local WebGL run measured 3.4% lower median CPU submission at 15 fps and 2.5% lower at 30 fps (about 3–5 μs per frame), with 8 draw calls in both variants. Pixel output matched in 11 of 12 theme, activity, and scale cases; the remaining case differed by one 8-bit channel level. These are CPU submission measurements, not GPU power or battery measurements.
 3. Reply, voice, and sync activity change the rings' rotation and the core's pulse.
 4. Hiding or closing the panel pauses drawing and status updates; reopening it resumes them.
 
@@ -60,6 +62,8 @@ Empty Kakao emoticon rows (message types 12, 20, and 22) enter the same durable 
 “Hey Jarvis” starts local speech recognition, a local model reply, and speech synthesis. Jarvis answers once and asks a follow-up only when essential information is missing. The voice pipeline keeps at most four recent question-and-answer turns in memory, up to 600 characters per message. It clears that context after ten idle minutes and resumes listening after each spoken reply.
 
 Before loading Whisper or Qwen3-TTS, a local-only admission check requires at least 8 GiB or 10 GiB of reclaimable RAM respectively and 2 GiB of free swap. If either probe is unavailable or the budget is low, the voice session reports the condition and does not load the model. A synthetic local voice run on 2026-09-24 reached the safety stop before a complete turn; end-to-end voice remains unverified on this host.
+
+Local MLX replies reject an explicit response model ID that differs from the requested model, after removing an optional `mlx/` transport prefix. Responses without a model ID remain accepted for gateway compatibility; generation readiness is still tracked separately.
 
 The settings UI marks voice status unavailable when its heartbeat is more than five minutes old, instead of presenting a stale `wake_listen` state as live.
 

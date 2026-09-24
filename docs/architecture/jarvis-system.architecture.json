@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "자비스 로컬 에이전트 구조",
+    "output": "jarvis-system.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/twoimo/openkakao-bot",
+      "provider": "github",
+      "revision": "5bae1ef4965295dd48fdebb0bc3972a5896569e5"
+    },
+    "views": [
+      {
+        "id": "desktop-interaction",
+        "label": "화면과 제어",
+        "focus": [
+          "operator",
+          "tauri",
+          "scene",
+          "orchestrator",
+          "os-tools"
+        ],
+        "note": "메뉴바 UI에서 로컬 제어 계층과 도구로 이어지는 흐름"
+      },
+      {
+        "id": "local-knowledge",
+        "label": "로컬 추론과 기억",
+        "focus": [
+          "orchestrator",
+          "mlx",
+          "kakao-db",
+          "snapshotter",
+          "graphrag",
+          "retriever"
+        ],
+        "note": "기기 안의 추론·색인·검색 경로"
+      },
+      {
+        "id": "voice-and-learning",
+        "label": "음성과 평가",
+        "focus": [
+          "operator",
+          "tauri",
+          "orchestrator",
+          "voice",
+          "evaluator",
+          "mlx"
+        ],
+        "note": "음성 입력·합성과 답변 품질 평가"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "사용자",
+      "sublabel": "메뉴바·음성",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "tauri",
+      "type": "frontend",
+      "label": "Tauri v2 앱",
+      "sublabel": "메뉴바 · 응답 표출",
+      "pos": [
+        255,
+        300
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "desktop/src-tauri/tauri.conf.json"
+        }
+      ]
+    },
+    {
+      "id": "scene",
+      "type": "frontend",
+      "label": "Three.js 코어",
+      "sublabel": "짐벌·파동 격자",
+      "pos": [
+        490,
+        150
+      ],
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "desktop/package.json"
+        }
+      ]
+    },
+    {
+      "id": "orchestrator",
+      "type": "backend",
+      "label": "자비스 조율기",
+      "sublabel": "도구·대화 상태",
+      "pos": [
+        490,
+        345
+      ],
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/jarvis_tool_runtime.py"
+        }
+      ]
+    },
+    {
+      "id": "mlx",
+      "type": "backend",
+      "label": "MLX Core",
+      "sublabel": "기기 내 모델 서버",
+      "pos": [
+        730,
+        130
+      ],
+      "size": [
+        175,
+        68
+      ],
+      "tag": "loopback"
+    },
+    {
+      "id": "voice",
+      "type": "backend",
+      "label": "음성 파이프라인",
+      "sublabel": "wake word · STT · TTS 입출력",
+      "pos": [
+        730,
+        270
+      ],
+      "size": [
+        185,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/jarvis_voice.py"
+        }
+      ]
+    },
+    {
+      "id": "os-tools",
+      "type": "backend",
+      "label": "브라우저·OS 도구",
+      "sublabel": "Browser-Use · Computer Use",
+      "pos": [
+        730,
+        420
+      ],
+      "size": [
+        195,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/jarvis_browser_runtime.py"
+        },
+        {
+          "path": "scripts/jarvis_browser_use.py"
+        }
+      ]
+    },
+    {
+      "id": "kakao-db",
+      "type": "database",
+      "label": "카카오톡 원본 DB",
+      "sublabel": "읽기 전용 원천",
+      "pos": [
+        40,
+        520
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "snapshotter",
+      "type": "backend",
+      "label": "복제·정규화",
+      "sublabel": "임시 복제 · WAL 읽기",
+      "pos": [
+        285,
+        520
+      ],
+      "size": [
+        185,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/auto-reply-db-watch.py"
+        }
+      ]
+    },
+    {
+      "id": "graphrag",
+      "type": "database",
+      "label": "지식 그래프",
+      "sublabel": "엔티티-관계 트리플",
+      "pos": [
+        535,
+        550
+      ],
+      "size": [
+        190,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/auto_reply_knowledge_graph.py"
+        },
+        {
+          "path": "scripts/auto_reply_reference_store.py"
+        }
+      ]
+    },
+    {
+      "id": "retriever",
+      "type": "backend",
+      "label": "하이브리드 검색",
+      "sublabel": "BM25 + Dense · RRF",
+      "pos": [
+        785,
+        550
+      ],
+      "size": [
+        180,
+        68
+      ],
+      "sources": [
+        {
+          "path": "scripts/auto_reply_reference_search.py"
+        }
+      ]
+    },
+    {
+      "id": "evaluator",
+      "type": "backend",
+      "label": "응답 평가",
+      "sublabel": "DPO 기반 오프라인 루프",
+      "pos": [
+        1015,
+        270
+      ],
+      "size": [
+        180,
+        68
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "operator-tauri",
+      "from": "operator",
+      "to": "tauri",
+      "label": "입력"
+    },
+    {
+      "id": "tauri-scene",
+      "from": "tauri",
+      "to": "scene",
+      "label": "상태·렌더 신호",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "tauri-orchestrator",
+      "from": "tauri",
+      "to": "orchestrator",
+      "label": "명령·상태"
+    },
+    {
+      "id": "orchestrator-mlx",
+      "from": "orchestrator",
+      "to": "mlx",
+      "label": "로컬 추론"
+    },
+    {
+      "id": "orchestrator-voice",
+      "from": "orchestrator",
+      "to": "voice",
+      "label": "음성 작업",
+      "labelDx": -60
+    },
+    {
+      "id": "orchestrator-tools",
+      "from": "orchestrator",
+      "to": "os-tools"
+    },
+    {
+      "id": "kakao-copy",
+      "from": "kakao-db",
+      "to": "snapshotter",
+      "label": "임시 복제"
+    },
+    {
+      "id": "snapshot-graph",
+      "from": "snapshotter",
+      "to": "graphrag",
+      "label": "정규화 트리플",
+      "labelDy": 73
+    },
+    {
+      "id": "graph-search",
+      "from": "graphrag",
+      "to": "retriever",
+      "label": "색인 조회",
+      "labelDx": 10,
+      "labelDy": -40
+    },
+    {
+      "id": "retriever-orchestrator",
+      "from": "retriever",
+      "to": "orchestrator",
+      "label": "근거 검색",
+      "labelDy": 25
+    },
+    {
+      "id": "orchestrator-evaluator",
+      "from": "orchestrator",
+      "to": "evaluator",
+      "label": "기록된 답변",
+      "variant": "dashed",
+      "labelDy": 21
+    },
+    {
+      "id": "evaluator-mlx",
+      "from": "evaluator",
+      "to": "mlx",
+      "label": "오프라인 평가",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "화면",
+      "items": [
+        "Tauri v2 셸과 Three.js 장면",
+        "메뉴바에서 텍스트·음성 응답을 표시하고 창이 보일 때만 렌더"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "로컬 처리",
+      "items": [
+        "음성·대화 추론은 loopback MLX Core로 전달",
+        "카카오톡 원본 DB는 복제본에서 읽고 색인"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "검색·평가",
+      "items": [
+        "트리플 그래프와 BM25·Dense RRF 검색",
+        "응답 평가는 오프라인 기록 경로로 분리"
+      ]
+    }
+  ]
+}
