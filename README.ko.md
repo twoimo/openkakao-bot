@@ -233,7 +233,7 @@ sh scripts/start-auto-reply-menubar.command
 
 온디바이스 기본은 MLX Qwen3.8 Flash-Next입니다. Qwen3.8 27B는 로컬 이미지 답변과 명시적 모델 교체에만 쓰며, 프로브가 시간 초과하면 fail-closed입니다. 권장 ID는 완료된 실생성을 뜻하지 않습니다.
 
-2026-09-24 읽기 전용 호스트 확인에서 Flash-Next는 `ready/loaded`였지만 최신 합성 생성 확인은 60.009초에 시간 초과했습니다. Qwen3.8 27B와 Qwen3-TTS는 내려가 있으며, 27B 준비 상태는 `model_not_ready`, MLX 서버 소유권은 `model_owner_unmanaged`였습니다. 남은 swap은 1,178.44 MiB로 음성 모델 적재 기준 2,048 MiB보다 낮아 Whisper/TTS 적재가 차단됩니다. 전체 호출어→STT→LLM→TTS 대화는 검증되지 않았습니다. 현재 적재 모델은 임베딩 기능을 알리지 않으므로 GraphRAG 검색은 BM25만 가능하고 dense/RRF는 사용할 수 없습니다. 이 확인 중 모델을 적재하거나 서버 소유권을 넘기지 않았습니다. 측정 근거와 한계는 [engineering status](docs/engineering-status.md)에 기록합니다.
+2026-09-24 읽기 전용 호스트 확인에서 로컬 MLX `/health`, `/v1/models`가 HTTP 200을 반환했습니다. Flash-Next는 적재됐고 Qwen3.8 27B와 Qwen3-TTS는 내려가 있습니다. 마지막 합성 Flash-Next 생성은 60.009초에 시간 초과해 재시도하지 않았으므로 현재 생성은 확인되지 않았습니다. 남은 스왑은 1,470.75 MiB로 음성 모델 적재 기준 2,048 MiB보다 577.25 MiB 낮아 Whisper/TTS 적재가 차단되고 전체 호출어→STT→LLM→TTS 대화는 검증되지 않았습니다. 적재 모델은 임베딩 기능을 알리지 않아 라이브 GraphRAG 검색은 BM25만 가능하고 dense/RRF는 사용할 수 없습니다. 자동 답변 호스트는 반복된 사전 점검 실패로 회로 차단 상태이며 설정된 방은 중지 또는 펜스 상태입니다. 읽기 전용 AX 점검은 한 방에서 transcript 불일치, 다른 방에서 정확히 일치하는 열린 창 없음으로 실패했습니다. 메시지는 보내지 않았고 worker도 시작하지 않았습니다. 모델 적재나 서버 소유권 변경도 하지 않았습니다. 측정 근거와 한계는 [engineering status](docs/engineering-status.md)에 기록합니다.
 
 무인 실행(launchd)은 `docs/auto-reply-launchd-supervision.md`와 `scripts/install-auto-reply-launchd.sh`를 보세요. 처음이면 메뉴바부터 시작하는 편이 안전합니다.
 
