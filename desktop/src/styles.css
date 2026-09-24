@@ -63,11 +63,6 @@ body.settings-view { min-width: 0; min-height: 700px; overflow-y: auto; line-hei
   gap: 16px;
 }
 .settings-header { grid-column: 1 / -1; padding: 0 4px 8px; }
-@media (min-width: 800px) {
-  .settings-shell {
-    grid-template-columns: minmax(0, 1.381fr) minmax(300px, 1fr);
-  }
-}
 .settings-header h1 { margin: 4px 0 8px; font-size: 24px; line-height: 1.2; letter-spacing: -0.02em; }
 .settings-header p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .eyebrow { color: var(--accent-ink) !important; font-size: 10px !important; font-weight: 700; letter-spacing: 0.12em; }
@@ -329,7 +324,7 @@ body.settings-view { min-width: 0; min-height: 700px; overflow-y: auto; line-hei
 
 @media (min-width: 800px) {
   .settings-shell {
-    grid-template-columns: minmax(0, 58fr) minmax(300px, 42fr);
+    grid-template-columns: minmax(0, 61.8fr) minmax(300px, 38.2fr);
     align-items: start;
     gap: 16px;
   }
