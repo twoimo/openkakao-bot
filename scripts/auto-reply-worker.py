@@ -358,11 +358,15 @@ MODEL_DEFERRABLE_NON_CIRCUIT_FAILURE_CLASSES = frozenset({
     "unparsed_output",
 })
 DUE_SCHEDULED_BURST_LIMIT = 4
-BURST_MAX_GAP_SECONDS = 2
 PARTNER_STREAK_MAX_GAP_SECONDS = 15
+LEGACY_BURST_MAX_GAP_SECONDS = 2
+BURST_MAX_GAP_SECONDS = PARTNER_STREAK_MAX_GAP_SECONDS
 BURST_SETTLE_SECONDS = float(BURST_MAX_GAP_SECONDS)
+PROACTIVE_SETTLE_SECONDS = 2.0
 BURST_MAX_MESSAGES = 6
 BURST_MAX_UTF8_BYTES = 8 * 1024
+LEGACY_BURST_POLICY_VERSION = "same-author-contiguous-v1"
+BURST_POLICY_VERSION = "same-author-contiguous-v2"
 BURST_MEDIA_TYPES = {2, 14, 27}
 KAKAO_MESSAGE_TYPE_KIND_MASK = 0xFF
 
@@ -2366,7 +2370,7 @@ def enqueue_event(event: dict) -> bool:
     except (TypeError, ValueError, UnicodeEncodeError):
         return False
     if prepared_size > MAX_EVENT_BYTES:
-        queued_event = dict(event)
+        queued_event = _singleton_burst_event(event)
     now = time.time()
     connection = _queue_connection()
     transaction_started = False
@@ -2389,13 +2393,18 @@ def enqueue_event(event: dict) -> bool:
             (
                 event_id,
                 json.dumps(queued_event, ensure_ascii=False),
-                now + BURST_SETTLE_SECONDS,
+                now
+                + (
+                    PROACTIVE_SETTLE_SECONDS
+                    if event.get("proactive") is True
+                    else BURST_SETTLE_SECONDS
+                ),
                 now,
                 now,
             ),
         ).rowcount
         if inserted == 1 and event.get("proactive") is not True:
-            predecessor_id = _same_author_burst_predecessor_event_id(event)
+            predecessor_id = _same_author_burst_predecessor_event_id(queued_event)
             if predecessor_id:
                 predecessor = connection.execute(
                     "SELECT event_json, status FROM reply_jobs WHERE event_id = ? LIMIT 1",
@@ -4065,17 +4074,11 @@ def _burst_text_body(row: dict) -> str:
     if not body or body in {"[사진]", "[파일]"}:
         return ""
     return body
-def _burst_glue_text(text: str) -> bool:
-    body = _burst_text_body({"message": text})
-    if not body:
-        return True
-    compact = re.sub(r"\s+", "", body)
-    return bool(
-        re.fullmatch(r"[?？!！ㅋㅎㄷㅠㅜ어음아오응ㅇㄴ]+", compact)
-        or len(compact) <= 1
-    )
-
-def _burst_rows(event: dict) -> list[dict]:
+def _burst_rows(
+    event: dict,
+    *,
+    max_gap_seconds: float = BURST_MAX_GAP_SECONDS,
+) -> list[dict]:
     current = _burst_row(event, current_event=True)
     if current is None:
         return []
@@ -4123,12 +4126,8 @@ def _burst_rows(event: dict) -> list[dict]:
             or row["chat_id"] != tail["chat_id"]
             or row["author_id"] != tail["author_id"]
             or row["log_id"] >= newer["log_id"]
-            or not 0 <= gap <= BURST_MAX_GAP_SECONDS
+            or not 0 <= gap <= max_gap_seconds
             or total_bytes + row_bytes > BURST_MAX_UTF8_BYTES
-            or (
-                not _burst_glue_text(row["message"])
-                and not _burst_glue_text(newer["message"])
-            )
         ):
             break
         burst.append(row)
@@ -4140,33 +4139,31 @@ def _burst_rows(event: dict) -> list[dict]:
 
 
 def _same_author_burst_predecessor_event_id(event: dict) -> str | None:
-    """Return the immediately preceding same-author row inside the 2s burst."""
-    current = _burst_row(event, current_event=True)
-    raw_recent = event.get("recent_messages")
-    if current is None or not isinstance(raw_recent, list) or len(raw_recent) < 2:
+    """Return the previous row only when the successor preserves it in-burst."""
+    rows = _verified_burst_rows(event)
+    if len(rows) < 2:
         return None
-    tail = _burst_row(raw_recent[-1])
-    predecessor = _burst_row(raw_recent[-2])
-    if tail != current or predecessor is None:
-        return None
-    gap = current["sent_at"] - predecessor["sent_at"]
-    if (
-        predecessor["chat_id"] != current["chat_id"]
-        or predecessor["author_id"] != current["author_id"]
-        or predecessor["author_nickname"] != current["author_nickname"]
-        or predecessor["log_id"] >= current["log_id"]
-        or predecessor["attachment"]
-        or current["attachment"]
-        or not 0 <= gap <= BURST_MAX_GAP_SECONDS
-    ):
+    predecessor, current = rows[-2:]
+    if predecessor["attachment"] or current["attachment"]:
         return None
     return f"db:{current['chat_id']}:{predecessor['log_id']}"
 
 
 def _prepare_burst_event(event: dict) -> dict:
-    # Each inbound row is its own reply job. Same-author glue no longer
-    # swallows earlier turns when a later line arrives.
-    return _singleton_burst_event(event)
+    # Keep each canonical queue row, while carrying contiguous same-author
+    # fragments forward so a superseding tail still contains their text.
+    prepared = _singleton_burst_event(event)
+    if event.get("proactive") is True:
+        return prepared
+    rows = _burst_rows(event, max_gap_seconds=BURST_MAX_GAP_SECONDS)
+    source_ids = [row["log_id"] for row in rows]
+    if not source_ids:
+        return prepared
+    prepared["burst_source_log_ids"] = source_ids
+    prepared["burst_tail_log_id"] = source_ids[-1]
+    prepared["burst_message_count"] = len(source_ids)
+    prepared["burst_policy_version"] = BURST_POLICY_VERSION
+    return prepared
 
 
 def _singleton_burst_event(event: dict) -> dict:
@@ -4175,7 +4172,7 @@ def _singleton_burst_event(event: dict) -> dict:
     prepared["burst_source_log_ids"] = [log_id] if log_id is not None else []
     prepared["burst_tail_log_id"] = log_id
     prepared["burst_message_count"] = 1 if log_id is not None else 0
-    prepared["burst_policy_version"] = "same-author-contiguous-v1"
+    prepared["burst_policy_version"] = BURST_POLICY_VERSION
     return prepared
 
 
@@ -4215,14 +4212,21 @@ def _predecessor_event_matches(predecessor: object, successor: dict) -> bool:
 
 
 def _verified_burst_rows(event: dict) -> list[dict]:
-    rows = _burst_rows(event)
+    policy_version = event.get("burst_policy_version")
+    if policy_version == BURST_POLICY_VERSION:
+        max_gap_seconds = BURST_MAX_GAP_SECONDS
+    elif policy_version == LEGACY_BURST_POLICY_VERSION:
+        max_gap_seconds = LEGACY_BURST_MAX_GAP_SECONDS
+    else:
+        current = _burst_row(event, current_event=True)
+        return [current] if current is not None else []
+    rows = _burst_rows(event, max_gap_seconds=max_gap_seconds)
     source_ids = [int(row["log_id"]) for row in rows]
     if (
         not source_ids
         or event.get("burst_source_log_ids") != source_ids
         or event.get("burst_tail_log_id") != source_ids[-1]
         or event.get("burst_message_count") != len(source_ids)
-        or event.get("burst_policy_version") != "same-author-contiguous-v1"
     ):
         current = _burst_row(event, current_event=True)
         return [current] if current is not None else []
@@ -4231,7 +4235,7 @@ def _verified_burst_rows(event: dict) -> list[dict]:
 
 def _coalesced_burst_event(event: dict) -> dict:
     coalesced = dict(event)
-    rows = _burst_rows(event)
+    rows = _verified_burst_rows(event)
     if len(rows) <= 1:
         return coalesced
     texts = [_burst_text_body(row) for row in rows]
@@ -6313,7 +6317,8 @@ def _recent_source_log_ids(event: dict) -> set[int] | None:
         return None
     if (
         "burst_policy_version" in event
-        and event.get("burst_policy_version") != "same-author-contiguous-v1"
+        and event.get("burst_policy_version")
+        not in {LEGACY_BURST_POLICY_VERSION, BURST_POLICY_VERSION}
     ):
         return None
     return set(source_ids)
@@ -13919,7 +13924,8 @@ def _media_unavailable_clarification_event(event: dict) -> bool:
         and event.get("burst_source_log_ids") == [log_id]
         and event.get("burst_tail_log_id") == log_id
         and event.get("burst_message_count") == 1
-        and event.get("burst_policy_version") == "same-author-contiguous-v1"
+        and event.get("burst_policy_version")
+        in {LEGACY_BURST_POLICY_VERSION, BURST_POLICY_VERSION}
         and not str(event.get("image_path") or "")
         and event.get("image_paths") == []
         and event.get("media_manifest") is None
@@ -16680,7 +16686,7 @@ def maybe_enqueue_proactive_topic(
     event["burst_tail_log_id"] = tail_log_id
     event["burst_source_log_ids"] = [tail_log_id]
     event["burst_message_count"] = 1
-    event["burst_policy_version"] = "same-author-contiguous-v1"
+    event["burst_policy_version"] = BURST_POLICY_VERSION
     event["sent_at"] = int(now)
     event["urls"] = [url]
     event["owner_id"] = os.environ.get(SUPERVISOR_OWNER_ENV, "").strip()

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-동작은 그대로 두고 반복 비용·할당·중복만 줄인 정리 묶음입니다.
+대화 턴 처리와 응답 안정성, 운영 비용을 함께 개선하는 변경 묶음입니다.
 
 ### Added
 - **OpenCodex 인증 게이트웨이 연동 및 자동 폴백**: 기존 gjc 프로세스 호출 방식을 로컬 OpenCodex 게이트웨이(`http://127.0.0.1:10100/v1`) 직접 연동으로 교체했습니다. OpenCode Go 사용량 한도 초과 시 0.28초 만에 에러를 감지하고 `google-antigravity/gemini-3.8-flash`(high)로 즉시 자동 전환되어 서비스 중단 없이 답장을 이어갑니다.
@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 페이싱 대기 시간을 **단계별로** 기록합니다. 전송 확정 원장에 `generation_seconds`(모델 생성), `stages_seconds`(대기열 도달까지·생성·생성 이후·합계), `clock_source`(카카오톡 `sent_at` 원격 시계 vs 로컬 wall)를 남깁니다. 기존에는 감지·전송 지연 두 숫자만 있어 146초가 "DB에 늦게 나타난 것"인지 "읽고도 생성이 오래 걸린 것"인지 구분할 수 없었습니다. 외부 읽기 전용 관측기는 아직 없어 남은 항목으로 표시합니다.
 - 결정 원장(`reply-evidence.jsonl`)에 **생성 영수증과 검색 영수증**을 추가했습니다. 한 줄에서 프롬프트 바이트 수, 프롬프트 SHA-256(앞 16자), 사용 모델, 검색 시도 여부·검색 오류, 프롬프트에 실린 근거 ID 개수, 링크 요청/확보 수가 같은 `event_id`로 연결됩니다. 이전에는 성공 경로가 `prompt_bytes`/`model_endpoint_reachable`를 넘기지 않아 항상 null이었고, 검색 결과는 근거 ID 목록만 있어 "검색 실패"와 "모델이 근거를 안 씀"을 구분할 수 없었습니다. 프롬프트 원문은 저장하지 않으며, 실패·미파싱 시도에도 같은 영수증을 남깁니다.
 ### Changed
+- 카카오톡 답장 큐가 같은 방·같은 작성자의 연속 메시지를 **최대 15초 간격, 6개, 8KiB** 한도 안에서 한 턴으로 묶습니다. 포함 행의 로그 ID와 본문을 보존하고, 후속 작업이 선행 행을 실제로 포함할 때만 선행 작업을 대체 처리합니다. 작성자·첨부·크기·개수 경계는 유지하며, 기존 v1 큐 작업은 2초 규칙으로 읽습니다. 실대화에서 관측된 `conversation_advanced`/`stale_backlog` 대량 건너뜀과 수분 지연을 줄이기 위한 변경입니다.
 - 메뉴바 운영자 프롬프트 중 **내장(builtin) 행의 본문이 저장소 기본값과 어긋나면 다시 맞춥니다.** 2026-08-21 시드 이후 기본값이 바뀐 7개 지시(가장 큰 문제는 `instruction.17`: "reply with exactly 어디가 봇 같았음?")가 그대로 남아 라이브 모델이 정해진 문구를 복사해 보내던 문제를 고칩니다. 내장 행은 코드 소유 안전 지시라 지울 수 없으므로 id·순서·`enabled`·`source`는 그대로 두고 제목·본문·갱신 시각만 새 기본값으로 바꾸며, 운영자가 만든 사용자 정의 행(`builtin = 0`)은 손대지 않습니다.
 - 인증 게이트웨이 호출 방식을 기존 gjc 서브프로세스 3~5개 기동 구조에서 **OpenCodex 단일 HTTP API 연동**으로 교체했습니다. 프로세스 생성 비용이 제거되어 모델 응답 시간이 10.5초에서 1.58초로 약 6.6배 단축되었고, 429 한도 초과 감지 지연도 240초 타임아웃에서 0.28초 즉시 감지로 850배 이상 단축되었습니다.
 - 응답시간 혼합 적합(`fit_response_time_distribution`)의 분할 탐색을 전 이중 루프(모든 `(first_split, second_split)` 열거, O(N²))에서 **결과가 완전히 동일한 분할정복 DP**(O(N log N))로 바꿨습니다. 후보 경계를 strict-increase 위치로 한정하고 크기창(`first ∈ [8, N-16]`, `second ∈ [first+8, N-8]`), 동률 시 가장 낮은 `(first, second)` 선택, 유효쌍 없으면 `None`(fail-closed) 계약은 그대로입니다. raw 기반 통계(`average`/`median`/`p90`/`min`/`max`)와 `prefix_sum`·`segment_sse`는 그대로이며 기존 정확값 테스트(`split_seconds == [15.0, 110.0]`, `global_upper_seconds == 890.0`, `tail_winsorized_count == 4`, weights 0.5/0.25/0.25)는 수정 없이 통과합니다. 실측 20,174행에서 661.7ms → 2.4ms.
