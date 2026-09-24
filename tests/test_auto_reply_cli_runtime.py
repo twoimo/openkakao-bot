@@ -1768,6 +1768,12 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertTrue(
             module._is_contextless_confusion_reply("무슨 말인지 모르겠네요")
         )
+        for generic in (
+            "무슨 소리인지 모르겠네",
+            "뭔 말인지 모르겠네요",
+            "이해가 잘 안 되네요",
+        ):
+            self.assertTrue(module._is_contextless_confusion_reply(generic))
 
         reasons = []
         self.assertFalse(
@@ -1807,6 +1813,53 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         unknown = module.select_ranked_reply("사람은 몇 명이야?", "", [], {}, [])
         self.assertEqual(unknown["fallback"], "question_unknown")
         self.assertEqual(unknown["reply"], "몇 명인진 안 나와서 모르겠네")
+
+    def test_punctuation_followup_can_clarify_the_last_self_reply(self):
+        module = self._load_auto_reply_module("auto_reply_self_context_pointer_test")
+        recent = [
+            {
+                "evidence_id": "recent:20",
+                "author_nickname": "다른 참여자",
+                "message": "자료 날짜가 왜 3월부터야?",
+                "is_self": False,
+            },
+            {
+                "evidence_id": "recent:21",
+                "author_nickname": "나",
+                "message": "필터를 어제 날짜 기준으로 잡았어",
+                "is_self": True,
+            },
+        ]
+
+        result = module.select_ranked_reply(
+            "???",
+            "무슨 말인지 모르겠네요",
+            ["무슨 말인지 모르겠어요"],
+            {"author_nickname": "MOM"},
+            recent,
+        )
+
+        self.assertEqual(result["fallback"], "contextual_clarification")
+        self.assertEqual(
+            result["reply"],
+            "내가 말한 “필터를 어제 날짜 기준으로 잡았어” 부분이야?",
+        )
+        self.assertEqual(
+            module._contextual_clarification_reply("???", recent, recipient="현준"),
+            "제가 말한 “필터를 어제 날짜 기준으로 잡았어” 부분 말씀하시는 거예요?",
+        )
+        recent.append(
+            {
+                "evidence_id": "recent:22",
+                "author_nickname": "나",
+                "message": "무슨 말인지 모르겠네요",
+                "is_self": True,
+            }
+        )
+        self.assertEqual(
+            module._contextual_clarification_reply("???", recent),
+            "내가 말한 “필터를 어제 날짜 기준으로 잡았어” 부분이야?",
+        )
 
     def test_outbound_question_follows_inbound_register(self):
         module = self._load_auto_reply_module("auto_reply_question_register_test")
