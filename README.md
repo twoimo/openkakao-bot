@@ -53,6 +53,8 @@ See the [GraphRAG search sequence](docs/architecture/graphrag-search-sequence.ht
 
 Each incoming KakaoTalk row remains a durable queue item. Consecutive rows from the same room and numeric author, no more than 15 seconds apart, are assembled into one reply turn, capped at six rows and 8 KiB. The 15-second settle interval lets the newest fragment arrive before inference; a successor supersedes an earlier job only when its saved burst IDs include that earlier row. The assembled prompt keeps each included message in order. Author changes, older attachments, and size/count limits end the burst. Legacy v1 queue records retain their original 2-second interpretation.
 
+Empty Kakao emoticon rows (message types 12, 20, and 22) enter the same durable queue as `[이모티콘]` instead of being acknowledged as empty input.
+
 ### Voice conversation
 
 “Hey Jarvis” starts local speech recognition, a local model reply, and speech synthesis. Jarvis answers once and asks a follow-up only when essential information is missing. The voice pipeline keeps at most four recent question-and-answer turns in memory, up to 600 characters per message. It clears that context after ten idle minutes and resumes listening after each spoken reply.
