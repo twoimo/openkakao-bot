@@ -6422,11 +6422,7 @@ def _policy_valid_draft(
         return reject("empty")
     if len(text) > 220:
         return reject("too_long")
-    if (
-        _is_context_pointer(inbound)
-        and _contextual_clarification_reply(inbound, recent_conversation)
-        and _is_contextless_confusion_reply(text)
-    ):
+    if _is_contextless_confusion_reply(text):
         return reject("contextless_confusion")
     if not _outbound_reaction_allows(
         text, inbound, laughter_allowed=laughter_allowed, awe_allowed=awe_allowed
@@ -6741,15 +6737,27 @@ def _is_contextless_confusion_reply(reply: str) -> bool:
     )
 
 
+def _is_inbound_confusion_request(inbound: str) -> bool:
+    compact = " ".join(str(inbound or "").split())
+    return bool(
+        re.search(
+            r"(?:무슨\s*(?:말|뜻|소리)|뭔\s*(?:말|소리)|이해가\s*안|잘\s*모르겠)",
+            compact,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _contextual_clarification_reply(
     inbound: str,
     recent_conversation: list[dict] | None,
     *,
     recipient: str | None = None,
     register: str | None = None,
+    force: bool = False,
 ) -> str:
     """Ask about the nearest grounded topic instead of reporting confusion."""
-    if not _is_context_pointer(inbound):
+    if not force and not _is_context_pointer(inbound):
         return ""
     topic = ""
     for row in reversed(list(recent_conversation or [])):
@@ -6768,6 +6776,10 @@ def _contextual_clarification_reply(
         break
     if not topic:
         return ""
+    if force and not _is_context_pointer(inbound):
+        if _recipient_requires_honorific(recipient, register):
+            return f"“{topic}” 중 어느 부분이 헷갈리셨어요?"
+        return f"“{topic}” 중 어느 부분 말하는 거야?"
     ending = "얘기예요?" if _recipient_requires_honorific(recipient, register) else "얘기야?"
     return f"아까 “{topic}” {ending}"
 
@@ -6943,6 +6955,42 @@ def select_ranked_reply(
                 "scores": [],
                 "winner_index": 0,
                 "fallback": "contextual_clarification",
+                "policy_rejections": policy_rejections,
+            }
+        confusion_fallback = _is_contextless_confusion_reply(fallback_text)
+        if confusion_fallback or _is_inbound_confusion_request(inbound):
+            contextual_clarification = _contextual_clarification_reply(
+                inbound,
+                recent_conversation,
+                recipient=recipient,
+                register=register,
+                force=True,
+            )
+            if contextual_clarification:
+                return {
+                    "reply": contextual_clarification,
+                    "drafts": [contextual_clarification],
+                    "scores": [],
+                    "winner_index": 0,
+                    "fallback": "contextual_clarification",
+                    "policy_rejections": policy_rejections,
+                }
+            if _recipient_requires_honorific(recipient, register):
+                fallback_text = (
+                    "어느 부분이 헷갈리셨는지 알려주시면 "
+                    "맥락에 맞춰 다시 설명드릴게요."
+                )
+            else:
+                fallback_text = (
+                    "어느 부분 말하는 건지 짚어주면 "
+                    "맥락 맞춰 다시 설명할게."
+                )
+            return {
+                "reply": fallback_text,
+                "drafts": [fallback_text],
+                "scores": [],
+                "winner_index": 0,
+                "fallback": "targeted_clarification",
                 "policy_rejections": policy_rejections,
             }
         if inbound_is_question and str(event.get("attachment") or "") != "image":
@@ -11227,7 +11275,7 @@ DEFAULT_REPLY_INSTRUCTIONS = tuple([
             "When should_reply is true, also include 3 or 4 distinct draft replies in drafts (2 to 8 max). reply remains required and must be one of those drafts.",
             "Write one Korean KakaoTalk reply in the observed 최연우 register: a short take to the other person, not a chain of self-commentary. One bubble is the default.",
             "Read the entire recent_conversation from every speaker before answering. The latest line is not the whole topic.",
-            "If incoming_message is only punctuation (for example ???), treat it as a pointer to the ongoing thread. Infer its likely referent from the latest substantive recent_conversation lines and link previews. Answer that topic when the evidence supports it; if two referents remain plausible, ask one focused clarification that names the topic. Never reply with a generic confusion line such as 무슨 말인지 모르겠네요 when prior context is available, and never invent missing facts.",
+            "If incoming_message is only punctuation (for example ???), treat it as a pointer to the ongoing thread. Read recent_conversation and link previews before answering every input. Never send a generic confusion line such as 무슨 말인지 모르겠네요: answer from supported context, or ask one concise clarification that names the uncertain topic or detail. If two referents remain plausible, name them in the clarification. Never invent missing facts.",
             "Use the full recent thread to decide what people are actually talking about. An image is one turn, not the only topic unless later messages stay on that image.",
             "Use context_evidence for facts and style_register only for register.",
             "Treat style_register and style_register_profile as non-factual register evidence. Never use them as facts, biography, authorship proof, or identity claims.",

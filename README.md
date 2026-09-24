@@ -61,7 +61,7 @@ Each incoming KakaoTalk row remains a durable queue item. Consecutive rows from 
 
 Empty Kakao emoticon rows (message types 12, 20, and 22) enter the same durable queue as `[이모티콘]` instead of being acknowledged as empty input.
 
-Punctuation-only follow-ups such as `???` are treated as pointers to the current thread. When recent messages give a topic, the model must answer from that context or ask one brief, topic-specific clarification; a generic “I don't understand” reply is rejected. Factual questions whose answer is absent keep the existing explicit unknown-answer path.
+Punctuation-only follow-ups such as `???` are treated as pointers to the current thread. Every reply is checked for generic confusion text, including “무슨 말인지 모르겠네요”. When recent messages identify a topic, the worker replaces that dead end with a topic-specific clarification; when the referent is clear, the model can answer from the thread. Factual questions whose answer is absent keep the explicit unknown-answer path.
 
 ### Voice conversation
 

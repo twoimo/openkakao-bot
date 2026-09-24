@@ -1808,6 +1808,52 @@ class AutoReplyCliRuntimeTests(unittest.TestCase):
         self.assertEqual(unknown["fallback"], "question_unknown")
         self.assertEqual(unknown["reply"], "몇 명인진 안 나와서 모르겠네")
 
+    def test_generic_confusion_on_natural_followup_becomes_topic_specific(self):
+        module = self._load_auto_reply_module("auto_reply_natural_confusion_test")
+        recent = [
+            {
+                "evidence_id": "recent:21",
+                "author_nickname": "다른 참여자",
+                "message": "둘다 해병대네",
+                "is_self": False,
+            }
+        ]
+        reasons = []
+        self.assertFalse(
+            module._policy_valid_draft(
+                "무슨 말인지 모르겠네요",
+                "무슨 말이야?",
+                recent,
+                reasons_out=reasons,
+            )
+        )
+        self.assertEqual(reasons, ["contextless_confusion"])
+
+        result = module.select_ranked_reply(
+            "무슨 말이야?",
+            "무슨 말인지 모르겠네요",
+            ["무슨 뜻인지 모르겠어요"],
+            {"author_nickname": "MOM"},
+            recent,
+        )
+        self.assertEqual(result["fallback"], "contextual_clarification")
+        self.assertEqual(result["reply"], "“둘다 해병대네” 중 어느 부분 말하는 거야?")
+
+    def test_generic_confusion_without_context_uses_a_focused_clarifier(self):
+        module = self._load_auto_reply_module("auto_reply_empty_confusion_test")
+        result = module.select_ranked_reply(
+            "무슨 말이야?",
+            "무슨 말인지 모르겠네요",
+            ["이해가 안 되네요"],
+            {"author_nickname": "현준"},
+            [],
+        )
+        self.assertEqual(result["fallback"], "targeted_clarification")
+        self.assertEqual(
+            result["reply"],
+            "어느 부분이 헷갈리셨는지 알려주시면 맥락에 맞춰 다시 설명드릴게요.",
+        )
+
     def test_outbound_question_follows_inbound_register(self):
         module = self._load_auto_reply_module("auto_reply_question_register_test")
         self.assertTrue(module._inbound_asks_question("이거 답변해줘"))
