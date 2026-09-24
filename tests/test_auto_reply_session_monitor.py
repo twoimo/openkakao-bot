@@ -71,7 +71,6 @@ class SessionMonitorTests(unittest.TestCase):
                     "/usr/bin/open",
                     "-g",
                     "-j",
-                    "--hide",
                     "-b",
                     "com.apple.Terminal",
                     str(command),

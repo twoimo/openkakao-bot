@@ -6,6 +6,8 @@ This appendix preserves the repository's detailed implementation notes and point
 
 When the new inbound is only punctuation, the contextual fallback now considers the latest substantive message from either speaker. A prior self-authored confusion line is skipped; the fallback then clarifies the nearest grounded turn with casual or honorific wording. The confusion matcher covers common `무슨/뭔 말·뜻·소리인지 모르겠…` and `이해가 안 되…` forms. Two focused regression tests pass, Python compilation succeeds, and `git diff --check` is clean. This verifies source policy only; no KakaoTalk reply was sent or live replay performed. The wider runtime module invokes local Flash-Next generation and was stopped after repeated 90-second inference timeouts.
 
+The session monitor now opens its Terminal watchdog with `open -g -j` without `--hide`, so it does not hide an already-open Terminal application. Its 9 focused tests pass; the change remains source-only until a new immutable runtime is installed.
+
 ## Previous architecture summary
 
 <h2 id="architecture">Architecture</h2>

@@ -22,11 +22,12 @@ WINDOW_NS = 15 * 60 * 1_000_000_000
 MAX_LAUNCHES_PER_WINDOW = 3
 LAUNCH_COOLDOWN_NS = 60 * 1_000_000_000
 OPEN_TIMEOUT_SECONDS = 5.0
+# Keep the new watchdog launch out of the foreground without hiding an already
+# open Terminal application or its existing windows.
 BACKGROUND_OPEN_ARGV = (
     "/usr/bin/open",
     "-g",
     "-j",
-    "--hide",
     "-b",
     "com.apple.Terminal",
 )
