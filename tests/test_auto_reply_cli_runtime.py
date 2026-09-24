@@ -9986,13 +9986,39 @@ print(json.dumps({
         second["recent_messages"].append(self._recent_row(second))
         prepared = module._prepare_burst_event(second)
         self.assertEqual(prepared["event_id"], "db:42:102")
-        self.assertEqual(prepared["burst_source_log_ids"], [102])
-        self.assertEqual(module._coalesced_burst_event(prepared)["message"], "second")
+        self.assertEqual(prepared["burst_source_log_ids"], [101, 102])
+        self.assertEqual(
+            module._coalesced_burst_event(prepared)["message"],
+            "first\nsecond",
+        )
+        legacy = dict(prepared)
+        legacy.update(
+            burst_source_log_ids=[102],
+            burst_tail_log_id=102,
+            burst_message_count=1,
+            burst_policy_version=module.LEGACY_BURST_POLICY_VERSION,
+        )
+        self.assertEqual(
+            [row["log_id"] for row in module._verified_burst_rows(legacy)],
+            [102],
+        )
+        at_limit = self._burst_event(
+            module,
+            108,
+            "limit",
+            1_015,
+            recent=[self._recent_row(first)],
+        )
+        at_limit["recent_messages"].append(self._recent_row(at_limit))
+        self.assertEqual(
+            module._prepare_burst_event(at_limit)["burst_source_log_ids"],
+            [101, 108],
+        )
         distinct = self._burst_event(
             module,
             106,
             "깃헙디짐",
-            1_020,
+            1_016,
             recent=[self._recent_row(first)],
         )
         distinct["recent_messages"].append(self._recent_row(distinct))
@@ -10010,13 +10036,17 @@ print(json.dumps({
         glue["recent_messages"].append(self._recent_row(glue))
         self.assertEqual(
             module._prepare_burst_event(glue)["burst_source_log_ids"],
-            [107],
+            [101, 107],
         )
         self.assertEqual(
             module._coalesced_burst_event(module._prepare_burst_event(glue))[
                 "burst_source_log_ids"
             ],
             [101, 107],
+        )
+        self.assertEqual(
+            module._coalesced_burst_event(module._prepare_burst_event(glue))["message"],
+            "first\n어",
         )
 
         same_name_other_id = dict(self._recent_row(first), author_id=701)
@@ -10038,7 +10068,7 @@ print(json.dumps({
         image["recent_messages"].append(self._recent_row(image))
         self.assertEqual(
             module._prepare_burst_event(image)["burst_source_log_ids"],
-            [103],
+            [101, 102, 103],
         )
         after_image = self._burst_event(
             module,
@@ -10053,7 +10083,7 @@ print(json.dumps({
             [104],
         )
         coalesced_image = module._coalesced_burst_event(module._prepare_burst_event(image))
-        self.assertEqual(coalesced_image["burst_source_log_ids"], [102, 103])
+        self.assertEqual(coalesced_image["burst_source_log_ids"], [101, 102, 103])
         self.assertEqual(coalesced_image.get("attachment"), "image")
 
     def test_recent_conversation_excludes_single_current_row(self):
@@ -10505,6 +10535,41 @@ print(json.dumps({
             finally:
                 connection.close()
 
+    def test_oversized_successor_does_not_supersede_unincluded_predecessor(self):
+        module = self._load_auto_reply_module("auto_reply_burst_oversized_queue_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            module.QUEUE = Path(temporary) / "reply-queue.sqlite3"
+            first = self._burst_event(module, 211, "first", 2_100)
+            first["recent_messages"] = [self._recent_row(first)]
+            oversized = self._burst_event(
+                module,
+                212,
+                "second",
+                2_101,
+                recent=[self._recent_row(first)],
+            )
+            oversized["recent_messages"].append(self._recent_row(oversized))
+            oversized["test_padding"] = "x" * module.MAX_EVENT_BYTES
+
+            self.assertTrue(module.enqueue_event(first))
+            self.assertTrue(module.enqueue_event(oversized))
+            connection = self._worker_queue_connection(module)
+            try:
+                stored = json.loads(
+                    connection.execute(
+                        "SELECT event_json FROM reply_jobs WHERE event_id = ?",
+                        (oversized["event_id"],),
+                    ).fetchone()[0]
+                )
+                link = connection.execute(
+                    "SELECT 1 FROM reply_job_supersessions WHERE event_id = ?",
+                    (first["event_id"],),
+                ).fetchone()
+                self.assertEqual(stored["burst_source_log_ids"], [212])
+                self.assertIsNone(link)
+            finally:
+                connection.close()
+
     def test_burst_settle_covers_gap_and_three_message_chain(self):
         module = self._load_auto_reply_module("auto_reply_burst_chain_test")
         self.assertGreaterEqual(
@@ -10555,14 +10620,25 @@ print(json.dumps({
                     FROM reply_job_supersessions ORDER BY event_id
                     """
                 ).fetchall()
-                self.assertEqual([tuple(row) for row in links], [])
+                self.assertEqual(
+                    [tuple(row) for row in links],
+                    [
+                        (first["event_id"], second["event_id"]),
+                        (second["event_id"], third["event_id"]),
+                    ],
+                )
                 stored_third = json.loads(
                     connection.execute(
                         "SELECT event_json FROM reply_jobs WHERE event_id = ?",
                         (third["event_id"],),
                     ).fetchone()[0]
                 )
-                self.assertEqual(stored_third["burst_source_log_ids"], [253])
+                self.assertEqual(
+                    stored_third["burst_source_log_ids"],
+                    [251, 252, 253],
+                )
+                combined_third = module._coalesced_burst_event(stored_third)
+                self.assertEqual(combined_third["message"], "one\ntwo\nthree")
             finally:
                 connection.close()
 

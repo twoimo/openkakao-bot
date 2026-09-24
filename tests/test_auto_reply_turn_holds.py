@@ -780,7 +780,7 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
         self.assertEqual(analysis["reason"], "low_information")
         generate.assert_called_once()
 
-    def test_burst_settle_deadline_is_finite_two_seconds(self):
+    def test_burst_settle_deadline_matches_fifteen_second_author_streak(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_burst_deadline_test")
         with tempfile.TemporaryDirectory() as temporary:
             module.QUEUE = module.Path(temporary) / "reply-queue.sqlite3"
@@ -799,7 +799,29 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             finally:
                 queue.close()
         self.assertIsNotNone(row)
-        self.assertEqual(module.BURST_SETTLE_SECONDS, 2.0)
+        self.assertEqual(module.BURST_SETTLE_SECONDS, 15.0)
+        self.assertEqual(float(row["due_at"]) - float(row["created_at"]), 15.0)
+
+    def test_proactive_jobs_keep_the_two_second_settle(self):
+        module = self._load_auto_reply_module("auto_reply_turn_hold_proactive_settle_test")
+        with tempfile.TemporaryDirectory() as temporary:
+            module.QUEUE = module.Path(temporary) / "reply-queue.sqlite3"
+            event = self._burst_event(module, 517, "digest", 1_000)
+            event["proactive"] = True
+            with (
+                mock.patch.object(module, "_event_identity_hold_reason", return_value=None),
+                mock.patch.object(module.time, "time", return_value=1_000.0),
+            ):
+                self.assertTrue(module.enqueue_event(event))
+            queue = self._worker_queue_connection(module)
+            try:
+                row = queue.execute(
+                    "SELECT created_at, due_at FROM reply_jobs WHERE event_id = ?",
+                    (event["event_id"],),
+                ).fetchone()
+            finally:
+                queue.close()
+        self.assertIsNotNone(row)
         self.assertEqual(float(row["due_at"]) - float(row["created_at"]), 2.0)
 
     def test_newer_same_author_supersedes_inflight_generation(self):
