@@ -125,6 +125,48 @@ class JarvisAbortAndVoiceTests(unittest.TestCase):
             self.assertEqual(result.error_code, "global_abort")
             self.assertEqual(tts.calls, 0)
 
+    def test_reasoning_only_model_response_is_never_spoken(self):
+        import json
+        from unittest import mock
+
+        class FakeResp:
+            def read(self, _limit: int = -1) -> bytes:
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "",
+                                    "reasoning_content": "이 내용은 사용자에게 읽으면 안 됩니다.",
+                                }
+                            }
+                        ]
+                    }
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> bool:
+                return False
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tts = FakeTts()
+            pipeline = JarvisVoicePipeline(
+                stt=FakeStt(),
+                llm=LocalMlxLlm(state_root=root),
+                tts=tts,
+                token=AbortController(root).token(),
+            )
+            with mock.patch("jarvis_voice._local_urlopen", return_value=FakeResp()):
+                result = pipeline.process_utterance(b"\x01\x00" * 320)
+
+        self.assertEqual(result.state, VoiceState.ERROR)
+        self.assertEqual(result.error_code, "generation_error")
+        self.assertEqual(tts.calls, 0)
+        self.assertEqual(pipeline._recent_conversation(), [])
+
     def test_abort_during_tts_stops_session(self):
         with TemporaryDirectory() as temp_dir:
             controller = AbortController(Path(temp_dir))
@@ -750,6 +792,38 @@ class LocalMlxLlmRequestTests(unittest.TestCase):
             token = AbortController(root).token()
             with mock.patch("jarvis_voice._local_urlopen", return_value=FakeResp()):
                 with self.assertRaisesRegex(RuntimeError, "local_llm_model_mismatch"):
+                    LocalMlxLlm(state_root=root).generate("안녕", token)
+
+    def test_generate_never_uses_reasoning_as_a_spoken_reply(self):
+        import json
+        from unittest import mock
+
+        class FakeResp:
+            def read(self, _limit: int = -1) -> bytes:
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "",
+                                    "reasoning_content": "내부 추론을 음성으로 읽으면 안 됩니다.",
+                                }
+                            }
+                        ]
+                    }
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> bool:
+                return False
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            token = AbortController(root).token()
+            with mock.patch("jarvis_voice._local_urlopen", return_value=FakeResp()):
+                with self.assertRaisesRegex(RuntimeError, "local_llm_reply_empty"):
                     LocalMlxLlm(state_root=root).generate("안녕", token)
 
     def test_voice_persona_ends_turn_without_engagement_question(self):

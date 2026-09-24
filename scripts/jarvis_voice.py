@@ -800,13 +800,17 @@ class LocalMlxLlm:
         try:
             body = json.loads(raw.decode("utf-8", "replace"))
             message = body["choices"][0]["message"]
-            content = message.get("content") or message.get("reasoning_content") or ""
+            content = message.get("content")
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError("local_llm_response_invalid") from exc
         if mlx_response_model_conflicts(self.model, body.get("model")):
             raise RuntimeError("local_llm_model_mismatch")
+        if not isinstance(content, str) or not content.strip():
+            # Never speak a model's private reasoning channel as if it were a
+            # user-facing answer. A reasoning-only response ends this turn.
+            raise RuntimeError("local_llm_reply_empty")
         token.raise_if_cancelled()
-        return str(content).strip()
+        return content.strip()
 
 
 class MlxWhisperAdapter:
