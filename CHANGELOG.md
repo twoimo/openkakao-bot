@@ -131,6 +131,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build
 - `main.rs`가 `lib.rs`와 같은 모듈 8개(`ax_send`, `error`, `local_db`, `loco`, `media`, `message_db`, `model`, `room_catalog`)를 `mod`로 다시 선언해 두 번 컴파일하던 구조를 없앴습니다. 12,322줄이 한 번만 컴파일되고, 중복 실행되던 테스트 171건과 컴파일러 dead-code 경고가 사라졌습니다.
 
+## [1.8.2] - 2026-09-24
+
+### Fixed
+- Local MLX model swaps now take an exclusive cross-process lease and refuse to swap while participating OpenKakao requests are active. Reply generation, voice, Browser-Use, GraphRAG embeddings, readiness checks, and DPO callers share the request gate; it does not fence external MLX clients or prove server-side cancellation after a disconnected request.
+- A newer room watermark is treated as context freshness rather than proof that an unanswered inbound was superseded, preventing the former `conversation_advanced` mass-skip path.
+
+### Jarvis Desktop
+- Bumped the installed Tauri app bundle to 0.1.2. The GitHub release workflow still publishes CLI assets only; the local app bundle is not part of the release assets.
+
 ## [1.8.1] - 2026-09-24
 
 ### Fixed
