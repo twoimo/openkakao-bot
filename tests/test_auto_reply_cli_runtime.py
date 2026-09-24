@@ -9517,6 +9517,57 @@ print(json.dumps({
             db_watch._message_summary({**base, "author_id": 199453377})["is_self"]
         )
 
+    def test_empty_emoticon_rows_are_normalized_before_acknowledging(self):
+        db_watch = self._load_db_watch_module("auto_reply_empty_emoticon_ingress")
+        for message_type in (12, 20, 22):
+            log_id = 100 + message_type
+            message = {
+                "chat_id": 42,
+                "log_id": log_id,
+                "author_id": 700,
+                "sender_name": "member",
+                "message": "",
+                "message_type": message_type,
+                "attachment": '{"opaque":"metadata"}',
+                "sent_at": 100,
+                "is_self": False,
+                "source_epoch": 7,
+            }
+            summary = db_watch._message_summary(message)
+            self.assertEqual(summary["message"], "[이모티콘]")
+
+            ack = {
+                "ack": "accepted",
+                "event_id": f"db:42:{log_id}",
+                "owner_id": "owner",
+                "source_epoch": 7,
+            }
+            result = subprocess.CompletedProcess(
+                args=["fake-hook"],
+                returncode=0,
+                stdout=json.dumps(ack),
+                stderr="",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"OPENKAKAO_SUPERVISOR_OWNER": "owner"},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    db_watch, "_run_bounded_hook", return_value=result
+                ) as hook,
+            ):
+                self.assertEqual(
+                    db_watch.emit(message, None, recent_messages=[summary]),
+                    "accepted",
+                )
+
+            payload = json.loads(hook.call_args.args[0].decode("utf-8"))
+            self.assertEqual(payload["message"], "[이모티콘]")
+            self.assertNotIn("skip_reason", payload)
+            self.assertEqual(payload["recent_messages"][-1]["message"], "[이모티콘]")
+
     def test_recent_tail_persists_across_polls_in_log_order(self):
         db_watch = self._load_db_watch_module("auto_reply_recent_tail_test")
         first = {

@@ -114,6 +114,8 @@ QUEUE = Path(
 )
 SELF = os.environ.get("OPENKAKAO_SELF_NICKNAME", "").strip()
 IMAGE_TYPES = {2, 14, 27}
+EMOTICON_MESSAGE_TYPES = frozenset({12, 20, 22})
+EMOTICON_PLACEHOLDER = "[이모티콘]"
 KAKAO_MESSAGE_TYPE_KIND_MASK = 0xFF
 
 
@@ -3593,6 +3595,17 @@ def _proven_self_flag(message: dict) -> bool | None:
     return True
 
 
+def _normalize_empty_emoticon_message(message_type: object, body: str) -> str:
+    if (
+        not body.strip()
+        and isinstance(message_type, int)
+        and not isinstance(message_type, bool)
+        and message_type in EMOTICON_MESSAGE_TYPES
+    ):
+        return EMOTICON_PLACEHOLDER
+    return body
+
+
 def _message_summary(message: dict) -> dict[str, Any]:
     message_type = message.get("message_type", 0)
     summary: dict[str, Any] = {
@@ -3625,7 +3638,7 @@ def _message_summary(message: dict) -> dict[str, Any]:
     if proven is not None:
         summary["is_self"] = proven
     text, urls = _sharp_search_message_and_urls(message)
-    summary["message"] = text
+    summary["message"] = _normalize_empty_emoticon_message(message_type, text)
     if urls:
         summary["urls"] = urls
     return summary
@@ -3810,6 +3823,8 @@ def emit(
     )
     bounded_recent_messages = recent_messages or []
     sharp_message, sharp_urls = _sharp_search_message_and_urls(message)
+    message_type = message.get("message_type", 0)
+    sharp_message = _normalize_empty_emoticon_message(message_type, sharp_message)
     reply_to = _quoted_reply_descriptor(message, bounded_recent_messages)
     quoted_source = None
     if isinstance(reply_to, dict) and isinstance(reply_to.get("quoted_source"), dict):
@@ -3828,7 +3843,7 @@ def emit(
         "is_self": message.get("is_self"),
         "reply_authorized": message.get("reply_authorized"),
         "message": sharp_message, "attachment": "image" if attachment else "",
-        "message_type": int(message.get("message_type", 0) or 0),
+        "message_type": int(message_type or 0),
         "sent_at": int(message.get("sent_at", 0) or 0),
         "image_path": str(image_path) if image_path else "",
         "image_paths": [str(path) for path in normalized_image_paths],
