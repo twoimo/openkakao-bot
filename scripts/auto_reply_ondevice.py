@@ -1418,14 +1418,36 @@ def _probe_ondevice_generation_locked(
                 base_url=gateway,
                 timeout=min(effective_timeout, 3.0),
             )
-            model = _model_id(advertised, "Qwen3.8-Flash-Next")
-            if not model:
+            selected = next(
+                (
+                    item
+                    for item in advertised
+                    if "qwen3.8-flash-next"
+                    in str(item.get("id") or "").strip().casefold()
+                ),
+                None,
+            )
+            if selected is None:
                 return _finish_probe(
                     started=started,
                     engine="mlx-serve-gateway",
                     model="",
                     ok=False,
                     errors=["flash_next_not_advertised"],
+                    state_root=state_root,
+                )
+            model = str(selected.get("id") or "").strip()
+            if (
+                not model
+                or selected.get("loaded") is not True
+                or selected.get("state") != "ready"
+            ):
+                return _finish_probe(
+                    started=started,
+                    engine="mlx-serve-gateway",
+                    model=model,
+                    ok=False,
+                    errors=["flash_next_not_ready"],
                     state_root=state_root,
                 )
             payload = json.dumps(
