@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import heapq
 import json
 import math
 import os
@@ -24,17 +25,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 import zlib
+from collections import Counter
 from datetime import datetime, timezone
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from local_mlx_gateway import (
-    MLX_GATEWAY_EMBEDDINGS_URL,
-    MlxRequestAdmissionClosed,
-    mlx_model_request_lease,
-)
+from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 KNOWLEDGE_GRAPH_DB_NAME = "knowledge-graph.sqlite3"
 GRAPH_SOURCE_KIND = "knowledge_graph"
@@ -50,7 +50,7 @@ DENSE_INDEX_VERSION = "local-embedding-lsh-v2"
 # An index must name the encoder the loopback server actually advertises.
 # Never label vectors as BGE-M3 merely because that name was sent in a request.
 DENSE_EMBEDDING_MODEL = os.environ.get("OPENKAKAO_DENSE_EMBEDDING_MODEL", "").strip()
-DEFAULT_DENSE_EMBEDDING_URL = MLX_GATEWAY_EMBEDDINGS_URL
+DEFAULT_DENSE_EMBEDDING_URL = "http://127.0.0.1:11236/v1/embeddings"
 DENSE_EMBEDDING_URL = os.environ.get(
     "OPENKAKAO_LOCAL_EMBEDDING_URL", DEFAULT_DENSE_EMBEDDING_URL
 )
@@ -66,7 +66,16 @@ DENSE_EMBEDDING_MODELS_MAX_BYTES = 64 * 1024
 DENSE_EMBEDDING_CYCLE_TIMEOUT_SECONDS = 900.0
 DENSE_EMBEDDING_CYCLE_REQUEST_CAP = 64
 DENSE_STATUS_MAX_LENGTH = 400
+DENSE_INPUT_TYPE_QUERY = "query"
+DENSE_INPUT_TYPE_PASSAGE = "passage"
+DENSE_INPUT_TYPES = frozenset({DENSE_INPUT_TYPE_QUERY, DENSE_INPUT_TYPE_PASSAGE})
 RRF_K = 60
+RETRIEVAL_CANDIDATE_LIMIT = 40
+RETRIEVAL_CONTEXT_CHARS = 8000
+RRF_WEIGHT_MIN = 0.0
+RRF_WEIGHT_MAX = 4.0
+RRF_BM25_WEIGHT = 1.0
+RRF_DENSE_WEIGHT = 1.0
 ANN_BANDS = 8
 ANN_BITS_PER_BAND = 8
 # LSH 하이퍼플레인의 부호는 (비트, 차원) 두 좌표만으로 결정된다. 예전에는
@@ -88,6 +97,7 @@ KST = ZoneInfo("Asia/Seoul")
 # which of the two it is and what backs it (2026-09-16).
 PROVENANCE_SEED = "seed"
 PROVENANCE_LEDGER = "ledger"
+PROVENANCE_SNAPSHOT = "snapshot"
 MAX_EVIDENCE_PER_NODE = 8
 
 
@@ -188,13 +198,18 @@ def _normalize_evidence(raw: Any) -> dict[str, Any]:
     ids = raw.get("source_event_ids")
     if not isinstance(ids, list):
         ids = []
-    return {
-        "kind": PROVENANCE_LEDGER if raw.get("kind") == PROVENANCE_LEDGER else PROVENANCE_SEED,
-        "source_event_ids": [str(item) for item in ids if str(item).strip()][:MAX_EVIDENCE_PER_NODE],
-        "chat_id": str(raw.get("chat_id") or ""),
-        "confirmed_at": raw.get("confirmed_at") or None,
-        "retracted": bool(raw.get("retracted")),
+    kind=raw['kind'] if raw.get('kind') in (PROVENANCE_LEDGER,PROVENANCE_SNAPSHOT) else PROVENANCE_SEED
+    result={
+        'kind':kind,'source_event_ids':[str(item) for item in ids if str(item).strip()][:MAX_EVIDENCE_PER_NODE],
+        'chat_id':str(raw.get('chat_id')or''),'confirmed_at':raw.get('confirmed_at')or None,'retracted':bool(raw.get('retracted')),
     }
+    if kind==PROVENANCE_SNAPSHOT:
+        rooms=raw.get('room_ids',[])
+        result['room_ids']=[r for r in rooms if isinstance(r,str) and re.fullmatch(r'kakao:[0-9a-f]{64}:room:[0-9]+',r)][:2048] if isinstance(rooms,list) else []
+        actor=str(raw.get('author_id')or'')
+        result['author_id']=actor if actor.isascii() and actor.isdigit() else ''
+    return result
+
 
 DEFAULT_ENTITIES = [
     {
@@ -292,6 +307,10 @@ DEFAULT_RELATIONS = [
         "weight": 90,
     },
 ]
+
+_BUILTIN_SEED_IDS = frozenset(item['entity_id'] for item in DEFAULT_ENTITIES) | frozenset(
+    item['source_id'] + '|' + item['target_id'] for item in DEFAULT_RELATIONS
+)
 
 
 def _connect_kg(db_path: Path) -> sqlite3.Connection:
@@ -668,32 +687,123 @@ import shutil
 
 ISOLATED_COPY_MAX_ATTEMPTS = 3
 
+_INDEX_CYCLE_SNAPSHOT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "knowledge_graph_index_cycle_snapshot", default=None
+)
 
-def _snapshot_signature(db_path: Path) -> tuple[tuple[str, bool, int, int, int], ...]:
-    """Return a cheap mutation detector for the DB and its WAL sidecars."""
-    signature: list[tuple[str, bool, int, int, int]] = []
+
+class _IndexCycleCursor(sqlite3.Cursor):
+    """Retain failures even when a legacy indexer catches sqlite3.Error."""
+
+    def _observed(self, operation, *args, **kwargs):
+        try:
+            return operation(*args, **kwargs)
+        except sqlite3.Error as error:
+            cycle = _INDEX_CYCLE_SNAPSHOT.get()
+            if cycle is not None:
+                cycle["errors"].append(f"sqlite:{type(error).__name__}")
+            raise
+
+    def execute(self, *args, **kwargs):
+        return self._observed(super().execute, *args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        return self._observed(super().executemany, *args, **kwargs)
+
+    def fetchone(self):
+        return self._observed(super().fetchone)
+
+    def fetchall(self):
+        return self._observed(super().fetchall)
+
+    def fetchmany(self, *args):
+        return self._observed(super().fetchmany, *args)
+
+    def __next__(self):
+        return self._observed(super().__next__)
+
+
+class _IndexCycleReadConnection(sqlite3.Connection):
+    def cursor(self, *args, **kwargs):
+        kwargs.setdefault("factory", _IndexCycleCursor)
+        return super().cursor(*args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        return self.cursor().execute(*args, **kwargs)
+
+
+class _IndexCycleGraphWriter:
+    """Existing indexers may commit; the owner publishes the whole cycle."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+
+    def cursor(self):
+        return self.connection.cursor(factory=_IndexCycleCursor)
+
+    def execute(self, *args, **kwargs):
+        return self.cursor().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        return self.cursor().executemany(*args, **kwargs)
+
+    def commit(self) -> None:
+        pass
+
+
+@contextmanager
+def _index_cycle_snapshot(db_path: Path):
+    """One private DB+WAL version for all source reads in this thread."""
+    with tempfile.TemporaryDirectory(prefix="kg-cycle-copy-") as directory:
+        try:
+            copied = _copy_consistent_sqlite_replica(db_path, Path(directory))
+        except (OSError, sqlite3.Error) as error:
+            raise sqlite3.OperationalError("isolated read-only snapshot unavailable") from error
+        cycle = {"source": db_path, "path": copied, "errors": []}
+        token = _INDEX_CYCLE_SNAPSHOT.set(cycle)
+        try:
+            yield cycle
+        finally:
+            _INDEX_CYCLE_SNAPSHOT.reset(token)
+
+
+def _snapshot_signature(db_path: Path) -> tuple[tuple[str, bool, int, int, int, int], ...]:
+    """Detect committed-data changes, including rollback-journal appearance.
+
+    SHM contains process-local WAL reader/lock state, not committed rows. Its
+    activity must neither invalidate a stable DB+WAL copy nor be replicated.
+    """
+    signature: list[tuple[str, bool, int, int, int, int]] = []
     for path in (
         db_path,
         db_path.with_name(db_path.name + "-wal"),
-        db_path.with_name(db_path.name + "-shm"),
+        db_path.with_name(db_path.name + "-journal"),
     ):
         try:
             stat = path.stat()
         except FileNotFoundError:
-            signature.append((path.name, False, 0, 0, 0))
+            signature.append((path.name, False, 0, 0, 0, 0))
             continue
         signature.append(
-            (path.name, True, int(stat.st_size), int(stat.st_mtime_ns), int(stat.st_ino))
+            (path.name, True, int(stat.st_size), int(stat.st_mtime_ns), int(stat.st_ino), int(stat.st_ctime_ns))
         )
     return tuple(signature)
 
 
 def _copy_consistent_sqlite_replica(db_path: Path, tmpdir: Path) -> Path:
-    """Copy DB+WAL+SHM only when the source stayed unchanged for the copy."""
+    """Copy stable DB+WAL and let SQLite rebuild SHM in the private directory.
+
+    This path reads Alden's plaintext context mirror; encrypted Kakao databases
+    are handled by the CLI. Never open/checkpoint the live source here. A
+    nonempty rollback journal requires recovery that this reader cannot attest,
+    so fail closed rather than silently omitting it from the copy.
+    """
     tmp_db = tmpdir / db_path.name
     last_error: BaseException | None = None
     for attempt in range(1, ISOLATED_COPY_MAX_ATTEMPTS + 1):
         before = _snapshot_signature(db_path)
+        if before[-1][1] and before[-1][2] > 0:
+            raise sqlite3.OperationalError("source rollback journal requires recovery")
         try:
             for target in (
                 tmp_db,
@@ -705,12 +815,9 @@ def _copy_consistent_sqlite_replica(db_path: Path, tmpdir: Path) -> Path:
                 except FileNotFoundError:
                     pass
             shutil.copy2(db_path, tmp_db)
-            for sidecar in (
-                db_path.with_name(db_path.name + "-wal"),
-                db_path.with_name(db_path.name + "-shm"),
-            ):
-                if sidecar.exists():
-                    shutil.copy2(sidecar, tmpdir / sidecar.name)
+            wal = db_path.with_name(db_path.name + "-wal")
+            if before[1][1]:
+                shutil.copy2(wal, tmpdir / wal.name)
         except OSError as error:
             last_error = error
             continue
@@ -729,6 +836,27 @@ def _open_isolated_ro_conn(db_path: Path):
     """DB Lock 방지: 카카오톡 DB 동기화 시 실행 중 파일 잠금을 방지하기 위해
     임시 디렉터리로 복제한 뒤 Read Only 모드로 안전하게 연결한다 (2026-09-17).
     """
+    cycle = _INDEX_CYCLE_SNAPSHOT.get()
+    if cycle is not None and db_path == cycle["source"]:
+        conn = None
+        try:
+            conn = sqlite3.connect(
+                f"file:{cycle['path']}?mode=ro", uri=True,
+                factory=_IndexCycleReadConnection,
+            )
+            conn.execute("PRAGMA query_only = ON")
+            yield conn
+        except (sqlite3.Error, OSError, ValueError) as error:
+            cycle["errors"].append(f"context_read:{type(error).__name__}")
+            raise
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error as error:
+                    cycle["errors"].append(f"context_close:{type(error).__name__}")
+                    raise
+        return
     if not db_path.exists():
         raise FileNotFoundError(f"Database not found: {db_path}")
 
@@ -917,9 +1045,123 @@ def k_hop_neighborhood(
             conn.close()
 
 
+def _raw_source_mode(state_root: Path) -> bool:
+    path=state_root/'knowledge/osk/raw-sources.json'
+    if not path.exists(): return False
+    if path.is_symlink() or path.stat().st_size>8192: raise RuntimeError('raw_source_configuration_unsafe')
+    value=json.loads(path.read_text())
+    return isinstance(value,dict) and value.get('schema_version')==1 and value.get('enabled') is True
+
+
 def _index_db_path(state_root: Path) -> Path:
-    """The shared context index. Sibling of the state root's parent."""
+    """Prefer only a completely published, account-scoped Alden corpus."""
+    root=state_root/'knowledge'/'corpus'
+    pointer=root/'current.json'
+    if pointer.exists():
+        if pointer.is_symlink() or pointer.stat().st_size>8192: raise RuntimeError('corpus_pointer_unsafe')
+        manifest=json.loads(pointer.read_text())
+        account=manifest.get('account','')
+        if manifest.get('schema_version')!=1 or not re.fullmatch('[0-9a-f]{64}',account): raise RuntimeError('corpus_pointer_invalid')
+        path=root/account/'context.sqlite3'
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file(): raise RuntimeError('corpus_publication_missing')
+        return path
     return state_root.parent / "context.sqlite3"
+
+
+def _corpus_labels(index_conn: sqlite3.Connection) -> tuple[dict[str,str],dict[str,str]]:
+    if not index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='corpus_meta'").fetchone():
+        return {},{}
+    return (dict(index_conn.execute('SELECT chat,label FROM alden_rooms')),dict(index_conn.execute('SELECT author_id,label FROM alden_authors')))
+
+
+def _identity_label(raw: Any, *, limit: int | None = 160) -> str:
+    """Normalize display/search labels, never the numeric identity or source."""
+    text = unicodedata.normalize("NFKC", str(raw or ""))
+    text = "".join(c for c in text if c.isspace() or unicodedata.category(c) not in {"Cc", "Cf"} or c in "\u200c\u200d")
+    return " ".join(text.split())[:limit]
+
+
+def _short_identity(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
+def _corpus_room_displays(labels: dict[str, str], titles: dict[str, str], activity_aliases: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
+    """Known titles stay searchable; equal/missing titles stay distinct."""
+    resolved: dict[str, tuple[str, str]] = {}
+    for key, raw in labels.items():
+        title = _identity_label(raw)
+        source = "snapshot"
+        if not title or title == "이름 없는 채팅방":
+            title = _identity_label(titles.get(key.rsplit(":", 1)[-1]))
+            source = "catalog" if title else "unresolved"
+            if not title and activity_aliases and activity_aliases.get(key):
+                title = _identity_label(activity_aliases[key]); source = "activity_alias"
+        resolved[key] = (title, source)
+    counts = Counter(title.casefold().replace(" ", "") for title, _ in resolved.values() if title)
+    result: dict[str, dict[str, Any]] = {}
+    for key, (title, source) in resolved.items():
+        duplicate = bool(title and counts[title.casefold().replace(" ", "")] > 1)
+        display = title or "제목 미확인"
+        if not title or duplicate or source == "activity_alias":
+            display += " · #" + _short_identity(key)
+        result[key] = {"label": display, "aliases": list(dict.fromkeys(x for x in (title, display, key) if x)),
+                       "label_source": source, "label_ambiguous": duplicate}
+    return result
+
+
+def _corpus_activity_aliases(index_conn: sqlite3.Connection, labels: dict[str, str], authors: dict[str, str]) -> dict[str, str]:
+    """Ground unnamed display aliases in recorded participants, preserving IDs.
+
+    One aggregate pass over the published corpus replaces a scan per room.
+    This is a local display alias, never a Kakao room rename or inferred topic.
+    """
+    unknown = {key for key, value in labels.items() if not _identity_label(value) or _identity_label(value) == '이름 없는 채팅방'}
+    if not unknown: return {}
+    if not index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='alden_messages'").fetchone(): return {}
+    names: dict[str, list[str]] = {}
+    for room, actor, count in index_conn.execute('SELECT chat,author_id,COUNT(*) FROM alden_messages WHERE is_self=0 AND CAST(author_id AS INTEGER)>0 GROUP BY chat,author_id ORDER BY COUNT(*) DESC'):
+        if room not in unknown or len(names.get(room, [])) >= 2: continue
+        name = _identity_label(authors.get(str(actor)), limit=36)
+        if not name or name in ('(알 수 없음)', '알 수 없음', 'Unknown') or name.isdigit(): continue
+        bucket = names.setdefault(room, [])
+        if name not in bucket: bucket.append(name)
+    return {room: ' · '.join(values) + ' 대화' for room, values in names.items()}
+
+
+def _corpus_person_id(room:str,actor:str)->str:
+    match=re.fullmatch(r'kakao:([0-9a-f]{64}):room:[0-9]+',room)
+    if not match or not actor.isascii() or not actor.isdigit() or not 0<int(actor)<2**63 or not 0<int(room.rsplit(':',1)[-1])<2**63:
+        raise ValueError('corpus_actor_identity_invalid')
+    return 'person:kakao:'+match[1]+':actor:'+str(int(actor))
+
+
+def _index_corpus_people(conn,index_conn,*,chat='',limit=60):
+    labels,authors=_corpus_labels(index_conn)
+    where='WHERE CAST(author_id AS INTEGER)>0'
+    params=[]
+    if chat: where+=' AND chat=?';params.append(chat)
+    rows=index_conn.execute('SELECT author_id,COUNT(*) FROM context_messages '+where+' GROUP BY author_id ORDER BY COUNT(*) DESC LIMIT ?',[*params,max(int(limit),1)]).fetchall()
+    written=0;now=int(time.time())
+    for actor,count in rows:
+        actor=str(actor)
+        if not actor.isascii() or not actor.isdigit() or not 0<int(actor)<2**63:
+            continue  # System rows and malformed identities are not people.
+        rooms=index_conn.execute('SELECT chat,COUNT(*) FROM context_messages WHERE author_id=? GROUP BY chat ORDER BY COUNT(*) DESC',(actor,)).fetchall()
+        if not rooms: continue
+        key=_corpus_person_id(str(rooms[0][0]),actor)
+        name=_identity_label(authors.get(actor)) or '대화 상대 · #'+_short_identity(key)
+        facts=[f'{len(rooms)}개 대화방에 {count:,}건의 메시지가 있습니다.']
+        # (author_id, chat, id) is the published corpus's covering index. Read
+        # three candidates per room instead of sorting every row by this actor.
+        recent=[]
+        for room,_ in rooms:
+            recent.extend(index_conn.execute('SELECT id,date,message,chat_id,log_id FROM context_messages WHERE author_id=? AND chat=? ORDER BY id DESC LIMIT 3',(actor,room)).fetchall())
+        samples=[row[1:] for row in heapq.nlargest(3,recent,key=lambda row:row[0])]
+        facts += [str(row[0])[:10]+' · '+str(row[1])[:90] for row in samples if row[1]]
+        conn.execute('INSERT INTO kg_entities(entity_id,name,category,aliases_json,description,key_facts_json,importance,evidence_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id)DO UPDATE SET name=excluded.name,category=excluded.category,aliases_json=excluded.aliases_json,description=excluded.description,key_facts_json=excluded.key_facts_json,importance=excluded.importance,evidence_json=excluded.evidence_json,updated_at=excluded.updated_at',(key,name,'대화 상대',json.dumps([name,actor],ensure_ascii=False),name+'의 대화 기록입니다.',json.dumps(facts,ensure_ascii=False),min(94,50+int(count)//4000),json.dumps(_normalize_evidence({'kind':'snapshot','author_id':actor,'room_ids':[str(r[0]) for r in rooms],'source_event_ids':['kakao:'+str(rooms[0][0]).split(':')[1]+':room:'+str(r[2])+':log:'+str(r[3]) for r in samples]})),now))
+        written+=1
+    conn.commit()
+    return {'persons':written,'written':written,'with_lines':written}
 
 
 def _index_topic_rows(conn: sqlite3.Connection, *, chat: str = "") -> list[tuple[str, int]]:
@@ -1036,6 +1278,8 @@ def _topic_terms(topic: str) -> list[str]:
 def _chat_label(chat: str) -> str:
     """A room id becomes a readable name, and stays findable by its number."""
     raw = (chat or "").strip()
+    if re.fullmatch(r'kakao:[0-9a-f]{64}:room:[0-9]+',raw):
+        return '이름 없는 채팅방'
     if raw.startswith("그룹:"):
         return f"그룹방 {raw.split(':', 1)[1]}"
     return raw
@@ -1062,7 +1306,7 @@ def _room_titles(state_root: Path) -> dict[str, str]:
         if not isinstance(item, dict):
             continue
         chat_id = str(item.get("chat_id") or "").strip()
-        title = str(item.get("title") or "").strip()
+        title = _identity_label(item.get("title"))
         if not chat_id or not title:
             continue
         titles[chat_id] = title
@@ -1082,7 +1326,19 @@ def _room_key(state_root: Path, chat: str) -> str:
     raw = (chat or "").strip()
     if not raw:
         return raw
+    if re.fullmatch(r'kakao:[0-9a-f]{64}:room:[0-9]+',raw):return raw
+    pointer=state_root/'knowledge'/'corpus'/'current.json'
+    numeric=raw[3:] if raw.startswith('그룹:') else raw
+    if pointer.is_file() and numeric.isascii() and numeric.isdigit():
+        _index_db_path(state_root)  # Refuse a malformed account pointer.
+        account=json.loads(pointer.read_text())['account']
+        return f'kakao:{account}:room:{int(numeric)}'
     titles = _room_titles(state_root)
+    title = titles.get(raw)
+    if title and sum(value == title for key, value in titles.items() if key.isascii() and key.isdigit()) > 1:
+        # Two registered rooms can share a title. A label is not an identity.
+        if numeric.isascii() and numeric.isdigit():
+            return "그룹:" + str(int(numeric))
     return titles.get(raw) or raw
 
 
@@ -1142,7 +1398,6 @@ def index_chat_entities(
     index_path = _index_db_path(state_root)
     if not index_path.exists():
         return stats
-    index_conn = None
     try:
         with _open_isolated_ro_conn(index_path) as index_conn:
             sql = (
@@ -1156,17 +1411,20 @@ def index_chat_entities(
             sql += " GROUP BY chat HAVING COUNT(*) >= ? ORDER BY COUNT(*) DESC LIMIT ?"
             params.extend([INDEX_CHAT_MIN_MESSAGES, max(int(limit), 1)])
             rows = index_conn.execute(sql, params).fetchall()
+            room_labels, author_labels = _corpus_labels(index_conn)
+            displays = _corpus_room_displays(room_labels, _room_titles(state_root), _corpus_activity_aliases(index_conn, room_labels, author_labels))
+            # All metadata and bounded evidence are read from this same
+            # snapshot. Standalone calls previously copied the whole corpus
+            # again for the label table and once for every selected room.
+            observed_by_room = {
+                str(room): index_conn.execute(
+                    'SELECT chat_id,log_id FROM context_messages WHERE chat=? ORDER BY id DESC LIMIT ?',
+                    (room, MAX_EVIDENCE_PER_NODE),
+                ).fetchall()
+                for room, _count, _first, _last in rows if room in room_labels
+            }
     except sqlite3.Error:
         return stats
-    finally:
-        # with 블록이 실패하면 index_conn 이 할당되지 않아, 여기서 바로
-        # 닫으면 UnboundLocalError 가 원래 예외를 덮어쓴다. 자식 프로세스가
-        # exit 1 로만 죽어 원인을 알 수 없던 이유다 (2026-09-17).
-        if index_conn is not None:
-            try:
-                index_conn.close()
-            except sqlite3.Error:
-                pass
     now = int(time.time())
     # 같은 방이 두 키로 들어오면 여기서 하나로 합친다. 합치지 않으면
     # 방 뉴런이 둘 서고 방 안의 사람도 두 벌로 갈린다 (2026-09-16).
@@ -1175,13 +1433,16 @@ def index_chat_entities(
         key = _room_key(state_root, str(room))
         bucket = merged.setdefault(key, [0, "", ""])
         bucket[0] += int(count or 0)
-        start, end = str(first or "")[:10], str(last or "")[:10]
+        first_time, last_time = _message_datetime_kst(first), _message_datetime_kst(last)
+        start = first_time.date().isoformat() if first_time else ""
+        end = last_time.date().isoformat() if last_time else ""
         if start and (not bucket[1] or start < bucket[1]):
             bucket[1] = start
         if end and (not bucket[2] or end > bucket[2]):
             bucket[2] = end
     for key, (total, start, end) in merged.items():
-        name = _chat_label(key)
+        display = displays.get(key)
+        name = display["label"] if display else _identity_label(_chat_label(key))
         span = f"{start} ~ {end}" if start and end else ""
         facts = [f"이 방에 {total:,}건의 메시지가 색인되어 있습니다"]
         if span:
@@ -1205,13 +1466,19 @@ def index_chat_entities(
                 f"chat:{key}",
                 name,
                 "대화방",
-                json.dumps([name, key], ensure_ascii=False),
-                f"{name} 방입니다. 여기서 나눈 주제는 이 방의 맥락으로 남습니다.",
+                json.dumps(display["aliases"] if display else [name, key], ensure_ascii=False),
+                ("카카오톡에서 제목을 확인하지 못한 별도 채팅방입니다." if display and display["label_source"] == "unresolved"
+                 else f"{name} 방입니다. 여기서 나눈 주제는 이 방의 맥락으로 남습니다."),
                 json.dumps(facts, ensure_ascii=False),
                 min(99, 45 + total // 4000),
                 now,
             ),
         )
+        if key in room_labels:
+            observed = observed_by_room.get(key, [])
+            account=key.split(':')[1]
+            evidence={'kind':PROVENANCE_SNAPSHOT,'chat_id':key,'source_event_ids':[f'kakao:{account}:room:{r}:log:{log}' for r,log in observed]}
+            conn.execute('UPDATE kg_entities SET evidence_json=? WHERE entity_id=?',(json.dumps(_normalize_evidence(evidence)),'chat:'+key))
         stats["written"] += 1
     conn.commit()
     stats["chats"] = len(merged)
@@ -1239,6 +1506,9 @@ def index_person_entities(
     selected: list[tuple[str, str, int, float, str, list[str]]] = []
     try:
         with _open_isolated_ro_conn(index_path) as index_conn:
+            if index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='corpus_meta'").fetchone():
+                return _index_corpus_people(conn,index_conn,chat=chat,limit=limit)
+
             sql = (
                 "SELECT chat, user_name, COUNT(*) FROM context_messages"
                 " WHERE chat IS NOT NULL AND chat != ''"
@@ -1411,6 +1681,12 @@ def index_topic_entities(
         return stats
     try:
         with _open_isolated_ro_conn(index_path) as index_conn:
+            has_topics = index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='context_message_topics'").fetchone()
+            raw_rebuild = _raw_source_mode(state_root)
+            if (index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='alden_messages'").fetchone()
+                and (raw_rebuild or not has_topics or not index_conn.execute('SELECT 1 FROM context_message_topics LIMIT 1').fetchone())):
+                from alden_corpus_topics import index as index_raw_topics
+                return index_raw_topics(conn, index_conn, chat=chat, minimum=INDEX_TOPIC_MIN_MESSAGES)
             topics = _index_topic_rows(index_conn, chat=chat)[: max(int(limit), 1)]
             stats["topics"] = len(topics)
             now = int(time.time())
@@ -1476,6 +1752,7 @@ def index_topic_relations(
     rather than a list of separate circles (2026-09-16).
     """
     stats = {"pairs": 0, "written": 0}
+    if _raw_source_mode(state_root): return stats  # Raw topic pass already wrote grounded pairs.
     index_path = _index_db_path(state_root)
     if not index_path.exists():
         return stats
@@ -1554,9 +1831,10 @@ def index_membership_relations(
     try:
         with _open_isolated_ro_conn(index_path) as index_conn:
             now = int(time.time())
+            is_corpus=index_conn.execute("SELECT 1 FROM sqlite_master WHERE name='corpus_meta'").fetchone() is not None
             # 사람 → 방
             sql = (
-                "SELECT chat, user_name, COUNT(*) FROM context_messages"
+                ("SELECT chat, author_id, COUNT(*) FROM context_messages" if is_corpus else "SELECT chat, user_name, COUNT(*) FROM context_messages") +
                 " WHERE chat IS NOT NULL AND chat != ''"
                 "   AND user_name IS NOT NULL AND user_name != ''"
             )
@@ -1564,12 +1842,12 @@ def index_membership_relations(
             if chat:
                 sql += " AND chat = ?"
                 params.append(chat)
-            sql += " GROUP BY chat, user_name ORDER BY COUNT(*) DESC LIMIT ?"
+            sql += (" GROUP BY chat, author_id ORDER BY COUNT(*) DESC LIMIT ?" if is_corpus else " GROUP BY chat, user_name ORDER BY COUNT(*) DESC LIMIT ?")
             params.append(max(int(limit), 1))
             try:
                 for room, user, count in index_conn.execute(sql, params):
                     room_key, name = _room_key(state_root, str(room)), str(user).strip()
-                    source = f"person:{room_key}:{name}"
+                    source = _corpus_person_id(room_key,name) if is_corpus and name.isdigit() and int(name)>0 else f"person:{room_key}:{name}"
                     target = f"chat:{room_key}"
                     if source not in known or target not in known:
                         continue
@@ -1586,6 +1864,8 @@ def index_membership_relations(
                     stats["person_chat"] += 1
             except sqlite3.Error:
                 pass
+            if _raw_source_mode(state_root):
+                conn.commit();return stats  # Topic edges came from the same Raw pass.
             # 방 → 주제. 방마다 그 주제가 얼마나 나왔는지가 곧 연결 강도다.
             sql = (
                 "SELECT m.chat, t.topic, COUNT(*) FROM context_message_topics t"
@@ -1620,7 +1900,7 @@ def index_membership_relations(
             # 사람 → 주제. 사람 뉴런은 `person:방:이름` 꼴이라, 그 사람의 메시지에
             # 붙은 주제를 세면 곧 사람과 주제의 연결이 된다.
             sql = (
-                "SELECT m.chat, m.user_name, t.topic, COUNT(*)"
+                ("SELECT m.chat, m.author_id, t.topic, COUNT(*)" if is_corpus else "SELECT m.chat, m.user_name, t.topic, COUNT(*)") +
                 " FROM context_message_topics t"
                 " JOIN context_messages m ON m.id = t.message_id"
                 " WHERE m.chat IS NOT NULL AND m.chat != ''"
@@ -1630,11 +1910,11 @@ def index_membership_relations(
             if chat:
                 sql += " AND m.chat = ?"
                 params.append(chat)
-            sql += " GROUP BY m.chat, m.user_name, t.topic ORDER BY COUNT(*) DESC LIMIT ?"
+            sql += (" GROUP BY m.chat, m.author_id, t.topic ORDER BY COUNT(*) DESC LIMIT ?" if is_corpus else " GROUP BY m.chat, m.user_name, t.topic ORDER BY COUNT(*) DESC LIMIT ?")
             params.append(max(int(limit), 1))
             try:
                 for room, user, topic, count in index_conn.execute(sql, params):
-                    source = f"person:{_room_key(state_root, str(room))}:{str(user).strip()}"
+                    source = _corpus_person_id(str(room),str(user)) if is_corpus and str(user).isdigit() and int(user)>0 else f"person:{_room_key(state_root, str(room))}:{str(user).strip()}"
                     target = f"topic:{topic}"
                     if source not in known or target not in known:
                         continue
@@ -1796,6 +2076,11 @@ def attach_ledger_evidence(
                     stats["matched"] += 1
 
     for entity_id, hits in found.items():
+        previous=conn.execute('SELECT evidence_json FROM kg_entities WHERE entity_id=?',(entity_id,)).fetchone()
+        try: existing=json.loads(previous[0] or '{}') if previous else {}
+        except (TypeError,ValueError):existing={}
+        if existing.get('kind')==PROVENANCE_SNAPSHOT and 'kakao:' in entity_id:
+            continue  # Actual DB observation is separate from decision-ledger proof.
         if not hits:
             conn.execute(
                 "UPDATE kg_entities SET evidence_json = ? WHERE entity_id = ?",
@@ -2052,67 +2337,82 @@ def _reindex_all(
     chat: str = "",
     cycle_started_at: int = 0,
 ) -> None:
-    """Rebuild every indexed neuron and synapse for the graph.
+    """Read one committed source snapshot and publish one complete graph.
 
-    This is the body that used to run inline in collect_knowledge_graph.
-    Each step is isolated: a failure in one indexer must not stop the others,
-    because a graph with topics but no rooms is still better than no refresh
-    (2026-09-16, 2026-09-17).
-
-    A step that dies is recorded in kg_meta instead of being swallowed. The
-    menu showed a freshly indexed, empty graph while every indexer had been
-    failing on a NameError that only the real database path reached
-    (2026-09-17, 사용자 지시).
+    Individual indexers still work outside this cycle. Their intermediate
+    commits are deferred here, and swallowed SQLite failures are retained by
+    the cycle cursor. A failed cycle preserves prior rows, FTS and watermark;
+    it never spends embedding work or stamps the old graph as freshly indexed.
     """
     failures: list[str] = []
+    savepoint = False
+    # A caller may own a surrounding transaction. Status updates must not
+    # accidentally commit its pending work, including on a snapshot failure.
+    status_writer = _IndexCycleGraphWriter(conn) if conn.in_transaction else conn
 
     def _note(step: str, error: BaseException) -> None:
         failures.append(f"{step}: {type(error).__name__}: {error}"[:400])
 
     try:
-        index_topic_entities(conn, state_root, chat=chat)
-        index_topic_relations(conn, state_root, chat=chat)
-    except Exception as error:  # noqa: BLE001 - 색인은 한 걸음이 죽어도 계속한다
-        _note("topics", error)
-    try:
-        index_chat_entities(conn, state_root, chat=chat)
-        index_person_entities(conn, state_root, chat=chat)
-        index_membership_relations(conn, state_root, chat=chat)
-        prune_indexed_entities(conn, cycle_started_at=cycle_started_at)
-        _merge_seed_rooms(conn)
-    except Exception as error:  # noqa: BLE001
-        _note("rooms", error)
-    try:
-        attach_ledger_evidence(conn, state_root)
-    except Exception as error:  # noqa: BLE001
-        _note("evidence", error)
-    if failures:
-        # 실패를 남기고 "색인했다"는 도장은 찍지 않는다. 찍으면 다음 폴링이
-        # 같은 일을 다시 하지 않아 그래프가 영영 낡은 채로 남는다
-        # (2026-09-17).
-        write_meta(conn, "last_index_error", " | ".join(failures))
-        if any("isolated read-only snapshot unavailable" in failure for failure in failures):
-            # 카카오 원본 DB로 폴백하지 않았음을 상태 화면에서도 확인할 수
-            # 있게 남긴다. 이 값은 다음 정상 색인이 성공할 때만 해제된다.
-            write_meta(conn, "last_snapshot_status", "fail_closed")
-    else:
-        write_meta(conn, "last_index_error", "")
-        write_meta(conn, "last_snapshot_status", "copy_ok")
-        # 이번 색인이 언제 끝났는지 남긴다. 이 값이 없으면 다음 폴링이 방금
-        # 끝난 색인을 모르고 같은 일을 다시 시작한다 (2026-09-17).
-        # Dense는 optional이므로 이 도장은 dense endpoint 상태와 독립적이다.
-        write_meta(conn, "last_indexed_at", str(int(time.time())))
+        with _index_cycle_snapshot(_index_db_path(state_root)) as cycle:
+            conn.execute("SAVEPOINT alden_graph_index_cycle")
+            savepoint = True
+            writer = _IndexCycleGraphWriter(conn)
+            try:
+                index_topic_entities(writer, state_root, chat=chat)
+                index_topic_relations(writer, state_root, chat=chat)
+            except Exception as error:
+                _note("topics", error)
+            try:
+                index_chat_entities(writer, state_root, chat=chat)
+                index_person_entities(writer, state_root, chat=chat)
+                index_membership_relations(writer, state_root, chat=chat)
+                prune_indexed_entities(writer, cycle_started_at=cycle_started_at)
+                _merge_seed_rooms(writer)
+            except Exception as error:
+                _note("rooms", error)
+            try:
+                if not _raw_source_mode(state_root): attach_ledger_evidence(writer, state_root)
+            except Exception as error:
+                _note("evidence", error)
+            failures.extend(cycle["errors"])
+            if not failures:
+                write_meta(writer, "last_index_error", "")
+                write_meta(writer, "last_snapshot_status", "copy_ok")
+                write_meta(writer, "last_indexed_at", str(int(time.time())))
+                with _open_isolated_ro_conn(_index_db_path(state_root)) as published_source:
+                    if published_source.execute("SELECT 1 FROM sqlite_master WHERE name='corpus_meta'").fetchone():
+                        snapshot_row=published_source.execute("SELECT value FROM corpus_meta WHERE key='snapshot'").fetchone()
+                        if snapshot_row: write_meta(writer,'source_corpus_snapshot',str(snapshot_row[0]))
+                failures.extend(cycle["errors"])
+        if failures:
+            conn.execute("ROLLBACK TO alden_graph_index_cycle")
+        conn.execute("RELEASE alden_graph_index_cycle")
+        savepoint = False
+    except BaseException as error:
+        if savepoint:
+            conn.execute("ROLLBACK TO alden_graph_index_cycle")
+            conn.execute("RELEASE alden_graph_index_cycle")
+        if not isinstance(error, Exception):
+            raise
+        _note("snapshot", error)
 
-    # Dense ANN은 그래프 재색인의 독립 단계다. 로컬 임베딩 서비스가 없거나
-    # 깨져도 그래프 색인 성공/실패 판정(last_index_error)을 오염시키지 않는다.
-    # refresh 자체도 fail-closed지만 이 경계에서도 막아 detached child와
-    # background thread 밖으로 예외가 새지 않게 한다.
+    if failures:
+        write_meta(status_writer, "last_index_error", " | ".join(dict.fromkeys(failures))[:400])
+        write_meta(status_writer, "last_snapshot_status", "fail_closed")
+        return
+
+    if conn.in_transaction:
+        write_meta(status_writer, "last_dense_status", "deferred:graph_transaction_uncommitted")
+        return
+
+    # Dense is optional and starts only after a complete graph is committed.
+    # Its own watermark validation rejects stale vectors after a failed update.
     try:
         refresh_dense_index(conn, state_root)
-    except Exception as error:  # noqa: BLE001 - optional dense stage must never escape
+    except Exception as error:
         write_meta(
-            conn,
-            "last_dense_status",
+            conn, "last_dense_status",
             _bounded_dense_status(f"unavailable:{type(error).__name__}:{error}"),
         )
 
@@ -2130,6 +2430,7 @@ def collect_knowledge_graph(
     reindex_interval_seconds: int = 300,
     wait_for_reindex: bool = False,
     reindex_mode: str = "process",
+    read_only: bool = False,
 ) -> dict[str, Any]:
     """Return the whole graph as nodes and edges for a force-directed view.
 
@@ -2149,8 +2450,12 @@ def collect_knowledge_graph(
     """
     kg_path = db_path.parent / KNOWLEDGE_GRAPH_DB_NAME
     try:
-        kg_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = _connect_kg(kg_path)
+        if read_only:
+            conn = sqlite3.connect(kg_path.resolve().as_uri() + "?mode=ro", uri=True)
+            conn.execute("PRAGMA query_only = ON")
+        else:
+            kg_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = _connect_kg(kg_path)
     except (OSError, sqlite3.Error) as error:
         # A window that cannot reach its store must draw an empty graph and say
         # why, not take the menu down with it (2026-09-16).
@@ -2166,7 +2471,8 @@ def collect_knowledge_graph(
             "reason": str(error) or "knowledge_graph_unavailable",
         }
     try:
-        ensure_seeded(conn)
+        if not read_only:
+            ensure_seeded(conn)
         # 이미 색인된 데이터가 있고 최근(기본 5분)에 갱신되었다면 매번
         # 1.4GB DB 전체를 다시 훑지 않고 저장된 그래프를 즉시 반환한다.
         # 메뉴바 폴링(2초 주기)과 감사에서 프로세스가 25초 타임아웃에
@@ -2196,7 +2502,13 @@ def collect_knowledge_graph(
         # 으로 대신하면, 방금 심은 시드 뉴런의 시각이 "최신"으로 읽혀 색인이
         # 영영 돌지 않는다. 그게 6 Pro가 지적한 빈 그래프의 원인이었다
         # (2026-09-17).
-        needs_reindex = force_reindex or (
+        corpus_pointer=state_root/'knowledge'/'corpus'/'current.json' if state_root else None
+        corpus_snapshot=''
+        if corpus_pointer and corpus_pointer.is_file():
+            _index_db_path(state_root)  # Validate the fixed account-scoped pointer.
+            corpus_snapshot=str(json.loads(corpus_pointer.read_text()).get('snapshot',''))
+        source_changed=bool(corpus_snapshot and read_meta(conn,'source_corpus_snapshot')!=corpus_snapshot)
+        needs_reindex = force_reindex or source_changed or (
             last_updated == 0 or now - last_updated >= reindex_interval_seconds
         )
         # 재색인을 백그라운드로 돌리면 이 응답은 저장된 그래프를 담는다.
@@ -2205,9 +2517,10 @@ def collect_knowledge_graph(
             "indexed_count": indexed_count,
             "indexed_at": last_updated,
             "needs_reindex": needs_reindex,
+            "stale": needs_reindex if read_only else False,
         }
 
-        if needs_reindex and state_root is not None:
+        if needs_reindex and state_root is not None and not read_only:
             # 재색인은 1.4GB 컨텍스트 DB를 훑는다. 예전에는 이 요청 안에서
             # 동기로 돌려, 캐시가 만료된 첫 조회가 25초 타임아웃에 걸려 빈
             # 그래프로 떨어졌다. 지금은 저장된 그래프를 즉시 돌려주고,
@@ -2217,7 +2530,11 @@ def collect_knowledge_graph(
                 # 동기 경로: 재색인이 끝난 뒤의 그래프를 이 응답에 담는다.
                 _reindex_all(conn, state_root, chat=chat, cycle_started_at=now)
                 result_meta["reindex"] = {"started": True, "chat": chat, "mode": "inline"}
-                result_meta["stale"] = False
+                # A rolled-back index cycle preserves prior data; its failure
+                # must not stamp that retained graph as current.
+                result_meta["stale"] = bool(read_meta(conn,'last_index_error'))
+                result_meta['indexed_at'] = int(read_meta(conn,'last_indexed_at') or 0)
+                result_meta['indexed_count'] = int(conn.execute("SELECT COUNT(*) FROM kg_entities WHERE entity_id LIKE 'chat:%' OR entity_id LIKE 'topic:%'").fetchone()[0])
             else:
                 started = _start_background_reindex(
                     conn,
@@ -2322,7 +2639,7 @@ def collect_knowledge_graph(
             "node_count": len(nodes),
             "edge_count": len(edges),
             "grounded_nodes": sum(
-                1 for node in nodes if node["evidence"]["kind"] == PROVENANCE_LEDGER
+                1 for node in nodes if node["evidence"]["kind"] in (PROVENANCE_LEDGER,PROVENANCE_SNAPSHOT)
             ),
             **_dense_status_payload(conn),
         }
@@ -2626,7 +2943,7 @@ def normalize_text_query(text: str, *, message_timestamp: Any = None) -> str:
     이 함수는 아무도 부르지 않아 통째로 죽어 있었다.
     """
 
-    normalized = " ".join(str(text or "").split())
+    normalized = _identity_label(text, limit=None)
     if not normalized:
         return ""
     for wrong, right in TYPO_DICTIONARY.items():
@@ -2789,12 +3106,25 @@ class _RejectLoopbackRedirects(urllib.request.HTTPRedirectHandler):
         )
 
 
+_EMBEDDING_ABORT_TOKEN = ContextVar('alden_embedding_abort_token',default=None)
+
+@contextmanager
+def embedding_abort_scope(token):
+    handle=_EMBEDDING_ABORT_TOKEN.set(token)
+    try:yield
+    finally:_EMBEDDING_ABORT_TOKEN.reset(handle)
+
+
 def _open_loopback_embedding_request(
     request: urllib.request.Request,
     *,
     timeout: float,
 ) -> Any:
     """Use an explicit no-proxy opener and refuse every redirect."""
+    token=_EMBEDDING_ABORT_TOKEN.get()
+    if token is not None:
+        from alden_local_http import CancellableLocalResponse
+        return CancellableLocalResponse(request,timeout,token,embedding=True)
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
         _RejectLoopbackRedirects(),
@@ -2930,6 +3260,7 @@ def _dense_endpoint_identity() -> str:
 def _local_dense_embeddings_unleased(
     texts: list[str],
     *,
+    input_type: str = DENSE_INPUT_TYPE_QUERY,
     model_id: str | None = None,
     timeout_seconds: float | None = None,
     _budget: _DenseCycleBudget | None = None,
@@ -2946,6 +3277,9 @@ def _local_dense_embeddings_unleased(
     normalized_texts = [str(text).strip() for text in texts]
     if any(not text for text in normalized_texts):
         raise ValueError("dense embedding input must be non-empty")
+    normalized_input_type = str(input_type).strip().casefold()
+    if normalized_input_type not in DENSE_INPUT_TYPES:
+        raise ValueError("dense embedding input_type must be query or passage")
     active_model = model_id or _active_dense_embedding_model()
     parsed = urllib.parse.urlparse(DENSE_EMBEDDING_URL)
     host = (parsed.hostname or "").casefold()
@@ -2959,7 +3293,11 @@ def _local_dense_embeddings_unleased(
     ):
         raise ValueError("dense embedding endpoint must be loopback-local")
     payload = json.dumps(
-        {"model": active_model, "input": normalized_texts},
+        {
+            "model": active_model,
+            "input": normalized_texts,
+            "input_type": normalized_input_type,
+        },
         ensure_ascii=False,
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -3028,6 +3366,7 @@ def _local_dense_embeddings_unleased(
 def _local_dense_embeddings(
     texts: list[str],
     *,
+    input_type: str = DENSE_INPUT_TYPE_QUERY,
     model_id: str | None = None,
     timeout_seconds: float | None = None,
     _budget: _DenseCycleBudget | None = None,
@@ -3050,6 +3389,7 @@ def _local_dense_embeddings(
     if not managed_gateway:
         return _local_dense_embeddings_unleased(
             texts,
+            input_type=input_type,
             model_id=model_id,
             timeout_seconds=timeout_seconds,
             _budget=_budget,
@@ -3059,6 +3399,7 @@ def _local_dense_embeddings(
         with mlx_model_request_lease(state_root):
             return _local_dense_embeddings_unleased(
                 texts,
+                input_type=input_type,
                 model_id=model_id,
                 timeout_seconds=timeout_seconds,
                 _budget=_budget,
@@ -3072,6 +3413,7 @@ def _local_dense_embeddings_adaptive(
     texts: list[str],
     *,
     model_id: str,
+    input_type: str = DENSE_INPUT_TYPE_QUERY,
     first_attempt_timeout_seconds: float | None = None,
     budget: _DenseCycleBudget | None = None,
     state_root: Path | None = None,
@@ -3093,6 +3435,7 @@ def _local_dense_embeddings_adaptive(
     if first_attempt_timeout_seconds is None:
         batch_vectors = _local_dense_embeddings(
             texts,
+            input_type=input_type,
             model_id=model_id,
             _budget=budget,
             state_root=state_root,
@@ -3100,6 +3443,7 @@ def _local_dense_embeddings_adaptive(
     else:
         batch_vectors = _local_dense_embeddings(
             texts,
+            input_type=input_type,
             model_id=model_id,
             timeout_seconds=first_attempt_timeout_seconds,
             _budget=budget,
@@ -3132,6 +3476,7 @@ def _dense_embedding_probe(
     try:
         _local_dense_embeddings(
             ["knowledge graph dense probe"],
+            input_type=DENSE_INPUT_TYPE_QUERY,
             model_id=model_id,
             timeout_seconds=DENSE_EMBEDDING_PROBE_TIMEOUT_SECONDS,
             _budget=budget,
@@ -3311,6 +3656,7 @@ def refresh_dense_index(
             vectors = _local_dense_embeddings_adaptive(
                 texts[start : start + bounded_batch_size],
                 model_id=model_id,
+                input_type=DENSE_INPUT_TYPE_PASSAGE,
                 first_attempt_timeout_seconds=first_attempt_timeout_seconds,
                 budget=budget,
                 state_root=state_root,
@@ -3468,6 +3814,7 @@ def _dense_ann_query(
             raise RuntimeError("dense vector metadata mismatch")
         query_vector = _local_dense_embeddings(
             [query_text],
+            input_type=DENSE_INPUT_TYPE_QUERY,
             model_id=active_model,
             state_root=state_root,
         )[0]
@@ -3546,17 +3893,57 @@ def _bm25_candidates(
     return [(str(entity_id), float(score)) for entity_id, score in rows]
 
 
+def _validated_rrf_weights(
+    weights: "tuple[float, float] | list[float] | None" = None,
+) -> tuple[float, float]:
+    selected = (
+        (RRF_BM25_WEIGHT, RRF_DENSE_WEIGHT)
+        if weights is None
+        else weights
+    )
+    if not isinstance(selected, (tuple, list)) or len(selected) != 2:
+        raise ValueError("RRF weights must contain BM25 and dense values")
+    try:
+        parsed = tuple(float(value) for value in selected)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError("RRF weights must be numeric") from error
+    if any(
+        not math.isfinite(value)
+        or value < RRF_WEIGHT_MIN
+        or value > RRF_WEIGHT_MAX
+        for value in parsed
+    ):
+        raise ValueError(
+            f"RRF weights must be finite values in {RRF_WEIGHT_MIN}..{RRF_WEIGHT_MAX}"
+        )
+    if sum(parsed) <= 0.0:
+        raise ValueError("at least one RRF weight must be positive")
+    return parsed
+
+
 def _rrf_merge(
     bm25: list[tuple[str, float]],
     dense: list[tuple[str, float]],
     *,
     k: int = RRF_K,
+    weights: "tuple[float, float] | list[float] | None" = None,
+    recency: "dict[str, int] | None" = None,
 ) -> list[tuple[str, float]]:
+    parsed = _validated_rrf_weights(weights)
     scores: dict[str, float] = {}
-    for ranked in (bm25, dense):
+    denominator_k = max(int(k), 1)
+    for source_weight, ranked in zip(parsed, (bm25, dense)):
+        if source_weight <= 0.0:
+            continue
         for rank, (entity_id, _raw_score) in enumerate(ranked, start=1):
-            scores[entity_id] = scores.get(entity_id, 0.0) + 1.0 / (max(int(k), 1) + rank)
-    return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+            scores[entity_id] = scores.get(entity_id, 0.0) + source_weight / (
+                denominator_k + rank
+            )
+    timestamps = recency or {}
+    return sorted(
+        scores.items(),
+        key=lambda item: (-item[1], -int(timestamps.get(item[0], 0)), item[0]),
+    )
 
 
 SEARCH_MODE_RRF = "rrf"
@@ -3593,6 +3980,62 @@ def _evidence_ids_from_json(raw: Any) -> list[str]:
     return [str(item) for item in ids if str(item).strip()][:MAX_EVIDENCE_PER_NODE]
 
 
+def _candidate_provenance(
+    entity_id: str,
+    evidence_json: Any,
+    updated_at: Any,
+) -> dict[str, Any]:
+    """Keep candidate evidence bound to the entity it came from."""
+    payload: Any = evidence_json
+    provenance_valid = isinstance(payload, dict)
+    if isinstance(evidence_json, str) and evidence_json.strip():
+        try:
+            payload = json.loads(evidence_json)
+            provenance_valid = isinstance(payload, dict)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = None
+            provenance_valid = False
+    provenance_valid = False
+    if isinstance(payload, dict):
+        if not payload:
+            # Schema migration created '{}' for legacy seed rows.
+            provenance_valid = True
+        else:
+            provenance_valid = (
+                payload.get("kind") in {PROVENANCE_SEED, PROVENANCE_LEDGER, PROVENANCE_SNAPSHOT}
+                and isinstance(payload.get("source_event_ids"), list)
+                and isinstance(payload.get("chat_id"), str)
+                and isinstance(payload.get("retracted"), bool)
+                and (
+                    payload.get("confirmed_at") is None
+                    or isinstance(payload.get("confirmed_at"), (str, int, float))
+                )
+            )
+    evidence = _normalize_evidence(payload)
+    # These built-in facts describe a particular historical Kakao room. Older
+    # databases stored '{}' as their evidence; an empty room must not make
+    # personal names and room history globally eligible. Real ledger/snapshot
+    # observations that replace a seed keep their own explicit provenance.
+    if evidence["kind"] == PROVENANCE_SEED and not evidence["chat_id"]:
+        if str(entity_id) in _BUILTIN_SEED_IDS:
+            evidence["chat_id"] = "417780809780519"
+    try:
+        updated = max(int(updated_at or 0), 0)
+    except (TypeError, ValueError, OverflowError):
+        updated = 0
+    return {
+        "entity_id": str(entity_id),
+        "source_kind": str(evidence["kind"]),
+        "source_event_ids": list(evidence["source_event_ids"]),
+        "room_id": str(evidence["chat_id"] or ""),
+        "room_ids": list(evidence.get("room_ids",[])),
+        "confirmed_at": evidence["confirmed_at"],
+        "retracted": bool(evidence["retracted"]),
+        "updated_at": updated,
+        "provenance_valid": provenance_valid,
+    }
+
+
 def _participant_in_scope(entity_id: str, participant_id: Any) -> bool:
     wanted = str(participant_id or "").strip()
     if not wanted:
@@ -3618,6 +4061,14 @@ def _relation_time_in_scope(
     end = _message_datetime_kst(valid_to)
     lower = _message_datetime_kst(time_from)
     upper = _message_datetime_kst(time_to)
+    if str(valid_from or "").strip() and start is None:
+        return False
+    if str(valid_to or "").strip() and end is None:
+        return False
+    if time_from is not None and lower is None:
+        return False
+    if time_to is not None and upper is None:
+        return False
     if start is None and end is None:
         return True
     if lower is not None and end is not None and end < lower:
@@ -3635,11 +4086,11 @@ def _keyword_ranked_candidates(
     limit: int = 40,
 ) -> list[tuple[str, float]]:
     ranked: list[tuple[str, float]] = []
-    for ent_id, name, aliases_str in conn.execute(
-        "SELECT entity_id, name, aliases_json FROM kg_entities"
+    for ent_id, name, aliases_str, evidence_json, updated_at in conn.execute(
+        "SELECT entity_id, name, aliases_json, evidence_json, updated_at FROM kg_entities"
     ):
         entity_id = str(ent_id)
-        if not in_scope(entity_id):
+        if not in_scope(entity_id, evidence_json, updated_at):
             continue
         try:
             aliases = json.loads(aliases_str)
@@ -3708,75 +4159,28 @@ def _upsert_relation(
     )
 
 
-def _focused_relation_facts(
-    focus: dict[str, Any],
-    *,
-    state_root: Path,
-    chat_id: "int | str | None",
-    limit: int,
-) -> list[str]:
-    """Render relation facts only from one bounded focus subgraph."""
-    node_ids = [str(value) for value in focus.get("node_ids", []) if _is_graph_entity_id(value)]
-    if not node_ids or limit <= 0:
-        return []
-    kg_path = state_root / KNOWLEDGE_GRAPH_DB_NAME
-    if not kg_path.exists():
-        return []
-
-    chat_str = str(chat_id or "").strip()
-    allowed_rooms: set[str] = set()
-    if chat_str:
-        for variant in (chat_str, _room_key(state_root, chat_str), _chat_label(chat_str)):
-            if variant:
-                allowed_rooms.add(str(variant))
-        allowed_rooms = {_room_key(state_root, room) or room for room in allowed_rooms}
-
-    def in_scope(entity_id: str) -> bool:
-        if not allowed_rooms:
-            return True
-        if not (entity_id.startswith("chat:") or entity_id.startswith("person:")):
-            return True
-        parts = entity_id.split(":")
-        room = parts[1] if len(parts) > 1 else ""
-        return (_room_key(state_root, room) or room) in allowed_rooms
-
-    conn = None
+def _explicit_ranked_entities(root: Path, candidates: list[str], query_text: str) -> set[str]:
+    """Retain independently named subjects without expanding shared aliases."""
+    if not candidates:
+        return set()
+    needles = [_identity_label(value, limit=None).casefold().replace(" ", "") for value in query_haystacks(query_text, None)]
+    terms: dict[str, set[str]] = {}
+    conn = sqlite3.connect((root / KNOWLEDGE_GRAPH_DB_NAME).resolve().as_uri()+'?mode=ro',uri=True,timeout=.2)
     try:
-        conn = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True)
-        conn.execute("PRAGMA query_only = ON")
-        marks = ",".join("?" for _ in node_ids)
-        names = {
-            str(entity_id): str(name)
-            for entity_id, name in conn.execute(
-                f"SELECT entity_id, name FROM kg_entities WHERE entity_id IN ({marks})",
-                node_ids,
-            )
-            if in_scope(str(entity_id))
-        }
-        rows = conn.execute(
-            f"SELECT source_id, relation, target_id, context, weight FROM kg_relations"
-            f" WHERE source_id IN ({marks}) AND target_id IN ({marks})"
-            f" ORDER BY weight DESC, id ASC",
-            node_ids + node_ids,
-        ).fetchall()
-        facts: list[str] = []
-        for source, relation, target, context, _weight in rows:
-            source = str(source)
-            target = str(target)
-            if source not in names or target not in names:
-                continue
-            facts.append(
-                f"[관계] {names[source]} —({relation})→ {names[target]}: {str(context or '')}"
-            )
-            if len(facts) >= limit:
-                break
-        return facts
-    except (OSError, sqlite3.Error, ValueError) as error:
-        _trace_graph("focus_relation_failed", error=type(error).__name__)
-        return []
+        conn.execute('PRAGMA query_only=ON')
+        marks = ",".join("?" for _ in candidates)
+        for entity_id, name, raw_aliases in conn.execute(f"SELECT entity_id,name,aliases_json FROM kg_entities WHERE entity_id IN ({marks})", candidates):
+            try:
+                aliases = json.loads(raw_aliases)
+            except (TypeError, ValueError):
+                aliases = []
+            for raw in [name, *(aliases if isinstance(aliases,list) else [])]:
+                term = _identity_label(raw, limit=None).casefold().replace(" ", "")
+                if len(term) >= 2:
+                    terms.setdefault(term,set()).add(str(entity_id))
     finally:
-        if conn is not None:
-            conn.close()
+        conn.close()
+    return {next(iter(ids)) for term,ids in terms.items() if len(ids)==1 and any(term in needle for needle in needles)}
 
 
 def retrieve_knowledge_bundle(
@@ -3787,6 +4191,13 @@ def retrieve_knowledge_bundle(
     also: "list[str] | tuple[str, ...] | None" = None,
     max_entities: int = 3,
     max_relations: int = 3,
+    participant_id: "int | str | None" = None,
+    time_from: Any = None,
+    time_to: Any = None,
+    rrf_weights: "tuple[float, float] | list[float] | None" = None,
+    rrf_k: int = RRF_K,
+    candidate_limit: int = RETRIEVAL_CANDIDATE_LIMIT,
+    max_context_chars: int = RETRIEVAL_CONTEXT_CHARS,
 ) -> dict[str, Any]:
     """GraphRAG + BM25/Dense RRF 검색 번들 반환.
 
@@ -3794,16 +4205,27 @@ def retrieve_knowledge_bundle(
     방 ID와 방 이름을 상호 확인하여 방 간 데이터 격리를 보장한다 (2026-09-17).
     Dense 실패 시 모드는 bm25_only이며 hybrid/rrf로 표시하지 않는다.
     """
+    if type(max_context_chars) is not int or not 256 <= max_context_chars <= 16000:
+        raise ValueError("retrieval context budget must be an integer in 256..16000")
     ranked = _query_knowledge_ranked(
         query_text,
         state_root=state_root,
         chat_id=chat_id,
         also=also,
+        participant_id=participant_id,
+        time_from=time_from,
+        time_to=time_to,
+        rrf_weights=rrf_weights,
+        rrf_k=rrf_k,
+        candidate_limit=candidate_limit,
     )
     entity_facts = list(ranked.get("entity_facts") or [])
     relation_facts = list(ranked.get("relation_facts") or [])
     candidates = list(ranked.get("candidates") or [])
+    candidate_provenance = list(ranked.get("candidate_provenance") or [])
+    relation_provenance = list(ranked.get("relation_provenance") or [])
     focus: dict[str, Any] | None = None
+    focused_ids: set[str] = set()
     if candidates:
         root = state_root or Path.home() / "Library/Application Support/openkakao/bujamentor"
         focus = k_hop_neighborhood(
@@ -3812,31 +4234,103 @@ def retrieve_knowledge_bundle(
             K_HOP_NEIGHBOR_LIMIT,
             state_root=root,
             chat_id=chat_id,
+            participant_id=participant_id,
+            time_from=time_from,
+            time_to=time_to,
         )
-        focused_ids = set(focus.get("node_ids", []))
-        if focused_ids:
-            entity_facts = [
-                fact
-                for entity_id, fact in zip(candidates, entity_facts)
-                if entity_id in focused_ids
-            ]
-            focused_relations = _focused_relation_facts(
-                focus,
-                state_root=root,
-                chat_id=chat_id,
-                limit=max_relations,
-            )
-            if focused_relations:
-                relation_facts = focused_relations
-    balanced_facts = entity_facts[:max_entities] + relation_facts[:max_relations]
+        focused_ids = {str(value) for value in focus.get("node_ids", [])}
+        # A comparison may name disconnected concepts. Graph navigation focus
+        # is a useful neighborhood budget, not a license to drop another
+        # explicitly named and already scope-filtered search result.
+        focused_ids.update(_explicit_ranked_entities(root, candidates, query_text))
+
+    candidate_provenance_by_id = {
+        str(item.get("entity_id")): item
+        for item in candidate_provenance
+        if isinstance(item, dict) and item.get("entity_id")
+    }
+    bounded_entities: list[tuple[str, dict[str, Any]]] = []
+    entity_limit = max(int(max_entities), 0)
+    for entity_id, fact in zip(candidates, entity_facts):
+        if len(bounded_entities) >= entity_limit:
+            break
+        entity_id = str(entity_id)
+        provenance = candidate_provenance_by_id.get(entity_id)
+        if (
+            provenance is None
+            or not provenance.get("provenance_valid")
+            or provenance.get("retracted")
+            or (focused_ids and entity_id not in focused_ids)
+        ):
+            continue
+        bounded_entities.append((str(fact), provenance))
+
+    bounded_relations: list[tuple[str, dict[str, Any]]] = []
+    relation_limit = max(int(max_relations), 0)
+    for fact, provenance in zip(relation_facts, relation_provenance):
+        if len(bounded_relations) >= relation_limit:
+            break
+        if not isinstance(provenance, dict):
+            continue
+        source_id = str(provenance.get("source_id") or "")
+        target_id = str(provenance.get("target_id") or "")
+        if (
+            not provenance.get("provenance_valid")
+            or provenance.get("retracted")
+            or not source_id
+            or not target_id
+            or (focused_ids and (source_id not in focused_ids or target_id not in focused_ids))
+        ):
+            continue
+        bounded_relations.append((str(fact), provenance))
+
+    selected_candidate_provenance = [item[1] for item in bounded_entities]
+    selected_relation_provenance = [item[1] for item in bounded_relations]
+    balanced_facts = [item[0] for item in bounded_entities + bounded_relations]
+    fact_provenance = [
+        {"fact_type": "entity", **provenance}
+        for provenance in selected_candidate_provenance
+    ] + [
+        {"fact_type": "relation", **provenance}
+        for provenance in selected_relation_provenance
+    ]
+    # Keep text and provenance in the same slice. The full source remains in
+    # the corpus; truncating a quote never truncates its identity or timestamp.
+    remaining_chars = max_context_chars
+    budgeted_facts: list[str] = []
+    budgeted_provenance: list[dict[str, Any]] = []
+    for fact, provenance in zip(balanced_facts, fact_provenance):
+        if remaining_chars <= 0:
+            break
+        excerpt = fact[:remaining_chars]
+        budgeted_facts.append(excerpt)
+        budgeted_provenance.append(dict(provenance, fact_truncated=len(excerpt) < len(fact)))
+        remaining_chars -= len(excerpt)
+    balanced_facts = budgeted_facts
+    fact_provenance = budgeted_provenance
+    selected_candidate_provenance = [p for p in fact_provenance if p["fact_type"] == "entity"]
+    selected_relation_provenance = [p for p in fact_provenance if p["fact_type"] == "relation"]
+    evidence_ids: list[str] = []
+    seen_evidence: set[str] = set()
+    for provenance in selected_candidate_provenance + selected_relation_provenance:
+        for value in provenance.get("source_event_ids") or []:
+            evidence_id = str(value).strip()
+            if not evidence_id or evidence_id in seen_evidence:
+                continue
+            seen_evidence.add(evidence_id)
+            evidence_ids.append(evidence_id)
     return {
         "query": query_text,
         "chat_id": str(chat_id or ""),
         "facts": balanced_facts,
         "fact_count": len(balanced_facts),
-        "candidate_count": len(candidates),
-        "entities_count": len(entity_facts),
-        "relations_count": len(relation_facts),
+        "candidate_count": len(selected_candidate_provenance),
+        "retrieved_candidate_count": len(candidates),
+        "entities_count": len(selected_candidate_provenance),
+        "relations_count": len(selected_relation_provenance),
+        "candidate_provenance": selected_candidate_provenance,
+        "relation_provenance": selected_relation_provenance,
+        "fact_provenance": fact_provenance,
         "focus_node_id": str((focus or {}).get("root_id") or ""),
         "focus_k": int((focus or {}).get("k") or 0),
         "focus_node_count": len((focus or {}).get("node_ids", [])),
@@ -3844,7 +4338,8 @@ def retrieve_knowledge_bundle(
         "search_mode": str(ranked.get("search_mode") or SEARCH_MODE_BM25_ONLY),
         "index_version": str(ranked.get("index_version") or SEARCH_INDEX_VERSION),
         "watermark": str(ranked.get("watermark") or ""),
-        "evidence_ids": list(ranked.get("evidence_ids") or []),
+        "evidence_ids": evidence_ids,
+        "retrieval_policy": {"rrf_k": rrf_k, "candidate_limit": candidate_limit, "max_context_chars": max_context_chars, "rrf_weights": ranked.get("rrf_weights")},
     }
 
 def query_knowledge_context(
@@ -3894,6 +4389,9 @@ def _query_knowledge_ranked(
     participant_id: "int | str | None" = None,
     time_from: Any = None,
     time_to: Any = None,
+    rrf_weights: "tuple[float, float] | list[float] | None" = None,
+    rrf_k: int = RRF_K,
+    candidate_limit: int = RETRIEVAL_CANDIDATE_LIMIT,
 ) -> dict[str, Any]:
     """Retrieve relevant Knowledge Graph context nodes for a turn.
 
@@ -3910,17 +4408,30 @@ def _query_knowledge_ranked(
     """
     # 오타·붙여쓰기·시간 표현을 표준형으로 바꾼 바늘더미까지 함께 쓴다.
     # 예전에는 원문만 썼고, 정규화 함수는 아무도 부르지 않았다.
+    selected_rrf_weights = _validated_rrf_weights(rrf_weights)
+    if type(rrf_k) is not int or not 1 <= rrf_k <= 120:
+        raise ValueError("RRF k must be an integer in 1..120")
+    if type(candidate_limit) is not int or not 1 <= candidate_limit <= 128:
+        raise ValueError("retrieval candidate limit must be an integer in 1..128")
     haystacks = query_haystacks(query_text, also)
     empty = {
         "entity_facts": [],
         "relation_facts": [],
         "candidates": [],
+        "candidate_provenance": [],
+        "relation_provenance": [],
         "search_mode": SEARCH_MODE_BM25_ONLY,
         "index_version": SEARCH_INDEX_VERSION,
         "watermark": "",
         "evidence_ids": [],
+        "bm25_candidates": [],
+        "dense_candidates": [],
         "bm25_count": 0,
         "dense_count": 0,
+        "rrf_weights": {
+            "bm25": selected_rrf_weights[0],
+            "dense": selected_rrf_weights[1],
+        },
     }
     if not haystacks:
         # 빈 질의로도 불린다. 여기서 리스트 하나를 돌려주면 호출자의 세 값
@@ -3947,7 +4458,7 @@ def _query_knowledge_ranked(
             norm_key = _room_key(root, chat_str)
             if norm_key:
                 allowed_rooms.add(norm_key)
-                allowed_rooms.add(_chat_label(norm_key))
+                if not norm_key.startswith("kakao:"): allowed_rooms.add(_chat_label(norm_key))
         # 어떤 표기가 들어와도 같은 정규 키로 모은다.
         room_aliases: dict[str, str] = {}
         for room in list(allowed_rooms):
@@ -3964,6 +4475,8 @@ def _query_knowledge_ranked(
 
             person:<room>:<name> 과 chat:<room> 두 모양만 방 스코프를 갖는다.
             """
+            if re.fullmatch(r'chat:kakao:[0-9a-f]{64}:room:[0-9]+',entity_id):return entity_id[5:]
+            if re.fullmatch(r'person:kakao:[0-9a-f]{64}:actor:[0-9]+',entity_id):return ''
             if entity_id.startswith("chat:") or entity_id.startswith("person:"):
                 parts = entity_id.split(":")
                 return parts[1] if len(parts) > 1 else ""
@@ -3985,17 +4498,143 @@ def _query_knowledge_ranked(
                 canonical = _room_key(root, room) or room
             return canonical in allowed_canonical
 
-        def _keep_entity(entity_id: str) -> bool:
-            return _in_scope(entity_id) and _participant_in_scope(entity_id, participant_id)
+        def _source_room_in_scope(room_id: Any) -> bool:
+            """Apply the same canonical room boundary to evidence provenance."""
+            source_room = str(room_id or "").strip()
+            if not allowed_canonical or not source_room:
+                return True
+            source_canonical = room_aliases.get(source_room) or (
+                _room_key(root, source_room) or source_room
+            )
+            return source_canonical in allowed_canonical
 
-        bm25_ranked = [
-            (entity_id, score)
-            for entity_id, score in _bm25_candidates(conn, haystacks, limit=40)
-            if _keep_entity(entity_id)
-        ]
+        temporal_scope: dict[str, dict[str, bool]] = {}
+        if time_from is not None or time_to is not None:
+            for (
+                source_id,
+                target_id,
+                room_id,
+                valid_from,
+                valid_to,
+                evidence_json,
+                updated_at,
+            ) in conn.execute(
+                "SELECT source_id,target_id,COALESCE(room_id,''),"
+                " COALESCE(valid_from,''),COALESCE(valid_to,''),"
+                " evidence_json,updated_at"
+                " FROM kg_relations WHERE valid_from != '' OR valid_to != ''"
+            ):
+                relation_id = f"{source_id}|{target_id}"
+                provenance = _candidate_provenance(
+                    relation_id, evidence_json, updated_at
+                )
+                if (
+                    not provenance["provenance_valid"]
+                    or provenance["retracted"]
+                    or not _source_room_in_scope(room_id)
+                    or not _source_room_in_scope(provenance["room_id"])
+                ):
+                    continue
+                in_range = _relation_time_in_scope(
+                    valid_from, valid_to, time_from, time_to
+                )
+                for entity_id in (str(source_id), str(target_id)):
+                    state = temporal_scope.setdefault(
+                        entity_id, {"has_interval": False, "in_range": False}
+                    )
+                    state["has_interval"] = True
+                    state["in_range"] = state["in_range"] or in_range
+
+        provenance_by_entity: dict[str, dict[str, Any]] = {}
+
+        def _candidate_allowed(
+            entity_id: str,
+            evidence_json: Any = None,
+            updated_at: Any = None,
+        ) -> bool:
+            if not _in_scope(entity_id) or not _participant_in_scope(
+                entity_id, participant_id
+            ):
+                return False
+            if entity_id not in provenance_by_entity:
+                if evidence_json is None:
+                    return False
+                provenance_by_entity[entity_id] = _candidate_provenance(
+                    entity_id, evidence_json, updated_at
+                )
+            provenance = provenance_by_entity.get(entity_id)
+            if (
+                provenance is None
+                or not provenance["provenance_valid"]
+                or provenance["retracted"]
+            ):
+                return False
+            if not _source_room_in_scope(provenance["room_id"]):
+                return False
+            if allowed_canonical and provenance['source_kind']==PROVENANCE_SNAPSHOT and entity_id.startswith('person:kakao:'):
+                if not any(_source_room_in_scope(room) for room in provenance.get('room_ids',[])):return False
+            time_state = temporal_scope.get(entity_id)
+            if time_state and time_state["has_interval"] and not time_state["in_range"]:
+                return False
+            return True
+
+        def _load_candidate_provenance(entity_ids: list[str]) -> None:
+            missing = [
+                entity_id
+                for entity_id in dict.fromkeys(entity_ids)
+                if entity_id not in provenance_by_entity
+            ]
+            if not missing:
+                return
+            marks = ",".join("?" for _ in missing)
+            for entity_id, evidence_json, updated_at in conn.execute(
+                f"SELECT entity_id,evidence_json,updated_at FROM kg_entities"
+                f" WHERE entity_id IN ({marks})",
+                missing,
+            ):
+                provenance_by_entity[str(entity_id)] = _candidate_provenance(
+                    str(entity_id), evidence_json, updated_at
+                )
+
+        def _filter_ranked(
+            ranked: list[tuple[str, float]],
+            *,
+            higher_score_is_better: bool,
+        ) -> list[tuple[str, float]]:
+            _load_candidate_provenance([str(entity_id) for entity_id, _ in ranked])
+            kept = [
+                (str(entity_id), float(score))
+                for entity_id, score in ranked
+                if _candidate_allowed(str(entity_id))
+            ]
+            if higher_score_is_better:
+                kept.sort(
+                    key=lambda item: (
+                        -item[1],
+                        -int(provenance_by_entity[item[0]]["updated_at"]),
+                        item[0],
+                    )
+                )
+            else:
+                kept.sort(
+                    key=lambda item: (
+                        item[1],
+                        -int(provenance_by_entity[item[0]]["updated_at"]),
+                        item[0],
+                    )
+                )
+            return kept
+
+        bm25_ranked = _filter_ranked(
+            _bm25_candidates(conn, haystacks, limit=candidate_limit),
+            higher_score_is_better=False,
+        )
         if not bm25_ranked:
-            bm25_ranked = _keyword_ranked_candidates(
-                conn, haystacks, _keep_entity, limit=40
+            bm25_ranked = _filter_ranked(
+                _keyword_ranked_candidates(
+                    conn, haystacks, _candidate_allowed, limit=candidate_limit
+                ),
+                higher_score_is_better=True,
             )
 
         search_mode = SEARCH_MODE_BM25_ONLY
@@ -4003,13 +4642,12 @@ def _query_knowledge_ranked(
         dense_watermark = ""
         try:
             dense_hits, dense_watermark = _dense_ann_query(
-                root, " ".join(haystacks), limit=40
+                root, " ".join(haystacks), limit=candidate_limit
             )
-            dense_ranked = [
-                (entity_id, score)
-                for entity_id, score in dense_hits
-                if _keep_entity(entity_id)
-            ]
+            dense_ranked = _filter_ranked(
+                [(str(entity_id), float(score)) for entity_id, score in dense_hits],
+                higher_score_is_better=True,
+            )
             search_mode = SEARCH_MODE_RRF
         except Exception as error:  # noqa: BLE001 - dense is optional, never cloud-fallback
             _trace_graph("dense_query_failed", error=type(error).__name__)
@@ -4017,16 +4655,29 @@ def _query_knowledge_ranked(
             dense_ranked = []
 
         if search_mode == SEARCH_MODE_RRF:
-            merged = _rrf_merge(bm25_ranked, dense_ranked)
+            merged = _rrf_merge(
+                bm25_ranked,
+                dense_ranked,
+                weights=selected_rrf_weights,
+                k=rrf_k,
+                recency={
+                    entity_id: int(provenance["updated_at"])
+                    for entity_id, provenance in provenance_by_entity.items()
+                },
+            )
         else:
-            merged = bm25_ranked
+            # Dense failure must not resurrect a source that the selected
+            # weighting explicitly disabled.
+            merged = bm25_ranked if selected_rrf_weights[0] > 0.0 else []
 
         ordered_ids = [entity_id for entity_id, _score in merged]
         entity_facts: list[str] = []
         relation_facts: list[str] = []
+        relation_provenance: list[dict[str, Any]] = []
         candidates: list[str] = []
         evidence_ids: list[str] = []
         matched_entity_ids: set[str] = set()
+        raw_scopes=[room for room in allowed_canonical if re.fullmatch(r'kakao:[0-9a-f]{64}:room:[0-9]+',room)]
         matched_entity_names: dict[str, str] = {}
         if ordered_ids:
             marks = ",".join("?" for _ in ordered_ids)
@@ -4049,46 +4700,99 @@ def _query_knowledge_ranked(
                     facts = []
                 if not isinstance(facts, list):
                     facts = []
+                provenance = provenance_by_entity.get(entity_id)
+                if len(raw_scopes)==1 and provenance and provenance['source_kind']==PROVENANCE_SNAPSHOT:
+                    from alden_corpus import search as corpus_search
+                    scope=raw_scopes[0];account=scope.split(':')[1];room_number=scope.rsplit(':',1)[1]
+                    actor_match=re.fullmatch(r'person:kakao:[0-9a-f]{64}:actor:([0-9]+)',entity_id)
+                    abort_token=_EMBEDDING_ABORT_TOKEN.get()
+                    observed=corpus_search(root,'',chat_id=room_number,author_id=actor_match[1] if actor_match else '',expected_account=account,cancelled=abort_token.is_cancelled if abort_token is not None else None,time_from=time_from,time_to=time_to)
+                    if not observed.get('ok') or not observed['items']:continue
+                    facts=[str(r['date'])[:10]+' · '+str(r['sender'])+' · '+str(r['content']) for r in observed['items'][:3]]
+                    description='선택한 대화방에서 확인한 과거 기록입니다.'
+                    provenance=dict(provenance,source_event_ids=[r['source_id'] for r in observed['items']],room_id=scope,room_ids=[scope])
+                    provenance_by_entity[entity_id]=provenance
                 candidates.append(entity_id)
                 matched_entity_ids.add(entity_id)
                 matched_entity_names[entity_id] = str(name)
                 entity_facts.append(
                     _format_entity_fact(name, category, description, facts)
                 )
-                evidence_ids.extend(_evidence_ids_from_json(evidence_json))
+                provenance = provenance_by_entity.get(entity_id)
+                if provenance is None:
+                    provenance = _candidate_provenance(entity_id, evidence_json, 0)
+                    provenance_by_entity[entity_id] = provenance
+                evidence_ids.extend(provenance["source_event_ids"])
 
         if matched_entity_ids:
             marks = ",".join("?" * len(matched_entity_ids))
             rel_cursor = conn.execute(
                 f"SELECT source_id, relation, target_id, context, weight,"
                 f" COALESCE(room_id,''), COALESCE(valid_from,''), COALESCE(valid_to,''),"
-                f" COALESCE(evidence_message_id,'')"
+                f" COALESCE(evidence_message_id,''), evidence_json, updated_at"
                 f" FROM kg_relations"
                 f" WHERE source_id IN ({marks}) OR target_id IN ({marks})"
                 f" ORDER BY weight DESC LIMIT 12",
                 list(matched_entity_ids) + list(matched_entity_ids),
             )
-            for src, rel, tgt, ctx, _weight, room_id, valid_from, valid_to, evidence_message_id in rel_cursor.fetchall():
-                if not _in_scope(src) or not _in_scope(tgt):
+            for (
+                src,
+                rel,
+                tgt,
+                ctx,
+                _weight,
+                room_id,
+                valid_from,
+                valid_to,
+                evidence_message_id,
+                evidence_json,
+                updated_at,
+            ) in rel_cursor.fetchall():
+                src = str(src)
+                tgt = str(tgt)
+                _load_candidate_provenance([src, tgt])
+                if not _candidate_allowed(src) or not _candidate_allowed(tgt):
                     continue
-                if not _participant_in_scope(src, participant_id) and not _participant_in_scope(
-                    tgt, participant_id
-                ):
-                    if str(participant_id or "").strip():
-                        continue
                 if not _relation_time_in_scope(valid_from, valid_to, time_from, time_to):
                     continue
-                if allowed_canonical and str(room_id or "").strip():
-                    canonical = room_aliases.get(str(room_id)) or (
-                        _room_key(root, str(room_id)) or str(room_id)
-                    )
-                    if canonical not in allowed_canonical:
-                        continue
+                provenance = _candidate_provenance(
+                    f"{src}|{rel}|{tgt}", evidence_json, updated_at
+                )
+                if (
+                    not provenance["provenance_valid"]
+                    or provenance["retracted"]
+                    or not _source_room_in_scope(room_id)
+                    or not _source_room_in_scope(provenance["room_id"])
+                ):
+                    continue
                 src_name = matched_entity_names.get(src, src.split(":")[-1])
                 tgt_name = matched_entity_names.get(tgt, tgt.split(":")[-1])
                 relation_facts.append(f"[관계] {src_name} —({rel})→ {tgt_name}: {ctx}")
-                if evidence_message_id:
-                    evidence_ids.append(str(evidence_message_id))
+                relation_evidence_ids = list(provenance["source_event_ids"])
+                if len(raw_scopes)==1 and provenance['source_kind']==PROVENANCE_SNAPSHOT:
+                    relation_evidence_ids=[value for value in provenance_by_entity.get(src,{}).get('source_event_ids',[]) if value.startswith(raw_scopes[0]+':log:')]
+                message_id = str(evidence_message_id or "").strip()
+                if message_id and message_id not in relation_evidence_ids:
+                    relation_evidence_ids.append(message_id)
+                evidence_ids.extend(relation_evidence_ids)
+                relation_provenance.append(
+                    {
+                        "relation_id": f"{src}|{rel}|{tgt}",
+                        "source_id": src,
+                        "relation": str(rel),
+                        "target_id": tgt,
+                        "source_kind": provenance["source_kind"],
+                        "source_event_ids": relation_evidence_ids,
+                        "room_id": provenance["room_id"],
+                        "relation_room_id": str(room_id or ""),
+                        "confirmed_at": provenance["confirmed_at"],
+                        "retracted": provenance["retracted"],
+                        "valid_from": str(valid_from or ""),
+                        "valid_to": str(valid_to or ""),
+                        "updated_at": provenance["updated_at"],
+                        "provenance_valid": provenance["provenance_valid"],
+                    }
+                )
 
         watermark = read_meta(conn, "last_indexed_at") or dense_watermark
         # Preserve order, drop duplicates.
@@ -4103,12 +4807,24 @@ def _query_knowledge_ranked(
             "entity_facts": entity_facts,
             "relation_facts": relation_facts,
             "candidates": candidates,
+            "candidate_provenance": [
+                provenance_by_entity[entity_id]
+                for entity_id in candidates
+                if entity_id in provenance_by_entity
+            ],
+            "relation_provenance": relation_provenance,
             "search_mode": search_mode,
             "index_version": SEARCH_INDEX_VERSION,
             "watermark": str(watermark or ""),
             "evidence_ids": ordered_evidence,
+            "bm25_candidates": [entity_id for entity_id, _ in bm25_ranked],
+            "dense_candidates": [entity_id for entity_id, _ in dense_ranked],
             "bm25_count": len(bm25_ranked),
             "dense_count": len(dense_ranked),
+            "rrf_weights": {
+                "bm25": selected_rrf_weights[0],
+                "dense": selected_rrf_weights[1],
+            },
         }
     except Exception as error:  # noqa: BLE001 - retrieval must not kill a turn
         _trace_graph("query_ranked_failed", error=type(error).__name__)
@@ -4120,4 +4836,10 @@ def _query_knowledge_ranked(
 if __name__ == "__main__":
     import sys as _sys
 
+    if len(_sys.argv) == 3 and _sys.argv[1] == "--read-persisted-view":
+        root = Path(_sys.argv[2])
+        if not root.is_absolute():
+            raise SystemExit("absolute state root required")
+        print(json.dumps(collect_knowledge_graph(root / "context.sqlite3", state_root=root, read_only=True), ensure_ascii=False))
+        raise SystemExit(0)
     raise SystemExit(_reindex_once_entry(_sys.argv[1:]))

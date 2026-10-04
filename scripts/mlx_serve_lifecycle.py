@@ -29,6 +29,14 @@ from typing import Any, Callable, Sequence
 
 
 MLX_SERVE_STATE_NAME = "mlx-app-owned-server.json"
+MLX_SERVE_FLASH_NEXT_IQ_PORT = 11235
+MLX_SERVE_FLASH_NEXT_IQ_STATE_NAME = "mlx-app-owned-server-11235.json"
+MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID = (
+    "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw"
+)
+MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID = (
+    "mlx/" + MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID
+)
 MLX_SERVE_STATE_MAX_BYTES = 4096
 MLX_SERVE_SCHEMA_VERSION = 1
 MLX_SERVE_DEFAULT_HOST = "127.0.0.1"
@@ -132,6 +140,19 @@ def _command_prefix_matches(command: str, prefix: Sequence[str]) -> bool:
     return observed == desired or observed.startswith(desired + " ")
 
 
+def _command_exact_matches(command: str, expected: Sequence[str]) -> bool:
+    if not command or not expected:
+        return False
+    observed = " ".join(str(command).split())
+    desired = " ".join(" ".join(str(token).split()) for token in expected)
+    return observed == desired
+
+
+def _command_digest(command: Sequence[str]) -> str:
+    joined = "\x1f".join(str(token) for token in command).encode("utf-8")
+    return hashlib.sha256(joined).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class MlxLaunchSpec:
     """Everything needed to launch an app-owned mlx-serve process.
@@ -176,6 +197,8 @@ class MlxLaunchSpec:
             MLX_SERVE_MIN_KV_QUANT <= self.kv_quant <= MLX_SERVE_MAX_KV_QUANT
         ):
             return "launch_invalid_spec"
+        if type(self.request_timeout) not in (int, float):
+            return "launch_invalid_spec"
         if not math.isfinite(self.request_timeout) or self.request_timeout <= 0:
             return "launch_invalid_spec"
         if not math.isfinite(float(self.minimum_free_bytes)) or self.minimum_free_bytes < 0:
@@ -198,10 +221,8 @@ class MlxLaunchSpec:
             str(self.port),
             "--ctx-size",
             str(self.ctx_size),
-            "--request-timeout",
-            str(self.request_timeout),
-            "--max-concurrent",
-            str(self.max_concurrent),
+            "--timeout",
+            str(math.ceil(self.request_timeout)),
             "--kv-quant",
             str(self.kv_quant),
             "--max-resident-models",
@@ -212,8 +233,7 @@ class MlxLaunchSpec:
         return self.command()[:MLX_SERVE_PREFIX_TOKENS]
 
     def command_digest(self) -> str:
-        joined = "\x1f".join(self.command()).encode("utf-8")
-        return hashlib.sha256(joined).hexdigest()[:16]
+        return _command_digest(self.command())
 
 
 @dataclass(frozen=True)
@@ -227,9 +247,10 @@ class AppOwnedServerRecord:
     prefix: tuple[str, ...]
     command_digest: str
     started_at: float
+    command: tuple[str, ...] | None = None
 
     def payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": MLX_SERVE_SCHEMA_VERSION,
             "pid": int(self.pid),
             "host": self.host,
@@ -239,6 +260,9 @@ class AppOwnedServerRecord:
             "command_digest": self.command_digest,
             "started_at": float(self.started_at),
         }
+        if self.command is not None:
+            payload["command"] = list(self.command)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -294,6 +318,20 @@ def _default_codesign(bundle: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return "launch_executable_unverified"
     return "" if result.returncode == 0 else "launch_executable_unverified"
+
+
+def resolve_app_executable(legacy: Path, renamed: Path) -> Path:
+    """Recognize the renamed installed bundle without searching PATH.
+
+    Preserve the legacy candidate when present, including unsafe symlinks:
+    the existing launch validator must reject it rather than bypass it.
+    Executable and signature validation still happens before any launch.
+    """
+    if legacy.exists() or legacy.is_symlink():
+        return legacy
+    if renamed.exists() or renamed.is_symlink():
+        return renamed
+    return legacy
 
 
 def validate_executable(
@@ -472,7 +510,18 @@ def _default_catalog_reader(host: str, port: int) -> tuple[str, ...]:
         identity = item.get("id")
         if not isinstance(identity, str) or not identity:
             raise ValueError("catalog malformed")
-        if item.get("loaded") is True or item.get("state") == "ready":
+        if int(port) == MLX_SERVE_FLASH_NEXT_IQ_PORT:
+            if (
+                identity
+                in {
+                    MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID,
+                    MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID,
+                }
+                and item.get("loaded") is True
+                and item.get("state") == "ready"
+            ):
+                loaded.append(identity)
+        elif item.get("loaded") is True or item.get("state") == "ready":
             loaded.append(identity)
     return tuple(loaded)
 
@@ -550,19 +599,27 @@ class LaunchHooks:
         return float(reader())
 
 
-def _state_path(state_root: Path) -> Path:
-    return Path(state_root) / MLX_SERVE_STATE_NAME
+def _state_name(port: int | None = None) -> str:
+    if port == MLX_SERVE_FLASH_NEXT_IQ_PORT:
+        return MLX_SERVE_FLASH_NEXT_IQ_STATE_NAME
+    return MLX_SERVE_STATE_NAME
 
 
-def _state_dir_unsafe(state_root: Path) -> bool:
+def _state_path(state_root: Path, *, port: int | None = None) -> Path:
+    return Path(state_root) / _state_name(port)
+
+
+def _state_dir_unsafe(state_root: Path, *, port: int | None = None) -> bool:
     try:
-        return _state_path(state_root).is_symlink()
+        return _state_path(state_root, port=port).is_symlink()
     except OSError:
         return True
 
 
-def _load_state_payload(state_root: Path) -> tuple[str, dict[str, Any] | None]:
-    path = _state_path(state_root)
+def _load_state_payload(
+    state_root: Path, *, port: int | None = None
+) -> tuple[str, dict[str, Any] | None]:
+    path = _state_path(state_root, port=port)
     try:
         metadata = path.lstat()
     except FileNotFoundError:
@@ -583,7 +640,9 @@ def _load_state_payload(state_root: Path) -> tuple[str, dict[str, Any] | None]:
     return ("ok", raw) if isinstance(raw, dict) else ("invalid", None)
 
 
-def _record_from_payload(raw: dict[str, Any] | None) -> AppOwnedServerRecord | None:
+def _record_from_payload(
+    raw: dict[str, Any] | None, *, expected_port: int | None = None
+) -> AppOwnedServerRecord | None:
     if not isinstance(raw, dict) or raw.get("schema_version") != MLX_SERVE_SCHEMA_VERSION:
         return None
     try:
@@ -596,7 +655,10 @@ def _record_from_payload(raw: dict[str, Any] | None) -> AppOwnedServerRecord | N
     model = raw.get("model")
     digest = raw.get("command_digest")
     prefix = raw.get("prefix")
+    command = raw.get("command")
     if host != MLX_SERVE_DEFAULT_HOST or not 1024 <= port <= 65535 or pid <= 1:
+        return None
+    if expected_port is not None and port != expected_port:
         return None
     if type(model) is not str or not model or "/" in model:
         return None
@@ -605,6 +667,19 @@ def _record_from_payload(raw: dict[str, Any] | None) -> AppOwnedServerRecord | N
     if not isinstance(prefix, list) or len(prefix) != MLX_SERVE_PREFIX_TOKENS:
         return None
     if any(type(token) is not str or not token for token in prefix):
+        return None
+    parsed_command: tuple[str, ...] | None = None
+    if command is not None:
+        if not isinstance(command, list) or not command:
+            return None
+        if any(type(token) is not str or not token for token in command):
+            return None
+        parsed_command = tuple(command)
+        if tuple(prefix) != parsed_command[:MLX_SERVE_PREFIX_TOKENS]:
+            return None
+        if _command_digest(parsed_command) != digest:
+            return None
+    if port == MLX_SERVE_FLASH_NEXT_IQ_PORT and parsed_command is None:
         return None
     if not math.isfinite(started_at) or started_at <= 0:
         return None
@@ -616,17 +691,25 @@ def _record_from_payload(raw: dict[str, Any] | None) -> AppOwnedServerRecord | N
         tuple(prefix),
         digest,
         started_at,
+        parsed_command,
     )
 
 
-def read_app_owned_state(state_root: Path) -> AppOwnedServerRecord | None:
-    kind, raw = _load_state_payload(Path(state_root))
+def read_app_owned_state(
+    state_root: Path, *, port: int | None = None
+) -> AppOwnedServerRecord | None:
+    kind, raw = _load_state_payload(Path(state_root), port=port)
     if kind != "ok":
         return None
-    return _record_from_payload(raw)
+    return _record_from_payload(raw, expected_port=port)
 
 
-def write_app_owned_state(state_root: Path, record: AppOwnedServerRecord) -> None:
+def write_app_owned_state(
+    state_root: Path,
+    record: AppOwnedServerRecord,
+    *,
+    port: int | None = None,
+) -> None:
     """Atomically persist the ownership record with 0600 permissions."""
 
     root = Path(state_root)
@@ -635,7 +718,12 @@ def write_app_owned_state(state_root: Path, record: AppOwnedServerRecord) -> Non
         root.chmod(0o700)
     except OSError:
         pass
-    path = _state_path(root)
+    if port is not None and record.port != port:
+        raise OSError("mlx_serve_state_port_mismatch")
+    if record.port == MLX_SERVE_FLASH_NEXT_IQ_PORT:
+        if port != MLX_SERVE_FLASH_NEXT_IQ_PORT or record.command is None:
+            raise OSError("mlx_serve_state_port_mismatch")
+    path = _state_path(root, port=port)
     if path.is_symlink():
         raise OSError("mlx_serve_state_unsafe")
     encoded = json.dumps(
@@ -643,7 +731,8 @@ def write_app_owned_state(state_root: Path, record: AppOwnedServerRecord) -> Non
     ).encode("utf-8")
     if len(encoded) > MLX_SERVE_STATE_MAX_BYTES:
         raise OSError("mlx_serve_state_too_large")
-    temp = root / ("." + MLX_SERVE_STATE_NAME + "." + str(os.getpid()) + "." + str(time.time_ns()) + ".tmp")
+    state_name = _state_name(port)
+    temp = root / ("." + state_name + "." + str(os.getpid()) + "." + str(time.time_ns()) + ".tmp")
     descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as handle:
@@ -658,9 +747,9 @@ def write_app_owned_state(state_root: Path, record: AppOwnedServerRecord) -> Non
             pass
 
 
-def _remove_app_owned_state(state_root: Path) -> None:
+def _remove_app_owned_state(state_root: Path, *, port: int | None = None) -> None:
     try:
-        _state_path(Path(state_root)).unlink(missing_ok=True)
+        _state_path(Path(state_root), port=port).unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -686,8 +775,13 @@ def attest_app_owned_server(
             return "attest_command_mismatch"
         if record.port != spec.port:
             return "attest_command_mismatch"
+        if record.command is not None and record.command != spec.command():
+            return "attest_command_mismatch"
     command = runtime.command_for(record.pid)
-    if not _command_prefix_matches(command, record.prefix):
+    if record.command is not None:
+        if not _command_exact_matches(command, record.command):
+            return "attest_command_mismatch"
+    elif not _command_prefix_matches(command, record.prefix):
         return "attest_command_mismatch"
     if record.pid not in runtime.listeners(record.port):
         return "attest_not_listening"
@@ -698,17 +792,40 @@ def _await_catalog_ready(
     spec: MlxLaunchSpec,
     hooks: LaunchHooks,
     pid: int,
+    process: Any,
 ) -> tuple[bool, str]:
     desired = _model_basename(spec.resident_model_name)
+    strict_iq = spec.port == MLX_SERVE_FLASH_NEXT_IQ_PORT
     deadline = hooks.now() + max(0.0, float(hooks.wait_budget))
     while True:
+        poll = getattr(process, "poll", None)
+        if callable(poll):
+            try:
+                if poll() is not None:
+                    return False, "launch_spawn_exited"
+            except Exception:
+                pass
         if not hooks.alive(pid):
             return False, "launch_spawn_exited"
         try:
             entries = hooks.catalog(spec.host, spec.port)
         except Exception:
             entries = ()
-        if any(_model_basename(item) == desired for item in entries):
+        if strict_iq:
+            ready = (
+                desired == _model_basename(MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID)
+                and any(
+                    item
+                    in {
+                        MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID,
+                        MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID,
+                    }
+                    for item in entries
+                )
+            )
+        else:
+            ready = any(_model_basename(item) == desired for item in entries)
+        if ready:
             return True, "launch_ready"
         if hooks.now() >= deadline:
             return False, "launch_startup_timeout"
@@ -757,7 +874,7 @@ def launch_app_owned_server(
     stages.append(LaunchStage.PORT_CHECK.value)
     listeners = runtime.listeners(spec.port)
     if listeners:
-        record = read_app_owned_state(state_root)
+        record = read_app_owned_state(state_root, port=spec.port)
         attested = record is not None and attest_app_owned_server(
             record, hooks=runtime, spec=spec
         ) == ""
@@ -781,7 +898,7 @@ def launch_app_owned_server(
         return fail("launch_memory_insufficient")
 
     stages.append(LaunchStage.STATE_CHECK.value)
-    if _state_dir_unsafe(state_root):
+    if _state_dir_unsafe(state_root, port=spec.port):
         return fail("launch_state_unsafe")
 
     stages.append(LaunchStage.SPAWN.value)
@@ -794,9 +911,10 @@ def launch_app_owned_server(
         return fail("launch_spawn_failed")
 
     stages.append(LaunchStage.STARTUP.value)
-    ready, startup_reason = _await_catalog_ready(spec, runtime, pid)
+    ready, startup_reason = _await_catalog_ready(spec, runtime, pid, process)
     if not ready:
-        _stop_quietly(pid, runtime)
+        if startup_reason != "launch_spawn_exited":
+            _stop_quietly(pid, runtime)
         return fail(startup_reason)
 
     stages.append(LaunchStage.ATTEST.value)
@@ -808,6 +926,7 @@ def launch_app_owned_server(
         spec.prefix(),
         spec.command_digest(),
         runtime.now(),
+        spec.command() if spec.port == MLX_SERVE_FLASH_NEXT_IQ_PORT else None,
     )
     if attest_app_owned_server(record, hooks=runtime, spec=spec):
         _stop_quietly(pid, runtime)
@@ -815,7 +934,7 @@ def launch_app_owned_server(
 
     stages.append(LaunchStage.READY.value)
     try:
-        write_app_owned_state(state_root, record)
+        write_app_owned_state(state_root, record, port=spec.port)
     except OSError:
         _stop_quietly(pid, runtime)
         return fail("launch_state_write_failed")
@@ -832,12 +951,13 @@ def launch_app_owned_server(
 def stop_app_owned_server(
     state_root: Path,
     *,
+    port: int | None = None,
     hooks: LaunchHooks | None = None,
 ) -> StopResult:
     """Signal only a pid that is still attested as this app's server."""
 
     runtime = hooks or LaunchHooks()
-    record = read_app_owned_state(state_root)
+    record = read_app_owned_state(state_root, port=port)
     if record is None:
         return StopResult(False, "stop_no_owned_server", None)
     if attest_app_owned_server(record, hooks=runtime):
@@ -846,7 +966,7 @@ def stop_app_owned_server(
         runtime.signal(record.pid, "TERM")
     except Exception:
         return StopResult(False, "stop_signal_failed", record.pid)
-    _remove_app_owned_state(state_root)
+    _remove_app_owned_state(state_root, port=port)
     return StopResult(True, "stop_stopped", record.pid)
 
 
@@ -874,11 +994,11 @@ def ownership_status(
             "model": model if type(model) is str and model else None,
         }
 
-    kind, raw = _load_state_payload(Path(state_root))
+    kind, raw = _load_state_payload(Path(state_root), port=port)
     if kind == "invalid":
         return report("state_invalid", False, None)
     if kind == "ok":
-        record = _record_from_payload(raw)
+        record = _record_from_payload(raw, expected_port=port)
         if record is None:
             return report("state_invalid", False, None)
         reason = attest_app_owned_server(record, hooks=runtime)

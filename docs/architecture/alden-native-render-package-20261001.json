@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "4838fffc9323e499fd734178b1b42b606dbc7514",
+  "asset": "Alden-0.1.6-4838fff-local.zip",
+  "bytes": 11539437,
+  "sha256": "b570f9d508d24d9a6fb384206278f18ffe62c5092232c0e9e7f673b88c46da31",
+  "files": 30,
+  "allNativeBundleBytesEqual": true,
+  "executableModeRetained": true,
+  "signature": "ad-hoc; local candidate, not notarized production installer",
+  "runtime": "requires existing pinned menubar CPython sidecar; no model weights included"
+}

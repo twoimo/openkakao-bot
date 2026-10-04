@@ -25,6 +25,9 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 const WINDOW_NS: i128 = 15 * 60 * 1_000_000_000;
 const MAX_LAUNCHES_PER_WINDOW: usize = 3;
 const LAUNCH_COOLDOWN_NS: i128 = 60 * 1_000_000_000;
+const STATUS_HELPER_SOURCE: &str = include_str!("../../scripts/status-auto-reply-service.sh");
+const STATUS_SHELL: &str = "/bin/sh";
+const STATUS_SHELL_ARG0: &str = "openkakao-auto-reply-host-status";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoReplyHostAction {
@@ -63,31 +66,58 @@ struct MonitorStatus {
     next_attempt_at_unix_ns: i128,
 }
 
-fn repo_root() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("resolve openkakao-cli path")?;
+fn is_plain_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+}
+
+fn is_plain_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_dir())
+        .unwrap_or(false)
+}
+
+fn repo_root_from_exe(exe: &Path) -> Result<PathBuf> {
     let mut cursor = exe.parent();
     while let Some(dir) = cursor {
-        if dir
-            .join("scripts/prepare-auto-reply-session-runtime.py")
-            .is_file()
-            && dir.join("Cargo.toml").is_file()
+        let scripts = dir.join("scripts");
+        if is_plain_directory(&scripts)
+            && is_plain_file(&scripts.join("prepare-auto-reply-session-runtime.py"))
+            && is_plain_file(&dir.join("Cargo.toml"))
         {
             return Ok(dir.to_path_buf());
         }
         cursor = dir.parent();
     }
     bail!(
-        "could not find the openkakao-cli repository root from {}",
+        "could not find the openkakao-cli source checkout required for auto-reply-host bake/disable from {}",
         exe.display()
     );
 }
 
-fn script_path(name: &str) -> Result<PathBuf> {
-    let path = repo_root()?.join("scripts").join(name);
-    if !path.is_file() {
-        bail!("missing host script {}", path.display());
+fn repo_root() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("resolve openkakao-cli path")?;
+    repo_root_from_exe(&exe)
+}
+
+fn script_path_from_root(root: &Path, name: &str) -> Result<PathBuf> {
+    let scripts = root.join("scripts");
+    if !is_plain_directory(&scripts) {
+        bail!(
+            "missing or unsafe host scripts directory {}",
+            scripts.display()
+        );
+    }
+    let path = scripts.join(name);
+    if !is_plain_file(&path) {
+        bail!("missing or unsafe host script {}", path.display());
     }
     Ok(path)
+}
+
+fn script_path(name: &str) -> Result<PathBuf> {
+    script_path_from_root(&repo_root()?, name)
 }
 
 fn configured_python(config: &OpenKakaoConfig) -> Result<PathBuf> {
@@ -132,6 +162,30 @@ fn run_script(program: &Path, args: &[&str]) -> Result<(i32, String, String)> {
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     ))
+}
+
+fn run_embedded_shell_with(
+    program: &Path,
+    source: &str,
+    args: &[&str],
+) -> Result<(i32, String, String)> {
+    let output = Command::new(program)
+        .arg("-c")
+        .arg(source)
+        .arg(STATUS_SHELL_ARG0)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("run embedded host helper with {}", program.display()))?;
+    Ok((
+        output.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+fn run_status_helper() -> Result<(i32, String, String)> {
+    run_embedded_shell_with(Path::new(STATUS_SHELL), STATUS_HELPER_SOURCE, &[])
 }
 
 fn emit(
@@ -529,12 +583,10 @@ pub fn cmd_auto_reply_host(opts: AutoReplyHostOptions) -> Result<()> {
         return Ok(());
     }
 
-    let config = config::load_config()?;
     match opts.action {
         AutoReplyHostAction::Tick => unreachable!("tick handled above"),
         AutoReplyHostAction::Status => {
-            let script = script_path("status-auto-reply-service.sh")?;
-            let (code, stdout, stderr) = run_script(&script, &[])?;
+            let (code, stdout, stderr) = run_status_helper()?;
             let healthy = stdout.lines().any(|line| line == "healthy=true");
             let kind = stdout
                 .lines()
@@ -576,6 +628,7 @@ pub fn cmd_auto_reply_host(opts: AutoReplyHostOptions) -> Result<()> {
             )
         }
         AutoReplyHostAction::Bake => {
+            let config = config::load_config()?;
             let python = configured_python(&config)?;
             let chats = configured_chats(&config, &opts.chats)?;
             let packager = script_path("prepare-auto-reply-session-runtime.py")?;
@@ -616,5 +669,194 @@ pub fn cmd_auto_reply_host(opts: AutoReplyHostOptions) -> Result<()> {
                 code,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    use tempfile::tempdir;
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    fn write_executable(path: &Path, contents: &str) {
+        write_file(path, contents);
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn write_checkout(root: &Path) -> PathBuf {
+        write_file(&root.join("Cargo.toml"), "[package]\nname='fixture'\n");
+        write_file(
+            &root.join("scripts/prepare-auto-reply-session-runtime.py"),
+            "# fixture\n",
+        );
+        write_file(
+            &root.join("scripts/uninstall-auto-reply-session-monitor.sh"),
+            "#!/bin/sh\nexit 0\n",
+        );
+        let exe = root.join("target/debug/openkakao-cli");
+        write_file(&exe, "fixture\n");
+        exe
+    }
+
+    #[test]
+    fn embedded_status_uses_fixed_executor_and_forwards_arguments() {
+        let temp = tempdir().unwrap();
+        let shell = temp.path().join("fake-shell");
+        let capture = temp.path().join("capture");
+        write_executable(
+            &shell,
+            r#"#!/bin/sh
+set -eu
+capture="$4"
+printf '%s\n' "$1" "$3" "$4" "$5" > "${capture}.args"
+printf '%s' "$2" > "${capture}.source"
+printf 'fake stdout\n'
+printf 'fake stderr\n' >&2
+exit 7
+"#,
+        );
+
+        let (code, stdout, stderr) = run_embedded_shell_with(
+            &shell,
+            STATUS_HELPER_SOURCE,
+            &[capture.to_str().unwrap(), "chat id"],
+        )
+        .unwrap();
+
+        assert_eq!(code, 7);
+        assert_eq!(stdout, "fake stdout\n");
+        assert_eq!(stderr, "fake stderr\n");
+        assert_eq!(
+            fs::read_to_string(capture.with_extension("args")).unwrap(),
+            format!(
+                "-c\n{}\n{}\nchat id\n",
+                STATUS_SHELL_ARG0,
+                capture.display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(capture.with_extension("source")).unwrap(),
+            STATUS_HELPER_SOURCE
+        );
+    }
+
+    #[test]
+    fn system_shell_executes_embedded_source_and_preserves_exit_status() {
+        let source = r#"printf 'first=%s|second=%s\n' "$1" "$2"
+printf 'shell error\n' >&2
+exit 9
+"#;
+        let (code, stdout, stderr) =
+            run_embedded_shell_with(Path::new(STATUS_SHELL), source, &["alpha", "beta gamma"])
+                .unwrap();
+
+        assert_eq!(code, 9);
+        assert_eq!(stdout, "first=alpha|second=beta gamma\n");
+        assert_eq!(stderr, "shell error\n");
+    }
+
+    #[test]
+    fn embedded_status_reports_missing_executor_without_fallback() {
+        let temp = tempdir().unwrap();
+        let missing = temp.path().join("missing-shell");
+        let error = run_embedded_shell_with(&missing, STATUS_HELPER_SOURCE, &[]).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("run embedded host helper"));
+        assert!(message.contains(missing.to_str().unwrap()));
+    }
+
+    #[test]
+    fn embedded_status_ignores_missing_or_contaminated_checkout_assets() {
+        let temp = tempdir().unwrap();
+        let checkout = temp.path().join("checkout");
+        write_file(
+            &checkout.join("scripts/status-auto-reply-service.sh"),
+            "contaminated runtime asset\n",
+        );
+        let shell = temp.path().join("fake-shell");
+        let capture = temp.path().join("capture");
+        write_executable(
+            &shell,
+            r#"#!/bin/sh
+set -eu
+capture="$4"
+printf '%s' "$2" > "$capture"
+"#,
+        );
+
+        let (code, stdout, stderr) =
+            run_embedded_shell_with(&shell, STATUS_HELPER_SOURCE, &[capture.to_str().unwrap()])
+                .unwrap();
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(fs::read_to_string(capture).unwrap(), STATUS_HELPER_SOURCE);
+        assert!(STATUS_HELPER_SOURCE.contains("MONITOR_LABEL="));
+        assert!(!STATUS_HELPER_SOURCE.contains("contaminated runtime asset"));
+    }
+
+    #[test]
+    fn development_checkout_assets_remain_supported() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let exe = write_checkout(&root);
+
+        assert_eq!(repo_root_from_exe(&exe).unwrap(), root);
+        assert_eq!(
+            script_path_from_root(&root, "uninstall-auto-reply-session-monitor.sh").unwrap(),
+            root.join("scripts/uninstall-auto-reply-session-monitor.sh")
+        );
+    }
+
+    #[test]
+    fn installed_prefix_without_source_checkout_fails_closed_for_bake_disable() {
+        let temp = tempdir().unwrap();
+        let exe = temp.path().join("prefix/bin/openkakao-cli");
+        write_file(&exe, "fixture\n");
+
+        let error = repo_root_from_exe(&exe).unwrap_err();
+        assert!(format!("{error:#}").contains("source checkout required"));
+    }
+
+    #[test]
+    fn source_checkout_rejects_symlinked_markers_and_helpers() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let outside = temp.path().join("outside");
+        write_file(&root.join("Cargo.toml"), "[package]\nname='fixture'\n");
+        write_file(&outside.join("prepare.py"), "# outside\n");
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        symlink(
+            outside.join("prepare.py"),
+            root.join("scripts/prepare-auto-reply-session-runtime.py"),
+        )
+        .unwrap();
+        let exe = root.join("target/debug/openkakao-cli");
+        write_file(&exe, "fixture\n");
+        assert!(repo_root_from_exe(&exe).is_err());
+
+        fs::remove_file(root.join("scripts/prepare-auto-reply-session-runtime.py")).unwrap();
+        write_file(
+            &root.join("scripts/prepare-auto-reply-session-runtime.py"),
+            "# fixture\n",
+        );
+        write_file(&outside.join("uninstall.sh"), "#!/bin/sh\nexit 0\n");
+        symlink(
+            outside.join("uninstall.sh"),
+            root.join("scripts/uninstall-auto-reply-session-monitor.sh"),
+        )
+        .unwrap();
+        let error =
+            script_path_from_root(&root, "uninstall-auto-reply-session-monitor.sh").unwrap_err();
+        assert!(format!("{error:#}").contains("missing or unsafe host script"));
     }
 }

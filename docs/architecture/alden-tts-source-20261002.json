@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "version": "0.3.3",
+  "scope": "source/controlled actual-weight experiments; installation and production separate",
+  "per_turn_cancel": [
+    {
+      "iteration": 0,
+      "steps": 2,
+      "elapsed_seconds": 1.2066343328915536,
+      "cancel_to_return_seconds": 0.01448320783674717,
+      "waveform_published": false,
+      "prior_file_preserved": true
+    },
+    {
+      "iteration": 1,
+      "steps": 2,
+      "elapsed_seconds": 0.3573258330579847,
+      "cancel_to_return_seconds": 0.02348716603592038,
+      "waveform_published": false,
+      "prior_file_preserved": true
+    },
+    {
+      "iteration": 2,
+      "steps": 2,
+      "elapsed_seconds": 0.4316752089653164,
+      "cancel_to_return_seconds": 0.016434249933809042,
+      "waveform_published": false,
+      "prior_file_preserved": true
+    }
+  ],
+  "global_cancel": {
+    "samples": [
+      {
+        "iteration": 0,
+        "steps": 2,
+        "elapsed_seconds": 0.9036547921132296,
+        "cancel_to_return_seconds": 0.019552499987185,
+        "waveform_published": false,
+        "prior_file_preserved": true
+      }
+    ],
+    "after_close_mps_allocated_bytes": 0,
+    "device": "mps:0",
+    "dtype": "torch.bfloat16"
+  },
+  "candidate_development": {
+    "cases": 6,
+    "seeds": [
+      301,
+      302,
+      303
+    ],
+    "exact_readback_pass": 6
+  },
+  "heldout": [
+    {
+      "label": "holdout-401",
+      "input": "7입니다.",
+      "seconds": 3.594358541769907,
+      "duration_seconds": 1.44,
+      "readback": " 숫자는 7입니다."
+    },
+    {
+      "label": "holdout-402",
+      "input": "21입니다.",
+      "seconds": 5.59331633313559,
+      "duration_seconds": 2.8,
+      "readback": " 숫자는 20일입니다."
+    },
+    {
+      "label": "holdout-403",
+      "input": "99입니다.",
+      "seconds": 7.369689290877432,
+      "duration_seconds": 3.6,
+      "readback": " 숫자는 99입니다."
+    },
+    {
+      "label": "holdout-404",
+      "input": "1234입니다.",
+      "seconds": 7.805903000058606,
+      "duration_seconds": 3.6,
+      "readback": " 숫자는 1234입니다."
+    },
+    {
+      "label": "holdout-405",
+      "input": "0입니다.",
+      "seconds": 4.250086291925982,
+      "duration_seconds": 2.0,
+      "readback": " 숫자는 0입니다."
+    },
+    {
+      "label": "holdout-406",
+      "input": "회의는 금요일 오후 3시입니다.",
+      "seconds": 4.815703833010048,
+      "duration_seconds": 2.64,
+      "readback": " 회의는 금요일 오후 3시입니다."
+    },
+    {
+      "label": "holdout-407",
+      "input": "정확한 값은 3.5입니다.",
+      "seconds": 4.7126029171049595,
+      "duration_seconds": 2.48,
+      "readback": " 정확한 값은 3.5입니다."
+    },
+    {
+      "label": "holdout-408",
+      "input": "온도는 영하 3도입니다.",
+      "seconds": 5.829695458058268,
+      "duration_seconds": 3.04,
+      "readback": " 온도는 영하 3도입니다."
+    }
+  ],
+  "configured_python": {
+    "total": 1134,
+    "skipped": 27,
+    "failed": 0
+  },
+  "focused_python": {
+    "total": 111,
+    "skipped": 5,
+    "failed": 0
+  },
+  "limitations": [
+    "21 vs 20일 homophone requires human audio review",
+    "no microphone/wake/playback/physical hotkey latency evidence",
+    "no cold-model cancellation percentile or speedup claim"
+  ]
+}

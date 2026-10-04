@@ -1,0 +1,41 @@
+{
+  "scope": "Same synthetic1000-message room, latest100 loaded, identical1200x760 viewport, actual DOM geometry; UI fixture, not primary/native or whole-app performance",
+  "samples": 1,
+  "baseline": {
+    "fullyVisibleKeys": [
+      "996",
+      "997",
+      "998",
+      "999"
+    ],
+    "height": 760,
+    "lastMessageFullyVisible": false,
+    "readerHeight": 549.5625,
+    "readerWidth": 753,
+    "sidebarWidth": 202,
+    "topbarHeight": 62,
+    "width": 1200
+  },
+  "candidate": {
+    "fullyVisibleKeys": [
+      "995",
+      "996",
+      "997",
+      "998",
+      "999",
+      "1000"
+    ],
+    "height": 760,
+    "lastMessageFullyVisible": true,
+    "readerHeight": 636.15625,
+    "readerWidth": 775,
+    "sidebarWidth": 180,
+    "topbarHeight": 0,
+    "width": 1200
+  },
+  "comparison": {
+    "reader_height_increase_percent": 15.756852041396566,
+    "reader_area_increase_percent": 19.13885834273883,
+    "fully_visible_count_increase_percent": 50.0
+  }
+}

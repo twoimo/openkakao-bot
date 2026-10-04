@@ -285,10 +285,7 @@ fn parse_id_field(field: &str) -> Result<i128, EventIdError> {
 /// `Some`, the chat id must equal it (and the expected value must itself be in
 /// `0 < v < MAX_INT64`), otherwise the id is rejected as belonging to another
 /// room. Returns the input string on success so callers can use it directly.
-pub fn validate_event_id(
-    value: &str,
-    expected_chat_id: Option<i64>,
-) -> Result<&str, EventIdError> {
+pub fn validate_event_id(value: &str, expected_chat_id: Option<i64>) -> Result<&str, EventIdError> {
     // `_validated_expected_chat_id`: the expected room id, if given, must be in
     // range before it can be compared (Python validates it up front).
     if let Some(expected) = expected_chat_id {
@@ -481,7 +478,8 @@ const CREATE_PIPELINE_EVENTS_SQL: &str = "CREATE TABLE IF NOT EXISTS pipeline_ev
 );";
 
 /// The index over `pipeline_events` used by [`SqliteHistoryStore::recent`].
-const CREATE_PIPELINE_EVENTS_INDEX_SQL: &str = "CREATE INDEX IF NOT EXISTS idx_pipeline_events_recent
+const CREATE_PIPELINE_EVENTS_INDEX_SQL: &str =
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_events_recent
     ON pipeline_events(at DESC, id DESC);";
 
 /// The stored-DDL markers that must all be present for the table to be
@@ -536,8 +534,7 @@ fn migrate_pipeline_events(conn: &Connection) -> Result<(), StoreError> {
     }
 
     let tx = conn.unchecked_transaction()?;
-    let before: i64 =
-        tx.query_row("SELECT COUNT(*) FROM pipeline_events", [], |row| row.get(0))?;
+    let before: i64 = tx.query_row("SELECT COUNT(*) FROM pipeline_events", [], |row| row.get(0))?;
 
     // New table under a temporary name, carrying the widened flow constraint
     // and the two nullable image columns.
@@ -566,11 +563,9 @@ fn migrate_pipeline_events(conn: &Connection) -> Result<(), StoreError> {
         FROM pipeline_events;",
     )?;
 
-    let after: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM pipeline_events_migrated",
-        [],
-        |row| row.get(0),
-    )?;
+    let after: i64 = tx.query_row("SELECT COUNT(*) FROM pipeline_events_migrated", [], |row| {
+        row.get(0)
+    })?;
     if before != after {
         // `tx` is dropped here, rolling the rebuild back and leaving the
         // original table intact.
@@ -708,18 +703,23 @@ mod tests {
         // Well-formed ids in range are accepted.
         assert!(validate_event_id("db:1:1", None).is_ok());
         assert!(validate_event_id("db:42:7", Some(42)).is_ok());
-        assert!(validate_event_id(
-            &format!("db:{}:{}", MAX_INT64 - 1, MAX_INT64 - 1),
-            None
-        )
-        .is_ok());
+        assert!(
+            validate_event_id(&format!("db:{}:{}", MAX_INT64 - 1, MAX_INT64 - 1), None).is_ok()
+        );
         // Room binding: a well-formed id from another room is denied.
         assert_eq!(
             validate_event_id("db:42:7", Some(84)),
             Err(EventIdError::WrongRoom)
         );
         // Malformed shapes: leading zero, extra field, injection, wrong prefix.
-        for bad in ["db:042:1", "db:42:1:2", "db:42:1 OR 1=1", "DB:1:1", "", "db:42:0"] {
+        for bad in [
+            "db:042:1",
+            "db:42:1:2",
+            "db:42:1 OR 1=1",
+            "DB:1:1",
+            "",
+            "db:42:0",
+        ] {
             assert!(
                 validate_event_id(bad, None).is_err(),
                 "{bad:?} must be denied"
@@ -744,7 +744,9 @@ mod tests {
     #[test]
     fn append_then_recent_roundtrips_a_clean_event() {
         let store = SqliteHistoryStore::open_in_memory().expect("open");
-        store.append(sample("flow-abc", "detected_ok")).expect("append");
+        store
+            .append(sample("flow-abc", "detected_ok"))
+            .expect("append");
 
         let recent = store.recent(10).expect("recent");
         assert_eq!(recent.len(), 1);
@@ -763,7 +765,10 @@ mod tests {
         let recent = store.recent(1).expect("recent");
         // The stored trace id is the stable provenance hash, not the raw input.
         assert_ne!(recent[0].trace_id, "flow-abc");
-        assert_eq!(recent[0].trace_id, crate::context::provenance_id("flow-abc"));
+        assert_eq!(
+            recent[0].trace_id,
+            crate::context::provenance_id("flow-abc")
+        );
     }
 
     #[test]
@@ -982,7 +987,11 @@ mod tests {
         let store = SqliteHistoryStore::open_in_memory().expect("open");
         // A short raw chat body with no URL or path must still be refused —
         // a result code is a machine token, never prose.
-        for prose in ["안녕하세요 비밀 메시지", "account_fp=owner-1234", "hi there"] {
+        for prose in [
+            "안녕하세요 비밀 메시지",
+            "account_fp=owner-1234",
+            "hi there",
+        ] {
             let err = store
                 .append(sample("flow", prose))
                 .expect_err("should refuse free text");

@@ -19,10 +19,10 @@
 //! Validates: Requirements R1.3, R2.3, R2.4, R2.6, R2.7, R8.1, R8.2, R8.3,
 //! R8.5, R8.8, R10.3
 
+use openkakao_cli::logging::SqliteHistoryStore;
 use openkakao_cli::logging::{
     FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus, StoreError,
 };
-use openkakao_cli::logging::SqliteHistoryStore;
 use openkakao_cli::memory::{
     MemoryDraft, MemoryError, MemoryItem, MemoryKind, MemoryStore, RagComparisonRow,
     SqliteMemoryStore,
@@ -60,7 +60,10 @@ fn history_shows_recorded_stages_newest_first() {
     match history_view(&store, HISTORY_WINDOW_LIMIT) {
         HistoryView::Rows(rows) => {
             assert_eq!(rows.len(), 2);
-            assert!(rows[0].contains("보낼 수 있는지 확인"), "newest first: {rows:?}");
+            assert!(
+                rows[0].contains("보낼 수 있는지 확인"),
+                "newest first: {rows:?}"
+            );
             assert!(rows[1].contains("메시지 확인"));
             assert!(rows.iter().all(|r| r.contains("자동 답변")));
         }
@@ -116,7 +119,9 @@ struct FailingHistoryStore;
 
 impl HistoryStore for FailingHistoryStore {
     fn recent(&self, _limit: usize) -> Result<Vec<PipelineEvent>, StoreError> {
-        Err(StoreError::Malformed("simulated lookup failure".to_string()))
+        Err(StoreError::Malformed(
+            "simulated lookup failure".to_string(),
+        ))
     }
     fn append(&self, _ev: PipelineEvent) -> Result<(), StoreError> {
         Ok(())
@@ -131,7 +136,10 @@ fn history_lookup_failure_shows_plain_notice_and_preserves() {
     match history_view(&store, HISTORY_WINDOW_LIMIT) {
         HistoryView::Failed(msg) => {
             assert!(msg.contains("불러오지 못"));
-            assert!(msg.contains("그대로"), "must reassure records are preserved (R2.6)");
+            assert!(
+                msg.contains("그대로"),
+                "must reassure records are preserved (R2.6)"
+            );
         }
         other => panic!("expected failure notice, got {other:?}"),
     }
@@ -178,7 +186,10 @@ fn memory_delete_requires_confirmation() {
         .expect("note");
 
     let prompt = delete_confirmation_message(&item);
-    assert!(prompt.contains("지울까요"), "plain confirmation (R8.5/R8.8)");
+    assert!(
+        prompt.contains("지울까요"),
+        "plain confirmation (R8.5/R8.8)"
+    );
     assert!(prompt.contains("되돌릴 수 없"));
 
     // The user cancels: nothing is removed.

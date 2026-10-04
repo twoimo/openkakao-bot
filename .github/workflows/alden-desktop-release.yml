@@ -1,0 +1,645 @@
+name: Alden Desktop Release
+
+on:
+  push:
+    tags:
+      - "alden-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alden-desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-apple-darwin
+
+jobs:
+  package:
+    name: Sign and notarize macOS arm64 package
+    runs-on: macos-14
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag_name: ${{ steps.identity.outputs.tag_name }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      cli_version: ${{ steps.identity.outputs.cli_version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Alden tag, source SHA, and versions
+        id: identity
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import tomllib
+
+          tag = os.environ["TAG_NAME"]
+          match = re.fullmatch(r"alden-v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))", tag)
+          if not match:
+              raise SystemExit(f"Alden production tag must be exact alden-vX.Y.Z, received {tag}")
+          version = match.group(1)
+
+          desktop_package = json.loads(pathlib.Path("desktop/package.json").read_text())
+          desktop_lock = json.loads(pathlib.Path("desktop/package-lock.json").read_text())
+          tauri_config = json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())
+          desktop_cargo = tomllib.loads(pathlib.Path("desktop/src-tauri/Cargo.toml").read_text())
+          cli_cargo = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+          declared = {
+              "desktop/package.json": desktop_package["version"],
+              "desktop/package-lock.json": desktop_lock["version"],
+              "desktop/package-lock.json packages root": desktop_lock["packages"][""]["version"],
+              "desktop/src-tauri/tauri.conf.json": tauri_config["version"],
+              "desktop/src-tauri/Cargo.toml": desktop_cargo["package"]["version"],
+          }
+          mismatches = {path: value for path, value in declared.items() if value != version}
+          if mismatches:
+              details = ", ".join(f"{path}={value}" for path, value in sorted(mismatches.items()))
+              raise SystemExit(f"Alden version {version} does not match metadata: {details}")
+          if tauri_config["bundle"]["targets"] != ["app"]:
+              raise SystemExit("Alden production workflow requires the Tauri app bundle target")
+
+          source_sha = subprocess.check_output(
+              ["git", "rev-parse", f"{tag}^{{commit}}"], text=True
+          ).strip()
+          head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if head_sha != source_sha:
+              raise SystemExit(f"checkout HEAD {head_sha} does not match {tag} commit {source_sha}")
+
+          output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a") as handle:
+              handle.write(f"version={version}\n")
+              handle.write(f"tag_name={tag}\n")
+              handle.write(f"source_sha={source_sha}\n")
+              handle.write(f"cli_version={cli_cargo['package']['version']}\n")
+          PY
+
+      - name: Require production signing and notarization prerequisites
+        env:
+          ALDEN_APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.ALDEN_APPLE_DEVELOPER_ID_P12_BASE64 }}
+          ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          ALDEN_APPLE_SIGNING_IDENTITY: ${{ secrets.ALDEN_APPLE_SIGNING_IDENTITY }}
+          ALDEN_APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.ALDEN_APPLE_NOTARY_KEY_P8_BASE64 }}
+          ALDEN_APPLE_NOTARY_KEY_ID: ${{ secrets.ALDEN_APPLE_NOTARY_KEY_ID }}
+          ALDEN_APPLE_NOTARY_ISSUER_ID: ${{ secrets.ALDEN_APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          required=(
+            ALDEN_APPLE_DEVELOPER_ID_P12_BASE64
+            ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD
+            ALDEN_APPLE_SIGNING_IDENTITY
+            ALDEN_APPLE_NOTARY_KEY_P8_BASE64
+            ALDEN_APPLE_NOTARY_KEY_ID
+            ALDEN_APPLE_NOTARY_ISSUER_ID
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required production release secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          case "$ALDEN_APPLE_SIGNING_IDENTITY" in
+            "Developer ID Application:"*) ;;
+            *)
+              echo "::error::ALDEN_APPLE_SIGNING_IDENTITY must name a Developer ID Application identity; ad-hoc and development identities are not production release identities."
+              exit 1
+              ;;
+          esac
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.95.0
+          rustflags: ""
+
+      - name: Install locked desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Import Developer ID certificate
+        env:
+          ALDEN_APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.ALDEN_APPLE_DEVELOPER_ID_P12_BASE64 }}
+          ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          ALDEN_APPLE_SIGNING_IDENTITY: ${{ secrets.ALDEN_APPLE_SIGNING_IDENTITY }}
+          CERT_PATH: ${{ runner.temp }}/alden-developer-id.p12
+          KEYCHAIN_PATH: ${{ runner.temp }}/alden-signing.keychain-db
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import os
+          import pathlib
+
+          encoded = "".join(os.environ["ALDEN_APPLE_DEVELOPER_ID_P12_BASE64"].split())
+          data = base64.b64decode(encoded, validate=True)
+          pathlib.Path(os.environ["CERT_PATH"]).write_bytes(data)
+          PY
+          chmod 600 "$CERT_PATH"
+          keychain_password="$(openssl rand -hex 32)"
+          security create-keychain -p "$keychain_password" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$keychain_password" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" |
+            grep -F -- "$ALDEN_APPLE_SIGNING_IDENTITY" >/dev/null
+
+      - name: Build arm64 CLI and Tauri v2 app
+        run: |
+          set -euo pipefail
+          rustup target add "$TARGET"
+          shasum -a 256 -c scripts/menubar-bytecode.sha256
+          cargo build --release --locked --target "$TARGET" --bin openkakao-cli
+          test "$(lipo -archs target/$TARGET/release/openkakao-cli)" = "arm64"
+
+          # desktop/src-tauri/build.rs intentionally stages the release CLI from
+          # target/release. Give it the arm64 binary while preserving its exact
+          # resource allowlist and fail-closed validation.
+          mkdir -p target/release
+          cp "target/$TARGET/release/openkakao-cli" target/release/openkakao-cli
+          chmod 755 target/release/openkakao-cli
+          /bin/sh scripts/build-alden-voice-audio.sh
+
+          (
+            cd desktop
+            npm run tauri -- build --target "$TARGET" --bundles app --no-sign
+          )
+
+      - name: Verify unsigned bundle identity, architecture, and resources
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          app="desktop/src-tauri/target/$TARGET/release/bundle/macos/Alden.app"
+          main="$app/Contents/MacOS/openkakao-alden-desktop"
+          embedded_cli="$app/Contents/Resources/bin/openkakao-cli"
+          embedded_audio="$app/Contents/Resources/scripts/libalden_audio.dylib"
+          test -x "$main"
+          test -x "$embedded_cli"
+          test "$(lipo -archs "$main")" = "arm64"
+          test "$(lipo -archs "$embedded_cli")" = "arm64"
+          test "$(lipo -archs "$embedded_audio")" = "arm64"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "com.openkakao.alden.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")" = "openkakao-alden-desktop"
+
+          APP_PATH="$app" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          app = pathlib.Path(os.environ["APP_PATH"])
+          config = json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())
+          resources = config["bundle"]["resources"]
+          if not resources:
+              raise SystemExit("Tauri bundle resource allowlist is empty")
+          root = app / "Contents" / "Resources"
+          for source, destination in sorted(resources.items()):
+              path = root / destination
+              if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+                  raise SystemExit(f"missing/empty bundled resource {destination} from {source}")
+          PY
+
+      - name: Sign, notarize, and staple Alden.app
+        id: notarize
+        env:
+          ALDEN_APPLE_SIGNING_IDENTITY: ${{ secrets.ALDEN_APPLE_SIGNING_IDENTITY }}
+          ALDEN_APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.ALDEN_APPLE_NOTARY_KEY_P8_BASE64 }}
+          ALDEN_APPLE_NOTARY_KEY_ID: ${{ secrets.ALDEN_APPLE_NOTARY_KEY_ID }}
+          ALDEN_APPLE_NOTARY_ISSUER_ID: ${{ secrets.ALDEN_APPLE_NOTARY_ISSUER_ID }}
+          KEYCHAIN_PATH: ${{ runner.temp }}/alden-signing.keychain-db
+          NOTARY_KEY_PATH: ${{ runner.temp }}/alden-notary-key.p8
+          NOTARY_RESULT_PATH: ${{ runner.temp }}/alden-notary-result.json
+        run: |
+          set -euo pipefail
+          app="desktop/src-tauri/target/$TARGET/release/bundle/macos/Alden.app"
+          embedded_cli="$app/Contents/Resources/bin/openkakao-cli"
+          submission_zip="$RUNNER_TEMP/alden-notary-submission.zip"
+          embedded_audio="$app/Contents/Resources/scripts/libalden_audio.dylib"
+
+          codesign --force --options runtime --timestamp --keychain "$KEYCHAIN_PATH" --sign "$ALDEN_APPLE_SIGNING_IDENTITY" "$embedded_cli"
+          codesign --force --options runtime --timestamp --keychain "$KEYCHAIN_PATH" --sign "$ALDEN_APPLE_SIGNING_IDENTITY" "$embedded_audio"
+          codesign --force --options runtime --timestamp --keychain "$KEYCHAIN_PATH" --sign "$ALDEN_APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --strict --verbose=2 "$embedded_cli"
+          codesign --verify --strict --verbose=2 "$embedded_audio"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          python3 - <<'PY'
+          import base64
+          import os
+          import pathlib
+
+          encoded = "".join(os.environ["ALDEN_APPLE_NOTARY_KEY_P8_BASE64"].split())
+          data = base64.b64decode(encoded, validate=True)
+          pathlib.Path(os.environ["NOTARY_KEY_PATH"]).write_bytes(data)
+          PY
+          chmod 600 "$NOTARY_KEY_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$submission_zip"
+          xcrun notarytool submit "$submission_zip" --key "$NOTARY_KEY_PATH" --key-id "$ALDEN_APPLE_NOTARY_KEY_ID" --issuer "$ALDEN_APPLE_NOTARY_ISSUER_ID" --wait --output-format json > "$NOTARY_RESULT_PATH"
+
+          NOTARY_RESULT_PATH="$NOTARY_RESULT_PATH" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          result = json.loads(pathlib.Path(os.environ["NOTARY_RESULT_PATH"]).read_text())
+          if result.get("status") != "Accepted":
+              raise SystemExit(f"notarization was not accepted: {result.get('status')!r}")
+          submission_id = result.get("id")
+          if not submission_id:
+              raise SystemExit("notarization result did not include a submission id")
+          with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
+              handle.write(f"submission_id={submission_id}\n")
+          PY
+
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+
+      - name: Package pinned CPython 3.11 menubar runtime sidecars
+        run: |
+          set -euo pipefail
+          test "$(/usr/bin/uname -s)" = "Darwin"
+          test "$(/usr/bin/uname -m)" = "arm64"
+          source_url="$(/bin/sh scripts/alden-menubar-runtime.sh source-url)"
+          source_archive="$RUNNER_TEMP/alden-menubar-cpython-source.tar.gz"
+          mkdir -p dist
+          /usr/bin/curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --output "$source_archive" \
+            "$source_url"
+          /bin/sh scripts/alden-menubar-runtime.sh package "$source_archive" dist
+
+      - name: Package immutable release evidence
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          TAG_NAME: ${{ steps.identity.outputs.tag_name }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          CLI_VERSION: ${{ steps.identity.outputs.cli_version }}
+          NOTARY_SUBMISSION_ID: ${{ steps.notarize.outputs.submission_id }}
+        run: |
+          set -euo pipefail
+          app="desktop/src-tauri/target/$TARGET/release/bundle/macos/Alden.app"
+          asset="Alden-$VERSION-macos-arm64.zip"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$asset"
+
+          APP_PATH="$app" ASSET_NAME="$asset" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          def sha256(path: pathlib.Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for block in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(block)
+              return digest.hexdigest()
+
+          app = pathlib.Path(os.environ["APP_PATH"])
+          asset = pathlib.Path("dist") / os.environ["ASSET_NAME"]
+          runtime_asset = pathlib.Path("dist/Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz")
+          runtime_manifest_path = pathlib.Path("dist/alden-menubar-runtime-v1.json")
+          runtime_installer = pathlib.Path("dist/install-alden-menubar-runtime.sh")
+          runtime_manifest = json.loads(runtime_manifest_path.read_text())
+          config = json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())
+          resources = []
+          for source, destination in sorted(config["bundle"]["resources"].items()):
+              path = app / "Contents" / "Resources" / destination
+              resources.append(
+                  {
+                      "source": source,
+                      "destination": destination,
+                      "sha256": sha256(path),
+                      "bytes": path.stat().st_size,
+                  }
+              )
+          evidence = {
+              "schema": "alden-desktop-release-evidence-v1",
+              "product": "Alden",
+              "channel": "production",
+              "platform": "macos",
+              "architecture": "arm64",
+              "rust_target": os.environ["TARGET"],
+              "version": os.environ["VERSION"],
+              "tag": os.environ["TAG_NAME"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "embedded_cli_version": os.environ["CLI_VERSION"],
+              "bundle_identifier": config["identifier"],
+              "signing": {
+                  "scope": "Alden.app",
+                  "developer_id_application": True,
+                  "hardened_runtime": True,
+                  "notarized": True,
+                  "stapled": True,
+                  "notary_submission_id": os.environ["NOTARY_SUBMISSION_ID"],
+              },
+              "menubar_runtime": {
+                  "manifest": runtime_manifest,
+                  "apple_notarization": "not asserted; integrity is pinned by provenance and SHA-256",
+                  "offline_installer": runtime_installer.name,
+              },
+              "assets": [
+                  {
+                      "name": path.name,
+                      "sha256": sha256(path),
+                      "bytes": path.stat().st_size,
+                  }
+                  for path in (asset, runtime_asset, runtime_manifest_path, runtime_installer)
+              ],
+              "bundle_resources": resources,
+          }
+          pathlib.Path("dist/alden-desktop-release-evidence-v1.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          (
+            cd dist
+            shasum -a 256 \
+              "$asset" \
+              Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz \
+              alden-menubar-runtime-v1.json \
+              install-alden-menubar-runtime.sh \
+              alden-desktop-release-evidence-v1.json \
+              > SHA256SUMS.txt
+          )
+          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6"
+
+      - name: Upload bounded production release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: alden-production-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove ephemeral Apple credentials
+        if: always()
+        env:
+          KEYCHAIN_PATH: ${{ runner.temp }}/alden-signing.keychain-db
+          CERT_PATH: ${{ runner.temp }}/alden-developer-id.p12
+          NOTARY_KEY_PATH: ${{ runner.temp }}/alden-notary-key.p8
+          NOTARY_RESULT_PATH: ${{ runner.temp }}/alden-notary-result.json
+        run: |
+          rm -f "$CERT_PATH" "$NOTARY_KEY_PATH" "$NOTARY_RESULT_PATH" "$RUNNER_TEMP/alden-notary-submission.zip"
+          security delete-keychain "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+
+  publish:
+    name: Publish and verify Alden GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ needs.package.outputs.tag_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: alden-production-release
+          path: dist
+
+      - name: Re-verify source identity and immutable evidence before publish
+        env:
+          TAG_NAME: ${{ needs.package.outputs.tag_name }}
+          VERSION: ${{ needs.package.outputs.version }}
+          SOURCE_SHA: ${{ needs.package.outputs.source_sha }}
+          CLI_VERSION: ${{ needs.package.outputs.cli_version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$TAG_NAME^{commit}")" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          (
+            cd dist
+            shasum -a 256 -c SHA256SUMS.txt
+          )
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tomllib
+
+          version = os.environ["VERSION"]
+          declared = {
+              "desktop/package.json": json.loads(pathlib.Path("desktop/package.json").read_text())["version"],
+              "desktop/package-lock.json": json.loads(pathlib.Path("desktop/package-lock.json").read_text())["version"],
+              "desktop/src-tauri/tauri.conf.json": json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())["version"],
+              "desktop/src-tauri/Cargo.toml": tomllib.loads(pathlib.Path("desktop/src-tauri/Cargo.toml").read_text())["package"]["version"],
+          }
+          if any(value != version for value in declared.values()):
+              raise SystemExit(f"release metadata changed before publish: {declared}")
+          cli_version = tomllib.loads(pathlib.Path("Cargo.toml").read_text())["package"]["version"]
+          if cli_version != os.environ["CLI_VERSION"]:
+              raise SystemExit(f"CLI version changed before publish: {cli_version}")
+
+          evidence_path = pathlib.Path("dist/alden-desktop-release-evidence-v1.json")
+          evidence = json.loads(evidence_path.read_text())
+          expected_asset = f"Alden-{version}-macos-arm64.zip"
+          runtime_asset = "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz"
+          runtime_manifest_name = "alden-menubar-runtime-v1.json"
+          runtime_installer = "install-alden-menubar-runtime.sh"
+          expected_files = {
+              expected_asset,
+              runtime_asset,
+              runtime_manifest_name,
+              runtime_installer,
+              "SHA256SUMS.txt",
+              "alden-desktop-release-evidence-v1.json",
+          }
+          actual_files = {path.name for path in pathlib.Path("dist").iterdir() if path.is_file()}
+          if actual_files != expected_files:
+              raise SystemExit(f"unexpected release file set: {sorted(actual_files)}")
+          expected_identity = {
+              "schema": "alden-desktop-release-evidence-v1",
+              "channel": "production",
+              "platform": "macos",
+              "architecture": "arm64",
+              "version": version,
+              "tag": os.environ["TAG_NAME"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "embedded_cli_version": os.environ["CLI_VERSION"],
+          }
+          for key, expected in expected_identity.items():
+              if evidence.get(key) != expected:
+                  raise SystemExit(f"evidence {key}={evidence.get(key)!r}, expected {expected!r}")
+          signing = evidence.get("signing", {})
+          if signing.get("scope") != "Alden.app":
+              raise SystemExit("production evidence signing scope must be Alden.app")
+          for key in ("developer_id_application", "hardened_runtime", "notarized", "stapled"):
+              if signing.get(key) is not True:
+                  raise SystemExit(f"production evidence is missing signing assertion {key}")
+          if not signing.get("notary_submission_id"):
+              raise SystemExit("production evidence is missing notarization submission id")
+          expected_evidence_assets = {
+              expected_asset,
+              runtime_asset,
+              runtime_manifest_name,
+              runtime_installer,
+          }
+          assets = evidence.get("assets", [])
+          if {item.get("name") for item in assets} != expected_evidence_assets:
+              raise SystemExit(f"unexpected evidence assets: {assets!r}")
+          if len(assets) != len(expected_evidence_assets):
+              raise SystemExit(f"duplicate or missing release evidence assets: {assets!r}")
+          for item in assets:
+              asset_path = pathlib.Path("dist") / item["name"]
+              digest = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+              if item.get("sha256") != digest or item.get("bytes") != asset_path.stat().st_size:
+                  raise SystemExit(f"asset metadata does not match release evidence: {item['name']}")
+          expected_runtime_manifest = subprocess.check_output(
+              ["/bin/sh", "scripts/alden-menubar-runtime.sh", "manifest"], text=True
+          )
+          runtime_manifest_path = pathlib.Path("dist") / runtime_manifest_name
+          if runtime_manifest_path.read_text() != expected_runtime_manifest:
+              raise SystemExit("runtime manifest does not match the tagged source provenance contract")
+          runtime_manifest = json.loads(expected_runtime_manifest)
+          if runtime_manifest.get("release_asset", {}).get("name") != runtime_asset:
+              raise SystemExit("runtime manifest release asset name is inconsistent")
+          runtime_digest = hashlib.sha256((pathlib.Path("dist") / runtime_asset).read_bytes()).hexdigest()
+          if runtime_manifest.get("release_asset", {}).get("sha256") != runtime_digest:
+              raise SystemExit("runtime archive SHA-256 does not match the pinned manifest")
+          if evidence.get("menubar_runtime", {}).get("manifest") != runtime_manifest:
+              raise SystemExit("release evidence does not embed the exact runtime manifest")
+          if not evidence.get("bundle_resources"):
+              raise SystemExit("release evidence is missing bundle resource hashes")
+          PY
+
+      - name: Refuse to mutate an existing Alden release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.package.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import urllib.error
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["TAG_NAME"]
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request) as response:
+                  response.read()
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  raise SystemExit(0)
+              raise
+          raise SystemExit(f"GitHub Release {tag} already exists; refusing to mutate it")
+          PY
+
+      - name: Create immutable Alden production release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ needs.package.outputs.tag_name }}
+          target_commitish: ${{ needs.package.outputs.source_sha }}
+          name: Alden ${{ needs.package.outputs.version }} (macOS arm64)
+          draft: false
+          prerelease: false
+          make_latest: false
+          generate_release_notes: true
+          body: |
+            macOS arm64 Alden app, signed with Developer ID and notarized by Apple.
+
+            This release also carries a pinned CPython 3.11.16 arm64 menubar
+            runtime archive, its provenance manifest, and an offline installer.
+            The runtime archive is a byte-identical copy of the SHA-256-pinned
+            upstream python-build-standalone asset; Apple notarization applies
+            to Alden.app only. Follow desktop/README.md before installing Alden.
+            The app ZIP does not contain Python, MLX model weights, or voice
+            dependencies. Voice activation remains disabled until the wake-model
+            release gate passes.
+          fail_on_unmatched_files: true
+          files: dist/*
+
+      - name: Read back published assets and verify SHA-256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.package.outputs.tag_name }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir readback
+          gh release download "$TAG_NAME" --dir readback
+          cmp dist/SHA256SUMS.txt readback/SHA256SUMS.txt
+          cmp dist/alden-desktop-release-evidence-v1.json readback/alden-desktop-release-evidence-v1.json
+          (
+            cd readback
+            shasum -a 256 -c SHA256SUMS.txt
+          )
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          tag = os.environ["TAG_NAME"]
+          raw = subprocess.check_output(
+              ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{tag}"]
+          )
+          release = json.loads(raw)
+          if release["tag_name"] != tag or release["draft"] is not False or release["prerelease"] is not False:
+              raise SystemExit("published Alden release identity/state is incorrect")
+          expected = {
+              f"Alden-{os.environ['VERSION']}-macos-arm64.zip",
+              "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+              "alden-menubar-runtime-v1.json",
+              "install-alden-menubar-runtime.sh",
+              "SHA256SUMS.txt",
+              "alden-desktop-release-evidence-v1.json",
+          }
+          assets = {asset["name"] for asset in release["assets"]}
+          if assets != expected:
+              raise SystemExit(f"published asset set differs from evidence: {sorted(assets)}")
+          PY

@@ -20,6 +20,7 @@ from verify_local_models import (  # noqa: E402
     DIAGNOSTIC_MAX_TOKENS,
     DIAGNOSTIC_PROMPT,
     FIXED_MODEL_IDS,
+    IQ_MODEL_ID,
     LOCAL_BASE_URL,
     MAX_MODEL_ROWS,
     MAX_RESPONSE_BYTES,
@@ -95,6 +96,11 @@ class VerifyLocalModelsTests(unittest.TestCase):
                     "state": "ready",
                 },
                 {
+                    "id": f"mlx/{IQ_MODEL_ID}",
+                    "loaded": True,
+                    "state": "ready",
+                },
+                {
                     "id": f"mlx/{SWAP_MODEL_ID}",
                     "loaded": True,
                     "state": "ready",
@@ -102,7 +108,7 @@ class VerifyLocalModelsTests(unittest.TestCase):
             ]
         }
 
-    def test_both_fixed_models_succeed_with_fake_opener(self):
+    def test_all_fixed_models_succeed_with_fake_opener(self):
         opener = _FakeOpener(self._ready_catalog())
 
         results = verify_local_models(FIXED_MODEL_IDS, opener=opener, timeout=5.0)
@@ -112,6 +118,8 @@ class VerifyLocalModelsTests(unittest.TestCase):
         self.assertEqual(
             [(request.full_url, request.get_method()) for request, _ in opener.calls],
             [
+                (MODELS_URL, "GET"),
+                (CHAT_COMPLETIONS_URL, "POST"),
                 (MODELS_URL, "GET"),
                 (CHAT_COMPLETIONS_URL, "POST"),
                 (MODELS_URL, "GET"),
@@ -139,11 +147,11 @@ class VerifyLocalModelsTests(unittest.TestCase):
 
     def test_optional_mlx_prefix_is_accepted_but_unknown_model_is_not_opened(self):
         opener = _FakeOpener(self._ready_catalog())
-        prefixed = verify_local_model(f"mlx/{RESIDENT_MODEL_ID}", opener=opener)
+        prefixed = verify_local_model(f"mlx/{IQ_MODEL_ID}", opener=opener)
         invalid = verify_local_model("mlx/remote/secret-model", opener=opener)
 
         self.assertTrue(prefixed.ok)
-        self.assertEqual(prefixed.model, RESIDENT_MODEL_ID)
+        self.assertEqual(prefixed.model, IQ_MODEL_ID)
         self.assertEqual(invalid.as_dict()["model"], "invalid")
         self.assertEqual(invalid.reason, "invalid_model_id")
         self.assertEqual(len(opener.calls), 2)
@@ -322,7 +330,7 @@ class VerifyLocalModelsTests(unittest.TestCase):
         self.assertNotIn("Bearer", rendered)
         self.assertNotIn("raw-server-output", rendered)
 
-    def test_cli_defaults_to_both_and_exits_nonzero_when_any_fails(self):
+    def test_cli_defaults_to_all_fixed_models_and_exits_nonzero_when_any_fails(self):
         catalog = self._ready_catalog()
         catalog["data"][1]["loaded"] = False
         catalog["data"][1]["state"] = "unloaded"

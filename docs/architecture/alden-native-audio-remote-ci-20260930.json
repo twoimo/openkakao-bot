@@ -1,0 +1,47 @@
+{
+  "schema": "alden-native-audio-remote-ci-v1",
+  "recorded_at": "2026-09-30T13:18:10.624388+00:00",
+  "head": "effa5c629955093dc64f7370295e789422783ad4",
+  "run_id": 36719629616,
+  "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36719629616",
+  "conclusion": "success",
+  "checks": [
+    {
+      "name": "Launchd and Python harness",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T13:09:48Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36719629616/job/109901120000"
+    },
+    {
+      "name": "macOS cargo test",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T13:13:26Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36719629616/job/109901119852"
+    },
+    {
+      "name": "Tauri desktop and focused Python tests",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T13:11:48Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36719629616/job/109901119597"
+    },
+    {
+      "name": "Alden unsigned arm64 release + runtime smoke",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T13:13:25Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36719629616/job/109901120029"
+    }
+  ],
+  "hosted_python": {
+    "tests": 971,
+    "skipped": 73,
+    "seconds": 42.881,
+    "failed": 0
+  },
+  "pr_draft": true,
+  "merge_state": "CLEAN",
+  "limits": [
+    "Hosted tests skip unavailable optional local dependencies; local pinned full-runtime result remains 971 tests with 2 skips.",
+    "Successful arm64 unsigned-bundle/native-library verification and pinned offline runtime smoke do not establish notarized public release.",
+    "No human speech, installed UI interaction or active shared worker cutover is covered."
+  ]
+}

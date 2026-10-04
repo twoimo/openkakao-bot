@@ -1,0 +1,36 @@
+{
+  "conclusion": "success",
+  "headSha": "4838fffc9323e499fd734178b1b42b606dbc7514",
+  "status": "completed",
+  "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36789358296",
+  "jobs": [
+    {
+      "name": "Tauri desktop and focused Python tests",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36789358296/job/110138316761"
+    },
+    {
+      "name": "Launchd and Python harness",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36789358296/job/110138316959"
+    },
+    {
+      "name": "Alden unsigned arm64 release + runtime smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36789358296/job/110138317045"
+    },
+    {
+      "name": "macOS cargo test",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36789358296/job/110138317057"
+    }
+  ],
+  "focusedPythonLogSummary": [
+    "Tauri desktop and focused Python tests\tRun focused local AI tests\t2026-09-30T23:08:05.7357350Z Ran 1054 tests in 52.070s",
+    "Tauri desktop and focused Python tests\tRun focused local AI tests\t2026-09-30T23:08:05.7358450Z OK (skipped=83)"
+  ]
+}

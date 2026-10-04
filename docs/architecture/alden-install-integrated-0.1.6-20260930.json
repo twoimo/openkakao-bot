@@ -1,0 +1,158 @@
+{
+  "schema": "alden-install-integrated-0.1.6-v1",
+  "recorded_utc": "2026-09-30T09:38:06.649984+00:00",
+  "version": "0.1.6",
+  "bundle_identifier": "com.openkakao.alden.desktop",
+  "pid": 50010,
+  "executable": "/Applications/Alden.app/Contents/MacOS/openkakao-alden-desktop",
+  "files": [
+    {
+      "path": "Contents/Info.plist",
+      "sha256": "969cf397e7852bf2e3160cd0505e21a7c925a7b6add4f876f4604e8a22744ee1",
+      "matches": true
+    },
+    {
+      "path": "Contents/MacOS/openkakao-alden-desktop",
+      "sha256": "cbbbdc206b8165f2b75351cba0315c5f85174a7530b230302daa37deb5e42965",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/bin/openkakao-cli",
+      "sha256": "90fe7746bee8fe29a532e11e3697b1ba415c80508cbba3731d6f0e29ba305d03",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+      "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+      "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+      "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_abort.py",
+      "sha256": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_browser_use.py",
+      "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_local_embedding_server.py",
+      "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_tool_runtime.py",
+      "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_voice.py",
+      "sha256": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-menubar.py",
+      "sha256": "365e80ba88d4efbba81cb3a4f40ed7ffb61eaaa32e790e868d8692f0fcec568c",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-operator-prompts.json",
+      "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-tui.py",
+      "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_ax_ui.py",
+      "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_knowledge_graph.py",
+      "sha256": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_metrics.py",
+      "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_ondevice.py",
+      "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_operator_prompt_store.py",
+      "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_reference_search.py",
+      "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_reference_store.py",
+      "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_transition_journal.py",
+      "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/bujamentor-tui.py",
+      "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/bujamentor_operator_prompt_store.py",
+      "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/local_mlx_gateway.py",
+      "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/local_mlx_model_readiness.py",
+      "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd",
+      "matches": true
+    },
+    {
+      "path": "Contents/Resources/scripts/mlx_serve_lifecycle.py",
+      "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f",
+      "matches": true
+    },
+    {
+      "path": "Contents/_CodeSignature/CodeResources",
+      "sha256": "695c0bbcbd92c1db0708f55ecf5075ac0dbbdd74ac3c2f1eeb39927737c02574",
+      "matches": true
+    }
+  ],
+  "all_match": true,
+  "launchd_running": true,
+  "native_ui": "CUA getApp timeoutReached(-10005) after installation",
+  "limits": [
+    "Local ad-hoc installation; no notarization/publicrelease",
+    "Process/resource readback is not direct WKWebView/microphone/shortcut verification",
+    "Shared Kakao worker runtime preserved"
+  ]
+}

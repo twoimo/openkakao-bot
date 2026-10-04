@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "installed_version": "0.3.5",
+  "installed_source_commit": "5a11bd345e46132b907400fc3e6da4590dbdc0d1",
+  "scope": "Installed adapters, repeated synthetic presegmented WAVs and fixed text histories; no microphone, wake/VAD, speaker playback, physical interruption or production send.",
+  "checkpoints": {
+    "llm": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+    "stt": "mlx-community/whisper-large-v3-turbo@a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+    "tts": "Qwen3-TTS 1.7B, actual MPS:0 / torch.bfloat16"
+  },
+  "pipeline": {
+    "samples": 8,
+    "ended": 8,
+    "errors": 0,
+    "replies": [
+      "4입니다.",
+      "12입니다.",
+      "4입니다.",
+      "12입니다.",
+      "4입니다.",
+      "12입니다.",
+      "4입니다.",
+      "12입니다."
+    ],
+    "turn_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "context_versions": [
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16
+    ],
+    "seconds": 43.819704500027,
+    "first_turn_stages_seconds": 14.633053,
+    "warm_stages_seconds": {
+      "samples": 7,
+      "median": 4.075492,
+      "min": 3.121902,
+      "max": 5.280797
+    },
+    "stage_seconds": [
+      {
+        "turn": 1,
+        "stage": "stt",
+        "seconds": 1.689637
+      },
+      {
+        "turn": 1,
+        "stage": "llm",
+        "seconds": 2.638349
+      },
+      {
+        "turn": 1,
+        "stage": "tts_file",
+        "seconds": 10.305066
+      },
+      {
+        "turn": 2,
+        "stage": "stt",
+        "seconds": 0.244638
+      },
+      {
+        "turn": 2,
+        "stage": "llm",
+        "seconds": 1.510898
+      },
+      {
+        "turn": 2,
+        "stage": "tts_file",
+        "seconds": 2.669182
+      },
+      {
+        "turn": 3,
+        "stage": "stt",
+        "seconds": 0.226548
+      },
+      {
+        "turn": 3,
+        "stage": "llm",
+        "seconds": 0.745165
+      },
+      {
+        "turn": 3,
+        "stage": "tts_file",
+        "seconds": 2.588409
+      },
+      {
+        "turn": 4,
+        "stage": "stt",
+        "seconds": 0.214054
+      },
+      {
+        "turn": 4,
+        "stage": "llm",
+        "seconds": 0.770463
+      },
+      {
+        "turn": 4,
+        "stage": "tts_file",
+        "seconds": 2.678063
+      },
+      {
+        "turn": 5,
+        "stage": "stt",
+        "seconds": 0.228063
+      },
+      {
+        "turn": 5,
+        "stage": "llm",
+        "seconds": 0.683666
+      },
+      {
+        "turn": 5,
+        "stage": "tts_file",
+        "seconds": 2.210172
+      },
+      {
+        "turn": 6,
+        "stage": "stt",
+        "seconds": 0.231275
+      },
+      {
+        "turn": 6,
+        "stage": "llm",
+        "seconds": 0.770438
+      },
+      {
+        "turn": 6,
+        "stage": "tts_file",
+        "seconds": 4.279084
+      },
+      {
+        "turn": 7,
+        "stage": "stt",
+        "seconds": 0.201106
+      },
+      {
+        "turn": 7,
+        "stage": "llm",
+        "seconds": 0.617036
+      },
+      {
+        "turn": 7,
+        "stage": "tts_file",
+        "seconds": 3.25735
+      },
+      {
+        "turn": 8,
+        "stage": "stt",
+        "seconds": 0.198053
+      },
+      {
+        "turn": 8,
+        "stage": "llm",
+        "seconds": 1.036615
+      },
+      {
+        "turn": 8,
+        "stage": "tts_file",
+        "seconds": 3.411441
+      }
+    ],
+    "network_connect_count": 16,
+    "only_destination": "127.0.0.1:11234",
+    "peak_process_rss_bytes": 2973515776,
+    "voice_process_mlx_peak_bytes": 2554400658,
+    "tts_mps_allocated_bytes": 4190486272,
+    "tts_mps_driver_bytes": 6796902400,
+    "mps_after_close_bytes": 8388608,
+    "after_close_harness_retained_parameter": true,
+    "whisper_cache_empty_after_close": true,
+    "pressure_before": 1,
+    "pressure_after": 1,
+    "swap_free_bytes_before": 1045755330,
+    "swap_free_bytes_after": 1045755330
+  },
+  "separate_audio_readback": {
+    "samples": 8,
+    "exact_expected_digits": 7,
+    "ambiguous_samples": [
+      1
+    ],
+    "rows": [
+      {
+        "file": "pipeline-1.wav",
+        "duration_seconds": 1.44,
+        "frames_over_rms_0_01": 26,
+        "last_active_second": 1.32,
+        "readback": " 셋자는 사입니다."
+      },
+      {
+        "file": "pipeline-2.wav",
+        "duration_seconds": 1.44,
+        "frames_over_rms_0_01": 30,
+        "last_active_second": 1.4,
+        "readback": " 숫자는 12입니다."
+      },
+      {
+        "file": "pipeline-3.wav",
+        "duration_seconds": 1.36,
+        "frames_over_rms_0_01": 28,
+        "last_active_second": 1.28,
+        "readback": " 숫자는 4입니다."
+      },
+      {
+        "file": "pipeline-4.wav",
+        "duration_seconds": 1.68,
+        "frames_over_rms_0_01": 35,
+        "last_active_second": 1.6,
+        "readback": " 숫자는 12입니다."
+      },
+      {
+        "file": "pipeline-5.wav",
+        "duration_seconds": 1.44,
+        "frames_over_rms_0_01": 30,
+        "last_active_second": 1.44,
+        "readback": " 숫자는 4입니다."
+      },
+      {
+        "file": "pipeline-6.wav",
+        "duration_seconds": 2.96,
+        "frames_over_rms_0_01": 44,
+        "last_active_second": 2.92,
+        "readback": " 숫자는 12입니다."
+      },
+      {
+        "file": "pipeline-7.wav",
+        "duration_seconds": 1.28,
+        "frames_over_rms_0_01": 26,
+        "last_active_second": 1.2,
+        "readback": " 숫자는 4입니다."
+      },
+      {
+        "file": "pipeline-8.wav",
+        "duration_seconds": 1.76,
+        "frames_over_rms_0_01": 34,
+        "last_active_second": 1.72,
+        "readback": " 숫자는 12입니다."
+      }
+    ],
+    "limits": "Independent local ASR is a check, not human listening. The first clip is not accepted as exact."
+  },
+  "llm_text": {
+    "captured_at": "2026-10-02T13:59:03Z",
+    "adapter_sha256": "4a8fd3f375fa57eb5473d32f324ad267670281c87d8e262fdee444d52f2bceb7",
+    "adapter_source_unchanged": true,
+    "case_sha256": "1237a28987757c44aafa6098f4dda15586a7307ebc9bdc64e3382b84bf392aa2",
+    "condition": "existing resident model; prefix cache and other host jobs remain active",
+    "samples": 12,
+    "correct_fact_count": 12,
+    "adapter_error_count": 0,
+    "full_answer_seconds": {
+      "p50": 0.451804,
+      "p95_nearest_rank": 1.971878
+    },
+    "first_visible_token_seconds": {
+      "samples": 12,
+      "p50": 0.23794,
+      "p95_nearest_rank": 1.601429
+    },
+    "interrupted": "",
+    "requested_samples": 12,
+    "drain_timeout_seconds": 5.0
+  },
+  "partial_run": {
+    "samples": 2,
+    "correct_fact_count": 2,
+    "adapter_error_count": 0,
+    "interrupted": "existing inference active; benchmark stopped before next case",
+    "requested_samples": 12
+  },
+  "llm_network": {
+    "connections": 87,
+    "only_destination": "127.0.0.1:11234"
+  },
+  "source_receipts": [
+    {
+      "name": "run-installed-stress/pipeline-receipt.json",
+      "sha256": "79f42e9e32aa7aa8f899667e7ffac8328dd4fcd1956ed253b89e35ae187feb52"
+    },
+    {
+      "name": "audio-readback.json",
+      "sha256": "d608f9461dfe5fc08d36edca5824941d772f9948334a94b080b0f11b64e81c28"
+    },
+    {
+      "name": "llm-12.json",
+      "sha256": "4b1562652c1fb6c3d37f03c39eef160850f833ec1ceeb15f9b7cab7b88081993"
+    },
+    {
+      "name": "llm-12-drain5.json",
+      "sha256": "b2b2952f61599d46e4d0f8bb3a47c09587d67ae4b115e270efe4f95e85d531e4"
+    }
+  ],
+  "limits": [
+    "Stage totals end at WAV creation, not first audible playback.",
+    "Repeated pair and 12 cached shared-host text samples do not establish broad stress success or causal performance improvement.",
+    "The earlier recursive_mutex crash did not recur; its root cause remains unproven.",
+    "Unified-memory RSS, MLX and MPS measurements have overlapping scope and must not be added.",
+    "No reliable tokens/s or human end-to-first-speaker measurement in this run."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "reviewedFile": "desktop/src-tauri/src/render_audit.rs",
+  "reviewedSha256": "7f0b853d5f3d456cf9cf5d5049f4dc13bfe4605669e56780d46aa888492a9a50",
+  "agentId": "01a0f40f-ff7e-7f02-8bca-e5ffbd418d78",
+  "requestedRoute": "gpt-6-astra/max",
+  "routeAttestation": "unavailable; no substitution",
+  "findingsClosed": [
+    "native focus-neutral orderFront",
+    "deadline gates and exit status",
+    "fresh hidden event and current-loop diagnostics",
+    "layout/context/backing density validation",
+    "Retina movement and settling deadline"
+  ],
+  "remainingSourceFindings": 0,
+  "scope": "independent read-only source review; physical2x remains unexecuted",
+  "independentInstalledEvidenceReview": {
+    "status": "pass",
+    "scope": "owned installed-binary audit PID39541 only; not primaryPID39125",
+    "captures": "both core and rings visible; no clipping",
+    "cycles": "ten fresh hidden events; zero hidden and late frames; resumed3-4frames",
+    "retina": "available=false; no physical2x claim"
+  }
+}

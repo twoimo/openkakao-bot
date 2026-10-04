@@ -1,0 +1,459 @@
+{
+  "schema_version": 1,
+  "source_commit": "410fc3961b66dc4fd9973db6192b6be068157ec0",
+  "activation": {
+    "activated": true,
+    "runtime_release": "20260930T0610Z-sqlite-410fc39",
+    "original_room_count": 3,
+    "designated_requirement_unchanged": true,
+    "preflight_before": {
+      "valid": true,
+      "network": false,
+      "will_send": false,
+      "workers_started": false
+    },
+    "preflight_after": {
+      "valid": true,
+      "network": false,
+      "will_send": false,
+      "workers_started": false
+    },
+    "backup_created": true,
+    "new_manual_sends": 0
+  },
+  "runtime": {
+    "schema_version": 1,
+    "source_commit": "410fc3961b66dc4fd9973db6192b6be068157ec0",
+    "new_test_sends": 0,
+    "runtime_release": "20260930T0610Z-sqlite-410fc39",
+    "samples": [
+      {
+        "index": 1,
+        "observed_at_utc": "2026-09-30T06:11:22.908176+00:00",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.871,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748673.089633,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.812,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748671.209974,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.657,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748671.753408,
+            "fence_reason": ""
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "observed_at_utc": "2026-09-30T06:11:48.132850+00:00",
+        "host_exit_code": 1,
+        "host_healthy": false,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.689,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748673.089633,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.731,
+            "watermark_did_not_regress": true,
+            "pending_count": 1,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748671.209974,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.752,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748671.753408,
+            "fence_reason": ""
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "observed_at_utc": "2026-09-30T06:12:13.359635+00:00",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.582,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748673.089633,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "processing",
+            "status_age_s": 0.842,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 7,
+            "context_sync_at": 1790748732.5848162,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.713,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748733.181411,
+            "fence_reason": ""
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "observed_at_utc": "2026-09-30T06:12:38.646669+00:00",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.603,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748735.008276,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.323,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 3,
+            "context_sync_at": 1790748755.655146,
+            "fence_reason": ""
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.576,
+            "watermark_did_not_regress": true,
+            "pending_count": 0,
+            "pending_gap_count": 0,
+            "nonterminal_jobs": 0,
+            "context_sync_at": 1790748733.181411,
+            "fence_reason": ""
+          }
+        ]
+      }
+    ],
+    "asset_checks": {
+      "alden_abort.py": true,
+      "auto-reply-apple-watch.py": true,
+      "auto-reply-db-watch.py": true,
+      "auto-reply-rerank.py": true,
+      "auto-reply-schema.json": true,
+      "auto-reply-service.py": true,
+      "auto-reply-session-monitor.py": true,
+      "auto-reply-supervisor.py": true,
+      "auto-reply-tui.py": true,
+      "auto-reply-worker.py": true,
+      "auto_reply_ax_ui.py": true,
+      "auto_reply_knowledge_graph.py": true,
+      "auto_reply_metrics.py": true,
+      "auto_reply_ondevice.py": true,
+      "auto_reply_reference_search.py": true,
+      "auto_reply_reference_store.py": true,
+      "auto_reply_transition_journal.py": true,
+      "config.toml": true,
+      "local_mlx_gateway.py": true,
+      "openkakao-cli": true
+    },
+    "limitations": [
+      "Four discrete samples do not establish continuous operation.",
+      "No new natural conversation was generated for this check.",
+      "No live AX send or cancellation shortcut was exercised."
+    ],
+    "stable_cli_matches_build": false,
+    "elapsed_s": 75.964,
+    "passed": false
+  },
+  "installed_app": {
+    "schema_version": 1,
+    "source_commit": "410fc3961b66dc4fd9973db6192b6be068157ec0",
+    "observed_at_utc": "2026-09-30T06:13:19.082897+00:00",
+    "built_file_count": 28,
+    "installed_file_count": 28,
+    "differing_file_count": 0,
+    "codesign_verify_exit_code": 0,
+    "launch_agent_exit_code": 0,
+    "launch_agent_running": true,
+    "process_pid": 48417,
+    "direct_installed_screen_verified": false,
+    "screen_limitation": "No visible Alden window exposed to Computer Use; getApp timed out.",
+    "public_signed_notarized_release": false
+  },
+  "new_natural_events": {
+    "schema_version": 1,
+    "observed_at_utc": "2026-09-30T06:20:19.388474+00:00",
+    "window_start_utc": "2026-09-30T06:10:00+00:00",
+    "new_manual_sends": 0,
+    "rooms": [
+      {
+        "room_index": 1,
+        "job_count": 0,
+        "status_counts": {},
+        "reason_counts": {},
+        "error_class_counts": {},
+        "supersession_edges_inside_window": 0,
+        "terminal_chain_roots_if_edges_acyclic": 0,
+        "ingress_age_s": {
+          "n": 0,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "transition_code_counts": []
+      },
+      {
+        "room_index": 2,
+        "job_count": 12,
+        "status_counts": {
+          "pending": 1,
+          "skipped": 11
+        },
+        "reason_counts": {
+          "model_temporarily_unavailable": 1,
+          "burst_superseded": 10,
+          "stale_backlog": 1
+        },
+        "error_class_counts": {
+          "model_runner_failed": 1,
+          "": 11
+        },
+        "supersession_edges_inside_window": 9,
+        "terminal_chain_roots_if_edges_acyclic": 3,
+        "ingress_age_s": {
+          "n": 12,
+          "median": 6.975453972816467,
+          "min": 1.4838221073150635,
+          "max": 27.224114894866943
+        },
+        "transition_code_counts": [
+          {
+            "component": "ingress",
+            "code": "candidate_persisted",
+            "count": 16
+          },
+          {
+            "component": "ingress",
+            "code": "hook_dispatch_intent",
+            "count": 16
+          },
+          {
+            "component": "authorization",
+            "code": "authorization_allowed",
+            "count": 12
+          },
+          {
+            "component": "media",
+            "code": "media_acquire_started",
+            "count": 1
+          },
+          {
+            "component": "media",
+            "code": "media_acquire_ready",
+            "count": 1
+          },
+          {
+            "component": "queue",
+            "code": "enqueued",
+            "count": 12
+          },
+          {
+            "component": "ingress",
+            "code": "hook_ack_received",
+            "count": 16
+          },
+          {
+            "component": "ingress",
+            "code": "cursor_advance_persisting",
+            "count": 16
+          },
+          {
+            "component": "ingress",
+            "code": "cursor_advanced",
+            "count": 16
+          },
+          {
+            "component": "authorization",
+            "code": "authorization_rejected",
+            "count": 4
+          },
+          {
+            "component": "queue",
+            "code": "status_changed",
+            "count": 36
+          },
+          {
+            "component": "context",
+            "code": "context_lookup",
+            "count": 6
+          },
+          {
+            "component": "model",
+            "code": "model_call",
+            "count": 3
+          },
+          {
+            "component": "model",
+            "code": "model_result",
+            "count": 3
+          },
+          {
+            "component": "projection",
+            "code": "projection_written",
+            "count": 11
+          },
+          {
+            "component": "terminal",
+            "code": "terminal_committed",
+            "count": 12
+          },
+          {
+            "component": "delay",
+            "code": "delay_scheduled",
+            "count": 2
+          },
+          {
+            "component": "pre_send",
+            "code": "pre_send_check",
+            "count": 1
+          },
+          {
+            "component": "ax",
+            "code": "ax_mutation_authorized",
+            "count": 1
+          },
+          {
+            "component": "recovery",
+            "code": "recovery_started",
+            "count": 1
+          },
+          {
+            "component": "recovery",
+            "code": "reconciled",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "room_index": 3,
+        "job_count": 0,
+        "status_counts": {},
+        "reason_counts": {},
+        "error_class_counts": {},
+        "supersession_edges_inside_window": 0,
+        "terminal_chain_roots_if_edges_acyclic": 0,
+        "ingress_age_s": {
+          "n": 0,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "transition_code_counts": []
+      }
+    ]
+  },
+  "ci": {
+    "run": 36676596909,
+    "status": "completed",
+    "conclusion": "failure",
+    "failure": "Anyhow Debug includes a backtrace under RUST_BACKTRACE=1; exact one-line retry diagnostic assertion failed. Separate Web follow-up is in progress."
+  }
+}

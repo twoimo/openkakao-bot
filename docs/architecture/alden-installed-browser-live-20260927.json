@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "source_revision": "51ebd9c",
+  "app": "/Applications/Alden.app",
+  "runtime_python": "3.11.16",
+  "task_url": "https://example.com",
+  "expected_document_title": "Example Domain",
+  "exit_code": 0,
+  "pure_json_stdout": true,
+  "result": {
+    "errorCode": "",
+    "ok": true,
+    "result": "Example Domain",
+    "status": "completed"
+  },
+  "elapsed_seconds": 28.769829208031297,
+  "stderr_bytes": 1432,
+  "owned_chromium_pids_before": [],
+  "owned_chromium_pids_after": [],
+  "installed_menubar_script_sha256": "365e80ba88d4efbba81cb3a4f40ed7ffb61eaaa32e790e868d8692f0fcec568c",
+  "independent_dom_readback": {
+    "url": "https://example.com/",
+    "http_status": 200,
+    "document_title": "Example Domain",
+    "elapsed_seconds": 0.9431178340455517,
+    "method": "independent Playwright DOM read with provisioned Chromium1243"
+  },
+  "invocation_kind": "installed Python entrypoint with fixed dedicated browser interpreter",
+  "tauri_invoke_event_exercised": false,
+  "bundle_byte_comparison_mismatches": 0,
+  "bundled_resources_matched_committed_source": 24,
+  "captured_at_utc": "2026-09-27T14:26:23.958045+00:00"
+}

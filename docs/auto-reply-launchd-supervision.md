@@ -371,7 +371,7 @@ that retained entries are hidden. The generated
 `open-auto-reply-tui.command` intentionally uses the default redacted mode.
 
 The primary menu-bar app is the Tauri bundle installed by
-`scripts/install-jarvis-desktop.sh`; its `com.openkakao.jarvis.desktop`
+`scripts/install-alden-desktop.sh`; its `com.openkakao.alden.desktop`
 LaunchAgent owns the panel and its Rust/Python bridge. The former Swift
 companion is read-only for Kakao/AX and remains available only through the
 explicit `OPENKAKAO_MENUBAR_BACKEND=swift`

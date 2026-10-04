@@ -1,0 +1,30 @@
+{
+  "schema": "alden-photo-worker-candidate-v1",
+  "prepared_utc": "2026-09-30T20:16:33Z",
+  "worker_sha256": "20bc0ac046dc022fecbf34596d81784eea513a49ab92784b85446de96d0dafbb",
+  "prepared": true,
+  "activated": false,
+  "assets_verified": 21,
+  "source_files_byte_equal": 19,
+  "chat_selector_count": 3,
+  "selectors_preserved": true,
+  "config_byte_equal": true,
+  "shared_state_equal_during_stage": true,
+  "limits": [
+    "No supervisor/worker adopted, killed, restarted or activated.",
+    "Candidate private config is excluded from distributable artifacts.",
+    "Readback equality covers candidate staging only, not earlier test execution."
+  ],
+  "code_commit": "247c67644dece85144b9d42276a350a99765c57b",
+  "candidate_id": "alden-0.1.6-photo-20bc0ac046dc",
+  "preservation_readback": {
+    "enrollment_unchanged": true,
+    "config_unchanged": true,
+    "stable_cli_unchanged": true,
+    "active_runtime_unchanged": true,
+    "active_queue_count": 3,
+    "queue_id_status_digests_unchanged": true,
+    "scope": "candidate staging interval only"
+  },
+  "private_receipt_location": "Private stage root receipt.json; exact paths and production aggregates are not published."
+}

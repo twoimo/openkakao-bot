@@ -1,0 +1,714 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "description": "Frozen dev and heldout judgments authored from source fixture facts, not generated retrieval answers.",
+  "queries": [
+    {
+      "id": "dev-abbreviation-computer-use",
+      "split": "dev",
+      "text": "컴유 자동화 알려줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "korean_abbreviation",
+        "alias"
+      ],
+      "relevant": {
+        "topic:tool:computer-use": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:tool:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:tool:computer-use",
+        "topic:model:claude",
+        "topic:semantic:z-payment-history"
+      ]
+    },
+    {
+      "id": "dev-english-alias-korean-query",
+      "split": "dev",
+      "text": "클로드 비교해줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "korean_alias",
+        "cross_script"
+      ],
+      "relevant": {
+        "topic:model:claude": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:model:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:model:claude",
+        "topic:tool:computer-use"
+      ]
+    },
+    {
+      "id": "dev-spacing-joined",
+      "split": "dev",
+      "text": "서울맛집 추천해줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "spacing",
+        "dense_rescue"
+      ],
+      "relevant": {
+        "topic:place:seoul-food": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:place:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:place:seoul-food",
+        "topic:semantic:z-payment-history"
+      ]
+    },
+    {
+      "id": "dev-typo-particle",
+      "split": "dev",
+      "text": "러닝박에 못 뛰었어",
+      "chat_id": "room-alpha",
+      "tags": [
+        "typo",
+        "particle",
+        "normalization"
+      ],
+      "relevant": {
+        "ent:activity:running": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:running:1"
+      ],
+      "fixture_dense_ranking": [
+        "ent:activity:running",
+        "topic:place:seoul-food"
+      ]
+    },
+    {
+      "id": "dev-contextual-abbreviation",
+      "split": "dev",
+      "text": "알쫀쿠 쿠폰 만료일 알려줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "korean_abbreviation",
+        "context_gate"
+      ],
+      "relevant": {
+        "ent:tech:alizonku": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:cloud:1"
+      ],
+      "fixture_dense_ranking": [
+        "ent:tech:alizonku",
+        "topic:tool:computer-use"
+      ]
+    },
+    {
+      "id": "dev-homonym-room-isolation",
+      "split": "dev",
+      "text": "민수 담당이 뭐였지",
+      "chat_id": "room-alpha",
+      "tags": [
+        "homonym",
+        "room_scope"
+      ],
+      "relevant": {
+        "person:알파방:minsu-alpha": 3
+      },
+      "forbidden": [
+        "person:베타방:minsu-beta"
+      ],
+      "expected_evidence_ids": [
+        "synthetic:person:alpha:minsu"
+      ],
+      "fixture_dense_ranking": [
+        "person:베타방:minsu-beta",
+        "person:알파방:minsu-alpha",
+        "topic:tool:computer-use"
+      ]
+    },
+    {
+      "id": "heldout-room-prefix-isolation",
+      "split": "heldout",
+      "text": "영희가 한 말 찾아줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "room_scope",
+        "prefix_collision",
+        "negative"
+      ],
+      "relevant": {},
+      "forbidden": [
+        "person:알파방-스터디:younghee-study"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:알파방-스터디:younghee-study",
+        "person:알파방:minsu-alpha"
+      ]
+    },
+    {
+      "id": "heldout-participant-disambiguation",
+      "split": "heldout",
+      "text": "김서준 메모 보여줘",
+      "chat_id": "room-alpha",
+      "participant_id": "dev-001",
+      "tags": [
+        "homonym",
+        "participant_scope"
+      ],
+      "relevant": {
+        "person:알파방:dev-001": 3
+      },
+      "forbidden": [
+        "person:알파방:design-002"
+      ],
+      "expected_evidence_ids": [
+        "synthetic:person:alpha:dev-001"
+      ],
+      "fixture_dense_ranking": [
+        "person:알파방:design-002",
+        "person:알파방:dev-001"
+      ]
+    },
+    {
+      "id": "heldout-retracted-entity",
+      "split": "heldout",
+      "text": "오로라 일정 알려줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "deletion",
+        "freshness"
+      ],
+      "relevant": {
+        "topic:project:z-current": 3
+      },
+      "forbidden": [
+        "topic:project:a-deleted"
+      ],
+      "expected_evidence_ids": [
+        "synthetic:aurora:current"
+      ],
+      "fixture_dense_ranking": [
+        "topic:project:z-current",
+        "topic:project:a-deleted"
+      ]
+    },
+    {
+      "id": "heldout-latest-entity",
+      "split": "heldout",
+      "text": "올든 요금 뭐가 최신이야",
+      "chat_id": "room-alpha",
+      "tags": [
+        "freshness",
+        "duplicate_topic"
+      ],
+      "relevant": {
+        "topic:pricing:z-current": 3
+      },
+      "forbidden": [
+        "topic:pricing:a-old"
+      ],
+      "expected_evidence_ids": [
+        "synthetic:pricing:current"
+      ],
+      "fixture_dense_ranking": [
+        "topic:pricing:z-current",
+        "topic:pricing:a-old"
+      ]
+    },
+    {
+      "id": "heldout-provenance-room-leak",
+      "split": "heldout",
+      "text": "베타 전용 코드가 뭐야",
+      "chat_id": "room-alpha",
+      "tags": [
+        "source_room",
+        "negative"
+      ],
+      "relevant": {},
+      "forbidden": [
+        "topic:secret:beta"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "topic:secret:beta",
+        "topic:tool:computer-use"
+      ]
+    },
+    {
+      "id": "heldout-relation-time-scope",
+      "split": "heldout",
+      "text": "알든 출시 일정 알려줘",
+      "chat_id": "room-alpha",
+      "time_from": "2026-10-01T00:00:00+09:00",
+      "time_to": "2026-10-31T23:59:59+09:00",
+      "tags": [
+        "time_scope",
+        "freshness",
+        "relation"
+      ],
+      "relevant": {
+        "topic:release:alden": 3,
+        "time:release:z-current": 2
+      },
+      "forbidden": [
+        "time:release:a-old"
+      ],
+      "forbidden_fact_substrings": [
+        "9월 30일 출시는 철회됨"
+      ],
+      "expected_evidence_ids": [
+        "synthetic:release:root",
+        "synthetic:relation:release:current"
+      ],
+      "fixture_dense_ranking": [
+        "topic:release:alden",
+        "time:release:z-current",
+        "time:release:a-old"
+      ]
+    },
+    {
+      "id": "heldout-semantic-dense-rescue",
+      "split": "heldout",
+      "text": "구독한 돈 돌려받는 법",
+      "chat_id": "room-alpha",
+      "tags": [
+        "semantic",
+        "dense_rescue"
+      ],
+      "relevant": {
+        "topic:semantic:a-refund": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:refund:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:semantic:a-refund",
+        "topic:semantic:z-payment-history",
+        "topic:tool:computer-use"
+      ]
+    },
+    {
+      "id": "dev-numeric-room42",
+      "split": "dev",
+      "text": "제품팀 대화방 기록",
+      "chat_id": "42",
+      "tags": [
+        "numeric_snapshot",
+        "room_scope"
+      ],
+      "relevant": {
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:42": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:42"
+      ],
+      "forbidden_fact_substrings": [
+        "토요일 정오",
+        "월요일 오전"
+      ]
+    },
+    {
+      "id": "dev-numeric-person7",
+      "split": "dev",
+      "text": "민수 백엔드 배포 담당",
+      "chat_id": "42",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7"
+      ],
+      "forbidden_fact_substrings": [
+        "토요일 정오",
+        "월요일 오전"
+      ],
+      "participant_id": "7"
+    },
+    {
+      "id": "dev-numeric-person9",
+      "split": "dev",
+      "text": "유나 인증 검사",
+      "chat_id": "42",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "forbidden_fact_substrings": [
+        "고전 문학",
+        "도서관"
+      ],
+      "participant_id": "9"
+    },
+    {
+      "id": "dev-numeric-room84",
+      "split": "dev",
+      "text": "영화방 상영 기록",
+      "chat_id": "84",
+      "tags": [
+        "numeric_snapshot",
+        "room_scope"
+      ],
+      "relevant": {
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:84": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:84"
+      ],
+      "forbidden_fact_substrings": [
+        "금요일 오후 3시",
+        "프로토타입"
+      ]
+    },
+    {
+      "id": "heldout-numeric-person8",
+      "split": "heldout",
+      "text": "민수 화면 설계 담당",
+      "chat_id": "126",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope",
+        "homonym"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8"
+      ],
+      "forbidden_fact_substrings": [
+        "영화 음악",
+        "토요일 정오"
+      ],
+      "participant_id": "8"
+    },
+    {
+      "id": "heldout-numeric-person10",
+      "split": "heldout",
+      "text": "지아 사용성 시험",
+      "chat_id": "126",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10"
+      ],
+      "forbidden_fact_substrings": [
+        "도서관",
+        "목요일 저녁"
+      ],
+      "participant_id": "10"
+    },
+    {
+      "id": "heldout-numeric-person7-other-room",
+      "split": "heldout",
+      "text": "민수 예매 담당",
+      "chat_id": "84",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope",
+        "shared_actor"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7"
+      ],
+      "forbidden_fact_substrings": [
+        "백엔드 배포",
+        "금요일 오후"
+      ],
+      "participant_id": "7"
+    },
+    {
+      "id": "heldout-numeric-person9-other-room",
+      "split": "heldout",
+      "text": "유나 번역 비교",
+      "chat_id": "168",
+      "tags": [
+        "numeric_snapshot",
+        "participant_scope",
+        "shared_actor"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "forbidden_fact_substrings": [
+        "인증",
+        "배포"
+      ],
+      "participant_id": "9"
+    },
+    {
+      "id": "heldout-numeric-room126",
+      "split": "heldout",
+      "text": "제품팀 대화방 기록",
+      "chat_id": "126",
+      "tags": [
+        "numeric_snapshot",
+        "room_scope",
+        "equal_room_name"
+      ],
+      "relevant": {
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:126": 3
+      },
+      "forbidden": [
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:126"
+      ],
+      "forbidden_fact_substrings": [
+        "금요일 오후 3시",
+        "토요일 정오"
+      ]
+    },
+    {
+      "id": "heldout-numeric-unknown-room",
+      "split": "heldout",
+      "text": "민수 담당",
+      "chat_id": "999",
+      "participant_id": "7",
+      "tags": [
+        "numeric_snapshot",
+        "unknown_room",
+        "negative"
+      ],
+      "relevant": {},
+      "forbidden": [
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:126",
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:168",
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:42",
+        "chat:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:84",
+        "ent:activity:running",
+        "ent:channel:bujamentor",
+        "ent:person:choi_yeonwoo",
+        "ent:person:moon_seunghyun",
+        "ent:tech:alizonku",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:10",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:8",
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7"
+      ]
+    },
+    {
+      "id": "dev-multiple-named-concepts",
+      "split": "dev",
+      "text": "컴퓨터 유즈와 Anthropic Claude를 비교해 줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "multiple_subjects",
+        "context_coverage"
+      ],
+      "relevant": {
+        "topic:tool:computer-use": 3,
+        "topic:model:claude": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:tool:1",
+        "synthetic:model:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:tool:computer-use",
+        "topic:model:claude"
+      ]
+    },
+    {
+      "id": "heldout-multiple-named-concepts",
+      "split": "heldout",
+      "text": "서울 맛집과 러닝 정보를 각각 정리해 줘",
+      "chat_id": "room-alpha",
+      "tags": [
+        "multiple_subjects",
+        "context_coverage"
+      ],
+      "relevant": {
+        "topic:place:seoul-food": 3,
+        "ent:activity:running": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "synthetic:place:1",
+        "synthetic:running:1"
+      ],
+      "fixture_dense_ranking": [
+        "topic:place:seoul-food",
+        "ent:activity:running"
+      ]
+    },
+    {
+      "id": "dev-snapshot-historical-date",
+      "split": "dev",
+      "text": "민수 이전 배포 기록",
+      "chat_id": "42",
+      "participant_id": "7",
+      "time_from": "2026-09-20T00:00:00+09:00",
+      "time_to": "2026-09-20T23:59:59+09:00",
+      "tags": [
+        "numeric_snapshot",
+        "time_scope"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:42:log:804"
+      ],
+      "forbidden_fact_substrings": [
+        "금요일 오후 3시",
+        "토요일 정오"
+      ],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:7"
+      ]
+    },
+    {
+      "id": "heldout-snapshot-real-timestamp",
+      "split": "heldout",
+      "text": "유나 지난 문학 토론",
+      "chat_id": "168",
+      "participant_id": "9",
+      "time_from": "2026-09-25T00:00:00+09:00",
+      "time_to": "2026-09-25T23:59:59+09:00",
+      "tags": [
+        "numeric_snapshot",
+        "time_scope",
+        "real_timestamp"
+      ],
+      "relevant": {
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9": 3
+      },
+      "forbidden": [],
+      "expected_evidence_ids": [
+        "kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:room:168:log:904"
+      ],
+      "forbidden_fact_substrings": [
+        "번역을 비교",
+        "인증과 권한"
+      ],
+      "fixture_dense_ranking": [
+        "person:kakao:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:actor:9"
+      ]
+    }
+  ]
+}

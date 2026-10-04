@@ -1,6 +1,7 @@
 import { createCancellationToken, type CancellationToken, type RuntimeSnapshot } from "./contracts";
 import { sourceLoads, totalFor, type SourceLoads } from "./core/load-mapping";
 import { cancelRuntimeRequest, fetchRuntimeSnapshot } from "./runtime";
+import { freshInputRms } from "./voice-amplitude";
 
 export interface RuntimeSignalSink {
   setSignals(jobLoad: number, voiceRms: number, sources?: SourceLoads): void;
@@ -53,6 +54,7 @@ export class RuntimeSnapshotPoller {
     private readonly makeToken: () => CancellationToken = createCancellationToken,
     private readonly scheduler: PollTimerScheduler = browserPollScheduler,
     private readonly intervalMs = 2500,
+    private readonly observeSnapshot: (snapshot: RuntimeSnapshot | null) => void = () => undefined,
   ) {}
 
   start(): void {
@@ -108,11 +110,13 @@ export class RuntimeSnapshotPoller {
     if (!isCurrent) return;
 
     try {
+      this.observeSnapshot(snapshot);
       const sources = snapshotSources(snapshot);
+      const rms = freshInputRms(snapshot);
       if (sources) {
-        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, snapshot?.voice.rms ?? 0, sources);
+        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, rms, sources);
       } else {
-        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, snapshot?.voice.rms ?? 0);
+        this.signalSink.setSignals(snapshot?.jobLoad ?? 0, rms);
       }
     } catch {
       // Rendering state must not break polling cleanup or create an unhandled rejection.

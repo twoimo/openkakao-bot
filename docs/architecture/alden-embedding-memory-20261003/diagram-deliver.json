@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/twoimo/.codex/worktrees/a0c2/openkakao-bot/docs/architecture/alden-embedding-memory-20261003.compact.sequence.json",
+  "output": "/Users/twoimo/.codex/worktrees/a0c2/openkakao-bot/docs/architecture/alden-embedding-memory-20261003.html",
+  "specification": {
+    "sha256": "6375650722823a1fca5dc5e736aaccd3b0e70488959a8ede76d4a6ca06b53360",
+    "bytes": 3090
+  },
+  "artifact": {
+    "sha256": "ec1b12c852ce0da5c8f8eeb3223a12e1d56600ba585c77fe84144e4f987eef28",
+    "bytes": 804566
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  }
+}

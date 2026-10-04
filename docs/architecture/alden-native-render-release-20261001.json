@@ -1,0 +1,39 @@
+{
+  "nativeSourceCommit": "4838fffc9323e499fd734178b1b42b606dbc7514",
+  "evidenceCommit": "60fdb04445f3c5d05ddb476ed9b0a236900acd4a",
+  "releaseUrl": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-179cb6167afd74a68bd5",
+  "releaseTag": "alden-native-evidence-20261001-60fdb04",
+  "releaseDraft": true,
+  "releaseTarget": "60fdb04445f3c5d05ddb476ed9b0a236900acd4a",
+  "downloadedAssets": 7,
+  "allAssetBytesEqual": true,
+  "finalEvidenceCI": {
+    "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36790224085",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "macOS cargo test",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Alden unsigned arm64 release + runtime smoke",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Launchd and Python harness",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Tauri desktop and focused Python tests",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "nativeInstall": "0.1.6; primaryPID39125; 30/30files,27/27resources, ad-hoc only",
+  "nativeAudit": "owned installed-binary PID39541; 1x; 10/10 freshpause cycles; 0 hidden frames",
+  "scope": "local candidate and source/evidence delivery; no signed public release or production completion"
+}

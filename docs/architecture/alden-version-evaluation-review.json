@@ -1,0 +1,20 @@
+{
+  "artifact_sha256": "e4809731e04ebdbbf2f791ae7333413d4ce40f4ab757b417c60aa7bb5f403ab6",
+  "specification_sha256": "8ab5a213500d6806eb04d9113978b77093870806c6ac5189055bbfc528b7f8ce",
+  "validation": "9/9 showcase, 0 errors, 0 warnings",
+  "browser_evidence": "passed",
+  "visual_review": "passed",
+  "reviewer": "image capable parent",
+  "inspected_screenshots": [
+    "alden-version-evaluation.visual-check.1440x900.light.png",
+    "alden-version-evaluation.visual-check.2048x1320.dark.png"
+  ],
+  "observations": [
+    "main path and cache branch readable",
+    "no empty lifecycle outcome band",
+    "changed-source path and no-success error path distinguishable",
+    "legend and cards remain contained"
+  ],
+  "correction_rounds": 1,
+  "viewer_locale": "English fallback; authored content Korean"
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "alden-installed-browser-entrypoint-v1",
+  "installed_version": "0.1.6",
+  "invocation": "exact installed Python script entrypoint with fixed browser runtime; isolated state root",
+  "runtime_root": "/private/tmp/alden-installed-browser-0.1.6-krqojkae",
+  "returncode": 0,
+  "elapsed_s": 48.556,
+  "source_sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+  "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "model_endpoint": "http://127.0.0.1:11234/v1",
+  "load_average": [
+    13.93115234375,
+    13.08935546875,
+    12.1484375
+  ],
+  "outcome": {
+    "errorCode": "",
+    "ok": true,
+    "result": "Example Domain",
+    "status": "completed"
+  },
+  "independent_title": "Example Domain",
+  "exact_match": true,
+  "limits": [
+    "One public exact-title task only",
+    "Installed Python entrypoint exercised; Tauri UI invocation and physical focus not observed",
+    "Shared Kakao queue/model service not changed; owned isolated job state only"
+  ]
+}

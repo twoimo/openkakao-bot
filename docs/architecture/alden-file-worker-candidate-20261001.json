@@ -1,0 +1,17 @@
+{
+  "schema": "alden-file-worker-candidate-v1",
+  "code_commit": "c29e263e158db4bb5b0ddd28d2962bc74bfd1c78",
+  "runtime_root": "/private/var/folders/8d/nwv_19w124zbq0dxqx2r1jn40000gn/T/alden-worker-file-20261001-4y3jwhxo/state/runtime-candidates/alden-0.1.6-file-c29e263",
+  "prepared": true,
+  "activated": false,
+  "assets_verified": 21,
+  "source_files_byte_equal": 19,
+  "chat_selector_count": 3,
+  "selectors_preserved": true,
+  "config_byte_equal": true,
+  "new_module_included": true,
+  "limits": [
+    "Private state/bin only; no existing worker adopted, killed or restarted.",
+    "Reprepare against preserved live state after explicit authorization."
+  ]
+}

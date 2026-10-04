@@ -3,10 +3,10 @@
 //! Mirrors `scripts/auto_reply_metrics.py`. Metrics are disabled unless
 //! `OPENKAKAO_PERF_METRICS=1` and never carry application data.
 
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::Instant;
-use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "auto_reply_perf_v1";
 const ENABLE_ENV: &str = "OPENKAKAO_PERF_METRICS";
@@ -83,7 +83,11 @@ pub fn record_measurement(m: &Measurement) -> bool {
     };
     if let Ok(file_path) = std::env::var(FILE_ENV) {
         if !file_path.trim().is_empty() {
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(file_path.trim()) {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file_path.trim())
+            {
                 let _ = writeln!(file, "{}", line);
                 return true;
             }
@@ -113,4 +117,3 @@ mod tests {
         assert!(timer.started.elapsed().as_millis() >= 4);
     }
 }
-

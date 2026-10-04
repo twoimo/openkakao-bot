@@ -8,8 +8,8 @@ use crate::loco_helpers::{check_loco_status, loco_connect_with_auto_refresh};
 use crate::media::{
     download_media_file, download_media_file_into_existing_directory,
     download_public_media_file_into_existing_directory, normalize_downloaded_image,
-    parse_attachment_url, parse_image_download_sources, sanitize_filename,
-    validate_normalized_image, ValidatedImageFile, MAX_IMAGE_BATCH_BYTES,
+    parse_attachment_url, parse_file_download_source, parse_image_download_sources,
+    sanitize_filename, validate_normalized_image, ValidatedImageFile, MAX_IMAGE_BATCH_BYTES,
 };
 use crate::util::{get_bson_i32, get_bson_i64, get_bson_str, get_creds};
 
@@ -161,12 +161,8 @@ fn cmd_download_local(
             }
             created_paths.push(download_path.clone());
             created_paths.push(normalized_path.clone());
-            let image = normalize_downloaded_image(
-                &download_path,
-                &normalized_path,
-                message_type,
-                source,
-            )?;
+            let image =
+                normalize_downloaded_image(&download_path, &normalized_path, message_type, source)?;
             std::fs::remove_file(&download_path)?;
             let final_path = output_dir.join(opaque_image_filename(index, &image.media_type)?);
             if final_path.exists() || std::fs::symlink_metadata(&final_path).is_ok() {
@@ -232,14 +228,119 @@ fn cmd_download_local(
     Ok(())
 }
 
+fn cmd_download_local_file(
+    chat_id: i64,
+    log_id: i64,
+    output_dir: Option<&str>,
+    expected_author_id: Option<i64>,
+    expected_attachment_sha256: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let output_dir = private_existing_output_directory(
+        output_dir
+            .map(Path::new)
+            .ok_or_else(|| anyhow::anyhow!("--file requires --output-dir"))?,
+    )?;
+    let expected_author = expected_author_id
+        .filter(|id| *id > 0)
+        .ok_or_else(|| anyhow::anyhow!("--file requires a positive --expected-author-id"))?;
+    let expected_digest = expected_attachment_sha256
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| anyhow::anyhow!("--file requires the exact attachment SHA-256"))?;
+    let reader = crate::local_db::LocalDbReader::open_no_mutation()?;
+    let attachment = reader.exact_media_attachment(chat_id, log_id)?;
+    let attachment_digest = hex::encode(Sha256::digest(attachment.attachment.as_bytes()));
+    if attachment.is_self
+        || attachment.author_id != expected_author
+        || attachment_digest != expected_digest
+    {
+        anyhow::bail!("Exact local file identity mismatch");
+    }
+    let source = parse_file_download_source(&attachment.attachment, attachment.message_type)?;
+    let path = output_dir.join("file.download");
+    if std::fs::symlink_metadata(&path).is_ok() {
+        anyhow::bail!("Local file output already exists");
+    }
+    #[cfg(unix)]
+    let mut created_identity = None;
+    let result = (|| -> Result<(u64, String)> {
+        let size = if source.requires_credentials {
+            let credentials = crate::auth_flow::resolve_base_credentials_noninteractive()?;
+            download_media_file_into_existing_directory(&credentials, &source.url, &path)?
+        } else {
+            download_public_media_file_into_existing_directory(&source.url, &path)?
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = std::fs::symlink_metadata(&path)?;
+            created_identity = Some((metadata.dev(), metadata.ino()));
+        }
+        if size != source.declared_size {
+            anyhow::bail!("Downloaded file size differs from its exact attachment");
+        }
+        let bytes = std::fs::read(&path)?;
+        if bytes.len() as u64 != size {
+            anyhow::bail!("Downloaded file changed during validation");
+        }
+        Ok((size, hex::encode(Sha256::digest(&bytes))))
+    })();
+    let (size, sha256) = match result {
+        Ok(value) => value,
+        Err(error) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if std::fs::symlink_metadata(&path).is_ok_and(|metadata| {
+                    metadata.file_type().is_file()
+                        && Some((metadata.dev(), metadata.ino())) == created_identity
+                }) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            return Err(error);
+        }
+    };
+    if json {
+        crate::util::output_json(&serde_json::json!({
+            "status":"ok", "kind":"file", "chat_id":chat_id, "log_id":log_id,
+            "author_id":expected_author, "message_type":attachment.message_type,
+            "attachment_sha256":attachment_digest, "filename":source.filename,
+            "path":path.display().to_string(), "size":size, "sha256":sha256,
+        }))?;
+    } else {
+        println!("Saved: {}", path.display());
+    }
+    Ok(())
+}
+
 pub fn cmd_download(
     chat_id: i64,
     log_id: i64,
     output_dir: Option<&str>,
     local: bool,
     expected_author_id: Option<i64>,
+    expected_attachment_sha256: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if expected_attachment_sha256.is_some() {
+        if !local {
+            anyhow::bail!("--file requires --local");
+        }
+        return cmd_download_local_file(
+            chat_id,
+            log_id,
+            output_dir,
+            expected_author_id,
+            expected_attachment_sha256,
+            json,
+        );
+    }
     if local {
         return cmd_download_local(chat_id, log_id, output_dir, expected_author_id, json);
     }

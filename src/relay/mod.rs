@@ -111,7 +111,11 @@ impl RelayPair {
         let mut rooms = self.kakao_rooms.clone();
         rooms.sort_unstable();
         let rooms: Vec<String> = rooms.iter().map(|r| r.to_string()).collect();
-        crate::context::provenance_id(&format!("tg:{}|rooms:{}", self.telegram.id, rooms.join(",")))
+        crate::context::provenance_id(&format!(
+            "tg:{}|rooms:{}",
+            self.telegram.id,
+            rooms.join(",")
+        ))
     }
 }
 
@@ -896,7 +900,10 @@ impl<'a> TelegramRelay<'a> {
             DetectMode::Notification => {
                 if self.notification_confirmed {
                     DetectMode::Notification
-                } else if self.clock.now_ms().saturating_sub(self.notification_started)
+                } else if self
+                    .clock
+                    .now_ms()
+                    .saturating_sub(self.notification_started)
                     >= NOTIFICATION_CONFIRM_MS
                 {
                     DetectMode::Polling {
@@ -941,9 +948,7 @@ mod tests {
     use super::*;
     use crate::fakes::{FakeAxReadPort, VirtualClock};
     use crate::logging::SqliteHistoryStore;
-    use crate::ports::{
-        AcquireError, ImageAcquisition, ImageAcquirer, ImageRef, TelegramMessage,
-    };
+    use crate::ports::{AcquireError, ImageAcquirer, ImageAcquisition, ImageRef, TelegramMessage};
     use std::cell::RefCell;
 
     // ---- helpers ----
@@ -1224,7 +1229,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![msg("m1", 1, 0, "hello")]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1254,7 +1261,9 @@ mod tests {
         ]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1277,7 +1286,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![msg("m1", 1, 0, "a")]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         // Pre-mark as delivered.
         store
@@ -1305,7 +1316,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![m]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 1 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 1,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1340,7 +1353,9 @@ mod tests {
         let ladder = rig.ladder();
         // The sender is reached (text/links still relayed, R7.17) but delivers
         // zero images.
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1410,7 +1425,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![m]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1429,7 +1446,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1451,7 +1470,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![]).with_mode(DetectMode::Polling { interval_ms: 9_999 });
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1468,7 +1489,9 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![msg("secret-pid", 1, 0, "sensitive body")]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
@@ -1489,13 +1512,14 @@ mod tests {
         let ax = FakeAxReadPort::new(vec![msg("m1", 1, 0, "a"), msg("m2", 2, 0, "b")]);
         let rig = LadderRig::acquiring(clock.clone());
         let ladder = rig.ladder_acquiring();
-        let sender = ScriptedSender::new(RelaySendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RelaySendOutcome::Sent {
+            images_delivered: 0,
+        });
         let store = SqliteRelayStore::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
 
         {
-            let mut relay =
-                build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
+            let mut relay = build(&ax, &ladder, &sender, &store, &journal, &clock, pair(&[10]));
             relay.tick();
             assert_eq!(relay.cursor().last_at, 2);
         }

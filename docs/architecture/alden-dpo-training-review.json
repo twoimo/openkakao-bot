@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "artifact_sha256": "ed9d8a43cee9683151d7fda3807c43b020d5482e1441cbee94a9e7d11962cb15",
+  "browser_evidence": "passed",
+  "visual_review": "passed",
+  "correction_rounds": 0,
+  "parent_inspected_images": [
+    "alden-dpo-training.visual-check.1440x900.light.png",
+    "alden-dpo-training.visual-check.2048x1320.dark.png"
+  ],
+  "observations": [
+    "Sequential data/reference/gradient/reload/candidate path readable",
+    "Exception path and labels remain separate from nodes",
+    "No viewport overflow at all four desktop sizes",
+    "Reader controls fall back to English; authored content Korean"
+  ],
+  "source_review": {
+    "requested_model": "gpt-6-astra",
+    "requested_reasoning_effort": "max",
+    "independent_route_trace_verified": false,
+    "findings": 4,
+    "priority": "P2",
+    "closed": 4,
+    "reviewed_training_file_sha256": "63ff34ae11f88077ca0021adf237eb0d9fa78d926ad7dff5c4ea6a5f84c062d2"
+  },
+  "publication_review": {
+    "findings": 1,
+    "priority": "P2",
+    "closed": 1,
+    "correction": "Final MLX peak matched final-source receipt instead of earlier development run",
+    "independently_inspected_images": [
+      "alden-dpo-training.visual-check.1440x900.light.png",
+      "alden-dpo-training.visual-check.2048x1320.dark.png"
+    ],
+    "privacy_review": "passed",
+    "binding_and_claim_review": "passed"
+  },
+  "generation_review": {
+    "status": "passed",
+    "scope": "new generation receipt and Markdown section only",
+    "actionable_findings": 0,
+    "private_report_hashes_and_ci_independently_reviewed": false,
+    "no_route_substitution": true,
+    "independent_route_trace_verified": false
+  }
+}

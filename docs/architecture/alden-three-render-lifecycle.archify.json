@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Alden 지식 그래프의 그리기와 대기",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      580
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "화면 표시와 필요한 프레임"
+    },
+    {
+      "id": "visibility",
+      "label": "숨김과 복원"
+    }
+  ],
+  "states": [
+    {
+      "id": "window_visible",
+      "type": "start",
+      "label": "화면 표시",
+      "sublabel": "현재 지식·오브 준비",
+      "lane": "main",
+      "col": 0,
+      "width": 118,
+      "height": 92,
+      "step": "01"
+    },
+    {
+      "id": "lifecycle_active",
+      "type": "active",
+      "label": "프레임 요청",
+      "sublabel": "데이터·작업·음성·크기",
+      "lane": "main",
+      "col": 1,
+      "width": 118,
+      "height": 92,
+      "step": "02"
+    },
+    {
+      "id": "raf_running",
+      "type": "active",
+      "label": "제한된 루프",
+      "sublabel": "AnimationLoop",
+      "lane": "main",
+      "col": 2,
+      "width": 118,
+      "height": 92,
+      "step": "03"
+    },
+    {
+      "id": "runtime_snapshot",
+      "type": "active",
+      "label": "지식·오브 그리기",
+      "sublabel": "프레임 재사용·진폭 반영",
+      "lane": "main",
+      "col": 3,
+      "width": 118,
+      "height": 92,
+      "step": "04"
+    },
+    {
+      "id": "core_response",
+      "type": "waiting",
+      "label": "고요한 화면",
+      "sublabel": "정지하면 루프 중단",
+      "lane": "main",
+      "col": 4,
+      "width": 118,
+      "height": 92,
+      "step": "05"
+    },
+    {
+      "id": "window_hidden",
+      "type": "waiting",
+      "label": "다른 화면·숨김",
+      "sublabel": "네이티브 숨김·잠금",
+      "lane": "visibility",
+      "col": 0,
+      "width": 118,
+      "height": 92
+    },
+    {
+      "id": "raf_stopped",
+      "type": "waiting",
+      "label": "프레임 취소",
+      "sublabel": "RAF·신호 조회 정리",
+      "lane": "visibility",
+      "col": 1,
+      "width": 118,
+      "height": 92
+    }
+  ],
+  "transitions": [
+    {
+      "id": "moving",
+      "from": "runtime_snapshot",
+      "to": "raf_running",
+      "label": "작업·카메라·진폭 변화",
+      "labelAt": [
+        479,
+        232
+      ]
+    },
+    {
+      "id": "new_input",
+      "from": "core_response",
+      "to": "lifecycle_active",
+      "label": "음성 진폭·데이터 변화",
+      "route": "top-channel"
+    },
+    {
+      "id": "hide",
+      "from": "raf_running",
+      "to": "window_hidden",
+      "variant": "security"
+    },
+    {
+      "id": "cancel",
+      "from": "window_hidden",
+      "to": "raf_stopped",
+      "variant": "security"
+    },
+    {
+      "id": "resume",
+      "from": "raf_stopped",
+      "to": "window_visible",
+      "label": "다시 표시",
+      "variant": "emphasis",
+      "route": "bottom-channel"
+    }
+  ]
+}

@@ -767,7 +767,12 @@ mod tests {
 
     #[test]
     fn room_labels_carry_id_when_empty_or_duplicated() {
-        let rooms = vec![room(1, "스터디"), room(2, "스터디"), room(3, ""), room(4, "혼자")];
+        let rooms = vec![
+            room(1, "스터디"),
+            room(2, "스터디"),
+            room(3, ""),
+            room(4, "혼자"),
+        ];
         let keys = RoomKey::for_rooms(&rooms);
         // Duplicated title ⇒ suffixed.
         assert_eq!(keys[0].label(), "스터디 (#1)");
@@ -778,8 +783,7 @@ mod tests {
         assert_eq!(keys[3].label(), "혼자");
 
         // Labels are all distinct (R5.11, Property 16 label-count rule).
-        let labels: std::collections::BTreeSet<_> =
-            keys.iter().map(|k| k.label()).collect();
+        let labels: std::collections::BTreeSet<_> = keys.iter().map(|k| k.label()).collect();
         assert_eq!(labels.len(), keys.len());
     }
 

@@ -103,7 +103,10 @@ pub fn cmd_dataset_build(local_only: bool, json: bool) -> Result<()> {
                 println!("  질문-답변 쌍: {}개", report.qa_pairs);
                 println!("  첨부 근거: {}개", report.attachments);
                 println!("  말투를 익힌 상대: {}명", report.recipients_profiled);
-                println!("  답변이 없어 맥락으로만 둔 메시지: {}개", report.skipped_no_answer);
+                println!(
+                    "  답변이 없어 맥락으로만 둔 메시지: {}개",
+                    report.skipped_no_answer
+                );
             }
             Ok(())
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded generation checks for Jarvis's two fixed localhost MLX models."""
+"""Bounded generation checks for Alden's fixed localhost MLX models."""
 
 from __future__ import annotations
 
@@ -20,8 +20,9 @@ from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 
 RESIDENT_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+IQ_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw"
 SWAP_MODEL_ID = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
-FIXED_MODEL_IDS = (RESIDENT_MODEL_ID, SWAP_MODEL_ID)
+FIXED_MODEL_IDS = (RESIDENT_MODEL_ID, IQ_MODEL_ID, SWAP_MODEL_ID)
 FIXED_MODEL_ID_SET = frozenset(FIXED_MODEL_IDS)
 
 LOCAL_BASE_URL = "http://127.0.0.1:11234/v1"
@@ -448,13 +449,13 @@ def _timeout_argument(value: str) -> float:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify the two fixed Jarvis models through localhost only."
+        description="Verify the fixed Alden models through localhost only."
     )
     parser.add_argument(
         "--model",
         action="append",
         dest="models",
-        help="fixed model ID; repeat to check both (optional mlx/ prefix)",
+        help="fixed model ID; repeat to check multiple targets (optional mlx/ prefix)",
     )
     parser.add_argument(
         "--timeout",

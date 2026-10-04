@@ -45,7 +45,7 @@
 //!   ([`LadderOutcome::used_screen_capture`]), which is exactly what the relay
 //!   needs to warn about lower quality and the permission requirement (R7.6).
 
-use crate::ports::{AcquireError, Clock, ImageAcquisition, ImageAcquirer, ImageBlob, ImageRef};
+use crate::ports::{AcquireError, Clock, ImageAcquirer, ImageAcquisition, ImageBlob, ImageRef};
 
 /// The per-rung time bound: a rung must return a non-empty image within this
 /// many milliseconds to count as a success (R7.5).
@@ -171,7 +171,9 @@ impl ImageLadder<'_> {
                 Err(AcquireError::PermissionDenied) => {
                     attempts[idx] = StepAttempt::PermissionMissing
                 }
-                Err(AcquireError::NotAvailable) => attempts[idx] = StepAttempt::Error("not_available"),
+                Err(AcquireError::NotAvailable) => {
+                    attempts[idx] = StepAttempt::Error("not_available")
+                }
                 Err(AcquireError::Failed(_)) => attempts[idx] = StepAttempt::Error("failed"),
             }
         }
@@ -209,7 +211,12 @@ mod tests {
     }
 
     impl FakeAcquirer {
-        fn new(kind: ImageAcquisition, clock: VirtualClock, takes_ms: i64, outcome: Outcome) -> Self {
+        fn new(
+            kind: ImageAcquisition,
+            clock: VirtualClock,
+            takes_ms: i64,
+            outcome: Outcome,
+        ) -> Self {
             Self {
                 kind,
                 clock,
@@ -457,7 +464,7 @@ mod tests {
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
-use crate::collector::{Collected, CollectFailure, RoutingCollector};
+use crate::collector::{CollectFailure, Collected, RoutingCollector};
 use crate::logging::{FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus};
 use crate::room_catalog::RoomCatalog;
 
@@ -1320,76 +1327,79 @@ impl LinkForwarder<'_> {
             };
         }
 
-        let result = match self
-            .sender
-            .send_forward(room.chat_id, &message.render(), &message.images)
-        {
-            RoomSendOutcome::Fenced { reason } => {
-                self.journal_event(
-                    link_key,
-                    Stage::Authorize,
-                    StageStatus::Failed,
-                    "forward_fenced",
-                    start,
-                    Some(source_images as u32),
-                    Some(0),
-                );
-                DeliveryResult::Fenced { reason }
-            }
-            RoomSendOutcome::Failed { code } => {
-                self.journal_event(
-                    link_key,
-                    Stage::Commit,
-                    StageStatus::Failed,
-                    "forward_failed",
-                    start,
-                    Some(source_images as u32),
-                    Some(0),
-                );
-                DeliveryResult::Failed { code }
-            }
-            RoomSendOutcome::Sent { images_delivered } => {
-                let images = ImageTally {
-                    source: source_images,
-                    delivered: images_delivered,
-                };
-                if images.is_complete() {
-                    // Only a fully-delivered combination is marked (R6.14).
-                    let _ = self.ledger.mark(room.chat_id, link_key, self.clock.now_ms());
+        let result =
+            match self
+                .sender
+                .send_forward(room.chat_id, &message.render(), &message.images)
+            {
+                RoomSendOutcome::Fenced { reason } => {
                     self.journal_event(
                         link_key,
-                        Stage::Commit,
-                        StageStatus::Success,
-                        "forward_sent",
+                        Stage::Authorize,
+                        StageStatus::Failed,
+                        "forward_fenced",
                         start,
                         Some(source_images as u32),
-                        Some(images_delivered as u32),
+                        Some(0),
                     );
-                    DeliveryResult::Sent { images }
-                } else {
-                    // Image-count mismatch is a partial failure: do NOT mark, so
-                    // the combination stays retryable (R6.6).
+                    DeliveryResult::Fenced { reason }
+                }
+                RoomSendOutcome::Failed { code } => {
                     self.journal_event(
                         link_key,
                         Stage::Commit,
                         StageStatus::Failed,
-                        "forward_partial",
+                        "forward_failed",
                         start,
                         Some(source_images as u32),
-                        Some(images_delivered as u32),
+                        Some(0),
                     );
-                    DeliveryResult::PartialFailure {
-                        miss_reasons: miss_reasons(
-                            source_images,
-                            images_delivered,
-                            dropped_images,
-                            acquire_misses,
-                        ),
-                        images,
+                    DeliveryResult::Failed { code }
+                }
+                RoomSendOutcome::Sent { images_delivered } => {
+                    let images = ImageTally {
+                        source: source_images,
+                        delivered: images_delivered,
+                    };
+                    if images.is_complete() {
+                        // Only a fully-delivered combination is marked (R6.14).
+                        let _ = self
+                            .ledger
+                            .mark(room.chat_id, link_key, self.clock.now_ms());
+                        self.journal_event(
+                            link_key,
+                            Stage::Commit,
+                            StageStatus::Success,
+                            "forward_sent",
+                            start,
+                            Some(source_images as u32),
+                            Some(images_delivered as u32),
+                        );
+                        DeliveryResult::Sent { images }
+                    } else {
+                        // Image-count mismatch is a partial failure: do NOT mark, so
+                        // the combination stays retryable (R6.6).
+                        self.journal_event(
+                            link_key,
+                            Stage::Commit,
+                            StageStatus::Failed,
+                            "forward_partial",
+                            start,
+                            Some(source_images as u32),
+                            Some(images_delivered as u32),
+                        );
+                        DeliveryResult::PartialFailure {
+                            miss_reasons: miss_reasons(
+                                source_images,
+                                images_delivered,
+                                dropped_images,
+                                acquire_misses,
+                            ),
+                            images,
+                        }
                     }
                 }
-            }
-        };
+            };
 
         RoomDelivery {
             chat_id: room.chat_id,
@@ -1611,10 +1621,7 @@ mod forward_tests {
             canonical_link_key("https://Example.com/Post/"),
             canonical_link_key("https://example.com/post")
         );
-        assert_eq!(
-            canonical_link_key("https://x.com/a///"),
-            "https://x.com/a"
-        );
+        assert_eq!(canonical_link_key("https://x.com/a///"), "https://x.com/a");
     }
 
     // ---- mask_pii ----
@@ -1661,8 +1668,7 @@ mod forward_tests {
 
     #[test]
     fn mask_pii_masks_multiple_kinds() {
-        let (out, tally) =
-            mask_pii("서울특별시 강남구 테헤란로 5 010-1111-2222 123-456-7890");
+        let (out, tally) = mask_pii("서울특별시 강남구 테헤란로 5 010-1111-2222 123-456-7890");
         assert_eq!(tally.address, 1);
         assert_eq!(tally.phone, 1);
         assert_eq!(tally.account, 1);
@@ -1863,7 +1869,9 @@ mod forward_tests {
     fn forward_rejects_out_of_range_counts() {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(0));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 0,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);
@@ -1904,7 +1912,9 @@ mod forward_tests {
     fn forward_all_or_nothing_on_mention_failure() {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(0));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 0,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);
@@ -1942,7 +1952,9 @@ mod forward_tests {
     fn forward_happy_path_sends_and_marks_ledger() {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(2));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 2 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 2,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);
@@ -1993,7 +2005,9 @@ mod forward_tests {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(2));
         // Only one of two images delivered → mismatch.
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 1 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 1,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);
@@ -2038,7 +2052,9 @@ mod forward_tests {
     fn forward_already_delivered_sends_nothing() {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(0));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 0 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 0,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         ledger
             .mark(1, &canonical_link_key("https://x.com/a"), 1)
@@ -2116,9 +2132,12 @@ mod forward_tests {
     #[test]
     fn forward_collect_failure_sends_nothing() {
         let cat = catalog(&[(1, "스터디")]);
-        let collector =
-            ScriptedCollector::fail(CollectFailure::Terminal(crate::collector::CollectError::Private));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 0 });
+        let collector = ScriptedCollector::fail(CollectFailure::Terminal(
+            crate::collector::CollectError::Private,
+        ));
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 0,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);
@@ -2202,7 +2221,9 @@ mod forward_tests {
     fn forward_journals_only_redacted_records() {
         let cat = catalog(&[(1, "스터디")]);
         let collector = ScriptedCollector::ok(collected(1));
-        let sender = ScriptedSender::new(RoomSendOutcome::Sent { images_delivered: 1 });
+        let sender = ScriptedSender::new(RoomSendOutcome::Sent {
+            images_delivered: 1,
+        });
         let ledger = SqliteDeliveryLedger::open_in_memory().unwrap();
         let journal = SqliteHistoryStore::open_in_memory().unwrap();
         let clock = VirtualClock::new(0);

@@ -9,7 +9,7 @@ import * as THREE from "three";
  */
 export function createNucleusMaterial(accent: THREE.Color): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    name: "JarvisNucleus",
+    name: "AldenNucleus",
     uniforms: { accent: { value: accent.clone() } },
     vertexShader: /* glsl */`
       varying vec3 vNormal;

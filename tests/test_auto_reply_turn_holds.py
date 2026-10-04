@@ -23,9 +23,45 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
     _worker_queue_connection = staticmethod(
         runtime_helpers.AutoReplyCliRuntimeTests._worker_queue_connection
     )
+    _timing_stats = staticmethod(runtime_helpers.AutoReplyCliRuntimeTests._timing_stats)
     _queued_turn_with_authoritative_watermark = (
         runtime_helpers.AutoReplyCliRuntimeTests._queued_turn_with_authoritative_watermark
     )
+
+    def _context_bundle_payload(self, module, recipient="member"):
+        profile = {
+            "chat": module.CHAT,
+            "source": "source:opaque",
+            "user": "최연우",
+            "sample_count": 8,
+            "average_character_length": 11.0,
+            "median_character_length": 10.0,
+            "p90_character_length": 20.0,
+            "casual_ending_count": 0,
+            "casual_ending_counts_json": "{}",
+            "question_count": 0,
+            "emoji_count": 0,
+            "punctuation_count": 0,
+            "common_endings_json": "{}",
+            "common_tokens_json": "{}",
+            "policy_version": module.STYLE_POLICY_VERSION,
+        }
+        return {
+            "schema_version": module.BUNDLE_SCHEMA_VERSION,
+            "recipient": recipient,
+            "context": [{"message": "bounded", "user": recipient}],
+            "styles": [{"message": "그렇군요", "user": "최연우"}],
+            "prior_decisions": [],
+            "style_profile": profile,
+            "recipient_style_profile": {
+                "recipient": recipient,
+                "direct_sample_count": 8,
+                "confidence_sum": 5.0,
+                "used_fallback": False,
+                "profile": dict(profile),
+            },
+            "response_time": self._timing_stats(module),
+        }
 
     def test_self_inbound_holds_before_analyze_model(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_self_test")
@@ -611,6 +647,244 @@ class AutoReplyTurnHoldTests(unittest.TestCase):
             self.assertNotIn("analysis_watermark_log_id", deferred_event)
             analyze.assert_not_called()
             send.assert_not_called()
+
+    def test_repeated_analysis_watermark_advances_retry_until_fixed_grace_deadline(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_turn_hold_repeated_watermark_advance_test"
+        )
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, _state = fixture
+            event["sent_at"] = 1_000
+            event["response_window_upper_seconds"] = 60.0
+            connection = self._worker_queue_connection(module)
+            try:
+                connection.execute(
+                    "UPDATE reply_jobs SET event_json = ?, due_at = 0 WHERE event_id = ?",
+                    (json.dumps(event, ensure_ascii=False), event["event_id"]),
+                )
+                connection.commit()
+
+                bundle = self._context_bundle_payload(module)
+
+                def advancing_context_lookup(*_args, **_kwargs):
+                    current = json.loads(state_path.read_text(encoding="utf-8"))
+                    current["last_observed_log_id"] += 1
+                    state_path.write_text(json.dumps(current), encoding="utf-8")
+                    return bundle
+
+                def refreshed_rows(refresh_event, watermark):
+                    rows = [self._recent_row(refresh_event)]
+                    if watermark > refresh_event["log_id"]:
+                        rows.append(
+                            {
+                                **self._recent_row(refresh_event),
+                                "log_id": watermark,
+                                "author_id": 701,
+                                "author_nickname": "peer",
+                                "message": "newer context",
+                                "sent_at": refresh_event["sent_at"] + 1,
+                            }
+                        )
+                    return rows
+
+                now = [1_050.0]
+                with (
+                    mock.patch.object(module.time, "time", side_effect=lambda: now[0]),
+                    mock.patch.object(module, "BIN", module.Path("/usr/bin/true")),
+                    mock.patch.object(module, "db_authoritative_event_allowed", return_value=True),
+                    mock.patch.object(module, "privacy_attestation_current", return_value=True),
+                    mock.patch.object(module, "record_learned_style_tells"),
+                    mock.patch.object(module, "fetch_link_previews", return_value=[]),
+                    mock.patch.object(module, "event_exceeds_response_window", return_value=False),
+                    mock.patch.object(
+                        module,
+                        "refresh_recent_messages_from_local_db",
+                        side_effect=refreshed_rows,
+                    ) as refresh,
+                    mock.patch.object(
+                        module,
+                        "_run_json_command",
+                        side_effect=advancing_context_lookup,
+                    ),
+                    mock.patch.object(module, "runner_is_trusted", return_value=False),
+                    mock.patch.object(
+                        module,
+                        "generate_reply",
+                        return_value={
+                            "should_reply": True,
+                            "reply": "formed reply",
+                            "reason": "direct_question",
+                            "category": "question",
+                            "evidence_ids": [],
+                            "drafts": [],
+                        },
+                    ),
+                    mock.patch.object(
+                        module,
+                        "select_ranked_reply",
+                        return_value={
+                            "reply": "formed reply",
+                            "drafts": ["formed reply"],
+                            "scores": [1.0],
+                            "winner_index": 0,
+                            "fallback": "none",
+                            "policy_rejections": [],
+                        },
+                    ),
+                    mock.patch.object(module, "durable_policy_skip", return_value=True),
+                    mock.patch.object(module, "complete_event"),
+                ):
+                    for attempt_now in (1_050.0, 1_179.0):
+                        now[0] = attempt_now
+                        claimed = module.claim_job(attempt_now, connection)
+                        self.assertIsNotNone(claimed)
+                        job, previous_status = claimed
+                        module.process_job(job, previous_status, connection)
+                        row = connection.execute(
+                            "SELECT status, due_at, event_json FROM reply_jobs WHERE event_id = ?",
+                            (event["event_id"],),
+                        ).fetchone()
+                        self.assertEqual(row["status"], "pending")
+                        self.assertLessEqual(float(row["due_at"]), 1_180.0)
+                        deferred_event = json.loads(row["event_json"])
+                        self.assertTrue(deferred_event["context_refresh_required"])
+                        self.assertNotIn("analysis_watermark_log_id", deferred_event)
+
+                    now[0] = 1_180.0
+                    claimed = module.claim_job(now[0], connection)
+                    self.assertIsNotNone(claimed)
+                    job, previous_status = claimed
+                    module.process_job(job, previous_status, connection)
+
+                row = connection.execute(
+                    "SELECT status, reason FROM reply_jobs WHERE event_id = ?",
+                    (event["event_id"],),
+                ).fetchone()
+                self.assertEqual(row["status"], "skipped")
+                self.assertEqual(row["reason"], "stale_backlog")
+                self.assertEqual(refresh.call_count, 2)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM pipeline_transitions "
+                        "WHERE event_id = ? AND code = 'context_lookup'",
+                        (event["event_id"],),
+                    ).fetchone()[0],
+                    3,
+                )
+            finally:
+                connection.close()
+
+    def test_stable_refreshed_watermark_recovers_to_scheduled_reply(self):
+        module = self._load_auto_reply_module(
+            "auto_reply_turn_hold_stable_refreshed_watermark_test"
+        )
+        with self._queued_turn_with_authoritative_watermark(module) as fixture:
+            event, state_path, state = fixture
+            event["sent_at"] = 1_000
+            event["response_window_upper_seconds"] = 60.0
+            event["context_refresh_required"] = True
+            state_path.write_text(
+                json.dumps({**state, "last_observed_log_id": 421}),
+                encoding="utf-8",
+            )
+            connection = self._worker_queue_connection(module)
+            try:
+                connection.execute(
+                    "UPDATE reply_jobs SET event_json = ?, due_at = 0 WHERE event_id = ?",
+                    (json.dumps(event, ensure_ascii=False), event["event_id"]),
+                )
+                connection.commit()
+                bundle = self._context_bundle_payload(module)
+                refreshed_rows = [
+                    self._recent_row(event),
+                    {
+                        **self._recent_row(event),
+                        "log_id": 421,
+                        "author_id": 701,
+                        "author_nickname": "peer",
+                        "message": "newer context",
+                        "sent_at": event["sent_at"] + 1,
+                    },
+                ]
+                self.assertEqual(module.stable_room_watermark_log_id(event), 421)
+                self.assertIsNone(module._reply_turn_hold_reason(event, connection))
+                with (
+                    mock.patch.object(module.time, "time", return_value=1_050.0),
+                    mock.patch.object(module, "BIN", module.Path("/usr/bin/true")),
+                    mock.patch.object(module, "db_authoritative_event_allowed", return_value=True),
+                    mock.patch.object(module, "privacy_attestation_current", return_value=True),
+                    mock.patch.object(module, "record_learned_style_tells"),
+                    mock.patch.object(module, "fetch_link_previews", return_value=[]),
+                    mock.patch.object(module, "event_exceeds_response_window", return_value=False),
+                    mock.patch.object(
+                        module,
+                        "refresh_recent_messages_from_local_db",
+                        return_value=refreshed_rows,
+                    ) as refresh,
+                    mock.patch.object(module, "_run_json_command", return_value=bundle),
+                    mock.patch.object(module, "runner_is_trusted", return_value=True),
+                    mock.patch.object(
+                        module,
+                        "generate_reply",
+                        return_value={
+                            "should_reply": True,
+                            "reply": "formed reply",
+                            "reason": "direct_question",
+                            "category": "question",
+                            "evidence_ids": [],
+                            "drafts": [],
+                        },
+                    ),
+                    mock.patch.object(
+                        module,
+                        "select_ranked_reply",
+                        return_value={
+                            "reply": "formed reply",
+                            "drafts": ["formed reply"],
+                            "scores": [1.0],
+                            "winner_index": 0,
+                            "fallback": "none",
+                            "policy_rejections": [],
+                        },
+                    ),
+                    mock.patch.object(
+                        module,
+                        "sample_response_delay_for_analysis",
+                        return_value={
+                            "delay_seconds": 2.0,
+                            "sampled_delay_seconds": 2.0,
+                            "response_window_upper_seconds": 60.0,
+                        },
+                    ),
+                    mock.patch.object(module, "persist_reply_evidence_ledger"),
+                    mock.patch.object(module, "record_context_decision", return_value=True),
+                    mock.patch.object(module, "send_reply") as send,
+                ):
+                    claimed = module.claim_job(1_050.0, connection)
+                    self.assertIsNotNone(claimed)
+                    job, previous_status = claimed
+                    module.process_job(job, previous_status, connection)
+
+                row = connection.execute(
+                    "SELECT status, event_json FROM reply_jobs WHERE event_id = ?",
+                    (event["event_id"],),
+                ).fetchone()
+                self.assertEqual(row["status"], "scheduled")
+                scheduled_event = json.loads(row["event_json"])
+                self.assertEqual(scheduled_event["analysis_watermark_log_id"], 421)
+                self.assertNotIn("context_refresh_required", scheduled_event)
+                refresh.assert_called_once_with(mock.ANY, 421)
+                send.assert_not_called()
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM pipeline_transitions "
+                        "WHERE event_id = ? AND code = 'context_lookup'",
+                        (event["event_id"],),
+                    ).fetchone()[0],
+                    1,
+                )
+            finally:
+                connection.close()
 
     def test_send_reply_holds_for_reanalysis_when_watermark_advances_before_mutation(self):
         module = self._load_auto_reply_module("auto_reply_turn_hold_late_watermark_test")

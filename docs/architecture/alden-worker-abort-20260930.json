@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-09-30T03:41:25.795293+00:00",
+  "source_sha256": {
+    "scripts/auto-reply-worker.py": "ebed6a7f8b2e0b62140d2c95bc9fae26c85bc3ce43c55c7b979af85e578fe2cb",
+    "tests/test_alden_worker_abort.py": "e1c823aeedd1f8453ba5bebf5671fe87187140bcf80c82d6a73daed6a63630fa",
+    "tests/test_auto_reply_session_packager.py": "ecd572fb68da5c170a7d71b0f86e47dcf4a850042963f5b64a9b1cd197713528",
+    ".github/workflows/ci.yml": "474b3c71a723c8b01d8bf29d263205ee3458e43ec89bfc044a03f89463ee6472"
+  },
+  "worker_tests": 14,
+  "packager_tests": 13,
+  "selected_send_state_tests": 5,
+  "focused_total": 32,
+  "focused_runtime_seconds": 3.667,
+  "existing_engine_tests": 87,
+  "existing_engine_runtime_seconds": 0.664,
+  "preexisting_context_freshness_failures": 2,
+  "new_worker_tests_use_fakes": true,
+  "live_kakao_send": false,
+  "model_inference": false,
+  "production_worker_activated": false,
+  "final_rust_ax_fence_pending": true,
+  "requested_model": "chatgpt-web/gpt-5.6-sol",
+  "reasoning_effort": "xhigh",
+  "child_id": "01a0f028-561c-7c83-9264-b26e53e72766",
+  "child_turn_contexts_on_requested_route": 5,
+  "web_phases": [
+    {
+      "phase": "send-accepted",
+      "captured_at": "2026-09-30T03:06:08.260Z",
+      "trace_id": "4955aa3506c8"
+    },
+    {
+      "phase": "response-visible",
+      "captured_at": "2026-09-30T03:06:08.334Z",
+      "trace_id": "4955aa3506c8"
+    },
+    {
+      "phase": "turn-completed",
+      "captured_at": "2026-09-30T03:16:08.889Z",
+      "trace_id": "4955aa3506c8"
+    }
+  ]
+}

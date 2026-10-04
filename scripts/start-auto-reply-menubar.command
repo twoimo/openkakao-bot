@@ -21,21 +21,21 @@ APPLICATIONS_DIR=${OPENKAKAO_APPLICATIONS_DIR:-/Applications}
 LAUNCH_AGENTS_DIR=${OPENKAKAO_LAUNCH_AGENTS_DIR:-"$HOME/Library/LaunchAgents"}
 LAUNCHCTL=${OPENKAKAO_LAUNCHCTL:-/bin/launchctl}
 PLISTBUDDY=${OPENKAKAO_PLISTBUDDY:-/usr/libexec/PlistBuddy}
-LABEL="com.openkakao.jarvis.desktop"
+LABEL="com.openkakao.alden.desktop"
 UID_NOW=$(id -u)
 DOMAIN="gui/$UID_NOW"
 SERVICE="$DOMAIN/$LABEL"
-APP="$APPLICATIONS_DIR/OpenKakao Jarvis.app"
-BIN="$APP/Contents/MacOS/openkakao-jarvis-desktop"
+APP="$APPLICATIONS_DIR/Alden.app"
+BIN="$APP/Contents/MacOS/openkakao-alden-desktop"
 PLIST="$LAUNCH_AGENTS_DIR/$LABEL.plist"
 
 if [ ! -x "$BIN" ]; then
-  echo "OpenKakao Jarvis is not installed at $APP" >&2
+  echo "Alden is not installed at $APP" >&2
   echo "build and install it with scripts/build-auto-reply-menubar.sh and scripts/install-auto-reply-menubar.sh" >&2
   exit 1
 fi
 if [ ! -f "$PLIST" ]; then
-  echo "OpenKakao Jarvis LaunchAgent is not installed: $PLIST" >&2
+  echo "Alden LaunchAgent is not installed: $PLIST" >&2
   echo "run scripts/install-auto-reply-menubar.sh first" >&2
   exit 1
 fi
@@ -46,7 +46,7 @@ fi
 
 CONFIGURED_BIN=$("$PLISTBUDDY" -c 'Print :ProgramArguments:0' "$PLIST" 2>/dev/null || true)
 if [ "$CONFIGURED_BIN" != "$BIN" ]; then
-  echo "OpenKakao Jarvis LaunchAgent does not point at the installed app" >&2
+  echo "Alden LaunchAgent does not point at the installed app" >&2
   echo "run scripts/install-auto-reply-menubar.sh to refresh it" >&2
   exit 1
 fi
@@ -56,7 +56,7 @@ if ! "$LAUNCHCTL" print "$SERVICE" >/dev/null 2>&1; then
 fi
 "$LAUNCHCTL" kickstart -k "$SERVICE"
 if ! "$LAUNCHCTL" print "$SERVICE" >/dev/null 2>&1; then
-  echo "OpenKakao Jarvis did not register in $DOMAIN" >&2
+  echo "Alden did not register in $DOMAIN" >&2
   exit 3
 fi
 

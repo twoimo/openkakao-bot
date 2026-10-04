@@ -24,7 +24,7 @@ function runtimeSnapshot(jobLoad = 0.5, voiceRms = 0.25): RuntimeSnapshot {
     ...snapshot,
     available: true,
     jobLoad,
-    voice: { ...snapshot.voice, available: true, rms: voiceRms },
+    voice: { ...snapshot.voice, available: true, state: "user_listen", updatedAt: Math.floor(Date.now() / 1000), rms: voiceRms },
   };
 }
 

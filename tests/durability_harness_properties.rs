@@ -174,18 +174,18 @@ proptest! {
 /// independently, plus the plan whose attempt counts it is judged against.
 fn judge_input_strategy() -> impl Strategy<Value = (HarnessReport, HarnessPlan)> {
     (
-        20usize..=32,   // plan.auto_reply_runs
-        20usize..=32,   // report.auto_reply.attempted
-        5usize..=8,     // plan.geeknews_runs
-        5usize..=8,     // report.geeknews.attempted
-        0usize..=3,     // real_sends
-        0usize..=3,     // network_egress
-        0usize..=2,     // auto panics
-        0usize..=2,     // geek panics
-        0usize..=6,     // confirmed_sends
-        0usize..=6,     // commit_success_records
-        0usize..=3,     // gate_mismatch
-        any::<u64>(),   // seed
+        20usize..=32, // plan.auto_reply_runs
+        20usize..=32, // report.auto_reply.attempted
+        5usize..=8,   // plan.geeknews_runs
+        5usize..=8,   // report.geeknews.attempted
+        0usize..=3,   // real_sends
+        0usize..=3,   // network_egress
+        0usize..=2,   // auto panics
+        0usize..=2,   // geek panics
+        0usize..=6,   // confirmed_sends
+        0usize..=6,   // commit_success_records
+        0usize..=3,   // gate_mismatch
+        any::<u64>(), // seed
     )
         .prop_map(
             |(

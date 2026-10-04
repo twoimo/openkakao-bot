@@ -1681,7 +1681,7 @@ wheels = [
 ]
 
 [[package]]
-name = "openkakao-jarvis-browser"
+name = "openkakao-alden-browser"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

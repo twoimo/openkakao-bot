@@ -1,0 +1,18 @@
+{
+  "schema": "alden-image-input-guard-v1",
+  "source_sha256": "b69bd5e123fe06b7ccc24450a18e0267b599cf5ebd0fe3e406ffb8e5cc808be5",
+  "source_commit": "8ceeea8",
+  "focused_tests": 10,
+  "failed": 0,
+  "partial_or_missing_pixels": "No text-only or partial-image HTTP generation request",
+  "normal_image_and_text": "Fake transport serialization passes; not actual vision-model quality",
+  "recipient": "Current recipient and explicit register propagated in all three no-pixel callers",
+  "local_input_failure": "Captured lease released without model success/cooldown or fallback-chain call",
+  "model_invoked_metadata": "False for blocked input",
+  "active_worker_cutover": false,
+  "limits": [
+    "No live send, active queue change or model request",
+    "Existing production immutable worker remains earlier code",
+    "Link/file audit pending separately"
+  ]
+}

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -836,8 +837,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
             source.index("final class MenuPanelView"):
             source.index("final class CenteredLabelCell")
         ]
-        self.assertIn("class JarvisCoreView", source)
-        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn("class AldenCoreView", source)
+        self.assertIn("let coreView = AldenCoreView(frame: .zero)", panel)
         self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
         self.assertIn("x: width - Self.panelInset - Self.gearSize", panel)
         self.assertIn("y: Self.panelInset", panel)
@@ -845,10 +846,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
         self.assertIn("static let coreSize: CGFloat = 236", panel)
         self.assertIn("static let gearSize: CGFloat = 28", panel)
-        self.assertIn("coreView.activity = JarvisCoreView.activity(", panel)
-        self.assertIn("JarvisCoreView.background(model, chatId:", panel)
+        self.assertIn("coreView.activity = AldenCoreView.activity(", panel)
+        self.assertIn("AldenCoreView.background(model, chatId:", panel)
 
-        # The menu extra itself is only the Jarvis core plus the top-right gear.
+        # The menu extra itself is only the Alden core plus the top-right gear.
         self.assertNotIn("tileButtons", panel)
         self.assertNotIn("tileClicked", panel)
         self.assertNotIn('"room-popup"', panel)
@@ -1051,10 +1052,20 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             # 없는 동작을 부르면 조용히 성공한 척하지 않는다. argparse가
             # 알 수 없는 선택지를 거절하고, 출력에 ok=true가 남지 않는다.
-            output = os.popen(
-                f"{sys.executable} {MENUBAR} "
-                f"--state-root '{state.resolve()}' --action improve-prep 2>&1"
-            ).read()
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(MENUBAR),
+                    "--state-root",
+                    str(state.resolve()),
+                    "--action",
+                    "improve-prep",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = completed.stdout + completed.stderr
             self.assertNotIn('"ok": true', output)
             self.assertIn("improve-prep", output)
             del helper
@@ -2216,6 +2227,294 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertFalse(denied["ok"])
             del helper
 
+    def test_iq_model_set_requires_exact_ready_gateway_before_write(self):
+        module = load("auto_reply_menubar_iq_model_set_readiness")
+        original_readiness = module.read_fixed_local_mlx_readiness
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.raw = json.dumps(payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, limit):
+                return self.raw[:limit]
+
+        def reader_for(payload):
+            def fake_readiness(model, *, state_root=None):
+                def opener(_request, *, timeout):
+                    self.assertEqual(timeout, 2.0)
+                    self.assertEqual(
+                        _request.full_url,
+                        "http://127.0.0.1:11235/v1/models",
+                    )
+                    return FakeResponse(payload)
+
+                return original_readiness(
+                    model,
+                    state_root=state_root,
+                    opener=opener,
+                )
+
+            return fake_readiness
+
+        catalog = []
+        cases = (
+            ("absent", {"data": []}, False, "mlx_gateway_wrong_model"),
+            (
+                "unloaded",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_IQ_MODEL_ID,
+                            "loaded": False,
+                            "state": "unloaded",
+                        }
+                    ]
+                },
+                False,
+                "mlx_gateway_not_ready",
+            ),
+            (
+                "wrong-id",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_SWAP_MODEL_ID,
+                            "loaded": True,
+                            "state": "ready",
+                        }
+                    ]
+                },
+                False,
+                "mlx_gateway_wrong_model",
+            ),
+            (
+                "ready",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_IQ_MODEL_ID,
+                            "loaded": True,
+                            "state": "ready",
+                        }
+                    ]
+                },
+                True,
+                None,
+            ),
+        )
+
+        for name, payload, should_store, expected_reason in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                state = Path(raw)
+                override_path = module._reply_model_override_path(state)
+                with mock.patch.object(
+                    module,
+                    "_global_catalog_providers",
+                    return_value=catalog,
+                ), mock.patch.object(
+                    module,
+                    "_displayed_reply_providers",
+                    return_value=[],
+                ), mock.patch.object(
+                    module,
+                    "read_fixed_local_mlx_readiness",
+                    new=reader_for(payload),
+                ):
+                    result = module.set_reply_model(
+                        state,
+                        module.ALDEN_IQ_MODEL_ID,
+                        now=1000.0,
+                    )
+
+                self.assertEqual(result["ok"], should_store)
+                self.assertEqual(result.get("stored"), should_store)
+                self.assertEqual(result.get("prepared"), should_store)
+                self.assertEqual(override_path.exists(), should_store)
+                if should_store:
+                    saved = json.loads(override_path.read_text(encoding="utf-8"))
+                    self.assertEqual(saved["model"], module.ALDEN_IQ_MODEL_ID)
+                else:
+                    self.assertEqual(result["reason"], expected_reason)
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            readiness = mock.Mock(
+                side_effect=AssertionError(
+                    "non-allowlisted IDs must not probe fixed-model readiness"
+                )
+            )
+            with mock.patch.object(
+                module, "_global_catalog_providers", return_value=[]
+            ), mock.patch.object(
+                module, "_displayed_reply_providers", return_value=[]
+            ), mock.patch.object(
+                module, "read_fixed_local_mlx_readiness", new=readiness
+            ):
+                denied = module.set_reply_model(
+                    state,
+                    "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw-lookalike",
+                    now=1000.0,
+                )
+            self.assertFalse(denied["ok"])
+            self.assertFalse(module._reply_model_override_path(state).exists())
+
+    def test_27b_model_set_requires_exact_ready_11234_before_write(self):
+        module = load("auto_reply_menubar_27b_model_set_readiness")
+        original_readiness = module.read_fixed_local_mlx_readiness
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.raw = json.dumps(payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, limit):
+                return self.raw[:limit]
+
+        def reader_for(payload):
+            def fake_readiness(model, *, state_root=None):
+                def opener(_request, *, timeout):
+                    self.assertEqual(timeout, 2.0)
+                    self.assertEqual(
+                        _request.full_url,
+                        "http://127.0.0.1:11234/v1/models",
+                    )
+                    return FakeResponse(payload)
+
+                return original_readiness(
+                    model,
+                    state_root=state_root,
+                    opener=opener,
+                )
+
+            return fake_readiness
+
+        cases = (
+            ("absent", {"data": []}, module.ALDEN_SWAP_MODEL_ID, False, "mlx_gateway_wrong_model"),
+            (
+                "unready",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_SWAP_MODEL_ID,
+                            "loaded": False,
+                            "state": "unloaded",
+                        }
+                    ]
+                },
+                module.ALDEN_SWAP_MODEL_ID,
+                False,
+                "mlx_gateway_not_ready",
+            ),
+            (
+                "wrong-id",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_RESIDENT_MODEL_ID,
+                            "loaded": True,
+                            "state": "ready",
+                        }
+                    ]
+                },
+                module.ALDEN_SWAP_MODEL_ID,
+                False,
+                "mlx_gateway_wrong_model",
+            ),
+            (
+                "ready-prefixless",
+                {
+                    "data": [
+                        {
+                            "id": module.ALDEN_SWAP_MODEL_ID,
+                            "loaded": True,
+                            "state": "ready",
+                        }
+                    ]
+                },
+                module.ALDEN_SWAP_MODEL_ID,
+                True,
+                None,
+            ),
+            (
+                "ready-mlx-alias",
+                {
+                    "data": [
+                        {
+                            "id": module.QWEN38_27B_MODEL_ID,
+                            "loaded": True,
+                            "state": "ready",
+                        }
+                    ]
+                },
+                module.QWEN38_27B_MODEL_ID,
+                True,
+                None,
+            ),
+        )
+
+        for name, payload, requested, should_store, expected_reason in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                state = Path(raw)
+                override_path = module._reply_model_override_path(state)
+                with mock.patch.object(
+                    module, "_global_catalog_providers", return_value=[]
+                ), mock.patch.object(
+                    module, "_displayed_reply_providers", return_value=[]
+                ), mock.patch.object(
+                    module,
+                    "read_fixed_local_mlx_readiness",
+                    new=reader_for(payload),
+                ):
+                    result = module.set_reply_model(state, requested, now=1000.0)
+
+                self.assertEqual(result["ok"], should_store)
+                self.assertEqual(result.get("stored"), should_store)
+                self.assertEqual(result.get("prepared"), should_store)
+                self.assertEqual(override_path.exists(), should_store)
+                if should_store:
+                    self.assertFalse(result.get("needs_prepare"))
+                    saved = json.loads(override_path.read_text(encoding="utf-8"))
+                    self.assertEqual(saved["model"], module.ALDEN_SWAP_MODEL_ID)
+                    self.assertEqual(result["model"], module.ALDEN_SWAP_MODEL_ID)
+                else:
+                    self.assertEqual(result["reason"], expected_reason)
+                    self.assertTrue(result.get("needs_prepare"))
+                    self.assertFalse(result.get("stored"))
+                    self.assertFalse(result.get("prepared"))
+
+        with tempfile.TemporaryDirectory() as raw:
+            state = Path(raw)
+            readiness = mock.Mock(
+                side_effect=AssertionError(
+                    "non-allowlisted IDs must not probe fixed-model readiness"
+                )
+            )
+            with mock.patch.object(
+                module, "_global_catalog_providers", return_value=[]
+            ), mock.patch.object(
+                module, "_displayed_reply_providers", return_value=[]
+            ), mock.patch.object(
+                module, "read_fixed_local_mlx_readiness", new=readiness
+            ):
+                denied = module.set_reply_model(
+                    state,
+                    "ddalcu/Qwen3.8-27B-MLX-Serve-4bit-lookalike",
+                    now=1000.0,
+                )
+            self.assertFalse(denied["ok"])
+            self.assertFalse(module._reply_model_override_path(state).exists())
+
     def test_model_swap_requires_opt_in_and_verified_owner_before_gateway(self):
         module = load("auto_reply_menubar_model_swap_gates")
         token = "00000000-0000-4000-8000-000000000001"
@@ -2224,7 +2523,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
             no_opt_in = module.swap_reply_model(
                 root,
-                module.JARVIS_SWAP_MODEL_ID,
+                module.ALDEN_SWAP_MODEL_ID,
                 explicit_opt_in="",
                 request_token=token,
                 gateway_factory=gateway_factory,
@@ -2234,7 +2533,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
 
             owner_unknown = module.swap_reply_model(
                 root,
-                module.JARVIS_SWAP_MODEL_ID,
+                module.ALDEN_SWAP_MODEL_ID,
                 explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                 request_token=token,
                 residency_probe=lambda _root: module.ManagedModelResidency(
@@ -2253,7 +2552,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             gateway_factory = mock.Mock(side_effect=AssertionError("gateway must stay closed"))
             external = module.swap_reply_model(
                 root,
-                module.JARVIS_SWAP_MODEL_ID,
+                module.ALDEN_SWAP_MODEL_ID,
                 explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                 request_token=token,
                 residency_probe=lambda _root: module.ManagedModelResidency(
@@ -2275,7 +2574,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             with mlx_model_request_lease(root):
                 result = module.swap_reply_model(
                     root,
-                    module.JARVIS_SWAP_MODEL_ID,
+                    module.ALDEN_SWAP_MODEL_ID,
                     explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                     request_token=token,
                     gateway_factory=gateway_factory,
@@ -2297,7 +2596,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             ):
                 result = module.swap_reply_model(
                     root,
-                    module.JARVIS_SWAP_MODEL_ID,
+                    module.ALDEN_SWAP_MODEL_ID,
                     explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                     request_token=token,
                 )
@@ -2321,7 +2620,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 "--action",
                 "model-owner-status",
                 "--state-root",
-                "/tmp/jarvis-owner-state",
+                "/tmp/alden-owner-state",
             ]
             with mock.patch.object(
                 module, "_scope_menubar_rooms_to_enrollment"
@@ -2340,7 +2639,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         finally:
             sys.argv = argv
 
-        status.assert_called_once_with(Path("/tmp/jarvis-owner-state"))
+        status.assert_called_once_with(Path("/tmp/alden-owner-state"))
         print_json.assert_called_once_with(expected)
         swap.assert_not_called()
         legacy_main.assert_not_called()
@@ -2348,7 +2647,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def test_model_swap_fake_failures_cancellation_and_safe_success(self):
         module = load("auto_reply_menubar_model_swap_fakes")
         token = "00000000-0000-4000-8000-000000000001"
-        previous = f"mlx/{module.JARVIS_RESIDENT_MODEL_ID}"
+        previous = f"mlx/{module.ALDEN_RESIDENT_MODEL_ID}"
         target = module.QWEN38_27B_MODEL_ID
         residency = module.ManagedModelResidency(
             previous, (previous,), 4242, True, False, "model_drain_unverified"
@@ -2383,7 +2682,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         def run(root, gateway, memory_bytes=120 * 1024**3, cancel_check=None):
             return module.swap_reply_model(
                 root,
-                module.JARVIS_SWAP_MODEL_ID,
+                module.ALDEN_SWAP_MODEL_ID,
                 explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                 request_token=token,
                 residency_probe=lambda _root: residency,
@@ -2416,7 +2715,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             pre_cancel_factory = mock.Mock(side_effect=AssertionError("cancelled before gateway"))
             pre_cancelled = module.swap_reply_model(
                 root,
-                module.JARVIS_SWAP_MODEL_ID,
+                module.ALDEN_SWAP_MODEL_ID,
                 explicit_opt_in=module.MODEL_SWAP_OPT_IN,
                 request_token=token,
                 residency_probe=lambda _root: residency,
@@ -2706,7 +3005,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertFalse(denied["ok"])
             self.assertEqual(denied["reason"], "image_model_local_only")
             result = module.set_image_reply_model(
-                state.resolve(), module.JARVIS_SWAP_MODEL_ID, now=now
+                state.resolve(), module.ALDEN_SWAP_MODEL_ID, now=now
             )
             self.assertTrue(result["ok"])
             self.assertEqual(result["action"], "image-model-set")
@@ -3691,7 +3990,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("guard touchesHighlight else { continue }", source)
         # Grounded neurons glow and unverified seeds stay dim, so a reader can
         # tell a checked concept from a placeholder. The colours come from the
-        # Jarvis gold family so the graph reads as part of the same core
+        # Alden gold family so the graph reads as part of the same core
         # (2026-09-17, 사용자 지시).
         self.assertIn("node.evidence.grounded ? Self.neuronGold : Self.neuronBrass", source)
         self.assertIn("static let neuronGold", source)
@@ -3707,7 +4006,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         source = SWIFT.read_text(encoding="utf-8")
         graph = source[
             source.index("final class KnowledgeGraphView"):
-            source.index("final class JarvisCoreView")
+            source.index("final class AldenCoreView")
         ]
         self.assertIn("static let defaultFocusHop = 2", graph)
         self.assertIn("static let maxFocusHop = 3", graph)
@@ -3731,12 +4030,12 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
         self.assertIn("static let coreSize: CGFloat = 236", panel)
         self.assertIn("static let gearSize: CGFloat = 28", panel)
-        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn("let coreView = AldenCoreView(frame: .zero)", panel)
         self.assertIn('NSUserInterfaceItemIdentifier("gear")', panel)
         self.assertNotIn("KnowledgeGraphView", panel)
         self.assertIn("func ensureUnifiedSettingsWindow()", source)
 
-    def test_settings_sync_status_card_uses_existing_status_and_keeps_jarvis_constants(self):
+    def test_settings_sync_status_card_uses_existing_status_and_keeps_alden_constants(self):
         source = SWIFT.read_text(encoding="utf-8")
         settings = source[
             source.index("func ensureUnifiedSettingsWindow()"):
@@ -3748,11 +4047,11 @@ class AutoReplyMenubarTests(unittest.TestCase):
         ]
         graph = source[
             source.index("final class KnowledgeGraphView"):
-            source.index("final class JarvisCoreView")
+            source.index("final class AldenCoreView")
         ]
         graph_python = (SCRIPTS / "auto_reply_knowledge_graph.py").read_text(encoding="utf-8")
 
-        self.assertIn('Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)', settings)
+        self.assertIn('Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: aldenGold)', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-card")', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-copy")', settings)
         self.assertIn('NSUserInterfaceItemIdentifier("settings-sync-mode")', settings)
@@ -3763,7 +4062,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("static let panelBaseHeight: CGFloat = 260", panel)
         self.assertIn("static let coreSize: CGFloat = 236", panel)
         self.assertIn("static let gearSize: CGFloat = 28", panel)
-        self.assertIn("let coreView = JarvisCoreView(frame: .zero)", panel)
+        self.assertIn("let coreView = AldenCoreView(frame: .zero)", panel)
         self.assertIn("static let defaultFocusHop = 2", graph)
         self.assertIn("static let maxFocusHop = 3", graph)
         self.assertIn("static let focusNeighborLimit = 10", graph)
@@ -3860,17 +4159,17 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("layer?.borderWidth = Chrome.hairlineWidth", empty)
         self.assertIn('Chrome.sectionTitle("대상 채팅방")', settings)
         self.assertIn(
-            'Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)',
+            'Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: aldenGold)',
             settings,
         )
-        self.assertIn('Chrome.sectionTitle("DREAM-RSI", color: jarvisGold)', settings)
+        self.assertIn('Chrome.sectionTitle("DREAM-RSI", color: aldenGold)', settings)
         self.assertIn('Chrome.sectionTitle("GeekNews 슬롯")', settings)
         self.assertIn("Chrome.hairlineSeparator()", settings)
 
     def test_swift_extra_refines_gear_and_core_without_size_drift(self):
         source = SWIFT.read_text(encoding="utf-8")
         core = source[
-            source.index("final class JarvisCoreView") :
+            source.index("final class AldenCoreView") :
             source.index("final class MenuPanelView")
         ]
         panel = source[
@@ -3944,7 +4243,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("static let contentHeight: CGFloat = nodeRadius * 2 + 5 + nodeLabelHeight", pipeline_body)
         self.assertIn("bounds.height - contentHeight", pipeline_body)
         self.assertNotIn("heightAnchor.constraint(equalToConstant: 56)", source)
-        # 메뉴 패널은 더 이상 파이프라인 띠를 쓰지 않는다. 자비스 코어가 그
+        # 메뉴 패널은 더 이상 파이프라인 띠를 쓰지 않는다. 올든 코어가 그
         # 자리를 대신한다. 그래서 띠 높이 상수도 더 이상 참조되지 않아 함께
         # 없앴다 (2026-09-17).
         self.assertNotIn("PipelineView.stripHeight", source)
@@ -4303,7 +4602,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
         source = SWIFT.read_text(encoding="utf-8")
         graph = source[
             source.index("final class KnowledgeGraphView"):
-            source.index("final class JarvisCoreView")
+            source.index("final class AldenCoreView")
         ]
         panel = source[
             source.index("final class MenuPanelView"):
@@ -4371,6 +4670,19 @@ class AutoReplyMenubarTests(unittest.TestCase):
     def _write_background_json(self, path: Path, payload) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def _ready_watch_state(self, now: float, **overrides) -> dict:
+        state = {
+            "capability_state": "ready",
+            "delivery_enabled": True,
+            "fence": "ready",
+            "fence_reason": "",
+            "context_sync_at": now - 3.0,
+            "context_sync_retry_at": now + 57.0,
+            "heartbeat_at": now - 1.0,
+        }
+        state.update(overrides)
+        return state
+
     def _background_queue(self, room: Path, statuses: tuple[str, ...]) -> None:
         connection = sqlite3.connect(room / "reply-queue.sqlite3")
         try:
@@ -4399,13 +4711,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             now = 2_000_000_000.0
             self._write_background_json(
                 room / "db-watch-state.json",
-                {
-                    "capability_state": "ready",
-                    "fence_reason": "",
-                    "context_sync_at": now - 3.0,
-                    "context_sync_retry_at": now + 57.0,
-                    "heartbeat_at": now - 1.0,
-                },
+                self._ready_watch_state(now),
             )
             self._write_background_json(
                 room / "geeknews-rss-cursor.json",
@@ -4421,6 +4727,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(background["geeknews"]["state"], "idle")
             self.assertEqual(background["rooms"][0]["chat_id"], 42)
             self.assertEqual(background["schema_version"], 1)
+            self.assertEqual(snap["rooms"][0]["reply_readiness"], "ready")
 
     def test_background_state_separates_a_retrying_room_from_a_dead_one(self):
         """A fenced room is only "working" while its heartbeat is alive."""
@@ -4434,6 +4741,8 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 room / "db-watch-state.json",
                 {
                     "capability_state": "starting",
+                    "delivery_enabled": False,
+                    "fence": "starting",
                     "fence_reason": "context_sync_transient",
                     "heartbeat_at": now - 5.0,
                 },
@@ -4443,11 +4752,14 @@ class AutoReplyMenubarTests(unittest.TestCase):
             )
             self.assertEqual(snap["background"]["db_sync"]["state"], "retrying")
             self.assertEqual(snap["background"]["activity"], 0.3)
+            self.assertEqual(snap["rooms"][0]["reply_readiness"], "blocked")
 
             self._write_background_json(
                 room / "db-watch-state.json",
                 {
                     "capability_state": "starting",
+                    "delivery_enabled": False,
+                    "fence": "starting",
                     "fence_reason": "context_sync_transient",
                     "heartbeat_at": now - 3600.0,
                 },
@@ -4459,6 +4771,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(snap["background"]["db_sync"]["state"], "stalled")
             self.assertEqual(snap["background"]["activity"], 0.0)
             self.assertEqual(snap["background"]["caption"], "")
+            self.assertEqual(snap["rooms"][0]["reply_readiness"], "unknown")
 
     def test_background_state_confirms_a_recent_geeknews_send(self):
         """The cursor only counts as a send when a slot was actually posted."""
@@ -4527,9 +4840,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
             snap = module._attach_background_state(
                 self._background_snap(root), root, now=now
             )
-            self.assertEqual(snap["background"]["db_sync"]["state"], "ready")
+            self.assertEqual(snap["background"]["db_sync"]["state"], "unknown")
             self.assertEqual(snap["background"]["geeknews"]["state"], "idle")
             self.assertEqual(snap["background"]["activity"], 0.0)
+            self.assertEqual(snap["rooms"][0]["reply_readiness"], "unknown")
 
             # 방 디렉터리가 없어도, 스냅샷이 dict가 아니어도 같은 조회가
             # 죽으면 안 된다.
@@ -4540,9 +4854,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
             self.assertEqual(missing["background"]["geeknews"]["state"], "unknown")
             self.assertIs(module._attach_background_state(None, root), None)
 
-            # 두 번 붙여도 값이 겹쳐 덮이지 않는다.
+            # 이미 장식된 스냅샷도 현재 증거로 다시 계산한다.
             again = module._attach_background_state(snap, root, now=now)
-            self.assertIs(again, snap)
+            self.assertIsNot(again, snap)
+            self.assertEqual(again["rooms"][0]["reply_readiness"], "unknown")
 
     def test_background_state_ignores_a_nonsense_clock(self):
         """A NaN or an infinity must not turn into activity."""
@@ -4555,6 +4870,9 @@ class AutoReplyMenubarTests(unittest.TestCase):
                 room / "db-watch-state.json",
                 {
                     "capability_state": "ready",
+                    "delivery_enabled": True,
+                    "fence": "ready",
+                    "fence_reason": "",
                     "context_sync_at": float("nan"),
                     "context_sync_retry_at": float("inf"),
                     "heartbeat_at": -1,
@@ -4563,8 +4881,230 @@ class AutoReplyMenubarTests(unittest.TestCase):
             snap = module._attach_background_state(
                 self._background_snap(root), root, now=2_000_000_000.0
             )
-            self.assertEqual(snap["background"]["db_sync"]["state"], "ready")
+            self.assertEqual(snap["background"]["db_sync"]["state"], "unknown")
             self.assertEqual(snap["background"]["activity"], 0.0)
+            self.assertEqual(snap["rooms"][0]["reply_readiness"], "unknown")
+
+    def test_reply_readiness_uses_one_watcher_read_and_copies_source_rooms(self):
+        module = load(f"auto_reply_menubar_reply_ready_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            self._write_background_json(
+                room / "db-watch-state.json", self._ready_watch_state(now)
+            )
+            source = {
+                # A frozen/older producer may already have the animation
+                # payload but no room readiness. It must be upgraded once.
+                "background": {"schema_version": 1, "activity": 0.0},
+                "rooms": [
+                    {
+                        "chat_id": 42,
+                        "selector": "id:42",
+                        "live": True,
+                        "auto_reply": True,
+                    }
+                ]
+            }
+            original_read = module._read_background_state
+            watcher_reads = []
+
+            def counted_read(path):
+                if path.name == "db-watch-state.json":
+                    watcher_reads.append(path)
+                return original_read(path)
+
+            with mock.patch.object(
+                module, "_read_background_state", side_effect=counted_read
+            ):
+                snap = module._attach_background_state_once(source, root, now=now)
+                same = module._attach_background_state_once(snap, root, now=now)
+
+            self.assertEqual(len(watcher_reads), 1)
+            self.assertIs(same, snap)
+            self.assertNotIn("reply_readiness", source["rooms"][0])
+            self.assertEqual(
+                snap["rooms"][0],
+                {**source["rooms"][0], "reply_readiness": "ready"},
+            )
+            self.assertNotIn("capability_state", snap["rooms"][0])
+            self.assertNotIn("fence_reason", snap["rooms"][0])
+
+    def test_reply_readiness_blocked_stays_distinct_from_background_activity(self):
+        module = load(f"auto_reply_menubar_reply_blocked_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            cases = (
+                {
+                    "capability_state": "starting",
+                    "delivery_enabled": False,
+                    "fence": "starting",
+                    "fence_reason": "context_sync_deferred",
+                    "heartbeat_at": now - 1.0,
+                },
+                {
+                    "capability_state": "fenced",
+                    "delivery_enabled": False,
+                    "fence": "db_unavailable",
+                    "fence_reason": "poll_fence",
+                    "heartbeat_at": now - 1.0,
+                },
+            )
+            for state in cases:
+                with self.subTest(state=state["capability_state"]):
+                    self._write_background_json(room / "db-watch-state.json", state)
+                    snap = module._attach_background_state(
+                        self._background_snap(root), root, now=now
+                    )
+                    self.assertEqual(
+                        snap["rooms"][0]["reply_readiness"], "blocked"
+                    )
+                    self.assertEqual(
+                        snap["background"]["db_sync"]["state"], "retrying"
+                    )
+                    self.assertEqual(snap["background"]["activity"], 0.3)
+
+    def test_reply_readiness_missing_malformed_stale_and_future_fail_closed(self):
+        module = load(f"auto_reply_menubar_reply_unknown_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            state_path = room / "db-watch-state.json"
+            now = 2_000_000_000.0
+
+            state_path.unlink(missing_ok=True)
+            missing = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(missing["rooms"][0]["reply_readiness"], "unknown")
+
+            state_path.write_text("{", encoding="utf-8")
+            corrupt = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(corrupt["rooms"][0]["reply_readiness"], "unknown")
+
+            state_path.write_bytes(
+                b'{"padding":"'
+                + b"x" * module.BACKGROUND_STATE_LIMIT_BYTES
+                + b'"}'
+            )
+            oversized = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(oversized["rooms"][0]["reply_readiness"], "unknown")
+
+            stale_context_at = (
+                now
+                - module.REPLY_READINESS_CONTEXT_INTERVAL_SECONDS
+                - module.REPLY_READINESS_CONTEXT_LATE_GRACE_SECONDS
+                - 2.0
+            )
+            cases = {
+                "stale_heartbeat": self._ready_watch_state(
+                    now,
+                    heartbeat_at=(
+                        now - module.REPLY_READINESS_HEARTBEAT_FRESH_SECONDS - 1.0
+                    ),
+                ),
+                "future_heartbeat": self._ready_watch_state(
+                    now,
+                    heartbeat_at=(
+                        now + module.REPLY_READINESS_FUTURE_TOLERANCE_SECONDS + 1.0
+                    ),
+                ),
+                "stale_context": self._ready_watch_state(
+                    now,
+                    context_sync_at=stale_context_at,
+                    context_sync_retry_at=(
+                        stale_context_at
+                        + module.REPLY_READINESS_CONTEXT_INTERVAL_SECONDS
+                    ),
+                ),
+                "future_context": self._ready_watch_state(
+                    now,
+                    context_sync_at=(
+                        now + module.REPLY_READINESS_FUTURE_TOLERANCE_SECONDS + 1.0
+                    ),
+                    context_sync_retry_at=(
+                        now
+                        + module.REPLY_READINESS_FUTURE_TOLERANCE_SECONDS
+                        + 1.0
+                        + module.REPLY_READINESS_CONTEXT_INTERVAL_SECONDS
+                    ),
+                ),
+                "conflicting_tuple": self._ready_watch_state(
+                    now, delivery_enabled=False
+                ),
+                "unsupported_capability": self._ready_watch_state(
+                    now, capability_state="READY"
+                ),
+                "invalid_delivery_type": self._ready_watch_state(
+                    now, delivery_enabled=1
+                ),
+                "unsupported_fence_pair": {
+                    "capability_state": "fenced",
+                    "delivery_enabled": False,
+                    "fence": "db_unavailable",
+                    "fence_reason": "unsupported_reason",
+                    "heartbeat_at": now - 1.0,
+                },
+            }
+            for label, state in cases.items():
+                with self.subTest(label=label):
+                    self._write_background_json(state_path, state)
+                    snap = module._attach_background_state(
+                        self._background_snap(root), root, now=now
+                    )
+                    self.assertEqual(
+                        snap["rooms"][0]["reply_readiness"], "unknown"
+                    )
+
+            stale = self._background_snap(root)
+            stale["rooms"][0]["reply_readiness"] = "ready"
+            with mock.patch.object(
+                module, "_resolve_background_state_root", return_value=None
+            ):
+                unavailable = module._attach_background_state(stale, root, now=now)
+            self.assertEqual(
+                unavailable["rooms"][0]["reply_readiness"], "unknown"
+            )
+
+    def test_reply_readiness_refreshes_an_already_decorated_snapshot(self):
+        module = load(f"auto_reply_menubar_reply_refresh_{id(self)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "state"
+            room = self._background_room(root)
+            now = 2_000_000_000.0
+            state_path = room / "db-watch-state.json"
+            self._write_background_json(state_path, self._ready_watch_state(now))
+            ready = module._attach_background_state(
+                self._background_snap(root), root, now=now
+            )
+            self.assertEqual(ready["rooms"][0]["reply_readiness"], "ready")
+
+            self._write_background_json(
+                state_path,
+                {
+                    "capability_state": "fenced",
+                    "delivery_enabled": False,
+                    "fence": "db_unavailable",
+                    "fence_reason": "database_timeout",
+                    "heartbeat_at": now - 1.0,
+                },
+            )
+            refreshed = module._attach_background_state(ready, root, now=now)
+            self.assertIsNot(refreshed, ready)
+            self.assertEqual(ready["rooms"][0]["reply_readiness"], "ready")
+            self.assertEqual(
+                refreshed["rooms"][0]["reply_readiness"], "blocked"
+            )
+            self.assertEqual(
+                refreshed["background"]["db_sync"]["state"], "retrying"
+            )
 
     def test_the_cached_snapshot_path_still_carries_the_background_state(self):
         """A cache hit prints the snapshot itself, so the hook has to wrap it."""
@@ -4591,7 +5131,7 @@ class AutoReplyMenubarTests(unittest.TestCase):
             source.index("final class CenteredLabelCell")
         ]
         self.assertIn("background: Double = 0", source)
-        self.assertIn("JarvisCoreView.background(model, chatId:", panel)
+        self.assertIn("AldenCoreView.background(model, chatId:", panel)
         self.assertIn("background: background.activity", panel)
         self.assertIn("let background: BackgroundActivity?", source)
         self.assertIn("let speed = Self.idleSpeed + Self.activeSpeed * currentActivity", source)
@@ -4599,10 +5139,10 @@ class AutoReplyMenubarTests(unittest.TestCase):
         self.assertIn("let boost = 1.0 + currentActivity * 1.7", source)
         self.assertIn("0.22 * currentActivity * near", source)
 
-    def test_swift_jarvis_core_is_gold_amber_without_decorative_glow(self):
+    def test_swift_alden_core_is_gold_amber_without_decorative_glow(self):
         source = SWIFT.read_text(encoding="utf-8")
         core = source[
-            source.index("final class JarvisCoreView"):
+            source.index("final class AldenCoreView"):
             source.index("final class MenuPanelView")
         ]
         self.assertIn("private static let gold = NSColor(", core)
@@ -4643,8 +5183,8 @@ class LayoutGateTests(unittest.TestCase):
             rows.extend([
                 {
                     "window": window,
-                    "path": f"{window}/AutoReplyMenu.JarvisCoreView#0",
-                    "kind": "AutoReplyMenu.JarvisCoreView",
+                    "path": f"{window}/AutoReplyMenu.AldenCoreView#0",
+                    "kind": "AutoReplyMenu.AldenCoreView",
                     "hidden": False,
                 },
                 {
@@ -4658,10 +5198,10 @@ class LayoutGateTests(unittest.TestCase):
             ])
         self.assertEqual(self.check.menu_panel_surface_violations(rows), {})
 
-    def test_layout_gate_allows_only_jarvis_gear_overlap(self):
+    def test_layout_gate_allows_only_alden_gear_overlap(self):
         overlap = {
             "window": "menu-panel",
-            "a": "AutoReplyMenu.JarvisCoreView ",
+            "a": "AutoReplyMenu.AldenCoreView ",
             "b": "NSButton ",
             "overlap": [24.0, 24.0],
         }
@@ -4925,7 +5465,7 @@ class LayoutGateTests(unittest.TestCase):
         self.assertIn("let scroll = TableScrollView()", source)
 
 
-class JarvisBrowserBridgeActionTests(unittest.TestCase):
+class AldenBrowserBridgeActionTests(unittest.TestCase):
     def test_browser_task_stdin_is_bounded_and_strict_utf8(self):
         module = load(f"auto_reply_menubar_tool_stdin_{id(self)}")
 
@@ -4962,7 +5502,7 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
             )
 
     def test_invalid_input_and_global_abort_return_redacted_fixed_envelopes(self):
-        from jarvis_abort import AbortController
+        from alden_abort import AbortController
 
         module = load(f"auto_reply_menubar_tool_browser_{id(self)}")
         with tempfile.TemporaryDirectory() as temporary:
@@ -5000,7 +5540,7 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
             self.assertNotIn("private task", repr((invalid, aborted)))
 
     def test_oversized_result_and_missing_runtime_fail_closed(self):
-        from jarvis_tool_runtime import (
+        from alden_tool_runtime import (
             MAX_TOOL_RESULT_BYTES,
             ToolJobResult,
             ToolKind,
@@ -5030,13 +5570,13 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
                 raise ModuleNotFoundError("browser_use secret path")
 
         with tempfile.TemporaryDirectory() as temporary:
-            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", OversizedRuntime):
+            with mock.patch("alden_tool_runtime.AldenToolRuntime", OversizedRuntime):
                 oversized = asyncio.run(
                     module._tool_browser_payload(
                         state_root_raw=temporary, job_id="browser-2", task="task"
                     )
                 )
-            with mock.patch("jarvis_tool_runtime.JarvisToolRuntime", MissingRuntime):
+            with mock.patch("alden_tool_runtime.AldenToolRuntime", MissingRuntime):
                 unavailable = asyncio.run(
                     module._tool_browser_payload(
                         state_root_raw=temporary, job_id="browser-3", task="task"
@@ -5069,7 +5609,7 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
                 "--action",
                 "tool-browser",
                 "--state-root",
-                "/tmp/jarvis-state",
+                "/tmp/alden-state",
                 "--job-id",
                 "browser-4",
             ]
@@ -5087,15 +5627,61 @@ class JarvisBrowserBridgeActionTests(unittest.TestCase):
             sys.argv = argv
 
         run_browser.assert_awaited_once_with(
-            state_root_raw="/tmp/jarvis-state",
+            state_root_raw="/tmp/alden-state",
             job_id="browser-4",
             task="bounded task",
         )
         print_json.assert_called_once_with(expected)
         legacy_main.assert_not_called()
 
+    def test_main_keeps_browser_noise_off_stdout(self):
+        module = load(f"auto_reply_menubar_tool_stdout_{id(self)}")
+        expected = {
+            "ok": True,
+            "status": "completed",
+            "errorCode": "",
+            "result": "example.com",
+        }
 
-class JarvisMlxServerActionTests(unittest.TestCase):
+        class BinaryInput:
+            def __init__(self, payload):
+                self.buffer = io.BytesIO(payload)
+
+        async def noisy_browser(**_kwargs):
+            print("browser-use progress line")
+            return expected
+
+        saved = sys.argv
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            sys.argv = [
+                "auto-reply-menubar.py",
+                "--action",
+                "tool-browser",
+                "--state-root",
+                "/tmp/alden-state",
+                "--job-id",
+                "browser-noise",
+            ]
+            with mock.patch.object(module.sys, "stdin", BinaryInput(b"title task")), mock.patch.object(
+                module, "_scope_menubar_rooms_to_enrollment"
+            ), mock.patch.object(module, "_apply_catalog_mutates"), mock.patch.object(
+                module, "_tool_browser_payload", new=noisy_browser
+            ), mock.patch.object(module, "_orig_main") as legacy_main, contextlib.redirect_stdout(
+                stdout
+            ), contextlib.redirect_stderr(stderr):
+                self.assertEqual(module.main(), 0)
+        finally:
+            sys.argv = saved
+
+        self.assertEqual(json.loads(stdout.getvalue()), expected)
+        self.assertNotIn("browser-use progress line", stdout.getvalue())
+        self.assertIn("browser-use progress line", stderr.getvalue())
+        legacy_main.assert_not_called()
+
+
+class AldenMlxServerActionTests(unittest.TestCase):
     """The app-owned MLX server actions must stay bounded and opt-in gated."""
 
     def _run(self, module, argv, **patches):
@@ -5126,7 +5712,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
         module = load(f"auto_reply_menubar_mlx_status_{id(self)}")
         payload = self._run(
             module,
-            ["--action", "mlx-server-status", "--state-root", "/tmp/jarvis-mlx-state"],
+            ["--action", "mlx-server-status", "--state-root", "/tmp/alden-mlx-state"],
             ownership_status=lambda root: {
                 "ok": True,
                 "action": "mlx-server-status",
@@ -5147,7 +5733,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
             raise RuntimeError("probe exploded")
 
         with mock.patch.object(module, "ownership_status", new=boom):
-            payload = module._mlx_server_status_payload(Path("/tmp/jarvis-mlx-state"))
+            payload = module._mlx_server_status_payload(Path("/tmp/alden-mlx-state"))
         self.assertEqual(payload["owner_state"], "state_invalid")
         self.assertFalse(payload["app_owned"])
         self.assertIsNone(payload["model"])
@@ -5161,7 +5747,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
         for action in ("mlx-server-launch", "mlx-server-stop"):
             payload = self._run(
                 module,
-                ["--action", action, "--state-root", "/tmp/jarvis-mlx-state"],
+                ["--action", action, "--state-root", "/tmp/alden-mlx-state"],
                 launch_app_owned_server=launched,
                 stop_app_owned_server=stopped,
             )
@@ -5187,18 +5773,20 @@ class JarvisMlxServerActionTests(unittest.TestCase):
                 "--model",
                 "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
                 "--state-root",
-                "/tmp/jarvis-mlx-state",
+                "/tmp/alden-mlx-state",
                 "--explicit-opt-in",
             ],
             launch_app_owned_server=fake_launch,
         )
         self.assertTrue(payload["ok"])
         spec = captured["spec"]
-        self.assertEqual(spec.executable, module._MLX_APP_OWNED_BINARY)
+        self.assertEqual(spec.executable, module.resolve_app_executable(
+            module._MLX_APP_OWNED_BINARY, module._MLX_RENAMED_APP_BINARY
+        ))
         self.assertEqual(spec.resident_model_dir.name, "Qwen3.8-27B-MLX-Serve-4bit")
         self.assertEqual(spec.models_dir, module._MLX_APP_OWNED_MODELS_DIR)
         self.assertEqual(
-            spec.log_path, Path("/tmp/jarvis-mlx-state") / "mlx-app-owned-server.log"
+            spec.log_path, Path("/tmp/alden-mlx-state") / "mlx-app-owned-server.log"
         )
         self.assertEqual(spec.host, "127.0.0.1")
         self.assertEqual(spec.port, 11234)
@@ -5208,7 +5796,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
     def test_launch_accepts_the_prefixed_model_id_and_rejects_anything_else(self):
         module = load(f"auto_reply_menubar_mlx_models_{id(self)}")
         prefixed = module._mlx_app_owned_spec(
-            Path("/tmp/jarvis-mlx-state"),
+            Path("/tmp/alden-mlx-state"),
             "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
         )
         self.assertIsNotNone(prefixed)
@@ -5217,9 +5805,27 @@ class JarvisMlxServerActionTests(unittest.TestCase):
             "Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
         )
         self.assertEqual(prefixed.minimum_free_bytes, module.FLASH_NEXT_REQUIRED_BYTES)
+        iq = module._mlx_app_owned_spec(
+            Path("/tmp/alden-mlx-state"), module.ALDEN_IQ_MODEL_ID
+        )
+        self.assertIsNotNone(iq)
+        self.assertEqual(
+            iq.resident_model_dir,
+            module._MLX_APP_OWNED_MODELS_DIR / module.ALDEN_IQ_MODEL_ID,
+        )
+        self.assertEqual(iq.minimum_free_bytes, module.FLASH_NEXT_IQ_REQUIRED_BYTES)
+        self.assertEqual(iq.ctx_size, module.FLASH_NEXT_IQ_CONTEXT_SIZE)
+        self.assertEqual(iq.minimum_free_bytes, 60 * 1024**3)
+        self.assertEqual(iq.ctx_size, 8192)
+        self.assertEqual(iq.port, 11235)
+        self.assertEqual(
+            iq.log_path,
+            Path("/tmp/alden-mlx-state") / "mlx-app-owned-server-11235.log",
+        )
+        self.assertEqual(iq.validate(), "")
         for candidate in (None, "", "remote/arbitrary", "ddalcu/../../etc/passwd"):
             self.assertIsNone(
-                module._mlx_app_owned_spec(Path("/tmp/jarvis-mlx-state"), candidate),
+                module._mlx_app_owned_spec(Path("/tmp/alden-mlx-state"), candidate),
                 msg=f"accepted model {candidate!r}",
             )
 
@@ -5232,7 +5838,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
                 "--model",
                 "remote/arbitrary",
                 "--state-root",
-                "/tmp/jarvis-mlx-state",
+                "/tmp/alden-mlx-state",
                 "--explicit-opt-in",
             ],
             launch_app_owned_server=launched,
@@ -5240,13 +5846,73 @@ class JarvisMlxServerActionTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "mlx_model_not_supported")
         launched.assert_not_called()
 
+    def test_iq_launch_skips_11234_gateway_residency_seed(self):
+        module = load(f"auto_reply_menubar_mlx_iq_independent_{id(self)}")
+        captured = {}
+
+        class Result:
+            ok = True
+            pid = 4242
+
+            @staticmethod
+            def report():
+                return {
+                    "ok": True,
+                    "action": "mlx-server-launch",
+                    "reason": "launch_ready",
+                }
+
+        def fake_launch(spec, state_root):
+            captured["spec"] = spec
+            captured["state_root"] = state_root
+            return Result()
+
+        probe_11234 = mock.Mock(
+            side_effect=AssertionError("iQ launch must not probe the 11234 gateway")
+        )
+        write_residency = mock.Mock(
+            side_effect=AssertionError("iQ launch must not write 11234 residency")
+        )
+        payload = self._run(
+            module,
+            [
+                "--action",
+                "mlx-server-launch",
+                "--model",
+                module.ALDEN_IQ_MODEL_ID,
+                "--state-root",
+                "/tmp/alden-mlx-state",
+                "--explicit-opt-in",
+            ],
+            launch_app_owned_server=fake_launch,
+            _read_mlx_gateway_models=probe_11234,
+            write_managed_model_residency=write_residency,
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("residency_seeded", payload)
+        self.assertEqual(captured["state_root"], Path("/tmp/alden-mlx-state"))
+        self.assertEqual(captured["spec"].port, 11235)
+        self.assertEqual(captured["spec"].ctx_size, 8192)
+        self.assertEqual(captured["spec"].minimum_free_bytes, 60 * 1024**3)
+        self.assertEqual(
+            captured["spec"].log_path,
+            Path("/tmp/alden-mlx-state") / "mlx-app-owned-server-11235.log",
+        )
+        probe_11234.assert_not_called()
+        write_residency.assert_not_called()
+
     def test_launch_residency_seed_requires_exact_ready_catalog_and_owner_readback(self):
         module = load(f"auto_reply_menubar_mlx_residency_seed_{id(self)}")
         pid = 4242
         current = f"mlx/{module.FLASH_NEXT_MODEL_ID.removeprefix('mlx/')}"
         residency = module.ManagedModelResidency(
             current,
-            (module.FLASH_NEXT_MODEL_ID, module.QWEN38_27B_MODEL_ID),
+            (
+                module.FLASH_NEXT_MODEL_ID,
+                module.FLASH_NEXT_IQ_MODEL_ID,
+                module.QWEN38_27B_MODEL_ID,
+            ),
             pid,
             True,
             False,
@@ -5318,7 +5984,7 @@ class JarvisMlxServerActionTests(unittest.TestCase):
                 "--action",
                 "mlx-server-stop",
                 "--state-root",
-                "/tmp/jarvis-mlx-state",
+                "/tmp/alden-mlx-state",
                 "--explicit-opt-in",
             ],
             stop_app_owned_server=lambda root: StopResult(

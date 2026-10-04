@@ -63,11 +63,7 @@ pub fn cmd_experiment_run(prompt: String, json: bool, config: &OpenKakaoConfig) 
 
 /// `okc experiment compare <v1> <v2>`: load stored results for two prompt
 /// versions and compare their quality and speed side by side (R4.7).
-pub fn cmd_experiment_compare(
-    version_a: String,
-    version_b: String,
-    json: bool,
-) -> Result<()> {
+pub fn cmd_experiment_compare(version_a: String, version_b: String, json: bool) -> Result<()> {
     let db_path = openkakao_cli::context::default_db_path();
     let store = match SqliteExperimentStore::open(&db_path) {
         Ok(store) => store,
@@ -137,10 +133,19 @@ fn outcome_label(outcome: &Outcome) -> String {
 
 fn print_run_human(prompt: &str, results: &[ExperimentResult], table: &ComparisonTable) {
     let ok = results.iter().filter(|r| r.outcome.is_ok()).count();
-    let failed = results.iter().filter(|r| matches!(r.outcome, Outcome::Failed(_))).count();
-    let timed = results.iter().filter(|r| matches!(r.outcome, Outcome::Timeout)).count();
+    let failed = results
+        .iter()
+        .filter(|r| matches!(r.outcome, Outcome::Failed(_)))
+        .count();
+    let timed = results
+        .iter()
+        .filter(|r| matches!(r.outcome, Outcome::Timeout))
+        .count();
     println!("프롬프트 '{prompt}' 실험을 마쳤어요.");
-    println!("  측정: {}건 (성공 {ok}, 실패 {failed}, 시간 초과 {timed})", results.len());
+    println!(
+        "  측정: {}건 (성공 {ok}, 실패 {failed}, 시간 초과 {timed})",
+        results.len()
+    );
     if let Some(avg) = average_quality(results) {
         println!("  평균 말투 점수: {:.1}/100", avg);
     }

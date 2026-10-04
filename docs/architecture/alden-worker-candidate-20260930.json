@@ -1,0 +1,19 @@
+{
+  "schema": "alden-isolated-worker-candidate-v1",
+  "private_candidate_root": "/private/tmp/alden-reviewable-runtime-0.1.6-zl7an00z",
+  "runtime_root": "/private/tmp/alden-reviewable-runtime-0.1.6-zl7an00z/state/runtime-candidates/alden-0.1.6-source-8ceeea8",
+  "prepared": true,
+  "activated": false,
+  "rooms": 3,
+  "shared_stable_cli_unchanged": true,
+  "state_root": "isolated temporary private state; not production",
+  "scope": "Reviewable immutable candidate only; config is private and not in public release assets",
+  "worker_sha256": "b69bd5e123fe06b7ccc24450a18e0267b599cf5ebd0fe3e406ffb8e5cc808be5",
+  "graph_sha256": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+  "limits": [
+    "Historical intermediate candidate; do not activate. Use the separately verified final candidate receipt.",
+    "No watchdog/Terminal/launchctl/worker start",
+    "Existing active queue and session untouched"
+  ],
+  "superseded_by": "alden-worker-candidate-final-20260930.json"
+}

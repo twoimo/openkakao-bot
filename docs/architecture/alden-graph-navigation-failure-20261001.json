@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "date": "2026-10-01",
+  "version": "0.1.6",
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "executableSha256": "401a1dbb81a03139a6592da9d99b72735233022390819ebad060c56f432fadce",
+  "scenario": "preexisting private compact PNG after actual native graph navigation and settings resize",
+  "samples": 1,
+  "exitCode": 1,
+  "elapsedSec": 3.628966666990891,
+  "elapsedScope": "owned child launch through exit; includes launcher sampling interval; not an output failure latency benchmark",
+  "reportValid": true,
+  "reportSuccess": false,
+  "reportError": "output exists or cannot be created",
+  "watchdogUsed": false,
+  "sentinelPreserved": true,
+  "ownedChildExited": true,
+  "networkPolicy": "sandbox-exec deny network*",
+  "scope": "owned isolated floating settings renderer with fixed persisted graph read only; no primary, production, physical UX, full settings backend or voice attestation",
+  "priorCrashes": {
+    "count": 2,
+    "signal": "SIGABRT",
+    "mainThreadBoundary": "Tao control_flow_end_handler / Rust foreign exception cleanup",
+    "auditWorkerAtCapture": "openat / Output::write",
+    "lastExceptionBacktraceAvailable": false,
+    "rootCause": "unresolved",
+    "reproducedByCurrentScenario": false,
+    "interpretation": "report creation and main-thread abort occurred concurrently; this does not prove a write, shutdown or observer defect"
+  },
+  "claimsExcluded": [
+    "prior exception fixed",
+    "all failure paths safe",
+    "before/after improvement",
+    "p95 or app-wide resource saving"
+  ],
+  "sourceChange": false,
+  "fullGoalComplete": false
+}

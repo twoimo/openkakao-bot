@@ -1,0 +1,67 @@
+{
+  "sourceCommit": "8791ea1cc23073a58806bed5e6537a4512dbb54d",
+  "evidenceCommit": "b7bdda90f2a085353f817668ead800b5c873b663",
+  "releaseUrl": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-6730d9c69d5ac88931de",
+  "releaseTag": "alden-workspace-evidence-20261001-b7bdda9",
+  "isDraft": true,
+  "isPrerelease": true,
+  "bodyExact": true,
+  "downloadedAssetCount": 7,
+  "allDownloadedBytesEqual": true,
+  "downloadedNativeBundleFileCount": 30,
+  "downloadedOverlayFileCount": 23,
+  "assets": [
+    {
+      "name": "Alden-0.1.6-8791ea1-local.zip",
+      "sha256": "74422c9cdc0067c45962206a515981198085f33b315908baf1786046e267414b",
+      "bytes": 11629628,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4mro",
+      "byteEqual": true
+    },
+    {
+      "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+      "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+      "bytes": 26965707,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4mrh",
+      "byteEqual": true
+    },
+    {
+      "name": "alden-menubar-runtime-v1.json",
+      "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+      "bytes": 1533,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4mri",
+      "byteEqual": true
+    },
+    {
+      "name": "Alden-workspace-evidence-b7bdda9.tar.gz",
+      "sha256": "e55a3ea71bb79f0fd7c69023ca4cb9f238d850eb3662990f397a18454acd113f",
+      "bytes": 200728,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4mrj",
+      "byteEqual": true
+    },
+    {
+      "name": "install-alden-menubar-runtime.sh",
+      "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+      "bytes": 12585,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4mrl",
+      "byteEqual": true
+    },
+    {
+      "name": "INSTALL.md",
+      "sha256": "8d4c58efabee7295fa447f69e2b60aff6bc63ed8c8f04fafe518550b809bea32",
+      "bytes": 2732,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4msV",
+      "byteEqual": true
+    },
+    {
+      "name": "SHA256SUMS",
+      "sha256": "d22a9bb6f5b371d1a0fb8905919b5d38e7276e4945f1bcee7c67e8e08c70d94e",
+      "bytes": 589,
+      "remoteAssetId": "RA_kwDOUKbSPc4j4msS",
+      "byteEqual": true
+    }
+  ],
+  "scope": "authenticated draft readback; not public notarized production release",
+  "sourceCiUrl": "https://github.com/twoimo/openkakao-bot/actions/runs/36793165993",
+  "sourceCiSuccessfulJobs": 4
+}

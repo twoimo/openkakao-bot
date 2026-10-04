@@ -209,7 +209,10 @@ fn migration_renames_tables_adds_owner_key_and_preserves_counts() {
 
     // Legacy names gone, renamed names present.
     for (legacy, renamed) in super::OWNER_TABLE_RENAMES {
-        assert!(!table_present(&conn, legacy), "legacy {legacy} still present");
+        assert!(
+            !table_present(&conn, legacy),
+            "legacy {legacy} still present"
+        );
         assert!(table_present(&conn, renamed), "renamed {renamed} missing");
     }
 

@@ -1,0 +1,51 @@
+{
+  "version": "0.3.10",
+  "success": true,
+  "scope": "owned native graph WKWebView with fixed persisted graph reads; no existing-process, OS-lock, tray click, shortcut, voice or inference attestation",
+  "mode": "isolated-popover-persisted-graph-read-only",
+  "cycles": 10,
+  "hidden_sample_ms": 350,
+  "hidden_render_deltas": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "stop_upper_bound_ms": [
+    17.701,
+    26.53975,
+    19.019417,
+    1.3753330000000001,
+    1.145459,
+    20.803542,
+    11.699333,
+    1.329875,
+    2.227417,
+    7.509208
+  ],
+  "resume_render_deltas": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+  ],
+  "monitor_scale_factors": [
+    1.0,
+    1.0
+  ],
+  "retina": {
+    "available": false
+  }
+}

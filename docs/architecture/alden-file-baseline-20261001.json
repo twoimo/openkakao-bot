@@ -1,0 +1,31 @@
+{
+  "schema": "alden-file-readonly-baseline-v1",
+  "captured_utc": "2026-09-30T16:49:35.150566+00:00",
+  "n_rooms": 3,
+  "n_rows": 600,
+  "rooms": [
+    {
+      "room_fingerprint": "4492effd9a99",
+      "exit_code": 0,
+      "seconds": 1.454,
+      "files": [],
+      "rows": 200
+    },
+    {
+      "room_fingerprint": "2a54f9562e32",
+      "exit_code": 0,
+      "seconds": 0.25,
+      "files": [],
+      "rows": 200
+    },
+    {
+      "room_fingerprint": "fdd2c09d819d",
+      "exit_code": 0,
+      "seconds": 0.218,
+      "files": [],
+      "rows": 200
+    }
+  ],
+  "actual_file_downloads": 0,
+  "interpretation": "Bounded recent 200 rows per approved room contained no file candidates; does not establish no older files."
+}

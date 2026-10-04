@@ -1,0 +1,156 @@
+{
+  "fresh_process": {
+    "pairs": 30,
+    "calls_per_process": 1,
+    "latency_p50_ms": {
+      "before": 43.105708,
+      "after": 44.934479499999995,
+      "relative_improvement": -0.04242527462952227,
+      "paired_bootstrap_95ci": [
+        -0.15286165282413802,
+        0.04318692047319161
+      ],
+      "mean_paired_difference": -1.4684820333333344,
+      "mean_difference_95ci": [
+        -3.5537559283333353,
+        0.5537302091666653
+      ]
+    },
+    "latency_p95_ms": {
+      "before": 55.519994049999994,
+      "after": 55.170964399999995,
+      "relative_improvement": 0.00628655777026328,
+      "paired_bootstrap_95ci": [
+        -0.07038452515765041,
+        0.06125508871590631
+      ],
+      "mean_paired_difference": -1.4684820333333344,
+      "mean_difference_95ci": [
+        -3.5537559283333353,
+        0.5537302091666653
+      ]
+    },
+    "cpu_dispatch_p50_ms": {
+      "before": 2.1505,
+      "after": 2.066,
+      "relative_improvement": 0.03929318763078365,
+      "paired_bootstrap_95ci": [
+        -0.0416461310990637,
+        0.15209790209790205
+      ],
+      "mean_paired_difference": 0.06866666666666668,
+      "mean_difference_95ci": [
+        -0.06467083333333327,
+        0.19996749999999996
+      ]
+    },
+    "peak_rss_p50_bytes": {
+      "before": 30113792.0,
+      "after": 30883840.0,
+      "relative_improvement": -0.025571273122959738,
+      "paired_bootstrap_95ci": [
+        -0.0286493860845839,
+        -0.023939064200217627
+      ],
+      "mean_paired_difference": -791893.3333333334,
+      "mean_difference_95ci": [
+        -843229.8666666667,
+        -743833.6
+      ]
+    },
+    "semantic_pairs_equal": 30,
+    "observed_failures": 0,
+    "observed_lost_responses": 0,
+    "observed_duplicate_responses": 0
+  },
+  "warm": {
+    "pairs": 30,
+    "calls_per_process": 300,
+    "latency_p50_ms": {
+      "before": 1.51482275,
+      "after": 1.59532325,
+      "relative_improvement": -0.05314186098670626,
+      "paired_bootstrap_95ci": [
+        -0.19121985597207478,
+        0.05329374136229025
+      ],
+      "mean_paired_difference": -0.077016,
+      "mean_difference_95ci": [
+        -0.16195238666666664,
+        0.005882028333333286
+      ]
+    },
+    "latency_p95_ms": {
+      "before": 1.976246075,
+      "after": 2.0404657,
+      "relative_improvement": -0.03249576346407165,
+      "paired_bootstrap_95ci": [
+        -0.11944768213878393,
+        0.06271738075132959
+      ],
+      "mean_paired_difference": -0.077016,
+      "mean_difference_95ci": [
+        -0.16195238666666664,
+        0.005882028333333286
+      ]
+    },
+    "cpu_dispatch_p50_ms": {
+      "before": 1.34575,
+      "after": 1.34975,
+      "relative_improvement": -0.002972320267508827,
+      "paired_bootstrap_95ci": [
+        -0.1040221117258908,
+        0.06739327883742045
+      ],
+      "mean_paired_difference": -0.0028166666666666527,
+      "mean_difference_95ci": [
+        -0.06285124999999997,
+        0.056483749999999985
+      ]
+    },
+    "peak_rss_p50_bytes": {
+      "before": 31989760.0,
+      "after": 32833536.0,
+      "relative_improvement": -0.026376440460947503,
+      "paired_bootstrap_95ci": [
+        -0.02848344880677444,
+        -0.02506393861892583
+      ],
+      "mean_paired_difference": -821384.5333333333,
+      "mean_difference_95ci": [
+        -932249.6,
+        -702859.9466666669
+      ]
+    },
+    "semantic_pairs_equal": 30,
+    "observed_failures": 0,
+    "observed_lost_responses": 0,
+    "observed_duplicate_responses": 0,
+    "raw_call_latency_p50_ms": {
+      "before": 1.5123125,
+      "after": 1.5994165,
+      "relative_improvement": -0.05759656155721789,
+      "paired_cluster_bootstrap_95ci": [
+        -0.12768347151115733,
+        0.008012073278414909
+      ],
+      "pair_count": 30,
+      "before_calls": 9000,
+      "after_calls": 9000,
+      "bootstrap_unit": "paired process blocks, preserving all within-process calls"
+    },
+    "raw_call_latency_p95_ms": {
+      "before": 2.33705355,
+      "after": 2.4605871500000003,
+      "relative_improvement": -0.052858694658494444,
+      "paired_cluster_bootstrap_95ci": [
+        -0.08164817237078875,
+        -0.025391600524471085
+      ],
+      "pair_count": 30,
+      "before_calls": 9000,
+      "after_calls": 9000,
+      "bootstrap_unit": "paired process blocks, preserving all within-process calls"
+    }
+  }
+}

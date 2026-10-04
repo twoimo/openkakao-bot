@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "scope": "synthetic_validation_teacher_forcing_only",
+  "model_id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "format": "mlx-serve-qwen3_5-converted",
+  "sample_count_per_operation": 1,
+  "cache_hit_operation_excludes_model_loading": true,
+  "runs": [
+    {
+      "index": 0,
+      "exit_code": 0,
+      "wall_seconds": 24.772434,
+      "guard_reasons": [],
+      "stderr_bytes": 0,
+      "instrumentation": {
+        "model_load_calls": [
+          {
+            "requested_format": "mlx-serve-qwen3_5-converted"
+          }
+        ],
+        "runtime_network_attempts": [],
+        "negative_probe_denied": true,
+        "wall_seconds": 24.488000333076343,
+        "process_peak_rss_bytes": 16918544384,
+        "exit_code": 0
+      },
+      "result": {
+        "key": {
+          "schema_version": 1,
+          "version": "0.1.6",
+          "source_sha256": "6b4a176d97715434a74a044f7d3df62c6b43bf2d1e39efe10b694f6d96a0cf08",
+          "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+          "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "split": "validation",
+          "beta": 0.1,
+          "runtime_versions": {
+            "python": "3.11.16",
+            "mlx": "0.32.2",
+            "mlx-lm": "0.31.3",
+            "transformers": "5.17.0"
+          }
+        },
+        "phase": "evaluated",
+        "scoring": {
+          "status": "ok",
+          "reason": "dpo_teacher_forced",
+          "scoring_method": "mlx_direct_teacher_forcing",
+          "string_similarity_used": false,
+          "pair_count": 3,
+          "evaluated": 3,
+          "mean_loss": 0.6931471805599453,
+          "runtime_seconds": 15.504647,
+          "peak_bytes": 17354615326,
+          "peak_bytes_scope": "scoring_after_model_load",
+          "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f",
+          "reference_frozen": true,
+          "reference_reused": true,
+          "requested_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "policy_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "reference_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "identical_checkpoint_delta_zero": true,
+          "versions": {
+            "python": "3.11.16",
+            "mlx": "0.32.2",
+            "mlx-lm": "0.31.3",
+            "transformers": "5.17.0"
+          },
+          "pairs": [
+            {
+              "pair_id": "validation-meeting",
+              "chosen_tokens": 8,
+              "rejected_tokens": 8,
+              "policy_chosen_logprob": -6.681827444124792,
+              "policy_rejected_logprob": -29.861458986997604,
+              "reference_chosen_logprob": -6.681827444124792,
+              "reference_rejected_logprob": -29.861458986997604,
+              "delta": 0.0,
+              "loss": 0.6931471805599453
+            },
+            {
+              "pair_id": "validation-latest",
+              "chosen_tokens": 4,
+              "rejected_tokens": 4,
+              "policy_chosen_logprob": -5.685352478176355,
+              "policy_rejected_logprob": -12.019163057208061,
+              "reference_chosen_logprob": -5.685352478176355,
+              "reference_rejected_logprob": -12.019163057208061,
+              "delta": 0.0,
+              "loss": 0.6931471805599453
+            },
+            {
+              "pair_id": "validation-no-pixels",
+              "chosen_tokens": 7,
+              "rejected_tokens": 5,
+              "policy_chosen_logprob": -11.955785505007952,
+              "policy_rejected_logprob": -34.44330534338951,
+              "reference_chosen_logprob": -11.955785505007952,
+              "reference_rejected_logprob": -34.44330534338951,
+              "delta": 0.0,
+              "loss": 0.6931471805599453
+            }
+          ]
+        },
+        "split_counts": {
+          "train": 3,
+          "validation": 3,
+          "test": 3
+        },
+        "weights_trained": false,
+        "model_promoted": false,
+        "runtime_seconds": 24.455112,
+        "cached": false,
+        "evaluation_id": "2981a25da238be9a9ae686ed5cac2457d53a5f64962f57890241e536731b5a66"
+      }
+    },
+    {
+      "index": 1,
+      "exit_code": 0,
+      "wall_seconds": 8.566803,
+      "guard_reasons": [],
+      "stderr_bytes": 0,
+      "instrumentation": {
+        "model_load_calls": [],
+        "runtime_network_attempts": [],
+        "negative_probe_denied": true,
+        "wall_seconds": 8.429872292093933,
+        "process_peak_rss_bytes": 74711040,
+        "exit_code": 0
+      },
+      "result": {
+        "key": {
+          "beta": 0.1,
+          "checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+          "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "runtime_versions": {
+            "mlx": "0.32.2",
+            "mlx-lm": "0.31.3",
+            "python": "3.11.16",
+            "transformers": "5.17.0"
+          },
+          "schema_version": 1,
+          "source_sha256": "6b4a176d97715434a74a044f7d3df62c6b43bf2d1e39efe10b694f6d96a0cf08",
+          "split": "validation",
+          "version": "0.1.6"
+        },
+        "model_promoted": false,
+        "phase": "evaluated",
+        "runtime_seconds": 8.404978,
+        "scoring": {
+          "evaluated": 3,
+          "identical_checkpoint_delta_zero": true,
+          "mean_loss": 0.6931471805599453,
+          "pair_count": 3,
+          "pairs": [
+            {
+              "chosen_tokens": 8,
+              "delta": 0.0,
+              "loss": 0.6931471805599453,
+              "pair_id": "validation-meeting",
+              "policy_chosen_logprob": -6.681827444124792,
+              "policy_rejected_logprob": -29.861458986997604,
+              "reference_chosen_logprob": -6.681827444124792,
+              "reference_rejected_logprob": -29.861458986997604,
+              "rejected_tokens": 8
+            },
+            {
+              "chosen_tokens": 4,
+              "delta": 0.0,
+              "loss": 0.6931471805599453,
+              "pair_id": "validation-latest",
+              "policy_chosen_logprob": -5.685352478176355,
+              "policy_rejected_logprob": -12.019163057208061,
+              "reference_chosen_logprob": -5.685352478176355,
+              "reference_rejected_logprob": -12.019163057208061,
+              "rejected_tokens": 4
+            },
+            {
+              "chosen_tokens": 7,
+              "delta": 0.0,
+              "loss": 0.6931471805599453,
+              "pair_id": "validation-no-pixels",
+              "policy_chosen_logprob": -11.955785505007952,
+              "policy_rejected_logprob": -34.44330534338951,
+              "reference_chosen_logprob": -11.955785505007952,
+              "reference_rejected_logprob": -34.44330534338951,
+              "rejected_tokens": 5
+            }
+          ],
+          "peak_bytes": 17354615326,
+          "peak_bytes_scope": "scoring_after_model_load",
+          "policy_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "reason": "dpo_teacher_forced",
+          "reference_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "reference_frozen": true,
+          "reference_reused": true,
+          "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+          "requested_checkpoint_format": "mlx-serve-qwen3_5-converted",
+          "runtime_seconds": 15.504647,
+          "scoring_method": "mlx_direct_teacher_forcing",
+          "status": "ok",
+          "string_similarity_used": false,
+          "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f",
+          "versions": {
+            "mlx": "0.32.2",
+            "mlx-lm": "0.31.3",
+            "python": "3.11.16",
+            "transformers": "5.17.0"
+          }
+        },
+        "split_counts": {
+          "test": 3,
+          "train": 3,
+          "validation": 3
+        },
+        "weights_trained": false,
+        "cached": true,
+        "evaluation_id": "2981a25da238be9a9ae686ed5cac2457d53a5f64962f57890241e536731b5a66",
+        "original_evaluation_runtime_seconds": 24.455112
+      }
+    }
+  ],
+  "memory_before": {
+    "available_bytes": 52528414720,
+    "swap_used_bytes": 25389107773
+  },
+  "memory_after": {
+    "available_bytes": 47052488704,
+    "swap_used_bytes": 25389107773
+  },
+  "shared_command_preserved": true,
+  "shared_success_counter_before": 124,
+  "shared_success_counter_after": 124,
+  "weights_trained": false,
+  "model_promoted": false,
+  "quality_improvement_claimed": false,
+  "cold_start_controlled": false,
+  "app_total_memory_measured": false
+}

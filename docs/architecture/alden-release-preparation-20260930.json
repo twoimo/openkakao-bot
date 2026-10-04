@@ -1,0 +1,56 @@
+{
+  "version": "0.1.6",
+  "status": "prepared_local_adhoc_bundle_and_runtime_sidecar",
+  "production_release": "blocked: existing signing/notary prerequisite secrets missing",
+  "source_revision": "e03a678fb2416adbfcdbe4a2b96417c2e538a07f",
+  "signing": "local ad-hoc; Developer ID/notarization unavailable",
+  "assets": [
+    {
+      "name": "Alden-0.1.6-macos-arm64-local.zip",
+      "bytes": 11514743,
+      "sha256": "40056f0e275960c96b3bc1c34ee4dd39c5b30b005b487a43e070b518c58a728c"
+    },
+    {
+      "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+      "bytes": 26965707,
+      "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547"
+    },
+    {
+      "name": "RELEASE_NOTES.md",
+      "bytes": 1864,
+      "sha256": "8ef350107d10bdad5bced554bffb911e3fdf1ed227dcd353b3717d285851ae0e"
+    },
+    {
+      "name": "alden-local-delivery-manifest-v1.json",
+      "bytes": 7865,
+      "sha256": "0447adc5f61510e4d473d4c8872fb0ddbfc2f2aa8d50607caf97a4ef3444103e"
+    },
+    {
+      "name": "alden-menubar-runtime-v1.json",
+      "bytes": 1533,
+      "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287"
+    },
+    {
+      "name": "install-alden-menubar-runtime.sh",
+      "bytes": 12585,
+      "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc"
+    }
+  ],
+  "installed": true,
+  "installed_screen": "native CUA timeout; not verified",
+  "product_voice": "blocked by wake release model and memory admission",
+  "missing_production_secrets": [
+    "ALDEN_APPLE_DEVELOPER_ID_P12_BASE64",
+    "ALDEN_APPLE_DEVELOPER_ID_P12_PASSWORD",
+    "ALDEN_APPLE_SIGNING_IDENTITY",
+    "ALDEN_APPLE_NOTARY_KEY_P8_BASE64",
+    "ALDEN_APPLE_NOTARY_KEY_ID",
+    "ALDEN_APPLE_NOTARY_ISSUER_ID"
+  ],
+  "local_asset_root": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/dist/alden-0.1.6-local",
+  "installed_version": "0.1.6",
+  "installed_resource_matches": "25/25 packaged resources; 28/28 bundle files",
+  "source_commit": "e03a678fb2416adbfcdbe4a2b96417c2e538a07f",
+  "local_delivery_manifest": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/dist/alden-0.1.6-local/alden-local-delivery-manifest-v1.json",
+  "checksum_file": "SHA256SUMS"
+}

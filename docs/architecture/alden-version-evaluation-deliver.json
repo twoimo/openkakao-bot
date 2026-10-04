@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "deliver",
+  "type": "workflow",
+  "input": "docs/architecture/alden-version-evaluation.workflow.json",
+  "output": "docs/architecture/alden-version-evaluation.html",
+  "specification": {
+    "sha256": "8ab5a213500d6806eb04d9113978b77093870806c6ac5189055bbfc528b7f8ce",
+    "bytes": 2180
+  },
+  "artifact": {
+    "sha256": "e4809731e04ebdbbf2f791ae7333413d4ce40f4ab757b417c60aa7bb5f403ab6",
+    "bytes": 803255
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  }
+}

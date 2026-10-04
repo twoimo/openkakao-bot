@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/docs/architecture/alden-python-snapshot.sequence.json",
+  "output": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/docs/architecture/alden-python-snapshot.html",
+  "specification": {
+    "sha256": "e09a9665b04f6ecf09c26724c5cc5f68aba883701384a55aeec4d87a949a8371",
+    "bytes": 2793
+  },
+  "artifact": {
+    "sha256": "ec439f9aa3156028aaf57a6da8081fc7b9e745fb72e3b7d590bb69f4cc119220",
+    "bytes": 803937
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  },
+  "browser_evidence": "passed",
+  "visual_review": "passed",
+  "correction_rounds": 0,
+  "perceptual_scope": "Parent inspected all four current 1440x900/2048x1320 light/dark screenshots; labels, arrow separation, card fit and vertical balance acceptable. Automated containment separately passed four desktop sizes.",
+  "viewer_language": "Authored Korean; fixed Viewer controls and HTML lang fall back to English."
+}

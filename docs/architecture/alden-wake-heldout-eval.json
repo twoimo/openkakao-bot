@@ -1,0 +1,130 @@
+{
+  "schema": "alden.wake.experimental-eval/1",
+  "generated_at_kst": "2026-09-27T20:44:52+09:00",
+  "evaluator": "scripts/evaluate_alden_korean_wake.py",
+  "evaluator_sha256": "81fac766ac251317eb897534f22c4231f44bd069055cd68dd444f59e1cbace67",
+  "threshold": 0.65,
+  "threshold_changed": false,
+  "candidate": {
+    "path": "voice/models/experimental/alden_ko_ridge_candidate_v4.onnx",
+    "bytes": 6404,
+    "sha256": "944009e330abaa02bd1823e6f760d31fe23f2ad8fca18deeff4f79434d9bf827",
+    "training": {
+      "calibration_gain": 2.1945293579731837,
+      "method": "openwakeword_embedding_ridge_head",
+      "negative_clips": 6,
+      "negative_windows": 269,
+      "positive_clips": 4,
+      "positive_windows": 152,
+      "proof_scope": "synthesized_clips_single_system_voice",
+      "ridge_negative_max": -0.7028884887695312,
+      "ridge_positive_max": 1.2995678186416626
+    }
+  },
+  "scope": {
+    "backend": "say",
+    "voices": [
+      "Yuna"
+    ],
+    "positive_clips": 3,
+    "negative_clips": 3,
+    "synthetic_speech_only": true,
+    "human_speakers": false,
+    "microphones_or_rooms": false,
+    "independent_clip_state_reset": true,
+    "note": "One macOS Yuna synthetic voice. Each WAV starts from reset, silence-warmed detector state; this remains a small synthetic prototype check, not human-speaker generalization evidence."
+  },
+  "summary": {
+    "positive_accepts": 2,
+    "positive_total": 3,
+    "positive_accept_rate": 0.666667,
+    "negative_false_accepts": 0,
+    "negative_total": 3,
+    "negative_false_accept_rate": 0.0,
+    "stock_positive_accepts": 0,
+    "stock_negative_false_accepts": 0,
+    "closest_negative": "neg-Yuna-1"
+  },
+  "rows": [
+    {
+      "name": "pos-Yuna-default",
+      "kind": "positive",
+      "text": "올든",
+      "voice": "Yuna",
+      "custom_max": 0.725181,
+      "accepted": true,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 23,
+      "rate_mpr": null
+    },
+    {
+      "name": "pos-Yuna-140",
+      "kind": "positive",
+      "text": "올든",
+      "voice": "Yuna",
+      "custom_max": 0.805785,
+      "accepted": true,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 25,
+      "rate_mpr": 140
+    },
+    {
+      "name": "pos-Yuna-240",
+      "kind": "positive",
+      "text": "올든",
+      "voice": "Yuna",
+      "custom_max": 0.404137,
+      "accepted": false,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 18,
+      "rate_mpr": 240
+    },
+    {
+      "name": "neg-Yuna-0",
+      "kind": "negative",
+      "text": "안녕하세요",
+      "voice": "Yuna",
+      "custom_max": 0.264813,
+      "accepted": false,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 45,
+      "rate_mpr": null
+    },
+    {
+      "name": "neg-Yuna-1",
+      "kind": "negative",
+      "text": "올든 봇이야",
+      "voice": "Yuna",
+      "custom_max": 0.383677,
+      "accepted": false,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 44,
+      "rate_mpr": null
+    },
+    {
+      "name": "neg-Yuna-2",
+      "kind": "negative",
+      "text": "오늘 날씨 어때",
+      "voice": "Yuna",
+      "custom_max": 0.247573,
+      "accepted": false,
+      "stock_max": 0.0,
+      "stock_accepted": false,
+      "frames": 57,
+      "rate_mpr": null
+    }
+  ],
+  "release_gate": {
+    "passed": false,
+    "reasons": [
+      "synthetic_positive_accept_rate_below_one",
+      "no_human_speaker_trials"
+    ],
+    "runtime_enabled": false
+  }
+}

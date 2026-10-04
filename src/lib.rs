@@ -1,5 +1,7 @@
-pub mod ax_send;
+pub mod alden_abort;
+pub mod alden_corpus;
 pub mod auto_reply_service;
+pub mod ax_send;
 pub mod breaker;
 pub mod collector;
 pub mod context;
@@ -15,15 +17,16 @@ pub mod geeknews;
 pub mod improve;
 pub mod live_sample;
 pub mod local_db;
-pub mod logging;
 pub mod loco;
-pub mod memory;
+pub mod logging;
 #[allow(
     dead_code,
     reason = "the library ax_send module reuses the binary media validator for strict transcript binding"
 )]
 pub mod media;
+pub mod memory;
 pub mod message_db;
+pub mod metrics;
 pub mod model;
 pub mod model_config;
 pub mod packaging;
@@ -36,4 +39,3 @@ pub mod reply_receipt;
 pub mod room_catalog;
 pub mod safety;
 pub mod ui_shell;
-pub mod metrics;

@@ -45,14 +45,30 @@ const RENAMES: [(&str, &str); 4] = [
 /// A conversation fixture with enough owner (최연우) turns to produce a style
 /// profile. Row order is part of the golden contract.
 const FIXTURE_ROWS: &[(&str, &str, &str)] = &[
-    ("2026-01-01 09:00:00", "민수", "프로젝트 회의 일정 언제 잡을까"),
+    (
+        "2026-01-01 09:00:00",
+        "민수",
+        "프로젝트 회의 일정 언제 잡을까",
+    ),
     ("2026-01-01 09:05:00", "최연우", "회의 자료 먼저 정리할게"),
     ("2026-01-01 09:10:00", "민수", "점심 메뉴 뭐 먹을까"),
-    ("2026-01-01 09:15:00", "최연우", "회의 끝나고 점심 회의 자료 공유"),
+    (
+        "2026-01-01 09:15:00",
+        "최연우",
+        "회의 끝나고 점심 회의 자료 공유",
+    ),
     ("2026-01-01 09:20:00", "민수", "주말에 등산 갈 사람"),
-    ("2026-01-01 09:25:00", "최연우", "자료 준비 다 됐어 회의 하자"),
+    (
+        "2026-01-01 09:25:00",
+        "최연우",
+        "자료 준비 다 됐어 회의 하자",
+    ),
     ("2026-01-01 09:30:00", "민수", "발표 순서 정했어"),
-    ("2026-01-01 09:35:00", "최연우", "발표 자료 검토하고 회의 때 말할게"),
+    (
+        "2026-01-01 09:35:00",
+        "최연우",
+        "발표 자료 검토하고 회의 때 말할게",
+    ),
 ];
 
 fn write_fixture_csv(dir: &Path) -> PathBuf {
@@ -146,7 +162,10 @@ fn owner_scope_migration_preserves_search_and_style_lookup() {
                 )
                 .is_ok();
             assert!(legacy_present, "legacy {legacy} missing before migration");
-            assert!(!renamed_present, "renamed {renamed} present before migration");
+            assert!(
+                !renamed_present,
+                "renamed {renamed} present before migration"
+            );
         }
 
         let tx = conn.transaction().unwrap();

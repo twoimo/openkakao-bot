@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-30T07:53:54Z",
+  "scope": "alden_desktop_render_lifecycle",
+  "status": "source_and_chromium_verified",
+  "files": [
+    {
+      "path": "desktop/src/core/animation-loop.ts",
+      "sha256": "7d8ae85df367a8ce02e9eca7a595f3e374e9df79856ffa1d0bb3b35f33eea51a"
+    },
+    {
+      "path": "desktop/src/core/lifecycle.ts",
+      "sha256": "ec0b8dc75d3886bb6f3010059d5c9a3d05979037089a77796d44e1a2cd327df4"
+    },
+    {
+      "path": "desktop/src/core/alden-core.ts",
+      "sha256": "73dc9b3474657aa837ead2b3cd93901962411c75a8db40551e4c44ed92c004f4"
+    },
+    {
+      "path": "desktop/src/main.ts",
+      "sha256": "e18084f94dca85e975ce1d24fa56f026d6a4e7bd1fdb16120b611f5db29d91ec"
+    },
+    {
+      "path": "desktop/src/__tests__/render-lifecycle.test.ts",
+      "sha256": "95768d7a4a120a26b129df97d3d528ba3ca7e4b0e0e22f6eacf4f13e45cf92e1"
+    },
+    {
+      "path": "desktop/src/__tests__/lifecycle-wiring.test.ts",
+      "sha256": "a156f33a254f11b89a721ccf3a28160fb58c77c9fcaf2c52917f761596f1f6a8"
+    }
+  ],
+  "regression": {
+    "pre_fix_new_cases": {
+      "passed": 0,
+      "failed": 4,
+      "observed_failures": [
+        "one RAF queued after hide during frame",
+        "two RAFs queued after hide and restore during frame",
+        "pause measurement unavailable",
+        "51 timer stops for 51 hidden transitions"
+      ]
+    },
+    "focused": {
+      "command": "npx vitest run src/__tests__/render-lifecycle.test.ts src/__tests__/lifecycle-wiring.test.ts src/__tests__/render-state.test.ts src/__tests__/desktop.test.ts",
+      "test_files": 4,
+      "tests": 99,
+      "passed": 99
+    },
+    "full": {
+      "command": "npx vitest run",
+      "test_files": 15,
+      "tests": 191,
+      "passed": 191
+    },
+    "typecheck": {
+      "command": "npx tsc -p tsconfig.json --noEmit",
+      "exit_code": 0
+    }
+  },
+  "browser_measurement": {
+    "renderer": "real_chromium_webgl2",
+    "gl_version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+    "gl_renderer": "WebKit WebGL",
+    "source_server": "temporary Vite source server on 127.0.0.1:43179",
+    "tauri_bridge": "synthetic",
+    "runtime_snapshot": "synthetic_public_empty",
+    "installed_wkwebview": false,
+    "initial_hide": {
+      "event_call_at_ms": 2077.5999999046326,
+      "event_at_ms": 2077.7999999523163,
+      "render_count_before": 25,
+      "render_count_after_sync": 25,
+      "render_count_after_750ms": 25,
+      "renders_after_event": 0,
+      "last_render_at_ms": 2042.7,
+      "last_frame_offset_from_event_ms": -35.09999995231624,
+      "event_to_last_frame_ms": 0,
+      "running": false,
+      "pending_frame": false
+    },
+    "repeat_cycles": {
+      "hide_show_cycles": 50,
+      "visibility_listener_registrations": 1,
+      "visible_sample_seconds": 1.0,
+      "visible_sample_frames": 13,
+      "final_hidden_observation_ms": 500,
+      "final_hidden_added_frames": 0,
+      "final_last_frame_offset_from_event_ms": -59.099999952316466,
+      "final_event_to_last_frame_ms": 0,
+      "final_running": false,
+      "final_pending_frame": false
+    },
+    "cleanup": {
+      "owned_tab_closed": true,
+      "temporary_server_stopped": true,
+      "temporary_harness_removed": true
+    }
+  },
+  "load_context": {
+    "recorded_at": "2026-09-30T07:53:54Z",
+    "load_average_1m": 13.97,
+    "load_average_5m": 15.48,
+    "load_average_15m": 15.74,
+    "interpretation": "functional lifecycle evidence only; not a general frame-performance benchmark"
+  },
+  "boundaries": {
+    "verified": [
+      "RAF ownership across in-frame hide and restore races",
+      "deduplicated timer ownership",
+      "listener detach over 25 cycles",
+      "idempotent GPU resource disposal",
+      "real Chromium WebGL renderer pause through synthetic visibility bridge"
+    ],
+    "unverified": [
+      "production Tauri WKWebView",
+      "AppKit menu-bar hide event",
+      "installed app screen",
+      "screen lock lifecycle",
+      "Retina window behavior",
+      "package or release build",
+      "whole-app GPU or battery use"
+    ]
+  }
+}

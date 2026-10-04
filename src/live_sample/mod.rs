@@ -443,9 +443,7 @@ impl SampleStore for SqliteSampleStore {
                 },
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    SampleError::Backend("no-row".to_string())
-                }
+                rusqlite::Error::QueryReturnedNoRows => SampleError::Backend("no-row".to_string()),
                 other => db_err(other),
             });
         match row {
@@ -642,7 +640,8 @@ impl<'a> LiveSampleCollector<'a> {
                 self.store.save_pacing(&pacing)?;
             }
             if receipt.grade == SendGrade::Smoke {
-                self.smoke_confirmed.set(self.smoke_confirmed.get().saturating_add(1));
+                self.smoke_confirmed
+                    .set(self.smoke_confirmed.get().saturating_add(1));
             }
         }
 
@@ -895,14 +894,14 @@ mod tests {
         let clock = crate::fakes::VirtualClock::new(0);
         let collector = LiveSampleCollector::new(&store, &clock, Some(10), 1000, Some(5), 7);
         // memo grade allowed only for the memo chat id.
-        assert!(collector
-            .check(&partner_intent(SendGrade::Memo), 5)
-            .is_ok());
+        assert!(collector.check(&partner_intent(SendGrade::Memo), 5).is_ok());
         assert_eq!(
             collector.check(&partner_intent(SendGrade::Memo), 6),
             Err(GradeLimit::MemoOnly)
         );
         // fake grade always allowed.
-        assert!(collector.check(&partner_intent(SendGrade::Fake), 999).is_ok());
+        assert!(collector
+            .check(&partner_intent(SendGrade::Fake), 999)
+            .is_ok());
     }
 }

@@ -576,9 +576,9 @@ impl CheckProbe for RuntimeProbe {
     }
     fn check(&self) -> selfcheck::CheckStatus {
         match &self.snapshot {
-            Err(error) => selfcheck::CheckStatus::Fail(format!(
-                "동작 상태를 읽지 못했어요: {error}"
-            )),
+            Err(error) => {
+                selfcheck::CheckStatus::Fail(format!("동작 상태를 읽지 못했어요: {error}"))
+            }
             Ok(snapshot) => {
                 if let Some(secs) = snapshot.auth_cooldown_remaining_secs {
                     selfcheck::CheckStatus::Warn(format!(
@@ -643,7 +643,9 @@ impl ConfigValidity {
         }
         if let Some(mode) = self.privacy_mode.as_deref() {
             if mode != "local" && mode != "remote_explicit" {
-                return Some(format!("개인정보 모드 값 \"{mode}\"은(는) 알 수 없는 값이에요."));
+                return Some(format!(
+                    "개인정보 모드 값 \"{mode}\"은(는) 알 수 없는 값이에요."
+                ));
             }
         }
         None
@@ -736,12 +738,8 @@ impl CheckProbe for LocalDbProbe {
     fn check(&self) -> selfcheck::CheckStatus {
         match openkakao_cli::local_db::LocalDbReader::check_access() {
             Ok(status) if status.decryptable => selfcheck::CheckStatus::Ok,
-            Ok(_) => selfcheck::CheckStatus::Fail(
-                "로컬 데이터베이스를 열 수 없어요.".to_string(),
-            ),
-            Err(error) => {
-                selfcheck::CheckStatus::Fail(format!("연결 확인에 실패했어요: {error}"))
-            }
+            Ok(_) => selfcheck::CheckStatus::Fail("로컬 데이터베이스를 열 수 없어요.".to_string()),
+            Err(error) => selfcheck::CheckStatus::Fail(format!("연결 확인에 실패했어요: {error}")),
         }
     }
     fn is_repairable(&self) -> bool {
@@ -813,7 +811,8 @@ impl CheckProbe for SafetyGateProbe {
         false
     }
     fn guidance(&self) -> String {
-        "안전 규칙은 자동으로 바꾸지 않아요. 설정 파일의 [safety] 항목을 직접 확인해 주세요.".to_string()
+        "안전 규칙은 자동으로 바꾸지 않아요. 설정 파일의 [safety] 항목을 직접 확인해 주세요."
+            .to_string()
     }
 }
 

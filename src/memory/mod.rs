@@ -147,7 +147,9 @@ pub enum MemoryError {
     #[error("해당 기억을 찾을 수 없어요. 목록을 새로 불러온 뒤 다시 시도해 주세요.")]
     NotFound,
     /// A database operation failed; the existing data is preserved (R8.7).
-    #[error("작업을 끝내지 못했어요: {0}. 변경 내용은 저장되지 않았고 기존 데이터는 그대로 두었어요.")]
+    #[error(
+        "작업을 끝내지 못했어요: {0}. 변경 내용은 저장되지 않았고 기존 데이터는 그대로 두었어요."
+    )]
     Db(#[from] rusqlite::Error),
     /// A stored row could not be decoded.
     #[error("저장된 기억을 읽어 올 수 없어요: {0}")]

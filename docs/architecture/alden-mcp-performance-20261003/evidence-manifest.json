@@ -1,0 +1,70 @@
+{
+  "scope": "Synthetic paired measurements copied byte-for-byte; no private app screenshots or conversation records",
+  "files": [
+    {
+      "name": "osk-benchmark-raw.json",
+      "sha256": "d571465f862e176bf0fb364fe4fa85a78eccc432aadc1f0c6a9252bc6f7cdd9f",
+      "bytes": 173859
+    },
+    {
+      "name": "osk-benchmark-summary.json",
+      "sha256": "234091bb0c242eb2b9c9248e976c1082e5bf087517a7bac75afb798f502354c9",
+      "bytes": 8483
+    },
+    {
+      "name": "osk-benchmark-provenance.json",
+      "sha256": "bc98b17614d384f2937cfa42796da53e20d86ed034625dd32f097ef49c791aca",
+      "bytes": 726
+    },
+    {
+      "name": "status-benchmark-raw.json",
+      "sha256": "eee51c48b34b6a4d428112ac5b2d6bb950be22e1a9d61e76eaf90e63f7319181",
+      "bytes": 898664
+    },
+    {
+      "name": "status-benchmark-summary.json",
+      "sha256": "148a8dcfd83e1723f30bfa91ad7d871b5b26fb6f144b78bd63cdbdb5d0bb01ca",
+      "bytes": 4381
+    },
+    {
+      "name": "status-benchmark-provenance.json",
+      "sha256": "e98e5b71dfa8a9a80016a792c805698034a2f1f558b4407fac7de4ee0fdd33c4",
+      "bytes": 573
+    },
+    {
+      "name": "status-hardening-raw.json",
+      "sha256": "42e43055dbd3bfeca0d4c94317c059b282cda56ee84436cd3cbb0eeda4b04aba",
+      "bytes": 1086558
+    },
+    {
+      "name": "status-hardening-summary.json",
+      "sha256": "afae2fc68318b433288b8b0efe353f47b0c646b377b3bf7492ba04f177cf2e6c",
+      "bytes": 4345
+    },
+    {
+      "name": "status-hardening-provenance.json",
+      "sha256": "6d7bbae08a8946e436241d2edd0edfc6cd2fa6b31ff29515f143fbbeea1b5443",
+      "bytes": 627
+    },
+    {
+      "name": "status-control-comparison.json",
+      "sha256": "be783e51e9683f52c88f7f61a809f0c9bbf5dc50a3a553b27a811881df2583f4",
+      "bytes": 37380
+    },
+    {
+      "name": "status-cost-analysis.json",
+      "sha256": "99731a7f36955637df7fedccd222210728988f3feb337bc130e008fcc1da6e16",
+      "bytes": 3292
+    },
+    {
+      "name": "regression-summary.json",
+      "sha256": "3a44dc423b745312865c01c472fbeb2c0f31b3cfc2a782a1d4a75970fe33575d",
+      "bytes": 684
+    },
+    {
+      "name": "evidence-versions.json",
+      "sha256": "ec151f818668366ab59dda029068690960d43ec4facdd8ac4fd041f848b4f03c",
+      "bytes": 1805
+    }
+  ]
+}

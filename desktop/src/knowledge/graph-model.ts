@@ -2,9 +2,10 @@ export const DEFAULT_FOCUS_HOPS = 2;
 export const MAX_FOCUS_HOPS = 3;
 export const FOCUS_NEIGHBOR_LIMIT = 10;
 export const ON_SCREEN_NODE_CAP = 24;
+export const NAVIGATION_HISTORY_LIMIT = 32;
 
 export interface KnowledgeEvidence {
-  kind: "seed" | "ledger";
+  kind: "seed" | "ledger" | "snapshot";
   sourceEventIds: string[];
   chatId: string;
   confirmedAt: string | null;
@@ -18,6 +19,8 @@ export interface KnowledgeNode {
   importance: number;
   updatedAt: number;
   evidence: KnowledgeEvidence;
+  description?: string;
+  facts?: string[];
 }
 
 export interface KnowledgeEdge {
@@ -72,7 +75,8 @@ function parseEvidence(value: unknown): KnowledgeEvidence {
     ? item.source_event_ids.filter((entry): entry is string => typeof entry === "string").slice(0, 16)
     : [];
   return {
-    kind: item.kind === "ledger" ? "ledger" : "seed",
+    kind: item.kind === 'decision_ledger' ? 'ledger' : item.kind === 'local_db_snapshot' ? 'snapshot'
+      : item.kind === "ledger" || item.kind === "snapshot" ? item.kind : "seed",
     sourceEventIds: ids,
     chatId: stringValue(item.chat_id),
     confirmedAt: typeof item.confirmed_at === "string" ? item.confirmed_at : null,
@@ -80,7 +84,7 @@ function parseEvidence(value: unknown): KnowledgeEvidence {
   };
 }
 
-export function parseKnowledgeGraph(payload: Record<string, unknown> | null): KnowledgeGraph {
+export function parseKnowledgeGraph(payload: Record<string, unknown> | null, nowMs = Date.now()): KnowledgeGraph {
   const nodes = Array.isArray(payload?.nodes)
     ? payload.nodes.flatMap((raw): KnowledgeNode[] => {
       const item = objectValue(raw);
@@ -88,13 +92,17 @@ export function parseKnowledgeGraph(payload: Record<string, unknown> | null): Kn
       const id = stringValue(item.id);
       const label = stringValue(item.label);
       if (!id || !label || id.startsWith("message:") || id.startsWith("msg:")) return [];
+      const evidence = parseEvidence(item.evidence);
+      if (evidence.retracted) return [];
       return [{
         id,
         label,
         category: stringValue(item.category),
         importance: Math.max(0, Math.min(100, numberValue(item.importance))),
         updatedAt: Math.max(0, numberValue(item.updated_at)),
-        evidence: parseEvidence(item.evidence),
+        evidence,
+        description: stringValue(item.description).slice(0, 2400),
+        facts: Array.isArray(item.facts) ? item.facts.filter((entry): entry is string => typeof entry === 'string').slice(0, 6).map(entry => entry.slice(0, 600)) : [],
       }];
     })
     : [];
@@ -106,6 +114,9 @@ export function parseKnowledgeGraph(payload: Record<string, unknown> | null): Kn
       const source = stringValue(item.source);
       const target = stringValue(item.target);
       if (!nodeIds.has(source) || !nodeIds.has(target)) return [];
+      const evidence = parseEvidence(item.evidence), validTo = stringValue(item.valid_to);
+      const until = Date.parse(validTo);
+      if (evidence.retracted || (Number.isFinite(until) && until <= nowMs)) return [];
       return [{
         source,
         relation: stringValue(item.relation),
@@ -114,9 +125,9 @@ export function parseKnowledgeGraph(payload: Record<string, unknown> | null): Kn
         weight: Math.max(0, numberValue(item.weight)),
         roomId: stringValue(item.room_id),
         validFrom: stringValue(item.valid_from),
-        validTo: stringValue(item.valid_to),
+        validTo,
         evidenceMessageId: stringValue(item.evidence_message_id),
-        evidence: parseEvidence(item.evidence),
+        evidence,
       }];
     })
     : [];
@@ -182,8 +193,17 @@ export function kHopNodeIds(
 export class KnowledgeDrilldown {
   private focusId: string | null = null;
   private hops = 0;
+  private readonly history: Array<{ focusId: string | null; hops: number }> = [];
 
-  constructor(private readonly graph: KnowledgeGraph) {}
+  constructor(private graph: KnowledgeGraph) {}
+
+  replaceGraph(graph: KnowledgeGraph): KnowledgeView {
+    this.graph = graph;
+    const ids = new Set(graph.nodes.map(node => node.id));
+    this.history.splice(0, this.history.length, ...this.history.filter(entry => entry.focusId === null || ids.has(entry.focusId)));
+    if (this.focusId && !ids.has(this.focusId)) { this.focusId = null; this.hops = 0; }
+    return this.current();
+  }
 
   current(): KnowledgeView {
     if (!this.focusId) return overviewGraph(this.graph);
@@ -197,19 +217,42 @@ export class KnowledgeDrilldown {
 
   clickNode(nodeId: string): KnowledgeView {
     if (!this.graph.nodes.some((node) => node.id === nodeId)) return this.current();
+    this.remember(nodeId, DEFAULT_FOCUS_HOPS);
     this.focusId = nodeId;
     this.hops = DEFAULT_FOCUS_HOPS;
     return this.current();
   }
 
   expandOneHop(): KnowledgeView {
-    if (this.focusId) this.hops = Math.min(MAX_FOCUS_HOPS, Math.max(DEFAULT_FOCUS_HOPS, this.hops + 1));
+    if (this.focusId) {
+      const next = Math.min(MAX_FOCUS_HOPS, Math.max(DEFAULT_FOCUS_HOPS, this.hops + 1));
+      this.remember(this.focusId, next);
+      this.hops = next;
+    }
     return this.current();
   }
 
   reset(): KnowledgeView {
+    this.remember(null, 0);
     this.focusId = null;
     this.hops = 0;
     return this.current();
+  }
+
+  get canGoBack(): boolean { return this.history.length > 0; }
+
+  back(): KnowledgeView {
+    const previous = this.history.pop();
+    if (previous) {
+      this.focusId = previous.focusId;
+      this.hops = previous.hops;
+    }
+    return this.current();
+  }
+
+  private remember(focusId: string | null, hops: number): void {
+    if (this.focusId === focusId && this.hops === hops) return;
+    this.history.push({ focusId: this.focusId, hops: this.hops });
+    if (this.history.length > NAVIGATION_HISTORY_LIMIT) this.history.shift();
   }
 }

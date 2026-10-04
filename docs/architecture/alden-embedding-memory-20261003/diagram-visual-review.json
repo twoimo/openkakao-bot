@@ -1,0 +1,10 @@
+{
+  "reviewer": "parent image-capable agent",
+  "artifact_sha256": "ec1b12c852ce0da5c8f8eeb3223a12e1d56600ba585c77fe84144e4f987eef28",
+  "images": [
+    "alden-embedding-memory-20261003.visual-check.1440x900.dark.png",
+    "alden-embedding-memory-20261003.visual-check.2048x1320.light.png"
+  ],
+  "findings": "timeline, labels, cards and viewer controls readable and contained; no overlap observed; fixed viewer UI English",
+  "source": "alden-embedding-memory-20261003.compact.sequence.json"
+}

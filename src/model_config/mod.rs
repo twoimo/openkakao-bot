@@ -77,7 +77,10 @@ impl ModelSelection {
     /// The `provider/model` pair, trimmed, as owned strings. Used for
     /// supported-catalog membership checks.
     fn trimmed_pair(&self) -> (String, String) {
-        (self.provider.trim().to_string(), self.model.trim().to_string())
+        (
+            self.provider.trim().to_string(),
+            self.model.trim().to_string(),
+        )
     }
 }
 
@@ -405,7 +408,10 @@ mod tests {
     fn empty_image_model_is_rejected() {
         let store = store();
         let err = store
-            .apply(ModelConfig::new(reply_a(), ModelSelection::new("openai-image", "")))
+            .apply(ModelConfig::new(
+                reply_a(),
+                ModelSelection::new("openai-image", ""),
+            ))
             .expect_err("empty model must be rejected");
         assert_eq!(err, ConfigError::EmptyModel(ModelSlot::Image));
         assert_eq!(store.current().version, 1);

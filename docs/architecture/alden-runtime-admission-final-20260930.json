@@ -1,0 +1,24 @@
+{
+  "recorded_utc": "2026-09-30T10:07:54.142787+00:00",
+  "voice_memory": {
+    "reclaimable_bytes": 63026053120,
+    "swap_free_bytes": 1227945410
+  },
+  "voice_min_reclaimable_bytes": {
+    "stt": 8589934592,
+    "tts": 10737418240
+  },
+  "voice_min_swap_free_bytes": 2147483648,
+  "model_memory": {
+    "free_bytes": 63026118656,
+    "kv_cache_bytes": 0,
+    "voice_models_bytes": 0,
+    "other_resident_bytes": 0
+  },
+  "released_wake_model": null,
+  "scope": "Read-only admission current; no model/mic/restart/gate mutation",
+  "voice_memory_admitted": {
+    "stt": false,
+    "tts": false
+  }
+}

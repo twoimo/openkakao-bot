@@ -1,0 +1,190 @@
+{
+  "schema": "alden-context-image-failure-replay-v1",
+  "observed_at": "2026-09-30T08:56:17.801546+00:00",
+  "source_sha256": "8f48e4bf1fdc64903c1e70c06075fef93375f8db8da94e7bc332160d4b72c804",
+  "goal_file": "5a80379d-b416-4358-812b-3a2c370d697f/goal-objective.md",
+  "ledger_scope": "one existing authorized room ledger; read-only; unrelated conversation text and raw event IDs omitted",
+  "term_counts": {
+    "무슨 말인지 모르": 2,
+    "화질이 별로": 10,
+    "구도가 이상": 8
+  },
+  "confirmed_sent_ledger_counts": {
+    "무슨 말인지 모르": 1,
+    "화질이 별로": 1,
+    "구도가 이상": 1
+  },
+  "unique_photo_events": 16,
+  "baseline_unsupported_visual_claims": 16,
+  "current_unsupported_visual_claims": 0,
+  "replays": [
+    {
+      "event_sha256_prefix": "4fc6904335188201",
+      "historical_line": 567,
+      "recorded_at": "2026-08-27T05:34:32.725226+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네",
+      "baseline_uninspected_visual_claim": "구도가 이상하네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "12c7c2310a97be0f",
+      "historical_line": 568,
+      "recorded_at": "2026-08-27T05:36:19.672318+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "구도가 이상하네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "36d15eae7626ea81",
+      "historical_line": 569,
+      "recorded_at": "2026-08-27T05:42:34.556987+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "구도가 이상하네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "3a693d1c5f276299",
+      "historical_line": 610,
+      "recorded_at": "2026-08-28T07:04:07.973641+00:00",
+      "failure_reason": "model_authentication_unavailable",
+      "historical_reply": "구도가 이상하네요",
+      "baseline_uninspected_visual_claim": "화질이 별로네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "c886a60c2ab68cd0",
+      "historical_line": 611,
+      "recorded_at": "2026-08-28T07:04:37.593328+00:00",
+      "failure_reason": "model_authentication_unavailable",
+      "historical_reply": "구도가 이상하네요",
+      "baseline_uninspected_visual_claim": "화질이 별로네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "2918bb40b98309e1",
+      "historical_line": 613,
+      "recorded_at": "2026-08-28T07:07:53.685392+00:00",
+      "failure_reason": "model_authentication_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "구도가 이상하네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "fba68410ddb15657",
+      "historical_line": 615,
+      "recorded_at": "2026-08-28T07:11:46.431655+00:00",
+      "failure_reason": "model_authentication_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "잘 안 보이네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "015d4ad0b3404261",
+      "historical_line": 741,
+      "recorded_at": "2026-09-12T15:50:23.427394+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "잘 안 보이네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "15f1ed6df6e437ea",
+      "historical_line": 990,
+      "recorded_at": "2026-09-15T20:25:05.720596+00:00",
+      "failure_reason": "model_usage_limited",
+      "historical_reply": "화질이 별로네",
+      "baseline_uninspected_visual_claim": "화질이 별로네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "0c724fefa275329b",
+      "historical_line": 1093,
+      "recorded_at": "2026-09-17T10:41:28.947252+00:00",
+      "failure_reason": "model_usage_limited",
+      "historical_reply": "구도가 이상하네요",
+      "baseline_uninspected_visual_claim": "화면이 좀 깨지네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "ff610c7b8e8118fb",
+      "historical_line": 1284,
+      "recorded_at": "2026-09-23T15:52:58.146765+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네",
+      "baseline_uninspected_visual_claim": "화면이 좀 깨지네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "2c74c703d6422ead",
+      "historical_line": 1287,
+      "recorded_at": "2026-09-23T15:56:28.687308+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "구도가 이상하네",
+      "baseline_uninspected_visual_claim": "구도가 이상하네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "3647bd95cfb708ed",
+      "historical_line": 1358,
+      "recorded_at": "2026-09-26T07:55:27.858147+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "구도가 이상하네",
+      "baseline_uninspected_visual_claim": "화면이 좀 깨지네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "da2e6aae8acb5d2a",
+      "historical_line": 1434,
+      "recorded_at": "2026-09-30T06:30:41.200962+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "구도가 이상하네요",
+      "baseline_uninspected_visual_claim": "구도가 이상하네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "ebe3e679678df43e",
+      "historical_line": 1450,
+      "recorded_at": "2026-09-30T08:16:25.369281+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "구도가 이상하네",
+      "baseline_uninspected_visual_claim": "색감이 별로네",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_sha256_prefix": "14af7df4b4046170",
+      "historical_line": 1465,
+      "recorded_at": "2026-09-30T08:45:45.488695+00:00",
+      "failure_reason": "model_temporarily_unavailable",
+      "historical_reply": "화질이 별로네요",
+      "baseline_uninspected_visual_claim": "화질이 별로네요",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    }
+  ],
+  "new_sends": 0,
+  "production_writes": 0,
+  "model_calls": 0,
+  "limits": [
+    "Ledger sent-state is the historical persisted receipt, not a new live delivery",
+    "Helper replay only; no model/pixel/capture/STT/AX call",
+    "Current immutable worker runtime still contains the earlier helper; no shared session cutover"
+  ]
+}

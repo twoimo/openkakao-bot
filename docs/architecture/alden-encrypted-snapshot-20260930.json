@@ -1,0 +1,375 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T14:27:40.324295+00:00",
+  "goal_objective_sha256": "5786ad14aed4235ea05ba463f2402583b8a02d62016ad660c3ce139f94415619",
+  "full_goal_complete": false,
+  "installed_version": "0.1.6",
+  "source_code_commit": "effa5c629955093dc64f7370295e789422783ad4",
+  "installed_cli_sha256": "90fe7746bee8fe29a532e11e3697b1ba415c80508cbba3731d6f0e29ba305d03",
+  "encrypted_snapshot_inspection": {
+    "schema_version": 1,
+    "kind": "production-source-encrypted-replica-inspection",
+    "source_sqlite_connection_opened": false,
+    "source_db_bytes": 874995712,
+    "source_wal_bytes": 4676208,
+    "source_db_wal_signature_unchanged": false,
+    "source_identity_preserved": true,
+    "encrypted_header": true,
+    "copy_seconds": 0.042234959,
+    "open_seconds": 0.030233958,
+    "inspection": {
+      "readonly": true,
+      "query_only": 1,
+      "cipher_version": "4.6.1 community",
+      "quick_check": "ok",
+      "quick_check_seconds": 10.006642334
+    },
+    "polls": [
+      {
+        "room_fingerprint": "2a54f9562e32c403",
+        "messages_after_existing_checkpoint": 0,
+        "completeness": "empty",
+        "has_more": false,
+        "poll_seconds": 0.000253208
+      },
+      {
+        "room_fingerprint": "4492effd9a999f11",
+        "messages_after_existing_checkpoint": 4,
+        "completeness": "complete",
+        "has_more": false,
+        "poll_seconds": 8.4417e-05
+      },
+      {
+        "room_fingerprint": "fdd2c09d819dcffe",
+        "messages_after_existing_checkpoint": 0,
+        "completeness": "empty",
+        "has_more": false,
+        "poll_seconds": 3.075e-05
+      }
+    ],
+    "temporary_replica_removed": true,
+    "total_seconds": 10.248828959,
+    "messages_saved": false,
+    "keys_exported": false,
+    "model_calls": 0,
+    "send_calls": 0,
+    "production_index_writes": 0,
+    "process_peak_rss_bytes": 14467072,
+    "wrapper_seconds": 10.822158,
+    "process_timeout_seconds": 90,
+    "samples": 1,
+    "source_module_sha256": {
+      "src/local_db.rs": "7fa1ddb06e0cc2f7b17eb7ff80019f0b97f00e9e5a6c1138d99856571aef49c2",
+      "src/context_sync_replica.rs": "e362ff987c70977e620f4a3b312a73fb92449cfd537dfbdcacb4d6e236910336"
+    },
+    "probe_sha256": "2d4f4b553fb4982674c186ac9b17c5cdf46687cea725235d4ef10784b5e6a7c7"
+  },
+  "installed_incremental_sync": {
+    "destination": "private copy of the existing context mirror",
+    "rooms": 3,
+    "commands": 8,
+    "passes": [
+      {
+        "pass": 1,
+        "room_fingerprint": "2a54f9562e32c403",
+        "seconds": 0.416931,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 1,
+        "room_fingerprint": "4492effd9a999f11",
+        "seconds": 0.256991,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 1,
+        "room_fingerprint": "fdd2c09d819dcffe",
+        "seconds": 0.251957,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 2,
+        "room_fingerprint": "2a54f9562e32c403",
+        "seconds": 0.245556,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 2,
+        "room_fingerprint": "4492effd9a999f11",
+        "seconds": 0.252261,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 2,
+        "room_fingerprint": "fdd2c09d819dcffe",
+        "seconds": 0.24823,
+        "exit_code": 0,
+        "queue_receipt_source_supplied": true,
+        "pages": 1,
+        "authoritative": true,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "network": false,
+        "deferred": false
+      },
+      {
+        "pass": 3,
+        "room_fingerprint": "4492effd9a999f11",
+        "seconds": 0.535148,
+        "totals": {
+          "inserted_events": 4,
+          "duplicate_events": 0,
+          "indexed_messages": 4,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "pages": 1,
+        "authoritative": true,
+        "deferred": false,
+        "network": false,
+        "new_event_count_readback": 4,
+        "new_events_with_context_message": 4
+      },
+      {
+        "pass": 4,
+        "room_fingerprint": "4492effd9a999f11",
+        "seconds": 0.252652,
+        "totals": {
+          "inserted_events": 0,
+          "duplicate_events": 0,
+          "indexed_messages": 0,
+          "style_messages": 0,
+          "response_samples": 0,
+          "recipient_style_samples": 0
+        },
+        "pages": 1,
+        "authoritative": true,
+        "deferred": false,
+        "network": false,
+        "new_event_count_readback": 0,
+        "new_events_with_context_message": 0
+      }
+    ],
+    "private_mirror_quick_check": "ok",
+    "encrypted_tempdirs_remaining": 0,
+    "source_mirror_signature_unchanged": false,
+    "enrollment_unchanged": true,
+    "send_calls": 0,
+    "model_calls": 0,
+    "production_index_writes": 0,
+    "children_peak_rss_bytes": 21643264,
+    "private_mirror_removed": true,
+    "private_copy_removed_components": [
+      "main",
+      "-wal",
+      "-shm"
+    ]
+  },
+  "production_mirror_persisted_readback": {
+    "schema_version": 1,
+    "captured_at": "2026-09-30T14:11:30.509114+00:00",
+    "kind": "existing-production-mirror-persisted-readback",
+    "expected_real_new_events": 4,
+    "found_events": 4,
+    "matching_message_digests": 4,
+    "events_with_context_message": 4,
+    "production_checkpoint_at_least_private": true,
+    "authoritative": true,
+    "sync_status": "ready",
+    "source_mirror_opened_by_sqlite": false,
+    "copy_and_readback_seconds": 0.47129,
+    "sent_at_to_index_created_at_seconds": {
+      "samples": 4,
+      "min": 33.27142596244812,
+      "median": 37.62533497810364,
+      "max": 40.806391954422,
+      "scope": "Kakao sent_at to existing mirror receipt; not SQLite insert latency"
+    },
+    "original_mirror_connection_opened": false,
+    "production_writes_by_probe": 0,
+    "temporary_mirror_removed": true
+  },
+  "graph_before": {
+    "schema_version": 1,
+    "captured_at_unix": 1790777591,
+    "kind": "existing-graph-and-dense-metadata-private-copy-readback",
+    "original_connections_opened": 0,
+    "production_writes": 0,
+    "stores": {
+      "knowledge-graph.sqlite3": {
+        "last_dense_indexed_at": "1790772903",
+        "last_indexed_at": "1790772902",
+        "last_snapshot_status": "copy_ok",
+        "last_index_error_present": false,
+        "last_dense_status_prefix": "indexed"
+      },
+      "knowledge-dense-ann.sqlite3": {
+        "index_version": "local-embedding-lsh-v2",
+        "watermark": "1790772902"
+      }
+    },
+    "graph_stale_by_300s_contract": true,
+    "dense_watermark_matches_graph": true
+  },
+  "installed_graph_refresh": {
+    "schema_version": 1,
+    "captured_at": "2026-09-30T14:18:51.642078+00:00",
+    "kind": "installed-coordinated-one-shot-graph-refresh",
+    "backup": "/Users/twoimo/Library/Application Support/openkakao/install-backups/alden-graph/20260930T1416Z-avndokmy",
+    "backup_integrity": "ok",
+    "backup_files": [
+      {
+        "file": "knowledge-graph.sqlite3",
+        "bytes": 434176,
+        "sha256": "a294724728644cd93141e6cf61c649e5142ff3ce9ffb19bbb4b736c12001f8a8"
+      },
+      {
+        "file": "knowledge-dense-ann.sqlite3",
+        "bytes": 2940928,
+        "sha256": "966c801d84378c8019dc8a52f252953baf3417b633c5d94ee243cae151b753ae"
+      }
+    ],
+    "installed_source_sha256": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+    "python_executable": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+    "lock_owned": true,
+    "sends_by_probe": 0,
+    "worker_restarts": 0,
+    "original_kakao_db_writes": 0,
+    "external_inference": false,
+    "timeout_seconds": 180,
+    "exit_code": 0,
+    "seconds": 6.522227,
+    "children_peak_rss_bytes": 97959936,
+    "enrollment_unchanged": true,
+    "queue_identities_preserved": true,
+    "readback": {
+      "knowledge-graph.sqlite3": {
+        "last_dense_indexed_at": "1790777938",
+        "last_indexed_at": "1790777937",
+        "last_snapshot_status": "copy_ok",
+        "quick_check": "ok",
+        "last_index_error_present": false,
+        "last_dense_status_prefix": "indexed"
+      },
+      "knowledge-dense-ann.sqlite3": {
+        "index_version": "local-embedding-lsh-v2",
+        "watermark": "1790777937",
+        "quick_check": "ok"
+      }
+    },
+    "graph_fresh": true,
+    "dense_watermark_matches_graph": true
+  },
+  "dense_model_and_backend_readback": {
+    "rows": [
+      {
+        "model": "mlx-community/multilingual-e5-small-mlx@5030c7625865046d350eeea28f427d80353d0ac0",
+        "dimensions": 384,
+        "watermark": "1790777937",
+        "index_version": "local-embedding-lsh-v2",
+        "vectors": 50
+      }
+    ],
+    "captured_at_unix": 1790778232,
+    "backend_healthy": true,
+    "aggregate": {
+      "state": "running",
+      "readiness": "ready",
+      "authoritative": true,
+      "room_count": 3,
+      "ready_room_count": 3,
+      "updated_at": "2026-09-30T14:23:52.254670+00:00"
+    }
+  },
+  "checks": {
+    "release_example_build": "pass",
+    "encrypted_source_rejection_and_query_only_fixture": {
+      "passed": 1,
+      "seconds": 0.06
+    },
+    "rustfmt": "pass",
+    "git_diff_check": "pass",
+    "installed_deep_strict_codesign": "pass"
+  },
+  "limits": [
+    "Encrypted integrity inspection is one sample, not a p95 or a performance improvement comparison.",
+    "Source DB/WAL and shared mirror metadata changed while their existing writers were active; source mutation provenance and lock contention were not traced.",
+    "No source SQLite connection or source journal/checkpoint operation was invoked by either measured snapshot path.",
+    "Four real incoming events were observed without generating a test message; sent_at-to-mirror receipt timing is not SQLite insertion latency.",
+    "Graph refresh is a dated one-shot catch-up, not proof of continuous freshness or retrieval relevance.",
+    "Embedding calls are constrained by the existing loopback URL checks; a process-wide network trace was not collected.",
+    "Native UI, human speech, physical emergency shortcut, final room-worker cutover and signed public release remain unfinished."
+  ]
+}

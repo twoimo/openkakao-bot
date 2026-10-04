@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Alden 로컬 임베딩과 메모리 회수",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1040,
+      500
+    ],
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "retrieval",
+      "type": "backend",
+      "label": "GraphRAG",
+      "sublabel": "질의·증분 색인"
+    },
+    {
+      "id": "http",
+      "type": "backend",
+      "label": "로컬 HTTP",
+      "sublabel": "127.0.0.1:11236"
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "E5 추론",
+      "sublabel": "한 번에 한 배치"
+    },
+    {
+      "id": "allocator",
+      "type": "database",
+      "label": "MLX 메모리",
+      "sublabel": "가중치와 빈 캐시"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 230,
+      "label": "요청 검증"
+    },
+    {
+      "from": 238,
+      "to": 310,
+      "label": "고정 가중치 추론"
+    },
+    {
+      "from": 320,
+      "to": 440,
+      "label": "결과와 메모리 회수"
+    }
+  ],
+  "messages": [
+    {
+      "id": "request",
+      "from": "retrieval",
+      "to": "http",
+      "y": 160,
+      "label": "모델 ID·query/passage·입력",
+      "variant": "emphasis"
+    },
+    {
+      "id": "admit",
+      "from": "http",
+      "to": "engine",
+      "y": 202,
+      "label": "최대 8개·직렬 추론 잠금"
+    },
+    {
+      "id": "allocate",
+      "from": "engine",
+      "to": "allocator",
+      "y": 244,
+      "label": "512 MiB 빈 캐시 상한"
+    },
+    {
+      "id": "vectors",
+      "from": "allocator",
+      "to": "engine",
+      "y": 286,
+      "label": "평가된 벡터·Float32 복사",
+      "variant": "return"
+    },
+    {
+      "id": "trim",
+      "from": "engine",
+      "to": "allocator",
+      "y": 328,
+      "label": "텐서 해제 후 초과 캐시 정리"
+    },
+    {
+      "id": "release",
+      "from": "engine",
+      "to": "http",
+      "y": 370,
+      "label": "결과 보존·실패에도 잠금 해제",
+      "variant": "return"
+    },
+    {
+      "id": "response",
+      "from": "http",
+      "to": "retrieval",
+      "y": 412,
+      "label": "384차원 벡터·모델 출처",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "http",
+      "from": 160,
+      "to": 426,
+      "type": "backend"
+    },
+    {
+      "participant": "engine",
+      "from": 202,
+      "to": 382,
+      "type": "backend"
+    },
+    {
+      "participant": "allocator",
+      "from": 244,
+      "to": 340,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "slate",
+      "title": "바뀌는 범위",
+      "items": [
+        "전용 E5 서비스의 빈 캐시만 제한한다.",
+        "가중치·토크나이저·검색 순위 공식은 유지한다."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "측정의 경계",
+      "items": [
+        "메모리 감소와 재할당 지연을 함께 측정한다.",
+        "추론 엔진의 수치를 앱 전체 전력으로 해석하지 않는다."
+      ]
+    }
+  ]
+}

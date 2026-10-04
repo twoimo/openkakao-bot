@@ -106,13 +106,13 @@ impl DatasetSink for GuardedSink<'_> {
 /// Strategy for one arbitrary conversation message.
 fn message_strategy() -> impl Strategy<Value = DatasetMessage> {
     (
-        1i64..5,             // chat_id
-        0i64..1_000,         // at
-        any::<bool>(),       // is_owner
-        0usize..3,           // partner name index
-        0usize..3,           // kind index
-        0usize..4,           // text index
-        0u32..1_000_000,     // provenance salt
+        1i64..5,         // chat_id
+        0i64..1_000,     // at
+        any::<bool>(),   // is_owner
+        0usize..3,       // partner name index
+        0usize..3,       // kind index
+        0usize..4,       // text index
+        0u32..1_000_000, // provenance salt
     )
         .prop_map(
             |(chat_id, at, is_owner, name_idx, kind_idx, text_idx, salt)| {

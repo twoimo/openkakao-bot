@@ -1,0 +1,15 @@
+{
+  "artifactSha256": "621b9af517119b8f3f55da4a8065a93fce1331127c759b6220db6edd10237d9c",
+  "diagramType": "lifecycle",
+  "artifactChecks": 9,
+  "browserContainment": "four viewport sizes passed",
+  "visualReview": {
+    "status": "reviewed",
+    "reviewer": "image-capable assistant",
+    "views": [
+      "1440x900 light",
+      "2048x1320 dark"
+    ],
+    "result": "Labels and routes are visible without overlaps or viewport overflow. Authored labels remain Korean; fixed viewer controls remain English."
+  }
+}

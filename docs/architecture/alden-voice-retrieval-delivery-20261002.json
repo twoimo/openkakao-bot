@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "app_version": "0.3.2",
+  "code_commit": "641f8f82a125bf15bedaf288f4b8fabccbb57e8d",
+  "code_ci": {
+    "id": 36968558740,
+    "jobs_passed": 4,
+    "configured_python_total": 1129,
+    "skipped": 27,
+    "failed": 0
+  },
+  "installed": {
+    "version": "0.3.2",
+    "checked_paths": 35,
+    "codesign": "ad-hoc deep strict passed",
+    "stable_files_unchanged": [
+      "config",
+      "enrollment",
+      "stable_cli"
+    ],
+    "model_pids_unchanged": [
+      58780,
+      24161
+    ]
+  },
+  "release": {
+    "draft": true,
+    "release_id": 401567147,
+    "url": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-a4c98b48d7f117e71c0d",
+    "tag": "untagged-a4c98b48d7f117e71c0d",
+    "source_commit": "641f8f82a125bf15bedaf288f4b8fabccbb57e8d",
+    "downloaded_asset_digest_matches": [
+      {
+        "name": "Alden-0.3.2-641f8f8-local.zip",
+        "bytes": 12404898,
+        "sha256": "bac5019117fdec592b3800e04ab86d6a7d8c1b74daea7c3ab618db99a0cedd20",
+        "matched": true
+      },
+      {
+        "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+        "bytes": 26965707,
+        "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+        "matched": true
+      },
+      {
+        "name": "alden-menubar-runtime-v1.json",
+        "bytes": 1533,
+        "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+        "matched": true
+      },
+      {
+        "name": "install-alden-menubar-runtime.sh",
+        "bytes": 12585,
+        "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+        "matched": true
+      },
+      {
+        "name": "package-manifest.json",
+        "bytes": 4339,
+        "sha256": "3d7ed2421883f861e1130e4539857a76cf4465e35345e078f1c4cd0720da7933",
+        "matched": true
+      },
+      {
+        "name": "SHA256SUMS",
+        "bytes": 494,
+        "sha256": "00fb73991a207d8c256645421bfddfd08863dedddfa630675b2d8ad14dbd9acd",
+        "matched": true
+      }
+    ],
+    "asset_count": 6
+  },
+  "installed_rag": {
+    "scope": "installed module, real local E5/27B, five controlled text turns; no microphone or live Kakao source collection",
+    "turns": 5,
+    "passed": true,
+    "rrf_ms": [
+      84.58700007759035,
+      34.281875006854534,
+      37.83141705207527
+    ],
+    "sample_count_per_query": 1
+  },
+  "voice_file": {
+    "processes": 1,
+    "turns_ended": 2,
+    "first_tts_seconds": 41.917824916075915,
+    "first_waveform_seconds": 9.68,
+    "independent_stt_content_check": "first failed; second recognized 12",
+    "tts_device": "mps:0",
+    "tts_dtype": "torch.bfloat16",
+    "mps_allocated_after_close": 8388608,
+    "whisper_cached_after_close": false,
+    "scope": "synthetic presegmented files; not wake/VAD/microphone/speaker/physical interruption"
+  },
+  "generation_experiment": {
+    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    "speaker": "ryan",
+    "load_seconds": 7.838104458991438,
+    "samples": [
+      {
+        "label": "default",
+        "input": "4입니다.",
+        "options": {},
+        "seconds": 3.7552030000369996,
+        "duration_seconds": 1.44,
+        "readback": " 다 입니다"
+      },
+      {
+        "label": "greedy",
+        "input": "4입니다.",
+        "options": {
+          "do_sample": false,
+          "subtalker_dosample": false,
+          "max_new_tokens": 256
+        },
+        "seconds": 2.6991763338446617,
+        "duration_seconds": 1.36,
+        "readback": " 4입니다."
+      },
+      {
+        "label": "greedy",
+        "input": "12입니다.",
+        "options": {
+          "do_sample": false,
+          "subtalker_dosample": false,
+          "max_new_tokens": 256
+        },
+        "seconds": 33.833667791914195,
+        "duration_seconds": 20.4,
+        "readback": " 시비입니다."
+      },
+      {
+        "label": "greedy",
+        "input": "회의는 금요일 오후 세 시입니다.",
+        "options": {
+          "do_sample": false,
+          "subtalker_dosample": false,
+          "max_new_tokens": 256
+        },
+        "seconds": 7.490967000136152,
+        "duration_seconds": 2.64,
+        "readback": " 회의는 금요일 오후 3시입니다"
+      }
+    ],
+    "decision": "greedy candidate not accepted; 12 produced a 20.4-second waveform with a 256-token cap; product parameters unchanged"
+  },
+  "ui_inspection": {
+    "app_name_timeout": true,
+    "absolute_app_path_timeout": true,
+    "inventory_timeout_and_kernel_reset": true,
+    "primary_installed_ui_verified": false
+  },
+  "full_goal": "active; completion not claimed"
+}

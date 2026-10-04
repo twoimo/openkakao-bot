@@ -464,15 +464,15 @@ const _: () = assert!(MEMORY_OPEN_DEADLINE_MS <= 3_000);
 /// plain-language failure message on a database error so the caller can keep
 /// the previous screen and show a beginner-friendly notice (R8.7, R8.8).
 pub fn memory_view(store: &dyn MemoryStore) -> Result<MemoryView, String> {
-    let notes = store.list(MemoryKind::Note).map_err(|_| {
-        "대화 기억을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string()
-    })?;
-    let references = store.list(MemoryKind::ReferencePack).map_err(|_| {
-        "설명 자료를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string()
-    })?;
-    let comparisons = store.rag_comparisons().map_err(|_| {
-        "성능 비교 결과를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string()
-    })?;
+    let notes = store
+        .list(MemoryKind::Note)
+        .map_err(|_| "대화 기억을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string())?;
+    let references = store
+        .list(MemoryKind::ReferencePack)
+        .map_err(|_| "설명 자료를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string())?;
+    let comparisons = store
+        .rag_comparisons()
+        .map_err(|_| "성능 비교 결과를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.".to_string())?;
     Ok(MemoryView {
         notes,
         references,
@@ -497,7 +497,10 @@ impl PendingDelete {
 /// The plain-language confirmation shown before a note is deleted (R8.5, R8.8).
 pub fn delete_confirmation_message(item: &MemoryItem) -> String {
     let preview: String = item.text.chars().take(20).collect();
-    format!("이 기억을 지울까요? \u{201c}{}\u{2026}\u{201d} 지우면 되돌릴 수 없어요.", preview)
+    format!(
+        "이 기억을 지울까요? \u{201c}{}\u{2026}\u{201d} 지우면 되돌릴 수 없어요.",
+        preview
+    )
 }
 
 /// Run a staged deletion only if the user confirmed (R8.5).
@@ -628,7 +631,9 @@ mod tests {
 
         let err = shell
             .open_with(AppWindow::History, || {
-                Err(UiError::new(window_open_failure_message(AppWindow::History)))
+                Err(UiError::new(window_open_failure_message(
+                    AppWindow::History,
+                )))
             })
             .expect_err("history open fails");
 
@@ -651,7 +656,10 @@ mod tests {
         assert!(!ar.should_refresh(10), "no refresh due right after start");
         ar.note_change(1_000);
         assert!(ar.should_refresh(1_000));
-        assert_eq!(ar.must_refresh_by(), Some(1_000 + EVENT_REFRESH_DEADLINE_MS));
+        assert_eq!(
+            ar.must_refresh_by(),
+            Some(1_000 + EVENT_REFRESH_DEADLINE_MS)
+        );
     }
 
     #[test]
@@ -703,10 +711,22 @@ mod tests {
     fn history_view_lists_newest_first_in_plain_language() {
         let store = SqliteHistoryStore::open_in_memory().expect("store");
         store
-            .append(ev(FlowKind::AutoReply, Stage::Detect, StageStatus::Success, "ok", 1_000))
+            .append(ev(
+                FlowKind::AutoReply,
+                Stage::Detect,
+                StageStatus::Success,
+                "ok",
+                1_000,
+            ))
             .expect("append older");
         store
-            .append(ev(FlowKind::AutoReply, Stage::Model, StageStatus::InProgress, "run", 2_000))
+            .append(ev(
+                FlowKind::AutoReply,
+                Stage::Model,
+                StageStatus::InProgress,
+                "run",
+                2_000,
+            ))
             .expect("append newer");
         match history_view(&store, HISTORY_WINDOW_LIMIT) {
             HistoryView::Rows(rows) => {

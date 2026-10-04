@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+# The Alden menu bundle currently loads these exact CPython 3.11 artifacts.
+!scripts/_auto_reply_menubar_wrapper.cpython-311.pyc
+!scripts/_bujamentor_menubar_overlay.cpython-311.pyc
+!scripts/_bujamentor_menubar_impl.cpython-311.pyc
 *.egg-info/
 dist/
 build/
@@ -9,7 +13,7 @@ build/
 credentials.json
 /tmp/
 
-# Dedicated Jarvis voice interpreter; never Extra's runtime.
+# Dedicated Alden voice interpreter; never Extra's runtime.
 .venv-voice/
 browser/.venv/
 target/
@@ -72,3 +76,14 @@ context.sqlite3
 reply-queue.sqlite3
 model-circuit.sqlite3
 macos/AutoReplyMenu/build/
+
+# Private local review captures and unreleased voice candidates.
+docs/architecture/alden-core-panel.png
+docs/architecture/alden-knowledge-hologram.png
+docs/architecture/alden-live-panel.png
+docs/architecture/alden-live-settings.png
+docs/architecture/alden-settings-panel.png
+docs/architecture/alden-system.architecture.pre-main-*.json
+voice/models/experimental/
+scripts/libalden_audio.dylib
+scripts/libalden_audio.dylib.build-*

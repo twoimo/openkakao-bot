@@ -14,8 +14,8 @@ use openkakao_cli::ports::{Clock, HttpRequest, NetworkPort, SendPort};
 use openkakao_cli::safety::{
     BreakerGate, BreakerGateSource, DefaultLocoQuarantine, DefaultSafetyGate, FenceReason,
     GradeLimit, GradePolicy, GuardFence, LocoDecision, LocoQuarantine, LocoQuarantineReason,
-    LocoWriteOp, LocoWriteRequest, Origin, OwnerNameStatus, PacingSource, ProfileView, SafetyConfig,
-    SafetyGate, SendDecision, SendGrade, SendGuard, SendIntent, SendRequest,
+    LocoWriteOp, LocoWriteRequest, Origin, OwnerNameStatus, PacingSource, ProfileView,
+    SafetyConfig, SafetyGate, SendDecision, SendGrade, SendGuard, SendIntent, SendRequest,
 };
 use proptest::prelude::*;
 
@@ -45,13 +45,13 @@ fn config_strategy() -> impl Strategy<Value = SafetyConfig> {
 
 /// Strategy for an arbitrary `SendRequest`.
 fn request_strategy() -> impl Strategy<Value = SendRequest> {
-    (-20i64..20, fingerprint_strategy(), any::<bool>()).prop_map(|(chat_id, account_fp, state_ok)| {
-        SendRequest {
+    (-20i64..20, fingerprint_strategy(), any::<bool>()).prop_map(
+        |(chat_id, account_fp, state_ok)| SendRequest {
             chat_id,
             account_fp,
             state_ok,
-        }
-    })
+        },
+    )
 }
 
 /// The three opt-in conditions plus the database-authoritative match that an

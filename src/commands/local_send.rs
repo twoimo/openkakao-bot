@@ -16,6 +16,7 @@ pub struct BoundLocalSend {
     pub chat_id: i64,
     pub expected_source_log_id: i64,
     pub local_tail: Vec<crate::ax_send::BindingToken>,
+    pub abort_fence: Option<openkakao_cli::alden_abort::AldenAbortFence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,7 +339,12 @@ pub fn cmd_local_send(opts: LocalSendOptions) -> Result<()> {
                 "local-send --preflight is only available to the database-authoritative AutoReply worker"
             )
         })?;
-        match ax_send::preflight_bound_via_ax(chat_name, bound.chat_id, &bound.local_tail) {
+        match ax_send::preflight_bound_via_ax(
+            chat_name,
+            bound.chat_id,
+            &bound.local_tail,
+            bound.abort_fence.as_ref(),
+        ) {
             Ok(()) => {}
             Err(error) => {
                 let message = error.to_string();
@@ -390,8 +396,13 @@ pub fn cmd_local_send(opts: LocalSendOptions) -> Result<()> {
         // A failed 답장 arm leaves Kakao menus/composer in a bad state and
         // then the fallback bound send also fails. Quote-reply stays for
         // unbound interactive local-send.
-        let send_result =
-            ax_send::send_bound_via_ax(chat_name, bound.chat_id, &message, &bound.local_tail);
+        let send_result = ax_send::send_bound_via_ax(
+            chat_name,
+            bound.chat_id,
+            &message,
+            &bound.local_tail,
+            bound.abort_fence.as_ref(),
+        );
         match send_result {
             Ok(()) => {}
             Err(failure) => {
@@ -537,6 +548,7 @@ mod tests {
                 chat_id: CHAT_ID,
                 expected_source_log_id: SOURCE_LOG_ID,
                 local_tail: vec![crate::ax_send::BindingToken::from("source".to_string())],
+                abort_fence: None,
             }),
             reply_to: None,
         };

@@ -2147,11 +2147,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "openkakao-jarvis-desktop"
-version = "0.1.4"
+name = "openkakao-alden-desktop"
+version = "0.3.16"
 dependencies = [
+ "block2",
  "dirs",
  "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
  "serde",
  "serde_json",
  "tauri",

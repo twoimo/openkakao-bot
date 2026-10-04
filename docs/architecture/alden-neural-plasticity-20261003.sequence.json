@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {"title": "Alden 지식의 변화와 화면의 움직임", "quality_profile": "showcase", "viewBox": [1040, 590], "column_fit": "spread"},
+  "participants": [
+    {"id": "checkpoint", "type": "database", "label": "OSK 기억", "sublabel": "출처와 관계"},
+    {"id": "bridge", "type": "backend", "label": "로컬 Bridge", "sublabel": "고정 파일 metadata"},
+    {"id": "layout", "type": "frontend", "label": "지식 화면", "sublabel": "24 노드·144 다리"},
+    {"id": "gpu", "type": "frontend", "label": "GPU 배치", "sublabel": "보이는 동안만 렌더"}
+  ],
+  "segments": [
+    {"from": 150, "to": 278, "label": "확인된 변경 감지"},
+    {"from": 286, "to": 408, "label": "관계 기반 리모델링"},
+    {"from": 416, "to": 538, "label": "동적 표현과 중지"}
+  ],
+  "messages": [
+    {"id": "probe", "from": "layout", "to": "bridge", "y": 160, "label": "가시 상태에서 1초 간격"},
+    {"id": "revision", "from": "checkpoint", "to": "bridge", "y": 202, "label": "파일 교체·수정 시각", "variant": "return"},
+    {"id": "changed", "from": "bridge", "to": "layout", "y": 244, "label": "변경 시 새 그래프", "variant": "return"},
+    {"id": "forces", "from": "layout", "to": "gpu", "y": 304, "label": "관계 힘·접촉·감쇠", "variant": "emphasis"},
+    {"id": "bridges", "from": "layout", "to": "gpu", "y": 346, "label": "다리 성장·수축·폭"},
+    {"id": "settled", "from": "layout", "to": "gpu", "y": 388, "label": "수렴 후 같은 좌표 사용"},
+    {"id": "ambient", "from": "layout", "to": "gpu", "y": 448, "label": "은은한 흐름·30 fps 상한"},
+    {"id": "hidden", "from": "layout", "to": "gpu", "y": 490, "label": "숨김 시 프레임·조회 중지", "variant": "security"}
+  ]
+}

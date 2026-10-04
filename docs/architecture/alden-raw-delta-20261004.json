@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-04",
+  "version": "0.3.14",
+  "scope": "Saved published corpus; no original Kakao access, sends, primary or voice attestation. Private payloads and identities excluded.",
+  "raw": {
+    "base_rows": 2050483,
+    "first_new_messages": 135,
+    "first_metadata_records": 3809,
+    "first_chunks": 8,
+    "cold_bootstrap_ms": 24745.665916940197,
+    "current_rows": 2050732,
+    "additions_since_base": 249,
+    "raw_deletions": 0
+  },
+  "quality": {
+    "active": 115,
+    "contract_valid": 115,
+    "notes_with_raw_refs": 115,
+    "pending": 0,
+    "conflicts": 0
+  },
+  "measurements": {
+    "raw_same_publication": {
+      "samples_ms": [
+        0.7246669847518206,
+        0.5550419446080923,
+        0.5160830914974213,
+        0.5181659944355488,
+        0.6030411459505558
+      ],
+      "n": 5,
+      "median_ms": 0.5550419446080923,
+      "min_ms": 0.5160830914974213,
+      "max_ms": 0.7246669847518206
+    },
+    "cycle_same_publication": {
+      "samples_ms": [
+        27.174459071829915,
+        26.8953749909997,
+        27.132665971294045,
+        31.954417005181313,
+        34.90650001913309
+      ],
+      "n": 5,
+      "median_ms": 27.174459071829915,
+      "min_ms": 26.8953749909997,
+      "max_ms": 34.90650001913309
+    },
+    "first_derivation_refresh_ms": 19731.425374979153,
+    "raw_chunks_written_per_unchanged_tick": 0,
+    "sdk_revisions_per_unchanged_tick": 0,
+    "comparison": "Cold/unchanged paths are different work; no before-after speedup claimed."
+  },
+  "installed": {
+    "version": "0.3.14",
+    "files_sha_matched": 41,
+    "signature": "ad-hoc deep/strict; not notarized",
+    "preserved_configs_and_cli": 3,
+    "preserved_processes": 5
+  },
+  "checks": {
+    "installer_passed": 40,
+    "knowledge_graph_passed": 101,
+    "desktop_rust_passed": 96,
+    "voice": "not_tested",
+    "primary_ui": "not_tested",
+    "dot": "not_attested"
+  },
+  "collection": "waiting",
+  "saved_corpus_ready": true,
+  "goal_status": "active"
+}

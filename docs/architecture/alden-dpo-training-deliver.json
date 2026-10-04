@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "deliver",
+  "type": "workflow",
+  "input": "docs/architecture/alden-dpo-training.workflow.json",
+  "output": "docs/architecture/alden-dpo-training.html",
+  "specification": {
+    "sha256": "92db4782e349fa2985ad9dea3f431b9268476033a201b27693474d0e1e816b69",
+    "bytes": 2041
+  },
+  "artifact": {
+    "sha256": "ed9d8a43cee9683151d7fda3807c43b020d5482e1441cbee94a9e7d11962cb15",
+    "bytes": 802326
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  }
+}

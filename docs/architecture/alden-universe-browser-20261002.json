@@ -1,0 +1,277 @@
+{
+  "scope": "real Chrome/Metal rendering of production components with explicit synthetic development fixtures; emulated viewport/scale, not native physical Retina",
+  "cases": [
+    {
+      "viewport": [
+        1200,
+        760
+      ],
+      "scroll": [
+        1200,
+        760
+      ],
+      "nodes": 22,
+      "visibleLabels": 19,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "glError": 0,
+      "version": "v0.3.5",
+      "versionCenterOffset": 0.5,
+      "diagnostics": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 1,
+        "lastRenderAtMs": 115.5,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "name": "wide",
+      "device_scale": 1,
+      "scheme": "light",
+      "errors": [],
+      "failed_responses": [],
+      "interaction_checks": {
+        "focus": true,
+        "hidden_frames": 0,
+        "resume": true,
+        "overview": true,
+        "resize_invalidates": true
+      }
+    },
+    {
+      "viewport": [
+        640,
+        680
+      ],
+      "scroll": [
+        640,
+        680
+      ],
+      "nodes": 22,
+      "visibleLabels": 12,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "glError": 0,
+      "version": "v0.3.5",
+      "versionCenterOffset": 0.5,
+      "diagnostics": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 1,
+        "lastRenderAtMs": 93.1,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "name": "minimum",
+      "device_scale": 1,
+      "scheme": "light",
+      "errors": [],
+      "failed_responses": []
+    },
+    {
+      "viewport": [
+        1600,
+        1000
+      ],
+      "scroll": [
+        1600,
+        1000
+      ],
+      "nodes": 22,
+      "visibleLabels": 21,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "glError": 0,
+      "version": "v0.3.5",
+      "versionCenterOffset": 0.5,
+      "diagnostics": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 1,
+        "lastRenderAtMs": 215.8,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "name": "expanded",
+      "device_scale": 1,
+      "scheme": "dark",
+      "errors": [],
+      "failed_responses": []
+    },
+    {
+      "viewport": [
+        1200,
+        760
+      ],
+      "scroll": [
+        1200,
+        760
+      ],
+      "nodes": 22,
+      "visibleLabels": 19,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "glError": 0,
+      "version": "v0.3.5",
+      "versionCenterOffset": 0.5,
+      "diagnostics": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 1,
+        "lastRenderAtMs": 145.5,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "name": "retina",
+      "device_scale": 2,
+      "scheme": "dark",
+      "errors": [],
+      "failed_responses": []
+    },
+    {
+      "viewport": [
+        560,
+        420
+      ],
+      "scroll": [
+        560,
+        420
+      ],
+      "nodes": 22,
+      "visibleLabels": 11,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "glError": 0,
+      "version": null,
+      "versionCenterOffset": null,
+      "diagnostics": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 1,
+        "lastRenderAtMs": 270.4
+      },
+      "name": "panel",
+      "device_scale": 1,
+      "scheme": "light",
+      "errors": [],
+      "failed_responses": []
+    }
+  ],
+  "idle_before": {
+    "phase": "continuous",
+    "scope": "real Chrome WebGL and production graph module; synthetic fixture; 3 warmed 1s windows, not power/GPU-time measurement",
+    "samples": [
+      {
+        "renders_1s": 14,
+        "running": true,
+        "pending_frame": true
+      },
+      {
+        "renders_1s": 13,
+        "running": true,
+        "pending_frame": true
+      },
+      {
+        "renders_1s": 14,
+        "running": true,
+        "pending_frame": true
+      }
+    ]
+  },
+  "idle_after": {
+    "phase": "settled",
+    "scope": "real Chrome WebGL and production graph module; synthetic fixture; 3 warmed 1s windows, not power/GPU-time measurement",
+    "samples": [
+      {
+        "renders_1s": 0,
+        "running": false,
+        "pending_frame": false
+      },
+      {
+        "renders_1s": 0,
+        "running": false,
+        "pending_frame": false
+      },
+      {
+        "renders_1s": 0,
+        "running": false,
+        "pending_frame": false
+      }
+    ]
+  },
+  "source_checks": {
+    "ui": 214,
+    "native": 91,
+    "clippy": "passed",
+    "source_build": "passed"
+  },
+  "visual_review": {
+    "reviewer": "parent image review",
+    "captures": [
+      "final-wide",
+      "final-minimum",
+      "final-panel",
+      "final-focus"
+    ],
+    "result": "밤하늘과 사이드바 팔레트가 이어지며 제목·메뉴·운영 버튼·중앙 버전과 노드 표식이 읽힌다. 최소 창과 선택 정보창에서 화면 밖 가로·세로 넘침이 없다. 겹치는 노드 이름은 기존 제한된 표식 정책을 사용한다."
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "status": "ok",
+  "reason": "dpo_teacher_forced",
+  "scoring_method": "mlx_direct_teacher_forcing",
+  "string_similarity_used": false,
+  "pair_count": 2,
+  "evaluated": 2,
+  "mean_loss": 0.6931471805599453,
+  "runtime_seconds": 18.521636,
+  "peak_bytes": 17327024114,
+  "peak_bytes_scope": "scoring_after_model_load",
+  "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+  "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+  "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f",
+  "reference_frozen": true,
+  "reference_reused": true,
+  "requested_checkpoint_format": "mlx-serve-qwen3_5-converted",
+  "policy_checkpoint_format": "mlx-serve-qwen3_5-converted",
+  "reference_checkpoint_format": "mlx-serve-qwen3_5-converted",
+  "identical_checkpoint_delta_zero": true,
+  "versions": {
+    "python": "3.11.16",
+    "mlx": "0.32.2",
+    "mlx-lm": "0.31.3",
+    "transformers": "5.17.0"
+  },
+  "pairs": [
+    {
+      "pair_id": "synthetic-arithmetic",
+      "chosen_tokens": 2,
+      "rejected_tokens": 2,
+      "policy_chosen_logprob": -8.255856161471456,
+      "policy_rejected_logprob": -15.71886682510376,
+      "reference_chosen_logprob": -8.255856161471456,
+      "reference_rejected_logprob": -15.71886682510376,
+      "delta": 0.0,
+      "loss": 0.6931471805599453
+    },
+    {
+      "pair_id": "synthetic-status",
+      "chosen_tokens": 6,
+      "rejected_tokens": 13,
+      "policy_chosen_logprob": -5.962132060434669,
+      "policy_rejected_logprob": -53.90298224927392,
+      "reference_chosen_logprob": -5.962132060434669,
+      "reference_rejected_logprob": -53.90298224927392,
+      "delta": 0.0,
+      "loss": 0.6931471805599453
+    }
+  ],
+  "compatibility": {
+    "default_auto_status": "eval_unavailable",
+    "default_auto_reason": "checkpoint_layout_ambiguous",
+    "greedy_text": "4",
+    "first_token_logprob": -0.005496626254171133,
+    "earlier_native_first_token_logprob": -0.005831,
+    "absolute_logprob_difference": 0.0003343737458288672,
+    "native_measurement_reused": true
+  },
+  "receipt": {
+    "captured_at": "2026-09-30T03:04:31.722293+00:00",
+    "base_revision": "18a6d4bbf77695369c3ba748e8e3788fd2affbda",
+    "source_sha256": {
+      "scripts/alden_dpo_scorer.py": "e14429b8415d630ed036c3f09d69b7f480ffd194ab8941283985e4c1fa5f4502",
+      "scripts/auto_reply_finetune.py": "202d4e7cc494e9d8dcecbec44d3a68233ff53415b644d4866566a194e49eafe8"
+    },
+    "fixture": "two_public_synthetic_pairs",
+    "live_kakao_input": false,
+    "cloud_inference": false,
+    "training_executed": false,
+    "quality_improvement_claimed": false,
+    "available_memory_bytes_before_proof": 52167606272,
+    "weight_bytes": 18196477654,
+    "whole_probe_wall_seconds": 34.543519,
+    "process_peak_rss_bytes": 17436213248
+  }
+}

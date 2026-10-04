@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-04",
+  "scope": "Actual published Alden corpus, SDK/read-only automation histories, installed application. No private bodies or source IDs in this public report.",
+  "quality": {
+    "schema_version": 1,
+    "raw_rows": 2050483,
+    "source_identity_duplicate_groups": 0,
+    "duplicate_identity_extra_rows": 0,
+    "conflicting_identity_groups": 0,
+    "unchanged_raw_rows": 2050483,
+    "raw_rows_deleted": 0,
+    "rooms": 1181,
+    "normalized_room_labels": 6,
+    "unnamed_rooms": 213,
+    "length_outliers_flagged": 2298,
+    "length_outlier_rule": "0.67448975*abs(log1p(length)-median)/max(MAD,0.01) > 6",
+    "log_length_median": 2.302585092994046,
+    "log_length_mad": 0.5108256237659909,
+    "messages_over_64k_characters": 0,
+    "identity_policy": "account,room_id,log_id; identical text under distinct IDs is retained",
+    "scan_seconds": 12.246943375095725
+  },
+  "raw_application": {
+    "live_published": true,
+    "active_managed": 115,
+    "contract_valid": 115,
+    "with_raw_refs": 115,
+    "shared_existing_ids": 111,
+    "preserved_existing_ids": 111,
+    "pending": 0,
+    "conflicts": 0,
+    "participant_room_aliases": 89,
+    "source_base_rows": 2050483
+  },
+  "installed": {
+    "files_sha_matched": 40,
+    "version": "0.3.13",
+    "preserved_configs_and_cli": 3,
+    "preserved_processes": 5
+  },
+  "history_reader": {
+    "reply": {
+      "total_retained_events": 3069,
+      "page_items": 50,
+      "page_states": {
+        "waiting": 5,
+        "skipped": 29,
+        "cancelled": 16
+      },
+      "page_context_rows": 339,
+      "partial": false,
+      "samples_ms": [
+        337.371583096683,
+        189.7928339894861,
+        209.24445893615484,
+        199.9802498612553,
+        194.12999995984137
+      ],
+      "median_ms": 199.9802498612553,
+      "max_ms": 337.371583096683,
+      "payload_bytes": 56203
+    },
+    "geeknews": {
+      "total_retained_events": 527,
+      "page_items": 50,
+      "page_states": {
+        "confirmed": 36,
+        "skipped": 14
+      },
+      "page_context_rows": 0,
+      "partial": false,
+      "samples_ms": [
+        222.55245898850262,
+        205.44295897707343,
+        200.15345816500485,
+        210.8632088638842,
+        208.28791707754135
+      ],
+      "median_ms": 208.28791707754135,
+      "max_ms": 222.55245898850262,
+      "payload_bytes": 124476
+    }
+  },
+  "remaining_full_goal": [
+    "Developer ID/notary credentials and signed production release",
+    "physical microphone/wake validation",
+    "primary HID, physical lock and Retina evidence",
+    "Alden-dot attestation",
+    "remaining model/media latency targets"
+  ],
+  "native_workspaces": {
+    "version": "0.3.13",
+    "success": true,
+    "default_pages": 7,
+    "compact_pages": 7,
+    "page_errors": 0,
+    "horizontal_overflows": 0,
+    "navigation_samples": 14,
+    "navigation_p95_ms": 16,
+    "navigation_max_ms": 16
+  }
+}

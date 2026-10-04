@@ -1,0 +1,1831 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "description": "Frozen independent Korean retrieval corpus with ledger and synthetic published numeric Kakao identities.",
+  "watermark": "synthetic-20261002-v2",
+  "rooms": [
+    {
+      "chat_id": "room-alpha",
+      "title": "알파방"
+    },
+    {
+      "chat_id": "room-beta",
+      "title": "베타방"
+    },
+    {
+      "chat_id": "room-alpha-study",
+      "title": "알파방-스터디"
+    }
+  ],
+  "entities": [
+    {
+      "entity_id": "topic:tool:computer-use",
+      "name": "컴퓨터 유즈",
+      "category": "도구",
+      "aliases": [
+        "computer use",
+        "브라우저 제어"
+      ],
+      "description": "브라우저와 데스크톱을 제어하는 자동화 도구",
+      "facts": [
+        "결정적인 작업은 기존 CLI와 API를 먼저 사용한다"
+      ],
+      "importance": 80,
+      "updated_at": 1790726401,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:tool:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:model:claude",
+      "name": "Anthropic Claude",
+      "category": "모델",
+      "aliases": [
+        "Anthropic Claude",
+        "Claude"
+      ],
+      "description": "합성 평가에 쓰는 영어 정식 이름의 모델 항목",
+      "facts": [
+        "한국어 별칭으로도 검색되어야 한다"
+      ],
+      "importance": 70,
+      "updated_at": 1790726402,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:model:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:01:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:place:seoul-food",
+      "name": "서울 맛집",
+      "category": "장소",
+      "aliases": [
+        "서울 맛집",
+        "서울 식당"
+      ],
+      "description": "서울의 식당과 카페 추천을 모은 합성 항목",
+      "facts": [
+        "붙여 쓴 질의도 같은 항목을 찾아야 한다"
+      ],
+      "importance": 60,
+      "updated_at": 1790726403,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:place:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:02:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "ent:activity:running",
+      "name": "러닝",
+      "category": "활동",
+      "aliases": [
+        "러닝",
+        "달리기",
+        "조깅"
+      ],
+      "description": "달리기와 마라톤 훈련",
+      "facts": [
+        "오타와 조사가 붙어도 검색되어야 한다"
+      ],
+      "importance": 65,
+      "updated_at": 1790726404,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:running:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:03:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "ent:tech:alizonku",
+      "name": "알리바바 클라우드 구독",
+      "category": "클라우드",
+      "aliases": [
+        "알리바바 클라우드",
+        "알리 클라우드",
+        "Alibaba Cloud"
+      ],
+      "description": "클라우드 구독 비용 절감 서비스",
+      "facts": [
+        "한국어 축약어는 문맥이 있을 때 확장한다"
+      ],
+      "importance": 75,
+      "updated_at": 1790726405,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:cloud:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:04:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "person:알파방:minsu-alpha",
+      "name": "민수",
+      "category": "인물",
+      "aliases": [
+        "민수",
+        "개발자 민수"
+      ],
+      "description": "알파방에서 백엔드를 담당하는 합성 인물",
+      "facts": [
+        "동명이인 알파"
+      ],
+      "importance": 55,
+      "updated_at": 1790726406,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:person:alpha:minsu"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:05:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "person:베타방:minsu-beta",
+      "name": "민수",
+      "category": "인물",
+      "aliases": [
+        "민수",
+        "디자이너 민수"
+      ],
+      "description": "베타방에서 디자인을 담당하는 합성 인물",
+      "facts": [
+        "동명이인 베타"
+      ],
+      "importance": 55,
+      "updated_at": 1790726407,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:person:beta:minsu"
+        ],
+        "chat_id": "room-beta",
+        "confirmed_at": "2026-09-29T10:06:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "person:알파방-스터디:younghee-study",
+      "name": "영희",
+      "category": "인물",
+      "aliases": [
+        "영희"
+      ],
+      "description": "알파방-스터디에만 있는 합성 인물",
+      "facts": [
+        "접두사가 같은 다른 방"
+      ],
+      "importance": 50,
+      "updated_at": 1790726408,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:person:study:younghee"
+        ],
+        "chat_id": "room-alpha-study",
+        "confirmed_at": "2026-09-29T10:07:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "person:알파방:dev-001",
+      "name": "김서준",
+      "category": "인물",
+      "aliases": [
+        "김서준",
+        "서준",
+        "개발 서준"
+      ],
+      "description": "알파방의 개발 담당 합성 인물",
+      "facts": [
+        "participant_id dev-001"
+      ],
+      "importance": 52,
+      "updated_at": 1790726409,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:person:alpha:dev-001"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:08:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "person:알파방:design-002",
+      "name": "김서준",
+      "category": "인물",
+      "aliases": [
+        "김서준",
+        "서준",
+        "디자인 서준"
+      ],
+      "description": "알파방의 디자인 담당 합성 인물",
+      "facts": [
+        "participant_id design-002"
+      ],
+      "importance": 52,
+      "updated_at": 1790726410,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:person:alpha:design-002"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T10:09:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:project:a-deleted",
+      "name": "오로라 일정 폐기안",
+      "category": "프로젝트",
+      "aliases": [
+        "오로라 일정",
+        "프로젝트 오로라"
+      ],
+      "description": "철회된 9월 30일 일정",
+      "facts": [
+        "이 일정은 삭제되어 검색 결과에 나오면 안 된다"
+      ],
+      "importance": 95,
+      "updated_at": 1790726411,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:aurora:deleted"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-28T09:00:00+09:00",
+        "retracted": true
+      }
+    },
+    {
+      "entity_id": "topic:project:z-current",
+      "name": "오로라 일정 최신안",
+      "category": "프로젝트",
+      "aliases": [
+        "오로라 일정",
+        "프로젝트 오로라"
+      ],
+      "description": "확정된 10월 7일 일정",
+      "facts": [
+        "현재 유효한 일정"
+      ],
+      "importance": 80,
+      "updated_at": 1790726412,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:aurora:current"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T12:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:pricing:a-old",
+      "name": "올든 요금 이전안",
+      "category": "정책",
+      "aliases": [
+        "올든 요금",
+        "가격 정책"
+      ],
+      "description": "월 19000원의 이전 가격 정책",
+      "facts": [
+        "2026년 8월 기준"
+      ],
+      "importance": 90,
+      "updated_at": 1788102000,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:pricing:old"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-08-30T10:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:pricing:z-current",
+      "name": "올든 요금 최신안",
+      "category": "정책",
+      "aliases": [
+        "올든 요금",
+        "가격 정책"
+      ],
+      "description": "월 15000원의 현재 가격 정책",
+      "facts": [
+        "2026년 9월 29일 확정"
+      ],
+      "importance": 70,
+      "updated_at": 1790643600,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:pricing:current"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T11:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:secret:beta",
+      "name": "베타 전용 코드",
+      "category": "방 전용 정보",
+      "aliases": [
+        "베타 전용 코드",
+        "청동 열쇠"
+      ],
+      "description": "베타방에서만 확인된 합성 정보",
+      "facts": [
+        "알파방 검색에 섞이면 안 된다"
+      ],
+      "importance": 99,
+      "updated_at": 1790726413,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:secret:beta"
+        ],
+        "chat_id": "room-beta",
+        "confirmed_at": "2026-09-29T13:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:release:alden",
+      "name": "알든 출시 일정",
+      "category": "릴리즈",
+      "aliases": [
+        "알든 출시",
+        "출시 일정"
+      ],
+      "description": "알든의 현재 출시 계획",
+      "facts": [
+        "관계 유효기간으로 최신 일정을 구분한다"
+      ],
+      "importance": 85,
+      "updated_at": 1790726414,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:release:root"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T14:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "time:release:a-old",
+      "name": "9월 30일 출시",
+      "category": "시점",
+      "aliases": [
+        "출시 일정",
+        "9월 30일"
+      ],
+      "description": "더는 유효하지 않은 출시일",
+      "facts": [
+        "만료된 일정"
+      ],
+      "importance": 90,
+      "updated_at": 1789398000,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:release:old-node"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-14T10:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "time:release:z-current",
+      "name": "10월 15일 출시",
+      "category": "시점",
+      "aliases": [
+        "출시 일정",
+        "10월 15일"
+      ],
+      "description": "현재 유효한 출시일",
+      "facts": [
+        "최신 일정"
+      ],
+      "importance": 75,
+      "updated_at": 1790647200,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:release:current-node"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T12:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:semantic:a-refund",
+      "name": "구독 환불 절차",
+      "category": "결제",
+      "aliases": [
+        "환불",
+        "환급",
+        "결제 취소"
+      ],
+      "description": "구독 대금을 돌려받는 절차",
+      "facts": [
+        "의미 검색 정답"
+      ],
+      "importance": 78,
+      "updated_at": 1790726415,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:refund:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T15:00:00+09:00",
+        "retracted": false
+      }
+    },
+    {
+      "entity_id": "topic:semantic:z-payment-history",
+      "name": "구독 결제 내역",
+      "category": "결제",
+      "aliases": [
+        "구독",
+        "결제 내역"
+      ],
+      "description": "과거 결제 목록을 조회하는 항목",
+      "facts": [
+        "의미 검색의 어휘상 방해 항목"
+      ],
+      "importance": 78,
+      "updated_at": 1790726416,
+      "evidence": {
+        "kind": "ledger",
+        "source_event_ids": [
+          "synthetic:payment-history:1"
+        ],
+        "chat_id": "room-alpha",
+        "confirmed_at": "2026-09-29T15:01:00+09:00",
+        "retracted": false
+      }
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "topic:release:alden",
+      "relation": "SCHEDULED_FOR_OLD",
+      "target_id": "time:release:a-old",
+      "context": "9월 30일 출시는 철회됨",
+      "weight": 95,
+      "room_id": "room-alpha",
+      "valid_from": "2026-09-01T00:00:00+09:00",
+      "valid_to": "2026-09-20T23:59:59+09:00",
+      "evidence_message_id": "synthetic:relation:release:old",
+      "updated_at": 1789920000
+    },
+    {
+      "source_id": "topic:release:alden",
+      "relation": "SCHEDULED_FOR_CURRENT",
+      "target_id": "time:release:z-current",
+      "context": "10월 15일 출시가 현재 유효함",
+      "weight": 90,
+      "room_id": "room-alpha",
+      "valid_from": "2026-09-21T00:00:00+09:00",
+      "valid_to": "2026-12-31T23:59:59+09:00",
+      "evidence_message_id": "synthetic:relation:release:current",
+      "updated_at": 1790647200
+    },
+    {
+      "source_id": "person:알파방:minsu-alpha",
+      "relation": "USES",
+      "target_id": "topic:tool:computer-use",
+      "context": "알파방 민수가 컴퓨터 유즈를 사용함",
+      "weight": 65,
+      "room_id": "room-alpha",
+      "valid_from": "2026-09-01T00:00:00+09:00",
+      "valid_to": "",
+      "evidence_message_id": "synthetic:relation:minsu:tool",
+      "updated_at": 1790726417
+    }
+  ],
+  "snapshot": {
+    "account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rooms": [
+      {
+        "chat_id": "42",
+        "label": "제품팀"
+      },
+      {
+        "chat_id": "84",
+        "label": "영화방"
+      },
+      {
+        "chat_id": "126",
+        "label": "제품팀"
+      },
+      {
+        "chat_id": "168",
+        "label": "독서방"
+      }
+    ],
+    "authors": [
+      {
+        "author_id": "7",
+        "label": "민수"
+      },
+      {
+        "author_id": "8",
+        "label": "민수"
+      },
+      {
+        "author_id": "9",
+        "label": "유나"
+      },
+      {
+        "author_id": "10",
+        "label": "지아"
+      }
+    ],
+    "messages": [
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "800",
+        "text": "이전 배포는 9월 화요일 오전 9시입니다. 과거 API 점검 기록입니다.",
+        "date": "2026-09-20T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "900",
+        "text": "지난 독서 모임에서 시집을 읽었습니다. 과거 문학 토론 기록입니다.",
+        "date": 1790305200.0
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "801",
+        "text": "이전 배포는 9월 화요일 오전 9시입니다. 과거 API 점검 기록입니다.",
+        "date": "2026-09-20T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "901",
+        "text": "지난 독서 모임에서 시집을 읽었습니다. 과거 문학 토론 기록입니다.",
+        "date": 1790305200.0
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "802",
+        "text": "이전 배포는 9월 화요일 오전 9시입니다. 과거 API 점검 기록입니다.",
+        "date": "2026-09-20T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "902",
+        "text": "지난 독서 모임에서 시집을 읽었습니다. 과거 문학 토론 기록입니다.",
+        "date": 1790305200.0
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "803",
+        "text": "이전 배포는 9월 화요일 오전 9시입니다. 과거 API 점검 기록입니다.",
+        "date": "2026-09-20T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "903",
+        "text": "지난 독서 모임에서 시집을 읽었습니다. 과거 문학 토론 기록입니다.",
+        "date": 1790305200.0
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "804",
+        "text": "이전 배포는 9월 화요일 오전 9시입니다. 과거 API 점검 기록입니다.",
+        "date": "2026-09-20T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "904",
+        "text": "지난 독서 모임에서 시집을 읽었습니다. 과거 문학 토론 기록입니다.",
+        "date": 1790305200.0
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "1010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "1011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "1012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "1020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "1021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "1022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "11010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "11011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "11012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "11020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "11021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "11022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "21010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "21011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "21012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "21020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "21021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "21022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "31010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "31011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "31012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "31020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "31021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "31022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "41010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "41011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "41012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "41020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "41021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "41022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "51010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "51011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "51012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "51020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "51021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "51022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "61010",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "61011",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "7",
+        "log_id": "61012",
+        "text": "백엔드 배포는 금요일 오후 3시에 진행합니다. API 점검을 맡겠습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "61020",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "61021",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "42",
+        "author_id": "9",
+        "log_id": "61022",
+        "text": "배포 전에 사용자 인증과 권한 검사를 완료합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "1030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "1031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "1032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "1040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "1041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "1042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "11030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "11031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "11032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "11040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "11041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "11042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "21030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "21031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "21032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "21040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "21041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "21042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "31030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "31031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "31032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "31040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "31041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "31042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "41030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "41031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "41032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "41040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "41041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "41042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "51030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "51031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "51032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "51040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "51041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "51042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "61030",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "61031",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "8",
+        "log_id": "61032",
+        "text": "프로토타입 디자인 검토는 월요일 오전 10시입니다. 화면 설계를 맡습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "61040",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "61041",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "126",
+        "author_id": "10",
+        "log_id": "61042",
+        "text": "사용성 시험에는 모바일 화면과 큰 창을 함께 확인합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "1050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "1051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "1052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "1060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "1061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "1062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "11050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "11051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "11052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "11060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "11061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "11062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "21050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "21051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "21052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "21060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "21061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "21062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "31050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "31051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "31052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "31060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "31061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "31062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "41050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "41051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "41052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "41060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "41061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "41062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "51050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "51051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "51052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "51060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "51061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "51062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "61050",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "61051",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "7",
+        "log_id": "61052",
+        "text": "영화 상영은 토요일 정오입니다. 예매를 맡았습니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "61060",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "61061",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "84",
+        "author_id": "8",
+        "log_id": "61062",
+        "text": "영화 음악과 촬영에 관한 후기를 모읍니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "1070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "1071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "1072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "1080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "1081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "1082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "11070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "11071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "11072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "11080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "11081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "11082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "21070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "21071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "21072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "21080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "21081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "21082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "31070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "31071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "31072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "31080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "31081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "31082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "41070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "41071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "41072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "41080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "41081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "41082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "51070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "51071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "51072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "51080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "51081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "51082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "61070",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "61071",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "9",
+        "log_id": "61072",
+        "text": "독서 모임에서 고전 문학의 번역을 비교합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "61080",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "61081",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      },
+      {
+        "chat_id": "168",
+        "author_id": "10",
+        "log_id": "61082",
+        "text": "도서관에서 책을 빌린 뒤 목요일 저녁에 토론합니다.",
+        "date": "2026-10-02T09:00:00+09:00"
+      }
+    ]
+  }
+}

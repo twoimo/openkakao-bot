@@ -57,7 +57,11 @@ pub struct FakeMessageSource {
 
 impl FakeMessageSource {
     /// Build from explicit scripted rooms.
-    pub fn new(seed: u64, script: Vec<ScriptedRoom>, owner_candidates: Vec<OwnerCandidate>) -> Self {
+    pub fn new(
+        seed: u64,
+        script: Vec<ScriptedRoom>,
+        owner_candidates: Vec<OwnerCandidate>,
+    ) -> Self {
         let rooms = script.iter().map(|r| r.room.clone()).collect();
         Self {
             seed,
@@ -417,7 +421,11 @@ impl SendPort for BlockingRealSendPort {
         Err(PortError::RealSendBlocked)
     }
 
-    fn send_image(&self, _ticket: &SendTicket, _image: &ImageBlob) -> Result<SendReceipt, PortError> {
+    fn send_image(
+        &self,
+        _ticket: &SendTicket,
+        _image: &ImageBlob,
+    ) -> Result<SendReceipt, PortError> {
         self.blocked.fetch_add(1, Ordering::SeqCst);
         Err(PortError::RealSendBlocked)
     }
@@ -807,7 +815,10 @@ mod tests {
     fn scenario_shape_clamps_to_ceilings() {
         let shape = ScenarioShape::new(1_000, 10_000, 100, 500);
         assert_eq!(shape.rooms, ScenarioShape::MAX_ROOMS);
-        assert_eq!(shape.messages_per_room, ScenarioShape::MAX_MESSAGES_PER_ROOM);
+        assert_eq!(
+            shape.messages_per_room,
+            ScenarioShape::MAX_MESSAGES_PER_ROOM
+        );
         assert_eq!(
             shape.images_per_message,
             ScenarioShape::MAX_IMAGES_PER_MESSAGE

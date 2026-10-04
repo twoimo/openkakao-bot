@@ -1540,7 +1540,7 @@ final class PipelineView: NSView {
     /// 점과 이름이 실제로 차지하는 높이.
     ///
     /// 예전에는 이 높이로 띠 높이(stripHeight)까지 계산해 메뉴 패널에
-    /// 붙였다. 메뉴 패널이 자비스 코어로 바뀌면서 띠를 쓰는 창이 없어져
+    /// 붙였다. 메뉴 패널이 올든 코어로 바뀌면서 띠를 쓰는 창이 없어져
     /// 그 상수는 없앴다. 지금은 그리는 쪽이 높이를 직접 계산한다
     /// (2026-09-17).
     static let nodeRadius: CGFloat = 7
@@ -1755,12 +1755,12 @@ final class KnowledgeGraphView: NSView {
     /// 포커스 애니메이션의 프레임 상한. 코어와 같은 이유로 60fps를 쓰지 않는다.
     static let focusFramesPerSecond: Double = 60
 
-    /// 자비스 코어와 같은 금색 계열 팔레트.
+    /// 올든 코어와 같은 금색 계열 팔레트.
     ///
     /// 예전에는 이 창만 청록(teal)이었다. 같은 앱의 코어가 주황·금색인데
     /// 지식 그래프만 다른 색이면 한 앱이 아니라 두 앱처럼 보인다
     /// (2026-09-17, 사용자 지시).
-    /// 자비스 코어가 쓰는 값과 같은 계열로 맞춘다. 코어의 밝은 금색은
+    /// 올든 코어가 쓰는 값과 같은 계열로 맞춘다. 코어의 밝은 금색은
     /// (1.0, 0.70, 0.26)이고 어두운 쪽은 (1.0, 0.62, 0.18)이다. 같은 앱
     /// 안에서 두 화면이 같은 빛을 쓰도록 그 값을 그대로 가져온다
     /// (2026-09-17, 사용자 지시).
@@ -1769,7 +1769,7 @@ final class KnowledgeGraphView: NSView {
     static let synapseGold = NSColor(calibratedRed: 1.0, green: 0.78, blue: 0.36, alpha: 1)
     static let synapseBrass = NSColor(calibratedRed: 0.62, green: 0.48, blue: 0.26, alpha: 1)
 
-    /// 자비스 홀로그램 바탕의 색.
+    /// 올든 홀로그램 바탕의 색.
     ///
     /// 캔버스를 투명하게 두었더니 뉴런이 없는 자리는 창 배경과 똑같이
     /// 보였다. 그래프 아래쪽 46pt가 통째로 빈 띠로 남아 레이아웃 감사에
@@ -1784,7 +1784,7 @@ final class KnowledgeGraphView: NSView {
     /// 뉴런마다 그릴 시냅스의 개수.
     ///
     /// 관계를 전부 그리면 가운데가 선밭이 되어 무엇이 무엇과 이어졌는지
-    /// 읽을 수 없다. 자비스 코어가 뉴런마다 가까운 시냅스 셋만 그리는 것과
+    /// 읽을 수 없다. 올든 코어가 뉴런마다 가까운 시냅스 셋만 그리는 것과
     /// 같은 이유다. 고른 뉴런에 붙은 시냅스는 하나도 빠뜨리지 않는다 —
     /// 눌러 놓고 이어진 것을 못 보면 그래프를 볼 이유가 없다
     /// (2026-09-17, 6 Pro 지적).
@@ -2503,7 +2503,7 @@ final class KnowledgeGraphView: NSView {
                 // 대비 증가에서는 배경 선도 읽을 수 있어야 한다.
                 alpha = touchesHighlight ? min(1.0, alpha + 0.15) : max(alpha, 0.42)
             }
-            // 자비스 코어와 같은 금색 계열. 근거가 있는 시냅스는 밝은 금색,
+            // 올든 코어와 같은 금색 계열. 근거가 있는 시냅스는 밝은 금색,
             // 아직 확인되지 않은 것은 흐린 놋쇠색이다 (2026-09-17).
             let color = (grounded ? Self.synapseGold : Self.synapseBrass)
                 .withAlphaComponent(alpha)
@@ -2681,7 +2681,7 @@ final class KnowledgeGraphView: NSView {
         }
     }
 
-    /// 자비스 홀로그램 바탕.
+    /// 올든 홀로그램 바탕.
     ///
     /// 옅은 격자를 먼저 깔고, 뉴런 무게중심에서 번지는 금색 빛무리와
     /// 동심원을 그 위에 얹는다. 격자의 세로줄이 모든 행을 지나므로 뉴런이
@@ -2758,7 +2758,7 @@ final class KnowledgeGraphView: NSView {
     }
 }
 
-/// 자비스 홀로그램 코어.
+/// 올든 홀로그램 코어.
 ///
 /// 메뉴 패널의 주인공 화면이다. 주황·금색 톤의 입체 구형 뉴런 시냅스가
 /// 천천히 돌고, 백그라운드 작업(자동 답변 생성·긱뉴스 전송·DB 동기화)이
@@ -2768,7 +2768,7 @@ final class KnowledgeGraphView: NSView {
 /// 시냅스는 처음 한 번만 만들어 두고, 매 프레임 회전시켜 투영한다.
 /// 뉴런 수와 프레임 상한을 고정해 두어 메뉴가 열려 있는 동안 CPU를 계속
 /// 붙잡지 않게 했다 (2026-09-17).
-final class JarvisCoreView: NSView {
+final class AldenCoreView: NSView {
 
     /// 구면 위 뉴런의 개수. 늘리면 밀도가 올라가고 그리는 비용도 함께 는다.
     static let neuronCount = 96
@@ -2845,9 +2845,9 @@ final class JarvisCoreView: NSView {
     }
 
     /// 구면 위의 점. 한 번만 만든다.
-    private static let basePoints: [Point3] = JarvisCoreView.makeSphere(neuronCount)
+    private static let basePoints: [Point3] = AldenCoreView.makeSphere(neuronCount)
     /// 이웃끼리 이은 시냅스. 회전해도 이웃 관계는 그대로라 한 번만 만든다.
-    private static let synapseEdges: [(Int, Int)] = JarvisCoreView.makeSynapses(
+    private static let synapseEdges: [(Int, Int)] = AldenCoreView.makeSynapses(
         basePoints,
         neighbors: synapseNeighbors
     )
@@ -3272,7 +3272,7 @@ final class JarvisCoreView: NSView {
 
 final class MenuPanelView: NSView {
     var model: MenubarModel { didSet { sync() } }
-    let coreView = JarvisCoreView(frame: .zero)
+    let coreView = AldenCoreView(frame: .zero)
     let gearButton = NSButton(title: "", target: nil, action: #selector(AppDelegate.gearClicked(_:)))
     weak var operatorTarget: AnyObject? { didSet { gearButton.target = operatorTarget } }
     var selectedRoomId = 0 { didSet { if selectedRoomId != oldValue { sync() } } }
@@ -3321,8 +3321,8 @@ final class MenuPanelView: NSView {
         let pipeline = room?.pipeline ?? model.pipeline
         let openJobs = room?.open_jobs ?? model.open_jobs
         let level = room?.level ?? model.level
-        let background = JarvisCoreView.background(model, chatId: room?.chat_id)
-        coreView.activity = JarvisCoreView.activity(pipeline: pipeline, openJobs: openJobs, level: level, background: background.activity)
+        let background = AldenCoreView.background(model, chatId: room?.chat_id)
+        coreView.activity = AldenCoreView.activity(pipeline: pipeline, openJobs: openJobs, level: level, background: background.activity)
         needsDisplay = true
     }
 
@@ -5788,7 +5788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         roomsWindow?.setFrameAutosaveName("")
         roomsWindowUserResized = false
         let loadedModel = loadModel()
-        // 메뉴 extra는 JarvisCoreView와 우측 상단 gear 하나만 렌더한다.
+        // 메뉴 extra는 AldenCoreView와 우측 상단 gear 하나만 렌더한다.
         layoutAuditPanels = []
         let auditModel = loadedModel ?? Self.unavailableModel()
         let panel = MenuPanelView(
@@ -6171,7 +6171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func ensureUnifiedSettingsWindow() {
         guard settingsWindow == nil else { return }
         let window = Chrome.operatorWindow(
-            title: "Jarvis 운영 설정",
+            title: "Alden 운영 설정",
             size: NSSize(width: 640, height: 400),
             autosave: "openkakao.unified-settings",
             minimum: NSSize(width: 600, height: 380)
@@ -6194,13 +6194,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             padding: 12
         )
 
-        let jarvisGold = NSColor(
+        let aldenGold = NSColor(
             calibratedRed: 1.0,
             green: 0.78,
             blue: 0.36,
             alpha: 1.0
         )
-        let syncTitle = Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: jarvisGold)
+        let syncTitle = Chrome.sectionTitle("카카오 DB 동기화 · 색인", color: aldenGold)
         let syncSource = Chrome.label("동기화: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
         let syncCopy = Chrome.label("격리 복제: 확인 중", size: 11, color: .secondaryLabelColor, lines: 1)
         let syncMode = Chrome.label("색인 모드: WAL · 격리 복제 · mode=ro · query_only", size: 11, color: .secondaryLabelColor, lines: 1)
@@ -6221,7 +6221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             blue: 0.12,
             alpha: 1.0
         )
-        let dreamTitle = Chrome.sectionTitle("DREAM-RSI", color: jarvisGold)
+        let dreamTitle = Chrome.sectionTitle("DREAM-RSI", color: aldenGold)
         let dreamStatus = Chrome.label(
             "status: 확인 중 · selected_policy: none",
             size: 11,

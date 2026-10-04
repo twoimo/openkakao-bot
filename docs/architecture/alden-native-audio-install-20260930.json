@@ -1,0 +1,305 @@
+{
+  "schema": "alden-native-audio-install-v1",
+  "recorded_at": "2026-09-30T13:01:42.627136+00:00",
+  "version": "0.1.6",
+  "pid": 22050,
+  "command": "/Applications/Alden.app/Contents/MacOS/openkakao-alden-desktop",
+  "single_process": true,
+  "bundle_file_count": 29,
+  "bundle_files": [
+    {
+      "path": "Contents/Info.plist",
+      "sha256": "969cf397e7852bf2e3160cd0505e21a7c925a7b6add4f876f4604e8a22744ee1",
+      "match": true
+    },
+    {
+      "path": "Contents/MacOS/openkakao-alden-desktop",
+      "sha256": "f9d7f62dd0c9a47730f5b67f6381c7f6af32e0a3b2c91dccf85483e1c76660d8",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/bin/openkakao-cli",
+      "sha256": "90fe7746bee8fe29a532e11e3697b1ba415c80508cbba3731d6f0e29ba305d03",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+      "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+      "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+      "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_abort.py",
+      "sha256": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_browser_use.py",
+      "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_local_embedding_server.py",
+      "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_tool_runtime.py",
+      "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/alden_voice.py",
+      "sha256": "af48265824988e0c9d73e9214ebb82eb6c597c625e533aa738c100e9f1432af3",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-menubar.py",
+      "sha256": "365e80ba88d4efbba81cb3a4f40ed7ffb61eaaa32e790e868d8692f0fcec568c",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-operator-prompts.json",
+      "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto-reply-tui.py",
+      "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_ax_ui.py",
+      "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_knowledge_graph.py",
+      "sha256": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_metrics.py",
+      "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_ondevice.py",
+      "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_operator_prompt_store.py",
+      "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_reference_search.py",
+      "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_reference_store.py",
+      "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/auto_reply_transition_journal.py",
+      "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/bujamentor-tui.py",
+      "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/bujamentor_operator_prompt_store.py",
+      "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/libalden_audio.dylib",
+      "sha256": "aef1afce14f995e61651fafdd06d7b7f81b9d1974701903980e108b5d8b06a1b",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/local_mlx_gateway.py",
+      "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/local_mlx_model_readiness.py",
+      "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd",
+      "match": true
+    },
+    {
+      "path": "Contents/Resources/scripts/mlx_serve_lifecycle.py",
+      "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f",
+      "match": true
+    },
+    {
+      "path": "Contents/_CodeSignature/CodeResources",
+      "sha256": "3ee4ad929e3c18da1ce253f63b5343776bb15d92708730f77837c0254f7254d8",
+      "match": true
+    }
+  ],
+  "resource_count": 26,
+  "resources": [
+    {
+      "path": "scripts/auto-reply-menubar.py",
+      "match": true,
+      "sha256": "365e80ba88d4efbba81cb3a4f40ed7ffb61eaaa32e790e868d8692f0fcec568c"
+    },
+    {
+      "path": "scripts/local_mlx_model_readiness.py",
+      "match": true,
+      "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd"
+    },
+    {
+      "path": "scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+      "match": true,
+      "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3"
+    },
+    {
+      "path": "scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+      "match": true,
+      "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe"
+    },
+    {
+      "path": "scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+      "match": true,
+      "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16"
+    },
+    {
+      "path": "scripts/auto-reply-tui.py",
+      "match": true,
+      "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c"
+    },
+    {
+      "path": "scripts/bujamentor-tui.py",
+      "match": true,
+      "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1"
+    },
+    {
+      "path": "scripts/auto_reply_transition_journal.py",
+      "match": true,
+      "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197"
+    },
+    {
+      "path": "scripts/auto_reply_operator_prompt_store.py",
+      "match": true,
+      "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c"
+    },
+    {
+      "path": "scripts/bujamentor_operator_prompt_store.py",
+      "match": true,
+      "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013"
+    },
+    {
+      "path": "scripts/auto-reply-operator-prompts.json",
+      "match": true,
+      "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc"
+    },
+    {
+      "path": "scripts/auto_reply_reference_store.py",
+      "match": true,
+      "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c"
+    },
+    {
+      "path": "scripts/auto_reply_reference_search.py",
+      "match": true,
+      "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac"
+    },
+    {
+      "path": "scripts/auto_reply_knowledge_graph.py",
+      "match": true,
+      "sha256": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480"
+    },
+    {
+      "path": "scripts/alden_local_embedding_server.py",
+      "match": true,
+      "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820"
+    },
+    {
+      "path": "scripts/auto_reply_ondevice.py",
+      "match": true,
+      "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd"
+    },
+    {
+      "path": "scripts/local_mlx_gateway.py",
+      "match": true,
+      "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce"
+    },
+    {
+      "path": "scripts/mlx_serve_lifecycle.py",
+      "match": true,
+      "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f"
+    },
+    {
+      "path": "scripts/auto_reply_metrics.py",
+      "match": true,
+      "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9"
+    },
+    {
+      "path": "scripts/auto_reply_ax_ui.py",
+      "match": true,
+      "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e"
+    },
+    {
+      "path": "scripts/alden_browser_use.py",
+      "match": true,
+      "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e"
+    },
+    {
+      "path": "scripts/alden_tool_runtime.py",
+      "match": true,
+      "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c"
+    },
+    {
+      "path": "scripts/alden_voice.py",
+      "match": true,
+      "sha256": "af48265824988e0c9d73e9214ebb82eb6c597c625e533aa738c100e9f1432af3"
+    },
+    {
+      "path": "scripts/libalden_audio.dylib",
+      "match": true,
+      "sha256": "aef1afce14f995e61651fafdd06d7b7f81b9d1974701903980e108b5d8b06a1b"
+    },
+    {
+      "path": "scripts/alden_abort.py",
+      "match": true,
+      "sha256": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4"
+    },
+    {
+      "path": "bin/openkakao-cli",
+      "match": true,
+      "sha256": "90fe7746bee8fe29a532e11e3697b1ba415c80508cbba3731d6f0e29ba305d03"
+    }
+  ],
+  "codesign": "ad-hoc verified",
+  "full_previous_app_backup": "/Users/twoimo/Library/Application Support/openkakao/install-backups/alden-desktop/pre-native-audio-full-20260930T215444/Alden.app",
+  "probe_bytecache_preserved_outside_bundle": "/private/tmp/alden-owned-probe-bytecache-20260930T220050",
+  "native_screen_verified": false,
+  "physical_shortcut_verified": false,
+  "worker_activated": false,
+  "backend_delivery_unknown": 0,
+  "backend_health": {
+    "ax": "ok",
+    "model": "ok",
+    "supervisor": "ok",
+    "watchdog": "ok",
+    "worker": "ok"
+  },
+  "backend_rooms": 3,
+  "backend_reply_ready": 3
+}

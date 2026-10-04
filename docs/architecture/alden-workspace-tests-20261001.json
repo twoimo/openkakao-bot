@@ -1,0 +1,28 @@
+{
+  "rust": {
+    "passed": 90,
+    "failed": 0,
+    "runtime": "pinned Cargo.lock offline"
+  },
+  "frontend": {
+    "passed": 194,
+    "failed": 0
+  },
+  "frontendBuild": "passed tsc and Vite",
+  "sameTestsNotRepeated": true,
+  "clippy": "all targets -D warnings passed",
+  "nativeBuild": "ad-hoc app, CARGO_NET_OFFLINE=true and sandbox deny network*",
+  "sourceCommit": "8791ea1cc23073a58806bed5e6537a4512dbb54d",
+  "hostedPython": {
+    "run": 1054,
+    "skipped": 83,
+    "failed": 0,
+    "elapsedSec": 48.11,
+    "scope": "Tauri focused local AI suite in hosted CI; separate from prior local pinned environment"
+  },
+  "sourceCi": {
+    "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36793165993",
+    "successfulJobs": 4,
+    "totalJobs": 4
+  }
+}

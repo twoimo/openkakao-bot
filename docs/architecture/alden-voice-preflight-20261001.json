@@ -1,0 +1,76 @@
+{
+  "schema": "alden-voice-preflight-v1",
+  "actual_admission": {
+    "captured_utc": "2026-09-30T17:44:25.912665+00:00",
+    "budget": {
+      "reclaimable_bytes": 55601364992,
+      "swap_free_bytes": 1429272002
+    },
+    "wake_released": false,
+    "scope": "Owned presegmented public PCM reaches actual STT admission; no wake, mic, TTS or speaker success claim",
+    "actual_admission_probe": {
+      "state": "error",
+      "error_code": "voice_memory_budget_low",
+      "transcript_present": false,
+      "reply_present": false,
+      "tts_engine_loaded": false
+    },
+    "network_audit": [],
+    "heavy_modules_imported": []
+  },
+  "cached_files": {
+    "runtime_packages": {
+      "mlx-whisper": "0.4.3",
+      "openwakeword": "0.6.0",
+      "qwen-tts": "0.1.1",
+      "torch": "2.14.0",
+      "numpy": "2.4.6",
+      "webrtcvad-wheels": "2.0.14"
+    },
+    "checkpoints": [
+      {
+        "repository": "models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+        "snapshot_present": true,
+        "files": [
+          {
+            "file": "model.safetensors",
+            "bytes": 3833402552,
+            "tensor_count": 404,
+            "dtypes": {
+              "BF16": 404
+            }
+          },
+          {
+            "file": "speech_tokenizer/model.safetensors",
+            "bytes": 682293092,
+            "tensor_count": 496,
+            "dtypes": {
+              "F32": 496
+            }
+          }
+        ]
+      },
+      {
+        "repository": "models--mlx-community--whisper-large-v3-turbo",
+        "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+        "snapshot_present": true,
+        "files": [
+          {
+            "file": "weights.safetensors",
+            "bytes": 1613977612,
+            "tensor_count": 587,
+            "dtypes": {
+              "I64": 1,
+              "F16": 586
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "limits": [
+    "Safe file header/package metadata inspection is not current model inference.",
+    "Released wake remains unavailable and voice admission remains unchanged."
+  ]
+}

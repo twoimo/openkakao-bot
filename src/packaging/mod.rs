@@ -474,7 +474,11 @@ pub fn capabilities(state: &PermissionState) -> CapabilityMap {
     for capability in Capability::ALL {
         match capability.required_permission() {
             Some(permission) if !state.is_granted(permission) => {
-                blocked.push((capability, permission, permission.how_to_grant().to_string()));
+                blocked.push((
+                    capability,
+                    permission,
+                    permission.how_to_grant().to_string(),
+                ));
             }
             _ => available.push(capability),
         }
@@ -531,12 +535,7 @@ mod tests {
     }
 
     fn plan() -> BundlePlan {
-        BundlePlan::new(
-            "AutoReplyMenu",
-            "/tmp/core",
-            "/tmp/shell",
-            "/tmp/out",
-        )
+        BundlePlan::new("AutoReplyMenu", "/tmp/core", "/tmp/shell", "/tmp/out")
     }
 
     // -----------------------------------------------------------------------
@@ -687,10 +686,8 @@ mod tests {
 
     #[test]
     fn full_disk_denied_blocks_only_local_db_features() {
-        let state = PermissionState::from_granted([
-            Permission::Accessibility,
-            Permission::ScreenRecording,
-        ]);
+        let state =
+            PermissionState::from_granted([Permission::Accessibility, Permission::ScreenRecording]);
         let map = capabilities(&state);
         let blocked: BTreeSet<Capability> = map.blocked.iter().map(|(c, _, _)| *c).collect();
         assert_eq!(
@@ -709,10 +706,8 @@ mod tests {
 
     #[test]
     fn screen_recording_denied_blocks_only_screen_capture() {
-        let state = PermissionState::from_granted([
-            Permission::Accessibility,
-            Permission::FullDiskAccess,
-        ]);
+        let state =
+            PermissionState::from_granted([Permission::Accessibility, Permission::FullDiskAccess]);
         let map = capabilities(&state);
         let blocked: BTreeSet<Capability> = map.blocked.iter().map(|(c, _, _)| *c).collect();
         assert_eq!(blocked, BTreeSet::from([Capability::ScreenCaptureImages]));

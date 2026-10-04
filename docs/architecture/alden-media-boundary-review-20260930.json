@@ -1,0 +1,58 @@
+{
+  "schema": "alden-media-independent-review-v1",
+  "reviewed_worker_sha256": "64114bb47747f9e69ac8de68a8876dcbb187ebc6d573848da61ea2d1945bac6d",
+  "reviewed_watcher_sha256": "b3b858ce681c2b201a83c6e10dd288c3fed9bb793e57aefbe84dd8317bc6164e",
+  "requested_route": "gpt-6-astra / max",
+  "resumed_route_reported": "gpt-6.1-sol / max",
+  "route_limit": "Resumed child reported a route mismatch and stopped additional verification; these two tiny fixtures are not labelled Astra proof",
+  "finding": {
+    "priority": "P2",
+    "boundary": "recent file follow-up source",
+    "reproduced": "missing is_self, outgoing direction or different room could still return recent:924",
+    "fixed": "require explicit incoming non-self source and source room equal to current event room",
+    "regression": "8 invalid file-source variants added to existing follow-up test; 4 focused tests passed"
+  },
+  "partial_passes": [
+    "type26 quote/file and attachment alias separation",
+    "off-tail exact raw quote source and four invalid-source rejections",
+    "file metadata refresh with byte-exact attachment digest"
+  ],
+  "source_sha256_after_fix": {
+    "scripts/auto-reply-worker.py": "1f6765e45c22407e7c2722bade9031b5e746707c53e39e289114583a73572497",
+    "tests/test_auto_reply_cli_runtime.py": "70c49afea163c54714510fdde44dec881f18f6c47958e8204932f4494fbe2e68"
+  },
+  "remaining_review": "complete for the requested bounded source scope",
+  "live_http_db_send_shared_writes": 0,
+  "astra_followup": {
+    "request_turn_metadata": "gpt-6-astra / max",
+    "provider_internal_route": "not exposed",
+    "reviewed_worker_sha256": "1f6765e45c22407e7c2722bade9031b5e746707c53e39e289114583a73572497",
+    "fake_groups": 3,
+    "passes": [
+      "valid file follow-up and ten invalid-source rejections",
+      "byte-exact file metadata refresh; modified raw attachment rejected",
+      "chat-only image input: fake GET2/POST0; cooldown fallback release1/failure history unchanged/no second fallback/model_invokedFalse",
+      "six file-shape and five quote mismatch rejections; public helper/pre-send watermark fences"
+    ],
+    "finding": {
+      "priority": "P2",
+      "trigger": "general question with recent metadata-only file",
+      "failure": "UnboundLocalError for instructions before assignment",
+      "fix": "move file guidance block after instructions initialization",
+      "reproduction": "new public generate_reply prompt regression fails on previous source; passes after fix",
+      "focused_validation": "23 tests passed, 0.194s"
+    },
+    "source_sha256_after_fix": "c9b576a99f163866e42b9ee11494d0dbc76dd23bcc6ca3a8710b4235ff3be4ac",
+    "live_http_db_send_shared_writes": 0,
+    "remaining": "complete"
+  },
+  "astra_final": {
+    "route_request_and_host_turn_metadata": "gpt-6-astra / max",
+    "provider_internal_route": "not exposed",
+    "status": "pass for the single prompt-initialization fix",
+    "tests": "1/1, 0.152 seconds; metadata-present and metadata-absent public prompt cases",
+    "worker_sha256": "c9b576a99f163866e42b9ee11494d0dbc76dd23bcc6ca3a8710b4235ff3be4ac",
+    "change_verified": "moving only the file-guidance block back reproduced the previous reviewed bytes exactly",
+    "actual_http_db_send_shared_writes": 0
+  }
+}

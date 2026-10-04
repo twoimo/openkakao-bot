@@ -1,0 +1,18 @@
+{
+  "diagram_type": "dataflow",
+  "output": "alden-osk-knowledge.html",
+  "specification_sha256": "c14202f4ab8093681056fa271a3b4acd959df613ed6ea49d3869fcb575458080",
+  "artifact_sha256": "7bbb8ab9cb197077c5b1ed086de12fe277d4d8e8c43c69ddd4a0f5f29f38b1e7",
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  },
+  "browser_evidence": "passed",
+  "visual_review": "passed",
+  "correction_rounds": 1,
+  "review_scope": "Image review of exact delivered light/dark 1440x900 and 2048x1320 PNGs; automated containment at 1440x900,1600x1000,1920x1080,2048x1320. Korean authored diagram; fixed English viewer UI."
+}

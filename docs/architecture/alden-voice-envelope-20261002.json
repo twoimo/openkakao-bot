@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "version": "0.3.6",
+  "scope": "Real Chrome/Metal with production modules and explicit synthetic development fixtures; emulated viewport/DPR, not primary native app, microphone or physical Retina",
+  "layout": {
+    "scope": "real Chrome/Metal rendering of production components with explicit synthetic development fixtures; emulated viewport/scale, not native physical Retina",
+    "cases": [
+      {
+        "viewport": [
+          1200,
+          760
+        ],
+        "scroll": [
+          1200,
+          760
+        ],
+        "nodes": 22,
+        "visibleLabels": 19,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.6",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 180.1,
+          "inputRms": 0,
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "wide",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": [],
+        "interaction_checks": {
+          "focus": true,
+          "hidden_frames": 0,
+          "resume": true,
+          "overview": true,
+          "resize_invalidates": true
+        }
+      },
+      {
+        "viewport": [
+          640,
+          680
+        ],
+        "scroll": [
+          640,
+          680
+        ],
+        "nodes": 22,
+        "visibleLabels": 12,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.6",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 116,
+          "inputRms": 0,
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "minimum",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          1600,
+          1000
+        ],
+        "scroll": [
+          1600,
+          1000
+        ],
+        "nodes": 22,
+        "visibleLabels": 21,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.6",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 117.6,
+          "inputRms": 0,
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "expanded",
+        "device_scale": 1,
+        "scheme": "dark",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          1200,
+          760
+        ],
+        "scroll": [
+          1200,
+          760
+        ],
+        "nodes": 22,
+        "visibleLabels": 19,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.6",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 149.5,
+          "inputRms": 0,
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "retina",
+        "device_scale": 2,
+        "scheme": "dark",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          560,
+          420
+        ],
+        "scroll": [
+          560,
+          420
+        ],
+        "nodes": 22,
+        "visibleLabels": 11,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": null,
+        "versionCenterOffset": null,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 95,
+          "inputRms": 0,
+          "displayedRms": 0,
+          "audioVertices": 128
+        },
+        "name": "panel",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": []
+      }
+    ]
+  },
+  "amplitude": {
+    "scope": "Actual production TS modules rendered by owned Chrome/Metal context; controlled synthetic status, no microphone or native primary screenshot",
+    "idle_three_1s": [
+      0,
+      0,
+      0
+    ],
+    "positive": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 15,
+      "lastRenderAtMs": 6164.5,
+      "inputRms": 0.25,
+      "displayedRms": 0.25,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "speaking": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 29,
+      "lastRenderAtMs": 8681,
+      "inputRms": 0,
+      "displayedRms": 0,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "stale": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 29,
+      "lastRenderAtMs": 8681,
+      "inputRms": 0,
+      "displayedRms": 0,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "hidden": {
+      "calls": 6,
+      "diag": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 29,
+        "lastRenderAtMs": 8681,
+        "inputRms": 0,
+        "displayedRms": 0,
+        "audioVertices": 128,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "after_hidden_3s": {
+      "calls": 6,
+      "diag": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 29,
+        "lastRenderAtMs": 8681,
+        "inputRms": 0,
+        "displayedRms": 0,
+        "audioVertices": 128,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "resumed": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 45,
+      "lastRenderAtMs": 15647.4,
+      "inputRms": 1,
+      "displayedRms": 1,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "errors": []
+  },
+  "source_tests": {
+    "ui_passed": 220,
+    "build_passed": true
+  },
+  "images": [
+    {
+      "name": "overview.png",
+      "sha256": "3f446c0e2967fca04fc0a9d3b8b540c6e55c06f4ba230f9e0c9e11157de476ff"
+    },
+    {
+      "name": "input.png",
+      "sha256": "73d77f138653df78726f34d4bcac23956b80b2bd09b6e35661b4cfac25928cee"
+    }
+  ]
+}

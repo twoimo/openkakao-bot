@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { LifecycleState } from "./animation-loop";
 
 /** Event the Rust shell emits when it shows or hides a panel window. */
-export const VISIBILITY_EVENT = "jarvis://visibility";
+export const VISIBILITY_EVENT = "alden://visibility";
 
 export type VisibilityHandler = (visible: boolean) => void;
 export type VisibilitySubscriber = (handler: VisibilityHandler) => Promise<() => void>;
@@ -69,6 +69,9 @@ export function wireRenderLifecycle(
   // issued before an event arrived is older than that event, so it must not
   // overwrite it.
   let bridgeEvents = 0;
+  // Native hidden state remains authoritative through later DOM focus events.
+  // null means that no shell state is available (plain-browser fallback).
+  let shellVisible: boolean | null = options.subscribeVisibility && options.readVisibility ? false : null;
 
   // A throwing transition would escape an OS event handler and could take the
   // panel down with it, so render state stays inside this boundary.
@@ -81,10 +84,10 @@ export function wireRenderLifecycle(
     }
   };
 
-  const domState = (): LifecycleState => (doc.visibilityState === "visible" ? "visible" : "hidden");
+  const domState = (): LifecycleState => (shellVisible !== false && doc.visibilityState === "visible" ? "visible" : "hidden");
   const hide = (): void => transition("hidden");
   const show = (): void => {
-    if (doc.visibilityState === "visible") transition("visible");
+    if (shellVisible !== false && doc.visibilityState === "visible") transition("visible");
   };
   const visibilityChanged = (): void => transition(domState());
 
@@ -136,6 +139,7 @@ export function wireRenderLifecycle(
     void Promise.resolve()
       .then(() => subscribe((visible) => {
         bridgeEvents += 1;
+        shellVisible = visible;
         transition(visible ? "visible" : "hidden");
       }))
       .then(async (unsubscribe) => {
@@ -157,16 +161,20 @@ export function wireRenderLifecycle(
         try {
           visible = await read();
         } catch {
-          // A shell that cannot answer must not freeze the panel.
+          // A failed boot read cannot revoke a newer authoritative hide.
+          if (bridgeEvents !== issuedAt) return;
+          if (bridgeEvents === 0) shellVisible = null;
           transition(domState());
           return;
         }
         if (closed || detached || bridgeEvents !== issuedAt) return;
+        shellVisible = visible;
         transition(visible ? "visible" : "hidden");
       })
       .catch(() => {
         // A missing bridge (plain browser, no Tauri internals) leaves the
         // OS-derived behaviour in place instead of failing the panel.
+        if (bridgeEvents === 0) shellVisible = null;
         transition(domState());
       });
   }

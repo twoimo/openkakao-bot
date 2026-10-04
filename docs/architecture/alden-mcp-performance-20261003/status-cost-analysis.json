@@ -1,0 +1,89 @@
+{
+  "schema_size": {
+    "utf8_bytes": 401,
+    "unicode_characters": 401,
+    "sha256": "e8c7788a4d076ce243f64ce5d01cb08d6821e7ec35e4888f9cae411f8c329763"
+  },
+  "input_schema_size": {
+    "utf8_bytes": 62,
+    "unicode_characters": 62,
+    "sha256": "32062bdb9024160d3b9816f12ba2f337808ee107449f8bf08d55b0026944f51e"
+  },
+  "tools_list_result_size": {
+    "utf8_bytes": 413,
+    "unicode_characters": 413,
+    "sha256": "20a87bda82ffe3cd6dd8d8c181b467aea2b0c4911c78ea012162cf4c154ba9f6"
+  },
+  "tools_list_jsonrpc_size": {
+    "utf8_bytes": 447,
+    "unicode_characters": 447,
+    "sha256": "21b9e53fb50badeda7d1bf91709445e275f788c12b3242a510a849ef0bdb0c82"
+  },
+  "call_request_jsonrpc_size": {
+    "utf8_bytes": 94,
+    "unicode_characters": 94,
+    "sha256": "4727b81acc7aca438dec24cf84cc2cd5af7f6a8adeb9564732c38ce689b539dd"
+  },
+  "call_response_jsonrpc_size": {
+    "utf8_bytes": 613,
+    "unicode_characters": 613,
+    "sha256": "4663ccb78ecc2e29c5e80786cd2e3477324236b7d4a73b2d5487f30ce6f2d610"
+  },
+  "status_payload_size": {
+    "utf8_bytes": 462,
+    "unicode_characters": 462,
+    "sha256": "554d0befa69ae31f2d1add4c7c4d147ffd07b7c9dde35087c276481374e4f4c3"
+  },
+  "wire_framing_extra_bytes_per_message": 1,
+  "token_count": null,
+  "token_count_reason": "Pinned stdlib runtime has no tiktoken/tokenizers/transformers; exact Dot/model tokenizer and prompt rendering unavailable. No install, model load, paid API, or character/4 estimate used.",
+  "local_tokenizer_availability": {
+    "tiktoken": false,
+    "tokenizers": false,
+    "transformers": false
+  },
+  "startup_model": {
+    "definition": "T(N)=T_first+(N-1)*T_call = (T_first-T_call)+N*T_call, one persistent process per variant.",
+    "timing_ms": {
+      "direct": {
+        "observed_first_status_p50_ms": 57.729187499999995,
+        "observed_warm_call_p50_ms": 1.4152495,
+        "inferred_startup_intercept_ms": 56.31393799999999
+      },
+      "mcp": {
+        "observed_first_status_p50_ms": 58.7187295,
+        "observed_warm_call_p50_ms": 1.653271,
+        "inferred_startup_intercept_ms": 57.065458500000005
+      }
+    },
+    "projected_totals": [
+      {
+        "N": 1,
+        "direct_projected_ms": 57.729187499999995,
+        "mcp_projected_ms": 58.7187295,
+        "mcp_additional_ms": 0.9895420000000072
+      },
+      {
+        "N": 10,
+        "direct_projected_ms": 70.466433,
+        "mcp_projected_ms": 73.5981685,
+        "mcp_additional_ms": 3.131735500000005
+      },
+      {
+        "N": 100,
+        "direct_projected_ms": 197.838888,
+        "mcp_projected_ms": 222.39255849999998,
+        "mcp_additional_ms": 24.55367049999998
+      },
+      {
+        "N": 1000,
+        "direct_projected_ms": 1471.5634380000001,
+        "mcp_projected_ms": 1710.3364585,
+        "mcp_additional_ms": 238.7730204999998
+      }
+    ],
+    "limitations": "Inferred startup intercept, not a separately measured phase. Adding medians is a projection, not a measured job quantile. First-status CI crosses zero; no conclusive startup superiority or crossover. No loopback model GET or inference in these timings. Existing in-process API usage has no subprocess startup cost."
+  },
+  "adapter_sha256": "3c65936b3f40e0d99f22e4cfa8ca014e648dd611507d436322eae41f8e2c2795",
+  "semantic_output_unchanged": true
+}

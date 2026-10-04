@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "description": "Development and held-out Korean retrieval judgments. Grades are 1..3.",
+  "queries": [
+    {
+      "id": "dev-abbreviation-computer-use",
+      "split": "dev",
+      "text": "컴유 자동화 알려줘",
+      "chat_id": "room-alpha",
+      "tags": ["korean_abbreviation", "alias"],
+      "relevant": {"topic:tool:computer-use": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:tool:1"],
+      "fixture_dense_ranking": ["topic:tool:computer-use", "topic:model:claude", "topic:semantic:z-payment-history"]
+    },
+    {
+      "id": "dev-english-alias-korean-query",
+      "split": "dev",
+      "text": "클로드 비교해줘",
+      "chat_id": "room-alpha",
+      "tags": ["korean_alias", "cross_script"],
+      "relevant": {"topic:model:claude": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:model:1"],
+      "fixture_dense_ranking": ["topic:model:claude", "topic:tool:computer-use"]
+    },
+    {
+      "id": "dev-spacing-joined",
+      "split": "dev",
+      "text": "서울맛집 추천해줘",
+      "chat_id": "room-alpha",
+      "tags": ["spacing", "dense_rescue"],
+      "relevant": {"topic:place:seoul-food": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:place:1"],
+      "fixture_dense_ranking": ["topic:place:seoul-food", "topic:semantic:z-payment-history"]
+    },
+    {
+      "id": "dev-typo-particle",
+      "split": "dev",
+      "text": "러닝박에 못 뛰었어",
+      "chat_id": "room-alpha",
+      "tags": ["typo", "particle", "normalization"],
+      "relevant": {"ent:activity:running": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:running:1"],
+      "fixture_dense_ranking": ["ent:activity:running", "topic:place:seoul-food"]
+    },
+    {
+      "id": "dev-contextual-abbreviation",
+      "split": "dev",
+      "text": "알쫀쿠 쿠폰 만료일 알려줘",
+      "chat_id": "room-alpha",
+      "tags": ["korean_abbreviation", "context_gate"],
+      "relevant": {"ent:tech:alizonku": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:cloud:1"],
+      "fixture_dense_ranking": ["ent:tech:alizonku", "topic:tool:computer-use"]
+    },
+    {
+      "id": "dev-homonym-room-isolation",
+      "split": "dev",
+      "text": "민수 담당이 뭐였지",
+      "chat_id": "room-alpha",
+      "tags": ["homonym", "room_scope"],
+      "relevant": {"person:알파방:minsu-alpha": 3},
+      "forbidden": ["person:베타방:minsu-beta"],
+      "expected_evidence_ids": ["synthetic:person:alpha:minsu"],
+      "fixture_dense_ranking": ["person:베타방:minsu-beta", "person:알파방:minsu-alpha", "topic:tool:computer-use"]
+    },
+    {
+      "id": "heldout-room-prefix-isolation",
+      "split": "heldout",
+      "text": "영희가 한 말 찾아줘",
+      "chat_id": "room-alpha",
+      "tags": ["room_scope", "prefix_collision", "negative"],
+      "relevant": {},
+      "forbidden": ["person:알파방-스터디:younghee-study"],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": ["person:알파방-스터디:younghee-study", "person:알파방:minsu-alpha"]
+    },
+    {
+      "id": "heldout-participant-disambiguation",
+      "split": "heldout",
+      "text": "김서준 메모 보여줘",
+      "chat_id": "room-alpha",
+      "participant_id": "dev-001",
+      "tags": ["homonym", "participant_scope"],
+      "relevant": {"person:알파방:dev-001": 3},
+      "forbidden": ["person:알파방:design-002"],
+      "expected_evidence_ids": ["synthetic:person:alpha:dev-001"],
+      "fixture_dense_ranking": ["person:알파방:design-002", "person:알파방:dev-001"]
+    },
+    {
+      "id": "heldout-retracted-entity",
+      "split": "heldout",
+      "text": "오로라 일정 알려줘",
+      "chat_id": "room-alpha",
+      "tags": ["deletion", "freshness"],
+      "relevant": {"topic:project:z-current": 3},
+      "forbidden": ["topic:project:a-deleted"],
+      "expected_evidence_ids": ["synthetic:aurora:current"],
+      "fixture_dense_ranking": ["topic:project:z-current", "topic:project:a-deleted"]
+    },
+    {
+      "id": "heldout-latest-entity",
+      "split": "heldout",
+      "text": "올든 요금 뭐가 최신이야",
+      "chat_id": "room-alpha",
+      "tags": ["freshness", "duplicate_topic"],
+      "relevant": {"topic:pricing:z-current": 3},
+      "forbidden": ["topic:pricing:a-old"],
+      "expected_evidence_ids": ["synthetic:pricing:current"],
+      "fixture_dense_ranking": ["topic:pricing:z-current", "topic:pricing:a-old"]
+    },
+    {
+      "id": "heldout-provenance-room-leak",
+      "split": "heldout",
+      "text": "베타 전용 코드가 뭐야",
+      "chat_id": "room-alpha",
+      "tags": ["source_room", "negative"],
+      "relevant": {},
+      "forbidden": ["topic:secret:beta"],
+      "expected_evidence_ids": [],
+      "fixture_dense_ranking": ["topic:secret:beta", "topic:tool:computer-use"]
+    },
+    {
+      "id": "heldout-relation-time-scope",
+      "split": "heldout",
+      "text": "알든 출시 일정 알려줘",
+      "chat_id": "room-alpha",
+      "time_from": "2026-10-01T00:00:00+09:00",
+      "time_to": "2026-10-31T23:59:59+09:00",
+      "tags": ["time_scope", "freshness", "relation"],
+      "relevant": {"topic:release:alden": 3, "time:release:z-current": 2},
+      "forbidden": ["time:release:a-old"],
+      "forbidden_fact_substrings": ["9월 30일 출시는 철회됨"],
+      "expected_evidence_ids": ["synthetic:release:root", "synthetic:relation:release:current"],
+      "fixture_dense_ranking": ["topic:release:alden", "time:release:z-current", "time:release:a-old"]
+    },
+    {
+      "id": "heldout-semantic-dense-rescue",
+      "split": "heldout",
+      "text": "구독한 돈 돌려받는 법",
+      "chat_id": "room-alpha",
+      "tags": ["semantic", "dense_rescue"],
+      "relevant": {"topic:semantic:a-refund": 3},
+      "forbidden": [],
+      "expected_evidence_ids": ["synthetic:refund:1"],
+      "fixture_dense_ranking": ["topic:semantic:a-refund", "topic:semantic:z-payment-history", "topic:tool:computer-use"]
+    }
+  ]
+}

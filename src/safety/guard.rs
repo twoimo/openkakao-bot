@@ -314,7 +314,11 @@ impl SendGuard<'_> {
         }
 
         // 7. Every precondition passed — mint the ticket.
-        Ok(SendTicket::mint(req.chat_id, intent.grade, self.clock.now_ms()))
+        Ok(SendTicket::mint(
+            req.chat_id,
+            intent.grade,
+            self.clock.now_ms(),
+        ))
     }
 }
 

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "deliver",
+  "type": "workflow",
+  "input": "<checkout>/docs/architecture/alden-native-render-20261001.workflow.json",
+  "output": "<checkout>/docs/architecture/alden-native-render-20261001.html",
+  "specification": {
+    "sha256": "131b854a2e6eda5694e4939911eb58eb0cf7b9a9fdfe8183c5aade46a9d10e01",
+    "bytes": 2637
+  },
+  "artifact": {
+    "sha256": "9a4156e1ae0ac21e06ba8258aa2b68ca7749bb43de937642dbf9d4b993635492",
+    "bytes": 803980
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  }
+}

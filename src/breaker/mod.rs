@@ -34,9 +34,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
-use crate::logging::{
-    FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus,
-};
+use crate::logging::{FlowKind, HistoryStore, PipelineEvent, Stage, StageStatus};
 use crate::ports::Clock;
 use crate::safety::{self, BreakerGate, BreakerGateSource};
 
@@ -249,10 +247,7 @@ fn is_error_spike(outcomes: &[StageStatus]) -> bool {
     if window.is_empty() {
         return false;
     }
-    let failed = window
-        .iter()
-        .filter(|s| **s == StageStatus::Failed)
-        .count();
+    let failed = window.iter().filter(|s| **s == StageStatus::Failed).count();
     (failed as f32 / window.len() as f32) > SPIKE_RATIO
 }
 
@@ -327,7 +322,12 @@ impl SqliteBreakerStore {
                     alternation_run = excluded.alternation_run,
                     last_partner_at = excluded.last_partner_at,
                     last_agent_at = excluded.last_agent_at",
-                params![room_id, alternation_run as i64, last_partner_at, last_agent_at],
+                params![
+                    room_id,
+                    alternation_run as i64,
+                    last_partner_at,
+                    last_agent_at
+                ],
             )
             .map_err(db_err)?;
         Ok(())
@@ -777,7 +777,9 @@ mod tests {
     #[test]
     fn observation_upsert_and_room_reset() {
         let store = SqliteBreakerStore::open_in_memory().unwrap();
-        store.upsert_observation(5, 3, Some(100), Some(200)).unwrap();
+        store
+            .upsert_observation(5, 3, Some(100), Some(200))
+            .unwrap();
         assert_eq!(store.observation_run(5).unwrap(), 3);
         store.clear_and_reset(BreakScope::Room(5)).unwrap();
         assert_eq!(store.observation_run(5).unwrap(), 0);
@@ -856,10 +858,7 @@ mod tests {
         let clock = VirtualClock::new(0);
         let store = FailingStore;
         let breaker = EmergencyBreaker::new(&store, &clock);
-        assert!(matches!(
-            breaker.breaker_gate(1),
-            BreakerGate::Unknown(_)
-        ));
+        assert!(matches!(breaker.breaker_gate(1), BreakerGate::Unknown(_)));
     }
 
     // ---- observe: detection persists a trip, survives a "restart" ----

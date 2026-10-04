@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T07:03:18Z",
+  "source": "Alden plaintext context mirror",
+  "source_db_bytes": 1399140352,
+  "source_wal_bytes": 0,
+  "integrity": "ok",
+  "query_only": 1,
+  "table_count": 26,
+  "source_opened_by_sqlite": false,
+  "source_signature_unchanged": false,
+  "private_shm_created": true,
+  "temporary_copy_removed": true,
+  "elapsed_seconds": 5.31416,
+  "cpu_seconds": 2.982951,
+  "process_peak_rss_bytes": 33046528,
+  "samples": 1,
+  "limits": [
+    "One live snapshot, not a percentile benchmark",
+    "Source metadata can also change through the existing writer",
+    "quick_check does not prove graph retrieval relevance"
+  ]
+}

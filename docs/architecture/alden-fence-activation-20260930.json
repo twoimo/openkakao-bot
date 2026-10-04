@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "source_commit": "8af5f988e8ee3aae92942213533ceffa8435a551",
+  "activation": {
+    "activated": true,
+    "stable_cli_designated_requirement_unchanged": true,
+    "control_backup_created": true,
+    "normal_watchdog_drain_confirmed": true,
+    "preflight_before": {
+      "valid": true,
+      "network": false,
+      "will_send": false,
+      "workers_started": false
+    },
+    "preflight_after": {
+      "valid": true,
+      "network": false,
+      "will_send": false,
+      "workers_started": false
+    },
+    "runtime_asset_count": 20,
+    "runtime_assets_verified": 20,
+    "source_asset_checks": {
+      "auto-reply-worker.py": {
+        "matches_source": true,
+        "sha256": "bb6788338bdc33d41caa5a87458bbf1542782fd44ccda5e861bb54f18c369ffc"
+      },
+      "alden_abort.py": {
+        "matches_source": true,
+        "sha256": "811ef0232424f3a39963425be7e9a05a4387cc01f02aca840dcccfc182fd6f8f"
+      }
+    },
+    "production_python": "3.13",
+    "production_python_worker_tests_passed": 20,
+    "new_test_sends": 0,
+    "queue_or_watermark_reset": false
+  },
+  "readback": {
+    "schema_version": 1,
+    "source_commit": "8af5f988e8ee3aae92942213533ceffa8435a551",
+    "new_test_sends": 0,
+    "samples": [
+      {
+        "index": 1,
+        "observed_at_utc": "2026-09-30T05:08:56Z",
+        "host_exit_code": 1,
+        "host_healthy": false,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "fenced",
+            "phase": "idle",
+            "status_age_s": 0.949,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "fenced",
+            "phase": "idle",
+            "status_age_s": 0.463,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "fenced",
+            "phase": "idle",
+            "status_age_s": 0.734,
+            "watermark_did_not_regress": true
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "observed_at_utc": "2026-09-30T05:09:21Z",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 1.815,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.323,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.682,
+            "watermark_did_not_regress": true
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "observed_at_utc": "2026-09-30T05:09:46Z",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.7,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.229,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.572,
+            "watermark_did_not_regress": true
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "observed_at_utc": "2026-09-30T05:10:12Z",
+        "host_exit_code": 0,
+        "host_healthy": true,
+        "watchdog_state": "running",
+        "watchdog_attempt": 1,
+        "restart_count": 0,
+        "new_runtime_process_verified": true,
+        "rooms": [
+          {
+            "room_index": 1,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 1.751,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 2,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.328,
+            "watermark_did_not_regress": true
+          },
+          {
+            "room_index": 3,
+            "state": "running",
+            "readiness": "ready",
+            "phase": "idle",
+            "status_age_s": 0.394,
+            "watermark_did_not_regress": true
+          }
+        ]
+      }
+    ],
+    "asset_checks": {
+      "auto-reply-worker.py": {
+        "matches_source": true,
+        "sha256": "bb6788338bdc33d41caa5a87458bbf1542782fd44ccda5e861bb54f18c369ffc"
+      },
+      "alden_abort.py": {
+        "matches_source": true,
+        "sha256": "811ef0232424f3a39963425be7e9a05a4387cc01f02aca840dcccfc182fd6f8f"
+      }
+    },
+    "limitations": [
+      "Readiness is not a measured delivery or skip-rate result.",
+      "No physical global shortcut or live AX cancellation was performed."
+    ],
+    "elapsed_s": 76.284,
+    "passed": false
+  },
+  "interpretation": {
+    "startup_sample_ready_rooms": 0,
+    "subsequent_ready_samples": 3,
+    "ready_rooms_each_subsequent_sample": 3,
+    "observed_ready_span_seconds": 51.0,
+    "first_sample_fence_reason": "not_captured",
+    "all_four_samples_passed": false,
+    "latest_observed_ready": true
+  },
+  "desktop": {
+    "schema_version": 1,
+    "source_commit": "8af5f988e8ee3aae92942213533ceffa8435a551",
+    "observed_at_utc": "2026-09-30T05:11:36Z",
+    "built_file_count": 28,
+    "installed_file_count": 28,
+    "differing_file_count": 0,
+    "codesign_verify_exit_code": 0,
+    "launch_agent_exit_code": 0,
+    "launch_agent_running": true,
+    "process_pid": 82600,
+    "direct_installed_screen_verified": false,
+    "screen_limitation": "Computer Use getApp timed out after 5.106s after installation.",
+    "public_signed_notarized_release": false
+  },
+  "github_checks": {
+    "verified_commit": "8af5f988e8ee3aae92942213533ceffa8435a551",
+    "successful_checks": 5,
+    "total_checks": 5,
+    "run_url": "https://github.com/twoimo/openkakao-bot/actions/runs/36671239460"
+  },
+  "privacy": {
+    "chat_names_or_ids_included": false,
+    "message_bodies_included": false,
+    "credentials_included": false
+  },
+  "limitations": [
+    "The initial startup sample was fenced; the four-sample all-pass condition failed.",
+    "Three subsequent samples prove bounded readiness, not delivery success, lower skip rate, latency, or future uptime.",
+    "No physical global-shortcut-to-AX cancellation was tested.",
+    "Direct Alden screen capture timed out; no rendered app-screen claim is made.",
+    "The local desktop is ad-hoc signed; no signed/notarized public release is established."
+  ]
+}

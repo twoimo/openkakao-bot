@@ -1,0 +1,24 @@
+{
+  "schema": "alden-integrated-verification-20260930-v1",
+  "recorded_utc": "2026-09-30T09:34:25.413670+00:00",
+  "python": {
+    "runtime": "CPython3.11.9 pinned voice runtime",
+    "selectors": 50,
+    "tests": 948,
+    "skipped": 2,
+    "failed": 0,
+    "elapsed_s": 111.616,
+    "log_sha256": "dcd6ff6ff446184c815828fbe247af2ad4a2bb0751186dcdd2d6e4121183d5f9"
+  },
+  "scope": "Graph final public bundle4cc536 and committed image guardb69bd before subsequent attachment/fallback corrections",
+  "source_sha256": {
+    "scripts/alden_voice.py": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+    "scripts/alden_abort.py": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4",
+    "scripts/auto_reply_knowledge_graph.py": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480"
+  },
+  "worker_tested_sha256": "b69bd5e123fe06b7ccc24450a18e0267b599cf5ebd0fe3e406ffb8e5cc808be5",
+  "limits": [
+    "New link/file and final cooldown fallback fixes require their own focused verification",
+    "Not installed UI/microphone/production delivery"
+  ]
+}

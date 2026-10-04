@@ -5,6 +5,6 @@
   <key>LSUIElement</key>
   <true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Jarvis uses the microphone only when you start a voice session.</string>
+  <string>Alden uses the microphone only when you start a voice session.</string>
 </dict>
 </plist>

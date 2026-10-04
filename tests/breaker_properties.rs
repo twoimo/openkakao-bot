@@ -69,15 +69,17 @@ fn observation_strategy() -> impl Strategy<Value = BreakerObservation> {
         0u8..6,
         prop::collection::vec(-5i64..120, 0..6),
     )
-        .prop_map(|(room_id, commits, outcomes, run, gaps)| BreakerObservation {
-            room_id,
-            commits_last_5min: commits,
-            recent_outcomes: outcomes,
-            alternation: Alternation {
-                run,
-                gaps_secs: gaps,
+        .prop_map(
+            |(room_id, commits, outcomes, run, gaps)| BreakerObservation {
+                room_id,
+                commits_last_5min: commits,
+                recent_outcomes: outcomes,
+                alternation: Alternation {
+                    run,
+                    gaps_secs: gaps,
+                },
             },
-        })
+        )
 }
 
 // --- Independent oracles for the three trip conditions, recomputed from the

@@ -1,0 +1,297 @@
+{
+  "version": "0.1.6",
+  "identifier": "com.openkakao.alden.desktop",
+  "source_resource_count": 27,
+  "source_resource_matches": 27,
+  "installed_resource_matches": 27,
+  "rows": [
+    {
+      "resource": "scripts/auto-reply-menubar.py",
+      "sha256": "365e80ba88d4efbba81cb3a4f40ed7ffb61eaaa32e790e868d8692f0fcec568c",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/local_mlx_model_readiness.py",
+      "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+      "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+      "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+      "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto-reply-tui.py",
+      "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/bujamentor-tui.py",
+      "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_transition_journal.py",
+      "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_operator_prompt_store.py",
+      "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/bujamentor_operator_prompt_store.py",
+      "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto-reply-operator-prompts.json",
+      "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_file_content.py",
+      "sha256": "fc5c99eec5721b2f6dc0207cc57301cb86647d7ff47eee958bd70309bc770230",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_reference_store.py",
+      "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_reference_search.py",
+      "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_knowledge_graph.py",
+      "sha256": "3be77fe7229bc976b0c37d30e77d9e30da32c112c4b5fc2b96c7a471d56880dc",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_local_embedding_server.py",
+      "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_ondevice.py",
+      "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/local_mlx_gateway.py",
+      "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/mlx_serve_lifecycle.py",
+      "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_metrics.py",
+      "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/auto_reply_ax_ui.py",
+      "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_browser_use.py",
+      "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_tool_runtime.py",
+      "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_voice.py",
+      "sha256": "409b4040ef081c8bfb8d85a0e5c5e539799dfc5dccffdbe6a4190917ddea2f03",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/libalden_audio.dylib",
+      "sha256": "aef1afce14f995e61651fafdd06d7b7f81b9d1974701903980e108b5d8b06a1b",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "scripts/alden_abort.py",
+      "sha256": "35f251273637121e513d02de5624c0096af319579b4f00cb19a5863cab2d0e91",
+      "source_matches": true,
+      "installed_matches": true
+    },
+    {
+      "resource": "bin/openkakao-cli",
+      "sha256": "aa45b3a2739ca722597b72213a1eedc8bdd4b90b1d3cd6e637fb271e18ffb9cd",
+      "source_matches": true,
+      "installed_matches": true
+    }
+  ],
+  "strict_signature_exit": 0,
+  "evaluation": {
+    "key": {
+      "schema_version": 1,
+      "version": "0.1.6",
+      "source_sha256": "060c3018c6deea64075a6bcd83a746172655e6ccf1990f3d2a6aa119747fb948",
+      "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+      "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+      "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+      "checkpoint_format": "mlx-serve-qwen3_5-converted",
+      "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+      "split": "validation",
+      "beta": 0.1,
+      "runtime_versions": {
+        "python": "3.11.16",
+        "mlx": "0.32.2",
+        "mlx-lm": "0.31.3",
+        "transformers": "5.17.0"
+      }
+    },
+    "phase": "evaluated",
+    "scoring": {
+      "status": "ok",
+      "reason": "dpo_teacher_forced",
+      "scoring_method": "mlx_direct_teacher_forcing",
+      "string_similarity_used": false,
+      "pair_count": 3,
+      "evaluated": 3,
+      "mean_loss": 0.6926794938161391,
+      "runtime_seconds": 14.876916,
+      "peak_bytes": 17362436100,
+      "peak_bytes_scope": "scoring_after_model_load",
+      "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+      "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+      "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+      "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f",
+      "reference_frozen": true,
+      "reference_reused": false,
+      "requested_checkpoint_format": "mlx-serve-qwen3_5-converted",
+      "policy_checkpoint_format": "mlx-serve-qwen3_5-converted",
+      "reference_checkpoint_format": "mlx-serve-qwen3_5-converted",
+      "identical_checkpoint_delta_zero": false,
+      "versions": {
+        "python": "3.11.16",
+        "mlx": "0.32.2",
+        "mlx-lm": "0.31.3",
+        "transformers": "5.17.0"
+      },
+      "pairs": [
+        {
+          "pair_id": "validation-meeting",
+          "chosen_tokens": 8,
+          "rejected_tokens": 8,
+          "policy_chosen_logprob": -6.681828021573892,
+          "policy_rejected_logprob": -29.79251331090927,
+          "reference_chosen_logprob": -6.681827444124792,
+          "reference_rejected_logprob": -29.861458986997604,
+          "delta": -0.06894625353743322,
+          "loss": 0.696600435207394
+        },
+        {
+          "pair_id": "validation-latest",
+          "chosen_tokens": 4,
+          "rejected_tokens": 4,
+          "policy_chosen_logprob": -5.685380592942238,
+          "policy_rejected_logprob": -12.031896259635687,
+          "reference_chosen_logprob": -5.685352478176355,
+          "reference_rejected_logprob": -12.019163057208061,
+          "delta": 0.012705087661743164,
+          "loss": 0.6925121279509102
+        },
+        {
+          "pair_id": "validation-no-pixels",
+          "chosen_tokens": 7,
+          "rejected_tokens": 5,
+          "policy_chosen_logprob": -11.978592072147876,
+          "policy_rejected_logprob": -34.55071610212326,
+          "reference_chosen_logprob": -11.955785505007952,
+          "reference_rejected_logprob": -34.44330534338951,
+          "delta": 0.08460419159382582,
+          "loss": 0.6889259182901133
+        }
+      ]
+    },
+    "split_counts": {
+      "train": 3,
+      "validation": 3,
+      "test": 3
+    },
+    "weights_trained": false,
+    "model_promoted": false,
+    "runtime_seconds": 23.465826,
+    "cached": false,
+    "evaluation_id": "cd2e359c70bd9921fddf237cc352492380d30ef1a434b37d94a442c7902ffcb3"
+  },
+  "notarized": false,
+  "installed_app_replaced": false,
+  "training_in_installed_bundle": false,
+  "candidate_promoted": false,
+  "invocation_provenance": {
+    "source": "parent exec_command invocation and completed session readback",
+    "session_id": 7866,
+    "launcher": "/usr/bin/sandbox-exec",
+    "arguments": [
+      "-p",
+      "(version 1) (allow default) (deny network*)",
+      "/bin/sh",
+      "scripts/build-alden-desktop.sh"
+    ],
+    "configured_environment_names": [
+      "ALDEN_EVALUATION_DATASET",
+      "ALDEN_EVALUATION_PYTHON",
+      "ALDEN_EVALUATION_POLICY_DIR",
+      "ALDEN_EVALUATION_REFERENCE_DIR",
+      "ALDEN_EVALUATION_CHECKPOINT_FORMAT",
+      "ALDEN_EVALUATION_ADAPTER_DIR",
+      "ALDEN_EVALUATION_ROOT",
+      "ALDEN_EVALUATION_STATE_ROOT",
+      "OPENKAKAO_SIGN_IDENTITY"
+    ],
+    "openkakao_sign_identity": "-",
+    "completed_exit_code": 0,
+    "private_raw_log_sha256": "02496a7a87c1d5a43b2ff68d1750d8b5342939b1f0979b3b23403a6f396a23cf",
+    "published_redacted_log": "alden-dpo-training-build-20261001.log",
+    "published_log_sha256": "2d9d63563014caf2fc081ccbee3c01279f62d908ed912342ded56f8b2b40bcb1"
+  }
+}

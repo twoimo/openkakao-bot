@@ -1,0 +1,7 @@
+{
+  "server_version": "26.9.5",
+  "server_binary_sha256": "dd683d43c7b78d539706c8d4fb1412cf1b58a632d74340d6ff34e67df4ad8bde",
+  "server_mutation": "none",
+  "api_documentation": "https://github.com/ddalcu/mlx-serve/blob/main/docs/api.md",
+  "note": "Documented chat stream supported; no documented explicit chat cancellation endpoint. Shared server not restarted or replaced. Client close does not prove backend cancellation."
+}

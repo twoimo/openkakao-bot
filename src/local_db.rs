@@ -27,6 +27,27 @@ pub struct LocalChat {
     pub display_name: String,
 }
 
+/// Browser histories use decimal strings so JavaScript never rounds IDs.
+/// System rows with nonpositive IDs cannot be passed to `history_page`.
+pub fn history_room_items(mut chats: Vec<LocalChat>) -> Result<Vec<serde_json::Value>> {
+    chats.retain(|chat| chat.chat_id > 0);
+    chats.sort_by(|left, right| {
+        right
+            .last_updated_at
+            .cmp(&left.last_updated_at)
+            .then_with(|| left.chat_id.cmp(&right.chat_id))
+    });
+    chats
+        .into_iter()
+        .map(|chat| {
+            let mut value = serde_json::to_value(&chat)?;
+            value["chat_id"] = json!(chat.chat_id.to_string());
+            value["last_log_id"] = json!(chat.last_log_id.to_string());
+            Ok(value)
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LocalGroupChat {
     pub chat_id: i64,
@@ -48,6 +69,137 @@ const MAX_CHAT_SELECTORS: usize = 64;
 const MAX_CHAT_TARGETS: usize = 32;
 const MAX_CHAT_NAME_BYTES: usize = 256;
 const MAX_CHAT_INDEX_ROWS: usize = 10_000;
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn history_room_wire_ids_are_exact_and_readable_rooms_are_recent_first() {
+        let room = |chat_id, last_updated_at| LocalChat {
+            chat_id,
+            last_updated_at,
+            chat_type: 1,
+            chat_name: String::new(),
+            database_chat_name: None,
+            active_members_count: 2,
+            last_log_id: 9_007_199_254_740_999,
+            unread_count: 0,
+            display_name: String::new(),
+        };
+        let rows = history_room_items(vec![
+            room(-1, 100),
+            room(42, 5),
+            room(9_007_199_254_740_997, 10),
+            room(0, 200),
+        ])
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["chat_id"], "9007199254740997");
+        assert_eq!(rows[0]["last_log_id"], "9007199254740999");
+        assert_eq!(rows[1]["chat_id"], "42");
+        assert_eq!(rows[0]["last_updated_at"], 10);
+    }
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE NTChatMessage(logId INTEGER PRIMARY KEY,chatId INTEGER,authorId INTEGER,message TEXT,attachment TEXT,type INTEGER,sentAt INTEGER); CREATE TABLE NTUser(userId INTEGER,linkId INTEGER,displayName TEXT,friendNickName TEXT,nickName TEXT);").unwrap();
+        c.execute("INSERT INTO NTUser VALUES(7,0,'화자','','')", [])
+            .unwrap();
+        for id in 1..=235 {
+            c.execute(
+                "INSERT INTO NTChatMessage VALUES(?1,42,7,?2,'',1,1234)",
+                rusqlite::params![id, format!("전체 본문 {id}")],
+            )
+            .unwrap();
+        }
+        c
+    }
+    #[test]
+    fn whole_history_has_no_gap_with_identical_timestamps_and_live_appends() {
+        let c = fixture();
+        let mut p = history_page_from_connection(&c, 7, "account", 42, None, None, 50).unwrap();
+        assert_eq!(p.total, 235);
+        let anchor = p.anchor_log_id.parse().unwrap();
+        let mut ids = Vec::new();
+        c.execute(
+            "INSERT INTO NTChatMessage VALUES(999,42,7,'새 메시지','',1,1234)",
+            [],
+        )
+        .unwrap();
+        loop {
+            ids.extend(
+                p.messages
+                    .iter()
+                    .map(|m| m["id"].as_str().unwrap().parse::<i64>().unwrap()),
+            );
+            match p.next_before {
+                Some(ref cursor) => {
+                    p = history_page_from_connection(
+                        &c,
+                        7,
+                        "account",
+                        42,
+                        Some(anchor),
+                        Some(cursor.parse().unwrap()),
+                        50,
+                    )
+                    .unwrap()
+                }
+                None => break,
+            }
+        }
+        ids.sort();
+        assert_eq!(ids, (1..=235).collect::<Vec<_>>());
+        let latest = history_page_from_connection(&c, 7, "account", 42, None, None, 50).unwrap();
+        assert_eq!(latest.total, 236);
+    }
+    #[test]
+    fn whole_history_accepts_older_real_timestamp_rows() {
+        let c = fixture();
+        c.execute(
+            "UPDATE NTChatMessage SET sentAt=1234.125 WHERE logId=235",
+            [],
+        )
+        .unwrap();
+        let page = history_page_from_connection(&c, 7, "account", 42, None, None, 2).unwrap();
+        assert_eq!(page.messages.last().unwrap()["sent_at"], json!(1234.125));
+    }
+    #[test]
+    fn room_boundary_full_text_and_large_ids_are_preserved() {
+        let c = fixture();
+        let id = 9_007_199_254_740_995i64;
+        let text = "긴 원문 <script> 값\n".repeat(2000);
+        c.execute(
+            "INSERT INTO NTChatMessage VALUES(?1,84,8,?2,'첨부',26,1234)",
+            rusqlite::params![id, text],
+        )
+        .unwrap();
+        let p = history_page_from_connection(&c, 7, "account", 84, None, None, 1).unwrap();
+        assert_eq!(p.total, 1);
+        assert_eq!(p.messages[0]["id"], id.to_string());
+        assert_eq!(p.messages[0]["text"], text);
+        assert_eq!(p.messages[0]["is_self"], false);
+    }
+    #[test]
+    fn invalid_cursors_leave_connection_usable() {
+        let c = fixture();
+        for (anchor, before, limit) in [
+            (None, Some(10), 50),
+            (Some(5), Some(6), 50),
+            (None, None, 201),
+        ] {
+            assert!(
+                history_page_from_connection(&c, 7, "account", 42, anchor, before, limit).is_err()
+            );
+        }
+        assert_eq!(
+            history_page_from_connection(&c, 7, "account", 42, None, None, 50)
+                .unwrap()
+                .total,
+            235
+        );
+    }
+}
 
 const GROUP_TITLE_KEYS: &[&str] = &[
     "name",
@@ -452,6 +604,100 @@ pub struct LocalMessage {
     pub sent_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalHistoryPage {
+    pub account: String,
+    pub chat_id: String,
+    pub anchor_log_id: String,
+    pub total: i64,
+    pub next_before: Option<String>,
+    pub messages: Vec<serde_json::Value>,
+}
+
+/// Keyset paging over every available local message. A fixed high-water mark
+/// prevents new messages from shifting later pages; source rows are never edited.
+fn history_page_from_connection(
+    conn: &Connection,
+    account_user_id: i64,
+    account: &str,
+    chat_id: i64,
+    anchor: Option<i64>,
+    before: Option<i64>,
+    limit: usize,
+) -> Result<LocalHistoryPage> {
+    if chat_id <= 0
+        || !(1..=200).contains(&limit)
+        || anchor.is_some_and(|v| v < 0)
+        || before.is_some_and(|v| v <= 0)
+        || (before.is_some() && anchor.is_none())
+    {
+        anyhow::bail!("local history cursor is invalid");
+    }
+    conn.execute_batch("BEGIN")?;
+    let result = (|| -> Result<LocalHistoryPage> {
+        let high = match anchor {
+            Some(v) => v,
+            None => conn.query_row(
+                "SELECT COALESCE(MAX(logId),0) FROM NTChatMessage WHERE chatId=?",
+                [chat_id],
+                |r| r.get(0),
+            )?,
+        };
+        if before.is_some_and(|v| v > high) {
+            anyhow::bail!("local history cursor exceeds its anchor");
+        }
+        let total = conn.query_row(
+            "SELECT COUNT(*) FROM NTChatMessage WHERE chatId=? AND logId<=?",
+            [chat_id, high],
+            |r| r.get(0),
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT m.logId,m.authorId,COALESCE((SELECT COALESCE(NULLIF(u.displayName,''),NULLIF(u.friendNickName,''),u.nickName,'') FROM NTUser u WHERE u.userId=m.authorId AND u.linkId=0 LIMIT 1),''),COALESCE(m.message,''),COALESCE(m.attachment,''),m.type,m.sentAt FROM NTChatMessage m WHERE m.chatId=?1 AND m.logId<=?2 AND (?3 IS NULL OR m.logId<?3) ORDER BY m.logId DESC LIMIT ?4"
+        )?;
+        let mut messages = stmt.query_map(rusqlite::params![chat_id,high,before,(limit+1) as i64],|row| {
+            let id:i64=row.get(0)?;let author:i64=row.get(1)?;
+            Ok(json!({"id":id.to_string(),"chat_id":chat_id.to_string(),"author_id":author.to_string(),
+                "is_self":is_self_author(author,account_user_id),"sender":row.get::<_,String>(2)?,
+                "text":row.get::<_,String>(3)?,"attachment":row.get::<_,String>(4)?,
+                "type":row.get::<_,i32>(5)?,"sent_at":match row.get_ref(6)? {
+                    rusqlite::types::ValueRef::Integer(n)=>json!(n),
+                    rusqlite::types::ValueRef::Real(n)=>json!(n),
+                    rusqlite::types::ValueRef::Null=>serde_json::Value::Null,
+                    _=>serde_json::Value::Null,
+                }}))
+        })?.collect::<Result<Vec<_>,_>>()?;
+        let more = messages.len() > limit;
+        messages.truncate(limit);
+        let next = if more {
+            messages
+                .last()
+                .and_then(|m| m["id"].as_str())
+                .map(str::to_owned)
+        } else {
+            None
+        };
+        messages.reverse();
+        Ok(LocalHistoryPage {
+            account: account.to_owned(),
+            chat_id: chat_id.to_string(),
+            anchor_log_id: high.to_string(),
+            total,
+            next_before: next,
+            messages,
+        })
+    })();
+    match result {
+        Ok(page) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(page)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
 /// Numeric self proof only. Display names and `author_id == 0` never count.
 pub fn is_self_author(author_id: i64, account_user_id: i64) -> bool {
     author_id > 0 && account_user_id > 0 && author_id == account_user_id
@@ -500,6 +746,86 @@ const LOCAL_POLL_ROWS_SQL: &str = "SELECT m.logId, m.chatId, m.authorId,
      WHERE m.chatId = ? AND m.logId > ? AND m.type >= ?
      ORDER BY m.logId ASC, m.sentAt ASC
      LIMIT ?";
+const LOCAL_POLL_TAIL_EVIDENCE_SQL: &str = "SELECT
+            COUNT(CASE WHEN m.logId = ?2 THEN 1 END),
+            COUNT(CASE WHEN m.logId = ?2 AND m.type >= ?4 THEN 1 END),
+            COUNT(CASE WHEN m.logId = ?2 AND m.type < ?4 THEN 1 END),
+            MIN(CASE WHEN m.logId = ?2 THEN m.prevId END),
+            MAX(CASE WHEN m.logId = ?2 THEN m.prevId END),
+            COUNT(CASE WHEN m.logId = ?3 THEN 1 END),
+            COUNT(CASE WHEN m.logId = ?3 AND m.type >= ?4 THEN 1 END)
+     FROM NTChatMessage m
+     WHERE m.chatId = ?1 AND m.logId IN (?2, ?3)";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocalPollRoomTailMetadata {
+    advertised_last_log_id: i64,
+    last_user_log_id: i64,
+    last_seen_log_id: i64,
+    last_sync_log_id: i64,
+    last_mchat_log_id: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocalPollTailEvidence {
+    advertised_rows: i64,
+    advertised_conversation_rows: i64,
+    advertised_control_rows: i64,
+    advertised_prev_min: Option<i64>,
+    advertised_prev_max: Option<i64>,
+    last_user_rows: i64,
+    last_user_conversation_rows: i64,
+}
+
+/// Resolve the reply-visible tail only when the raw room tail is itself a
+/// visible control row whose direct predecessor is the room's independently
+/// advertised, present conversational tail. Any missing row, mixed type,
+/// conflicting watermark or rowset disagreement keeps the raw tail so the
+/// existing gap proof remains fail-closed.
+fn resolve_local_poll_conversation_tail(
+    metadata: LocalPollRoomTailMetadata,
+    evidence: Option<LocalPollTailEvidence>,
+    after_log_id: i64,
+    total_rows: i64,
+    available_max: Option<i64>,
+) -> i64 {
+    let advertised = metadata.advertised_last_log_id;
+    let conversation = metadata.last_user_log_id;
+    let bounded_ids = advertised > 0
+        && advertised < LOCAL_POLL_MAX_INT64
+        && conversation > 0
+        && conversation < LOCAL_POLL_MAX_INT64
+        && advertised > conversation
+        && conversation >= after_log_id;
+    let matching_room_watermarks = metadata.last_seen_log_id == advertised
+        && metadata.last_sync_log_id == advertised
+        && metadata.last_mchat_log_id == advertised;
+    let matching_rowset_tail = match available_max {
+        Some(tail) => total_rows > 0 && tail == conversation,
+        None => total_rows == 0 && after_log_id == conversation,
+    };
+    let Some(evidence) = evidence else {
+        return advertised;
+    };
+    let exact_visible_control = evidence.advertised_rows == 1
+        && evidence.advertised_conversation_rows == 0
+        && evidence.advertised_control_rows == 1
+        && evidence.advertised_prev_min == Some(conversation)
+        && evidence.advertised_prev_max == Some(conversation);
+    let exact_visible_conversation =
+        evidence.last_user_rows == 1 && evidence.last_user_conversation_rows == 1;
+
+    if bounded_ids
+        && matching_room_watermarks
+        && matching_rowset_tail
+        && exact_visible_control
+        && exact_visible_conversation
+    {
+        conversation
+    } else {
+        advertised
+    }
+}
 
 // Kakao log IDs are global sparse identifiers, so numeric holes are not gaps.
 // Completeness proves the bounded rowset from one SQLite snapshot instead.
@@ -730,6 +1056,18 @@ fn get_user_id_from_plist() -> Result<i64> {
 }
 
 fn get_user_id_from_plist_with_mode(mode: IdentityCacheMode) -> Result<i64> {
+    // TCC can suspend open() before SQLite's own bounded opener is reached.
+    // Keep the discovery stage bounded too, without using a cached identity
+    // to evade the OS's access decision.
+    run_bounded(
+        std::time::Duration::from_secs(3),
+        "local_account_metadata_access_waiting: macOS app-data access confirmation may be pending"
+            .into(),
+        move || read_user_id_from_plist_with_mode(mode),
+    )
+}
+
+fn read_user_id_from_plist_with_mode(mode: IdentityCacheMode) -> Result<i64> {
     let home = dirs::home_dir().context("No home directory")?;
     let current_uuid = if mode == IdentityCacheMode::NoMutation {
         get_platform_uuid_without_process().ok()
@@ -1289,6 +1627,7 @@ fn database_identity(path: &Path) -> Result<DatabaseIdentity> {
 // ---------------------------------------------------------------------------
 
 pub struct LocalDbReader {
+    isolated_replica: bool,
     conn: Connection,
     db_path: PathBuf,
     db_identity: DatabaseIdentity,
@@ -1359,6 +1698,7 @@ impl LocalDbReplicaSource {
         }
         self.ensure_source_identity()?;
         Ok(LocalDbReader {
+            isolated_replica: true,
             conn,
             db_path: replica_path.to_path_buf(),
             db_identity: replica_identity,
@@ -1513,6 +1853,7 @@ impl LocalDbReader {
         }
 
         Ok(Self {
+            isolated_replica: false,
             conn,
             db_path,
             db_identity,
@@ -1908,6 +2249,71 @@ impl LocalDbReader {
         Ok(rows)
     }
 
+    pub fn history_page(
+        &self,
+        chat_id: i64,
+        anchor: Option<i64>,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<LocalHistoryPage> {
+        self.ensure_database_identity()?;
+        let page = history_page_from_connection(
+            &self.conn,
+            self.account_user_id,
+            &self.account_fingerprint,
+            chat_id,
+            anchor,
+            before,
+            limit,
+        )?;
+        self.ensure_database_identity()?;
+        Ok(page)
+    }
+
+    pub fn synchronize_corpus(
+        &self,
+        root: &Path,
+        snapshot_id: &str,
+        snapshot_at: i64,
+        max_rows: usize,
+        abort: Option<&Path>,
+    ) -> Result<crate::alden_corpus::Report> {
+        if !self.isolated_replica {
+            anyhow::bail!("corpus_requires_isolated_replica");
+        }
+        self.ensure_database_identity()?;
+        let report = crate::alden_corpus::synchronize(
+            &self.conn,
+            crate::alden_corpus::Options {
+                root,
+                account: &self.account_fingerprint,
+                self_id: self.account_user_id,
+                snapshot_id,
+                snapshot_at,
+                max_rows,
+                abort,
+            },
+        )?;
+        self.ensure_database_identity()?;
+        Ok(report)
+    }
+
+    pub fn collection_summary(&self) -> Result<serde_json::Value> {
+        self.ensure_database_identity()?;
+        let rooms: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM NTChatRoom", [], |r| r.get(0))?;
+        let (messages, first, last): (i64, i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*),COALESCE(MIN(logId),0),COALESCE(MAX(logId),0) FROM NTChatMessage",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        self.ensure_database_identity()?;
+        Ok(
+            json!({"ok":true,"account":self.account_fingerprint,"rooms":rooms,"messages":messages,"first_log_id":first.to_string(),"last_log_id":last.to_string(),"source":"consistent-read-only-db-wal-replica"}),
+        )
+    }
+
     /// Read one exact media row without contacting Kakao servers.
     ///
     /// The database inode is checked before and after the query so callers do
@@ -2106,32 +2512,43 @@ impl LocalDbReader {
         let mut stmt = tx.prepare_cached(
             "SELECT r.chatId, r.type, r.chatName, r.activeMembersCount,
                     r.lastLogId, r.lastUpdatedAt, r.countOfNewMessage,
-                    COALESCE(u.displayName, u.friendNickName, u.nickName, '') as displayName
+                    COALESCE(u.displayName, u.friendNickName, u.nickName, '') as displayName,
+                    r.lastUserLogId, r.lastSeenLogId, r.lastSyncLogId, r.lastMChatLogId
              FROM NTChatRoom r
              LEFT JOIN NTUser u ON r.directChatMemberUserId = u.userId AND u.linkId = 0
              WHERE r.chatId = ?
              LIMIT 1",
         )?;
-        let chat = stmt
+        let (mut chat, tail_metadata) = stmt
             .query_row([chat_id], |row| {
                 let chat_name: String = row.get::<_, String>(2).unwrap_or_default();
                 let display_name: String = row.get::<_, String>(7).unwrap_or_default();
+                let advertised_last_log_id = row.get(4).unwrap_or(0);
                 let title = if chat_name.is_empty() {
                     display_name.clone()
                 } else {
                     chat_name
                 };
-                Ok(LocalChat {
-                    chat_id: row.get(0)?,
-                    chat_type: row.get(1)?,
-                    chat_name: title,
-                    database_chat_name: None,
-                    active_members_count: row.get(3).unwrap_or(0),
-                    last_log_id: row.get(4).unwrap_or(0),
-                    last_updated_at: row.get(5).unwrap_or(0),
-                    unread_count: row.get(6).unwrap_or(0),
-                    display_name,
-                })
+                Ok((
+                    LocalChat {
+                        chat_id: row.get(0)?,
+                        chat_type: row.get(1)?,
+                        chat_name: title,
+                        database_chat_name: None,
+                        active_members_count: row.get(3).unwrap_or(0),
+                        last_log_id: advertised_last_log_id,
+                        last_updated_at: row.get(5).unwrap_or(0),
+                        unread_count: row.get(6).unwrap_or(0),
+                        display_name,
+                    },
+                    LocalPollRoomTailMetadata {
+                        advertised_last_log_id,
+                        last_user_log_id: row.get(8).unwrap_or(0),
+                        last_seen_log_id: row.get(9).unwrap_or(0),
+                        last_sync_log_id: row.get(10).unwrap_or(0),
+                        last_mchat_log_id: row.get(11).unwrap_or(0),
+                    },
+                ))
             })
             .optional()?
             .with_context(|| "Target chat is no longer available")?;
@@ -2149,6 +2566,38 @@ impl LocalDbReader {
         if available_max == Some(LOCAL_POLL_MAX_INT64) {
             anyhow::bail!("reconcile_required");
         }
+        let tail_evidence = if tail_metadata.advertised_last_log_id > tail_metadata.last_user_log_id
+            && tail_metadata.last_user_log_id > 0
+        {
+            Some(tx.prepare_cached(LOCAL_POLL_TAIL_EVIDENCE_SQL)?.query_row(
+                rusqlite::params![
+                    chat_id,
+                    tail_metadata.advertised_last_log_id,
+                    tail_metadata.last_user_log_id,
+                    LOCAL_CONVERSATION_MESSAGE_TYPE_MIN
+                ],
+                |row| {
+                    Ok(LocalPollTailEvidence {
+                        advertised_rows: row.get(0)?,
+                        advertised_conversation_rows: row.get(1)?,
+                        advertised_control_rows: row.get(2)?,
+                        advertised_prev_min: row.get(3)?,
+                        advertised_prev_max: row.get(4)?,
+                        last_user_rows: row.get(5)?,
+                        last_user_conversation_rows: row.get(6)?,
+                    })
+                },
+            )?)
+        } else {
+            None
+        };
+        chat.last_log_id = resolve_local_poll_conversation_tail(
+            tail_metadata,
+            tail_evidence,
+            after_log_id,
+            total_rows,
+            available_max,
+        );
 
         let mut stmt = tx.prepare_cached(LOCAL_POLL_ROWS_SQL)?;
         let account_user_id = self.account_user_id;
@@ -2465,6 +2914,147 @@ mod tests {
             )
             .expect("create local-poll control-row fixture");
         connection
+    }
+
+    fn local_poll_reader_test_fixture() -> (tempfile::TempDir, LocalDbReader) {
+        let tempdir = tempfile::tempdir().expect("create local-poll fixture directory");
+        let db_path = tempdir.path().join("local-poll.sqlite3");
+        let connection = Connection::open(&db_path).expect("open local-poll fixture database");
+        connection
+            .execute_batch(
+                "CREATE TABLE NTUser(
+                    userId INTEGER NOT NULL,
+                    linkId INTEGER NOT NULL,
+                    displayName TEXT,
+                    friendNickName TEXT,
+                    nickName TEXT
+                );
+                CREATE TABLE NTChatRoom(
+                    chatId INTEGER PRIMARY KEY,
+                    type INTEGER NOT NULL,
+                    chatName TEXT,
+                    activeMembersCount INTEGER NOT NULL,
+                    lastLogId INTEGER NOT NULL,
+                    lastUpdatedAt INTEGER NOT NULL,
+                    countOfNewMessage INTEGER NOT NULL,
+                    directChatMemberUserId INTEGER NOT NULL,
+                    lastUserLogId INTEGER NOT NULL,
+                    lastSeenLogId INTEGER NOT NULL,
+                    lastSyncLogId INTEGER NOT NULL,
+                    lastMChatLogId INTEGER NOT NULL
+                );
+                CREATE TABLE NTChatMessage(
+                    chatId INTEGER NOT NULL,
+                    logId INTEGER NOT NULL,
+                    prevId INTEGER NOT NULL,
+                    msgId INTEGER NOT NULL,
+                    authorId INTEGER NOT NULL,
+                    message TEXT,
+                    attachment TEXT,
+                    type INTEGER NOT NULL,
+                    sentAt INTEGER NOT NULL,
+                    PRIMARY KEY(chatId, logId, msgId)
+                );
+
+                INSERT INTO NTChatRoom VALUES
+                    (42, 0, '', 2, 101, 1001, 0, 0, 100, 101, 101, 101),
+                    (43, 0, '', 2, 202, 2002, 0, 0, 202, 202, 202, 202),
+                    (44, 0, '', 2, 301, 3001, 0, 0, 301, 301, 301, 301),
+                    (45, 0, '', 2, 401, 4001, 0, 0, 400, 400, 401, 401),
+                    (46, 0, '', 2, 501, 5001, 0, 0, 500, 501, 501, 501);
+
+                INSERT INTO NTChatMessage
+                    (chatId, logId, prevId, msgId, authorId, message, attachment, type, sentAt)
+                VALUES
+                    (42, 100, 0, 1, 700, 'conversation', '', 1, 1000),
+                    (42, 101, 100, 2, 700, 'control', '', 0, 1001),
+                    (43, 200, 0, 1, 700, 'conversation', '', 1, 2000),
+                    (43, 201, 200, 2, 700, 'control', '', 0, 2001),
+                    (43, 202, 201, 3, 701, 'later-conversation', '', 71, 2002),
+                    (44, 300, 0, 1, 700, 'conversation', '', 1, 3000),
+                    (45, 400, 0, 1, 700, 'conversation', '', 1, 4000),
+                    (45, 401, 400, 2, 700, 'control', '', 0, 4001),
+                    (46, 500, 499, 1, 700, 'malformed-user-tail', '', 0, 5000),
+                    (46, 501, 500, 2, 700, 'control', '', 0, 5001);",
+            )
+            .expect("create local-poll reader fixture");
+        let db_identity = database_identity(&db_path).expect("read fixture identity");
+        let reader = LocalDbReader {
+            isolated_replica: false,
+            conn: connection,
+            db_path,
+            db_identity,
+            account_fingerprint: "fixture".to_string(),
+            account_user_id: 900,
+        };
+        (tempdir, reader)
+    }
+
+    #[test]
+    fn local_poll_resolves_visible_control_tail_to_conversation_predecessor() {
+        let (_tempdir, reader) = local_poll_reader_test_fixture();
+        let envelope = reader
+            .poll_after(42, LOCAL_POLL_MAX_ROWS, Some(100))
+            .expect("visible control tail should resolve");
+
+        assert!(envelope.messages.is_empty());
+        assert_eq!(envelope.chat.last_log_id, 100);
+        assert_eq!(envelope.completeness.chat_last_log_id, 100);
+        assert_eq!(envelope.completeness.status, "empty");
+        assert!(!envelope.completeness.has_gap);
+        assert_eq!(envelope.completeness.proof, "sqlite_snapshot_rowset");
+    }
+
+    #[test]
+    fn local_poll_missing_advertised_conversation_tail_stays_fail_closed() {
+        let (_tempdir, reader) = local_poll_reader_test_fixture();
+        let envelope = reader
+            .poll_after(44, LOCAL_POLL_MAX_ROWS, Some(300))
+            .expect("missing tail is represented as a gap page");
+
+        assert!(envelope.messages.is_empty());
+        assert_eq!(envelope.chat.last_log_id, 301);
+        assert_eq!(envelope.completeness.status, "gap");
+        assert!(envelope.completeness.has_gap);
+        assert_eq!(envelope.completeness.proof, "reconcile_required");
+    }
+
+    #[test]
+    fn local_poll_mixed_control_and_later_conversation_tail_is_complete() {
+        let (_tempdir, reader) = local_poll_reader_test_fixture();
+        let envelope = reader
+            .poll_after(43, LOCAL_POLL_MAX_ROWS, Some(200))
+            .expect("later conversation tail should remain authoritative");
+
+        assert_eq!(
+            envelope
+                .messages
+                .iter()
+                .map(|message| message.log_id)
+                .collect::<Vec<_>>(),
+            vec![202]
+        );
+        assert_eq!(envelope.chat.last_log_id, 202);
+        assert_eq!(envelope.completeness.status, "complete");
+        assert!(!envelope.completeness.has_gap);
+    }
+
+    #[test]
+    fn local_poll_control_tail_resolution_rejects_conflicting_or_malformed_evidence() {
+        let (_tempdir, reader) = local_poll_reader_test_fixture();
+        let conflicting = reader
+            .poll_after(45, LOCAL_POLL_MAX_ROWS, Some(400))
+            .expect("conflicting room watermarks remain a gap page");
+        assert_eq!(conflicting.chat.last_log_id, 401);
+        assert_eq!(conflicting.completeness.status, "gap");
+        assert!(conflicting.completeness.has_gap);
+
+        let malformed = reader
+            .poll_after(46, LOCAL_POLL_MAX_ROWS, Some(499))
+            .expect("non-conversation lastUserLogId remains a gap page");
+        assert_eq!(malformed.chat.last_log_id, 501);
+        assert_eq!(malformed.completeness.status, "gap");
+        assert!(malformed.completeness.has_gap);
     }
 
     #[test]

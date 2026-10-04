@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Alden · 직접 시작하는 음성 대화",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      566
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "사용자가 켠 음성 대화"
+    },
+    {
+      "id": "terminal",
+      "label": "입력과 실행의 종료"
+    }
+  ],
+  "states": [
+    {
+      "id": "off",
+      "type": "start",
+      "label": "마이크 꺼짐",
+      "sublabel": "사용자 입력 대기",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "prepare",
+      "type": "active",
+      "label": "마이크 준비",
+      "sublabel": "권한 · 중복 실행 확인",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "capture",
+      "type": "active",
+      "label": "말씀 듣기",
+      "sublabel": "발화 끝 침묵 0.6초",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "respond",
+      "type": "active",
+      "label": "답변과 재생",
+      "sublabel": "STT → LLM → TTS",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "followup",
+      "type": "waiting",
+      "label": "다음 말씀",
+      "sublabel": "같은 대화 맥락 유지",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "quiet",
+      "type": "neutral",
+      "label": "침묵 종료",
+      "sublabel": "15초 · 생성 없음",
+      "lane": "terminal",
+      "col": 0,
+      "yOffset": -70
+    },
+    {
+      "id": "stopped",
+      "type": "neutral",
+      "label": "음성 실행 종료",
+      "sublabel": "사용자 중단 · 부모 종료",
+      "lane": "terminal",
+      "col": 1,
+      "yOffset": -70
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "처리 오류",
+      "sublabel": "권한 · 입력 · 자원",
+      "lane": "terminal",
+      "col": 2,
+      "yOffset": -70
+    }
+  ],
+  "transitions": [
+    {
+      "id": "next-turn",
+      "from": "followup",
+      "to": "capture",
+      "label": "다음 발화",
+      "variant": "emphasis",
+      "route": "top-channel"
+    },
+    {
+      "id": "silence",
+      "from": "capture",
+      "to": "quiet",
+      "label": "발화 없음",
+      "labelDy": 24
+    },
+    {
+      "id": "stop",
+      "from": "respond",
+      "to": "stopped",
+      "label": "중단 요청",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "id": "failure",
+      "from": "respond",
+      "to": "failed",
+      "label": "처리 불가",
+      "variant": "security",
+      "note": "준비·입력·처리 오류는 모두 안전하게 종료",
+      "labelDx": 40
+    },
+    {
+      "id": "retry",
+      "from": "failed",
+      "to": "prepare",
+      "label": "다시 켜기",
+      "variant": "emphasis",
+      "route": "bottom-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "slate",
+      "title": "명시적 입력과 안전한 종료",
+      "items": [
+        "자동 호출어는 검증 대기 · 버튼으로 켜고 끕니다",
+        "자기 출력 차단과 비상 중단 기준을 유지합니다"
+      ]
+    }
+  ]
+}

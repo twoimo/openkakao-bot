@@ -1,0 +1,83 @@
+{
+  "schema": "alden-color-claim-pure-helper-replay-v1",
+  "recorded_at": "2026-09-30T13:33:01.295808+00:00",
+  "goal_file": "483991c3-119c-40da-b523-1c5ef9687e69/goal-objective.md",
+  "source_sha256": "c9b576a99f163866e42b9ee11494d0dbc76dd23bcc6ca3a8710b4235ff3be4ac",
+  "historical_reply_rows": 7,
+  "unique_events": 5,
+  "historical_sent_rows": 2,
+  "current_unsupported_visual_claims": 0,
+  "replays": [
+    {
+      "event_hash_prefix": "2e4fb315e4689f24",
+      "historical_line": 590,
+      "recorded_at": "2026-08-27T15:03:13.729206+00:00",
+      "historical_status": "scheduled",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "5321e87dcf0f2f96",
+      "historical_line": 592,
+      "recorded_at": "2026-08-27T19:41:07.440410+00:00",
+      "historical_status": "scheduled",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "24de853985d59ae5",
+      "historical_line": 1052,
+      "recorded_at": "2026-09-17T07:26:00.670453+00:00",
+      "historical_status": "scheduled",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "5cba14ce10baba10",
+      "historical_line": 1397,
+      "recorded_at": "2026-09-26T15:00:05.020362+00:00",
+      "historical_status": "scheduled",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "5cba14ce10baba10",
+      "historical_line": 1398,
+      "recorded_at": "2026-09-26T15:00:11.769702+00:00",
+      "historical_status": "sent",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어요. 필요한 부분을 글로 알려주시겠어요?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "56f9783335f8ae37",
+      "historical_line": 1497,
+      "recorded_at": "2026-09-30T13:25:24.530580+00:00",
+      "historical_status": "scheduled",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    },
+    {
+      "event_hash_prefix": "56f9783335f8ae37",
+      "historical_line": 1498,
+      "recorded_at": "2026-09-30T13:25:30.015960+00:00",
+      "historical_status": "sent",
+      "historical_matched_phrase": "색감이 별로",
+      "current_reply": "사진 내용을 확인하지 못했어. 필요한 부분을 글로 알려줄래?",
+      "current_unsupported_visual_claim": false
+    }
+  ],
+  "new_sends": 0,
+  "model_calls": 0,
+  "production_writes": 0,
+  "scope": "AST-selected source helper and its pure dependencies; no worker import, model, image decoding, original DB, AX or queue operation",
+  "limits": [
+    "Helper replay does not prove pixel interpretation or activated shared worker behavior.",
+    "Persisted historical sent receipt is not a new live delivery."
+  ]
+}

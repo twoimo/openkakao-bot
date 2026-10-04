@@ -1,0 +1,65 @@
+{
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "evidenceCommit": "5cfea2b9a48093671b3a06e478b459a091e2870a",
+  "draftTag": "alden-graph-navigation-evidence-20261001-5cfea2b",
+  "draftUrl": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-25ad469edd80663739aa",
+  "draft": true,
+  "prerelease": true,
+  "targetCommitish": "5cfea2b9a48093671b3a06e478b459a091e2870a",
+  "verifiedAssetCount": 7,
+  "zipInstalledByteEqualFileCount": 30,
+  "overlayByteEqualFileCount": 30,
+  "assets": [
+    {
+      "name": "Alden-0.1.6-51f71c2-local.zip",
+      "bytes": 11637614,
+      "sha256": "9407337d99faa443f098b29f90e20b4022f15eb67d24b23b2b719fac6320a37d",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "Alden-graph-navigation-evidence-5cfea2b.tar.gz",
+      "bytes": 809620,
+      "sha256": "92ec0e5521f7ac02820b5d3f3b5511adc34195c15a56e2af5c761ab59d985b8b",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+      "bytes": 26965707,
+      "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "INSTALL.md",
+      "bytes": 3012,
+      "sha256": "b097bcfc92f096734917c5b85a1b649c8a29cd74d5b93881bae3174a5b5ea0e2",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "SHA256SUMS",
+      "bytes": 596,
+      "sha256": "b6317fb024bb80ebddffe18533752bd8ac4a440839155484e86692d4cd6bd389",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "alden-menubar-runtime-v1.json",
+      "bytes": 1533,
+      "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    },
+    {
+      "name": "install-alden-menubar-runtime.sh",
+      "bytes": 12585,
+      "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+      "byteEqual": true,
+      "remoteDigestEqual": true
+    }
+  ],
+  "production": "not deployed; nonproduction draft evidence only",
+  "nativePrivateDataExcluded": true
+}

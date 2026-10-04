@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T08:01:00Z",
+  "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "adapter_sha256": "0be0e2acb4c6ce7e144adad3d480db04b48f67fbd505bb80a59af4b221739dac",
+  "samples": 1,
+  "host_cpu_load": "{ 13.50 14.94 15.41 }",
+  "before": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 0.0,
+    "mlx_serve:mlx_active_bytes": 21468694640.0
+  },
+  "running_before_cancel": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 1.0,
+    "mlx_serve:mlx_active_bytes": 22262088471.0
+  },
+  "after": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 0.0,
+    "mlx_serve:mlx_active_bytes": 21389972240.0
+  },
+  "client_exit_ms": 5.383,
+  "server_idle_observed_ms": 2464.104,
+  "client_thread_stopped": true,
+  "exception": "AldenCancelled",
+  "reply_returned": false,
+  "backend_cancel_counter_delta": 0.0,
+  "limits": [
+    "One owned synthetic inference; not a physical shortcut measurement",
+    "No mic/TTS/Kakao send/model swap/global latch change",
+    "Shared model service; other requests may confound metrics",
+    "Allocator bytes include cached model resources and are not process RSS"
+  ],
+  "cancel_phase": "after_first_model_token",
+  "adapter_metrics": {
+    "first_model_token_seconds": 1.0133299159351736,
+    "first_visible_token_seconds": 1.013330499874428
+  }
+}

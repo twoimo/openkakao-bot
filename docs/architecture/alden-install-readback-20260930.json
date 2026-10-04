@@ -1,0 +1,16 @@
+{
+  "captured_at": "2026-09-30T03:11:34.588263+00:00",
+  "app": "Alden",
+  "version": "0.1.5",
+  "built_file_count": 28,
+  "installed_file_count": 28,
+  "file_differences": [],
+  "strict_codesign_exit_code": 0,
+  "launchctl_exit_code": 0,
+  "launch_state": "running",
+  "launch_pid": "22124",
+  "signing": "ad_hoc",
+  "notarization_verified": false,
+  "installed_screen_verified": false,
+  "source_bundle_base_revision": "18a6d4bbf77695369c3ba748e8e3788fd2affbda"
+}

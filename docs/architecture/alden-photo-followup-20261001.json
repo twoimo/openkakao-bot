@@ -1,0 +1,1789 @@
+{
+  "created_utc": "2026-09-30T20:20:00Z",
+  "root": "/private/tmp/alden-owned-photo-followup-20261001-v_8f7e0_",
+  "checkpoint": "<USER_HOME>/.mlx-serve/models/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "samples": [],
+  "inference_policy": "same local checkpoint; external sockets rejected",
+  "source_tag": "v26.9.5",
+  "installed_version": "26.9.5",
+  "memory_before": {
+    "reclaimable_bytes": 52486078464,
+    "swap_used_bytes": 25389107773
+  },
+  "shared_before": {
+    "command": "/Applications/MLX Core.app/Contents/MacOS/mlx-serve --serve --model <USER_HOME>/.mlx-serve/models/ddalcu/Qwen3.8-27B-MLX-Serve-4bit --model-dir <USER_HOME>/.mlx-serve/models --host 127.0.0.1 --port 11234 --log-level info --log-file <USER_HOME>/.mlx-serve/logs/mlx-serve-11234.log --ctx-size 786432 --no-vision --timeout 300 --metrics --pld --pld-draft-len 5 --pld-key-len 3 --mtp --max-concurrent 2 --kv-quant 4 --prefix-cache-entries 16 --prefix-cache-mem 8GB --prefix-cache-disk 10GB --max-resident-models 3 --max-resident-mem 0 --llama-kv-quant off --llama-cache-entries 4 --tokenize-cache-entries 4 --draft-block-size 4 --temp 0.42 --top-p 0.95 --top-k 0 --max-tokens 16384",
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790799600,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        },
+        {
+          "id": "mlx-community/gemma-4-31b-it-8bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 33763120415,
+          "context_length": 262144,
+          "max_model_len": 262144,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "gemma4",
+            "engine": "mlx",
+            "vocab_size": 262144,
+            "hidden_size": 5376,
+            "num_layers": 60,
+            "quantization": "8-bit",
+            "context_length": 262144,
+            "model_max_tokens": 262144,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 33763120415
+          }
+        },
+        {
+          "id": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 75303252216,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "qwen4_exp",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 2560,
+            "num_layers": 48,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 786432,
+            "is_moe": true,
+            "mtp_available": true,
+            "bytes_on_disk": 75303252216
+          }
+        },
+        {
+          "id": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 3857414009,
+          "context_length": 0,
+          "max_model_len": 0,
+          "capabilities": [
+            "audio"
+          ],
+          "meta": {
+            "architecture": "qwen3_tts",
+            "engine": "mlx",
+            "vocab_size": 0,
+            "hidden_size": 0,
+            "num_layers": 0,
+            "quantization": "0-bit",
+            "context_length": 0,
+            "model_max_tokens": 0,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 3857414009
+          }
+        },
+        {
+          "id": "ddalcu/Krea-2-Turbo-MLX-Serve-mixed-4-8",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 9840816670,
+          "context_length": 0,
+          "max_model_len": 0,
+          "capabilities": [
+            "image"
+          ],
+          "meta": {
+            "architecture": "krea2_turbo",
+            "engine": "mlx",
+            "vocab_size": 0,
+            "hidden_size": 0,
+            "num_layers": 0,
+            "quantization": "0-bit",
+            "context_length": 0,
+            "model_max_tokens": 0,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 9840816670
+          }
+        },
+        {
+          "id": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 54331732144,
+          "context_length": 262144,
+          "max_model_len": 262144,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "qwen4_exp",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 2560,
+            "num_layers": 48,
+            "quantization": "4-bit",
+            "context_length": 262144,
+            "model_max_tokens": 262144,
+            "is_moe": true,
+            "mtp_available": true,
+            "bytes_on_disk": 54331732144
+          }
+        },
+        {
+          "id": "mlx-community/flux2-klein-9b-4bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 9529658020,
+          "capabilities": [
+            "image"
+          ],
+          "meta": {
+            "architecture": "flux2-klein",
+            "engine": "mlx",
+            "bytes_on_disk": 9529658020
+          }
+        }
+      ]
+    },
+    "metrics": {
+      "counters": {
+        "prompt_tokens_total": 638675,
+        "prefill_tokens_total": 577221,
+        "prefix_cache_tokens_total": 61454,
+        "generation_tokens_total": 6744,
+        "requests_success_total": 124,
+        "requests_cancelled_total": 1,
+        "prefix_cache_queries_total": 125,
+        "prefix_cache_hits_total": 55
+      },
+      "gauges": {
+        "requests_running": 0,
+        "requests_waiting": 0,
+        "gpu_utilization_pct": 24,
+        "memory_mb": 19946,
+        "generation_tokens_live": 6744,
+        "prefill_tokens_live": 0,
+        "prefill_tokens_expected": 0,
+        "requests_prefilling": 0,
+        "mlx_active_bytes": 20209961072,
+        "mlx_cache_bytes": 135266304,
+        "ane_int8_bytes": 0,
+        "ane_layers": 0,
+        "ngram_warm_bytes": 0,
+        "batched_group_size": 0
+      },
+      "decode_serial": {
+        "spec_active": 0,
+        "head_release_pending": 0,
+        "grammar": 0,
+        "logprobs": 0,
+        "embedded_engine": 0,
+        "arch": 0,
+        "pad_waste": 0
+      },
+      "histograms": {
+        "time_to_first_token_seconds": {
+          "count": 124,
+          "sum": 1517.372194324,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            1,
+            10,
+            33,
+            50,
+            58,
+            62,
+            68,
+            124
+          ]
+        },
+        "e2e_request_latency_seconds": {
+          "count": 124,
+          "sum": 2077.939892417,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            15,
+            36,
+            49,
+            54,
+            62,
+            124
+          ]
+        },
+        "prefill_time_seconds": {
+          "count": 124,
+          "sum": 1517.3333411200001,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            1,
+            10,
+            33,
+            50,
+            58,
+            62,
+            68,
+            124
+          ]
+        },
+        "decode_time_seconds": {
+          "count": 124,
+          "sum": 560.567698093,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            19,
+            19,
+            20,
+            21,
+            29,
+            41,
+            47,
+            59,
+            93,
+            107,
+            124
+          ]
+        },
+        "prompt_tokens": {
+          "count": 124,
+          "sum": 638675,
+          "bounds": [
+            32,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096,
+            8192
+          ],
+          "bucket_counts": [
+            20,
+            21,
+            53,
+            57,
+            57,
+            57,
+            63,
+            71,
+            124
+          ]
+        },
+        "output_tokens": {
+          "count": 124,
+          "sum": 6744,
+          "bounds": [
+            32,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096,
+            8192
+          ],
+          "bucket_counts": [
+            52,
+            107,
+            123,
+            124,
+            124,
+            124,
+            124,
+            124,
+            124
+          ]
+        }
+      }
+    }
+  },
+  "sandbox_network_deny_probe": "PermissionError 1",
+  "sandbox_probe_returncode": 0,
+  "sandbox_probe_stderr": "",
+  "checkpoint_metadata_sha256": {
+    "config.json": "c351570a6167fa89e0963787c0f04c55c10b593098fbfbbf466881c9abc14354",
+    "model.safetensors.index.json": "a4aaf77f95ab698c87f630acbea6ee3d601ca9461c8f6092d7ea16f002fd9a56",
+    "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+  },
+  "argv_without_secret": [
+    "/Applications/MLX Core.app/Contents/MacOS/mlx-serve",
+    "--serve",
+    "--model",
+    "/private/tmp/alden-owned-photo-followup-20261001-v_8f7e0_/models/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+    "--model-dir",
+    "/private/tmp/alden-owned-photo-followup-20261001-v_8f7e0_/models",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "11237",
+    "--ctx-size",
+    "8192",
+    "--max-concurrent",
+    "1",
+    "--max-resident-models",
+    "1",
+    "--max-resident-mem",
+    "24GB",
+    "--os-reserve-gib",
+    "8",
+    "--wired-margin-gib",
+    "8",
+    "--no-mtp",
+    "--no-drafter",
+    "--no-pld",
+    "--prefix-cache-entries",
+    "0",
+    "--prefix-cache-disk",
+    "off",
+    "--tokenize-cache-entries",
+    "0",
+    "--kv-quant",
+    "4",
+    "--timeout",
+    "70",
+    "--max-tokens",
+    "256",
+    "--no-prevent-sleep",
+    "--metrics",
+    "--api-key-env",
+    "ALDEN_OWNED_VISION_KEY",
+    "--api-key-strict",
+    "--log-file",
+    "/private/tmp/alden-owned-photo-followup-20261001-v_8f7e0_/server.log",
+    "--log-level",
+    "info"
+  ],
+  "child_environment_names": [
+    "ALDEN_OWNED_VISION_KEY",
+    "HOME",
+    "LANG",
+    "PATH",
+    "TMPDIR"
+  ],
+  "owned_pid": 31624,
+  "memory_samples": [
+    {
+      "reclaimable_bytes": 39262912512,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 29991370752,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 28414820352,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 28331835392,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 29118726144,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 30182113280,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 30113202176,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 30207066112,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 31019728896,
+      "swap_used_bytes": 25389107773
+    },
+    {
+      "reclaimable_bytes": 31432097792,
+      "swap_used_bytes": 25389107773
+    }
+  ],
+  "owned_models": [
+    {
+      "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "object": "model",
+      "created": 1790799603,
+      "owned_by": "mlx-serve",
+      "loaded": true,
+      "state": "ready",
+      "bytes_resident": 18196477654,
+      "bytes_on_disk": 18196477654,
+      "context_length": 8192,
+      "max_model_len": 8192,
+      "batched_decode": true,
+      "capabilities": [
+        "chat",
+        "tool_use",
+        "streaming",
+        "vision",
+        "reasoning",
+        "json_schema"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "meta": {
+        "architecture": "qwen3_5_moe",
+        "engine": "mlx",
+        "vocab_size": 248320,
+        "hidden_size": 5120,
+        "num_layers": 64,
+        "quantization": "4-bit",
+        "context_length": 8192,
+        "model_max_tokens": 262144,
+        "embedding_max_length": null,
+        "is_moe": false,
+        "drafter_loaded": false,
+        "drafter_path": null,
+        "mtp_loaded": false,
+        "mtp_available": true,
+        "kv_quant": "4",
+        "gen_temperature": 1,
+        "gen_top_p": 0.95,
+        "gen_top_k": 20
+      }
+    }
+  ],
+  "advertised_model_id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "load_to_ready_s": 3.3500468339771032,
+  "fixture": {
+    "file": "image-2.png",
+    "sha256": "a3076442e07fd872de55347ba8d0f266d7de23e05b036bb4db194f272d644852",
+    "answer": "left green rectangle; right orange triangle",
+    "text_does_not_contain_colors": true
+  },
+  "auth_negative_get": [
+    {
+      "kind": "absent",
+      "status": 401
+    },
+    {
+      "kind": "wrong",
+      "status": 401
+    }
+  ],
+  "worker_sha256": "20bc0ac046dc022fecbf34596d81784eea513a49ab92784b85446de96d0dafbb",
+  "selected_photo_log_ids": [
+    99
+  ],
+  "owned_gauge_samples": [
+    {
+      "requests_running": 0,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 0,
+      "memory_mb": 16631,
+      "generation_tokens_live": 0,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 16961609028,
+      "mlx_cache_bytes": 91440180,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 0,
+      "memory_mb": 19136,
+      "generation_tokens_live": 0,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 3361,
+      "requests_prefilling": 1,
+      "mlx_active_bytes": 18369153214,
+      "mlx_cache_bytes": 1230513895,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 100,
+      "memory_mb": 19813,
+      "generation_tokens_live": 0,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 3361,
+      "requests_prefilling": 1,
+      "mlx_active_bytes": 19426642110,
+      "mlx_cache_bytes": 933439207,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 100,
+      "memory_mb": 19830,
+      "generation_tokens_live": 0,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 3361,
+      "requests_prefilling": 1,
+      "mlx_active_bytes": 19474942132,
+      "mlx_cache_bytes": 903030513,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 99,
+      "memory_mb": 18762,
+      "generation_tokens_live": 0,
+      "prefill_tokens_live": 2048,
+      "prefill_tokens_expected": 3361,
+      "requests_prefilling": 1,
+      "mlx_active_bytes": 18872518860,
+      "mlx_cache_bytes": 384698971,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 72,
+      "memory_mb": 17721,
+      "generation_tokens_live": 11,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 18058469580,
+      "mlx_cache_bytes": 101472876,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 60,
+      "memory_mb": 17891,
+      "generation_tokens_live": 42,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 18064438572,
+      "mlx_cache_bytes": 272942604,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 78,
+      "memory_mb": 18061,
+      "generation_tokens_live": 74,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 18036116349,
+      "mlx_cache_bytes": 480407483,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    {
+      "requests_running": 1,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 75,
+      "memory_mb": 18234,
+      "generation_tokens_live": 106,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 18108965004,
+      "mlx_cache_bytes": 588339884,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    }
+  ],
+  "followup_analysis": {
+    "result": {
+      "decision": "reply",
+      "reason": "direct_question",
+      "category": "information",
+      "reply": "초록색이네",
+      "context": [],
+      "styles": [],
+      "prior_decisions": [],
+      "response_time": {},
+      "attachment": "",
+      "context_match_count": 0,
+      "style_match_count": 0,
+      "best_context_score": 0.0,
+      "best_style_score": 0.0,
+      "prior_similarity": 0.0,
+      "recent_conversation": [
+        {
+          "evidence_id": "recent:99",
+          "log_id": 99,
+          "author_id": 7,
+          "author_nickname": "",
+          "message": "사진",
+          "message_type": 2,
+          "attachment": false,
+          "is_self": false,
+          "sent_at": 999
+        }
+      ],
+      "style_profile": {},
+      "recipient_style_profile": {},
+      "evidence_ids": [
+        "recent:100",
+        "media:a3076442e07fd872de55347ba8d0f266d7de23e05b036bb4db194f272d644852"
+      ],
+      "provenance": {
+        "privacy_attested": true,
+        "image_requested": false,
+        "image_captured": true,
+        "image_marker_owned": false,
+        "image_input_count": 1,
+        "media_bundle_digest": "a3076442e07fd872de55347ba8d0f266d7de23e05b036bb4db194f272d644852",
+        "links_requested": 0,
+        "links_retrieved": 0,
+        "retrieval_attempted": true,
+        "retrieval_evidence_ids": [],
+        "model_invoked": true,
+        "runner_available": true,
+        "image_source_log_ids": [
+          99
+        ],
+        "generation": {
+          "prompt_bytes": 11986,
+          "prompt_sha256": "9bd5cdea174ee796",
+          "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "model_endpoint_reachable": null,
+          "retrieved_evidence_ids": 2,
+          "prompt_evidence_ids": 2,
+          "generation_seconds": 15.78
+        },
+        "rerank": {
+          "fallback": "fixture_rerank_not_executed",
+          "policy_rejections": []
+        }
+      },
+      "prompt_bytes": 11986,
+      "prompt_sha256": "9bd5cdea174ee796",
+      "model_endpoint_reachable": null,
+      "retrieved_evidence_ids": 2,
+      "prompt_evidence_ids": 2,
+      "laughter_allowed": false,
+      "awe_allowed": false,
+      "generation_seconds": 15.78,
+      "drafts": [
+        "초록색이네",
+        "초록색이죠",
+        "초록색입니다",
+        "초록색이 맞아요"
+      ],
+      "rerank_scores": [],
+      "rerank_winner_index": 0,
+      "rerank_fallback": "fixture_rerank_not_executed",
+      "rerank_policy_rejections": []
+    },
+    "elapsed_s": 16.325150708900765,
+    "sent": [
+      {
+        "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+        "response_format": "json_schema",
+        "image_blocks": 1,
+        "media_evidence": {
+          "evidence_id": "media:a3076442e07fd872de55347ba8d0f266d7de23e05b036bb4db194f272d644852",
+          "source_log_id": 99,
+          "image_count": 1,
+          "source_log_ids": [
+            99
+          ]
+        },
+        "current_inbound_evidence": {
+          "evidence_id": "recent:100",
+          "source_log_id": 100,
+          "message": "왼쪽 색은?"
+        },
+        "prompt_bytes": 11986
+      }
+    ],
+    "request_count": 1,
+    "recovered_scratch_removed": true,
+    "routing_and_fixture_seams": [
+      "BIN",
+      "_acquire_model_call_slot",
+      "_ensure_omlx_model_resident",
+      "_finish_model_call_failure",
+      "_finish_model_call_success",
+      "_generation_reply_model",
+      "_model_fallback_chain",
+      "_operator_state_root",
+      "_partner_streak_hold_reason",
+      "_recover_local_media_bundle",
+      "_release_cancelled_model_call",
+      "_reply_turn_hold_reason",
+      "_rerank_client",
+      "capture_visible_image",
+      "detect_mlx_gateway_models",
+      "discover_mlx_gateway",
+      "event_exceeds_response_window",
+      "run_context_reply_bundle",
+      "runner_is_trusted"
+    ],
+    "limits": [
+      "synthetic room/database/process fixture; no real Kakao attachment",
+      "private routing/lease/empty graph/rerank seams; shared worker not activated",
+      "one sample; no latency distribution or performance claim"
+    ]
+  },
+  "owned_metrics_after": {
+    "counters": {
+      "prompt_tokens_total": 3362,
+      "prefill_tokens_total": 3362,
+      "prefix_cache_tokens_total": 0,
+      "generation_tokens_total": 120,
+      "requests_success_total": 1,
+      "requests_cancelled_total": 0,
+      "prefix_cache_queries_total": 1,
+      "prefix_cache_hits_total": 0
+    },
+    "gauges": {
+      "requests_running": 0,
+      "requests_waiting": 0,
+      "gpu_utilization_pct": 24,
+      "memory_mb": 17471,
+      "generation_tokens_live": 120,
+      "prefill_tokens_live": 0,
+      "prefill_tokens_expected": 0,
+      "requests_prefilling": 0,
+      "mlx_active_bytes": 17887398336,
+      "mlx_cache_bytes": 147947520,
+      "ane_int8_bytes": 0,
+      "ane_layers": 0,
+      "ngram_warm_bytes": 0,
+      "batched_group_size": 0
+    },
+    "decode_serial": {
+      "spec_active": 0,
+      "head_release_pending": 0,
+      "grammar": 0,
+      "logprobs": 0,
+      "embedded_engine": 0,
+      "arch": 0,
+      "pad_waste": 0
+    },
+    "histograms": {
+      "time_to_first_token_seconds": {
+        "count": 1,
+        "sum": 8.224376958,
+        "bounds": [
+          0.01,
+          0.025,
+          0.05,
+          0.1,
+          0.25,
+          0.5,
+          1,
+          2.5,
+          5,
+          10
+        ],
+        "bucket_counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "e2e_request_latency_seconds": {
+        "count": 1,
+        "sum": 15.517072334000002,
+        "bounds": [
+          0.01,
+          0.025,
+          0.05,
+          0.1,
+          0.25,
+          0.5,
+          1,
+          2.5,
+          5,
+          10
+        ],
+        "bucket_counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "prefill_time_seconds": {
+        "count": 1,
+        "sum": 8.22436075,
+        "bounds": [
+          0.01,
+          0.025,
+          0.05,
+          0.1,
+          0.25,
+          0.5,
+          1,
+          2.5,
+          5,
+          10
+        ],
+        "bucket_counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "decode_time_seconds": {
+        "count": 1,
+        "sum": 7.292695376,
+        "bounds": [
+          0.01,
+          0.025,
+          0.05,
+          0.1,
+          0.25,
+          0.5,
+          1,
+          2.5,
+          5,
+          10
+        ],
+        "bucket_counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "prompt_tokens": {
+        "count": 1,
+        "sum": 3362,
+        "bounds": [
+          32,
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          4096,
+          8192
+        ],
+        "bucket_counts": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      },
+      "output_tokens": {
+        "count": 1,
+        "sum": 120,
+        "bounds": [
+          32,
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          4096,
+          8192
+        ],
+        "bucket_counts": [
+          0,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  },
+  "status": "inference_finished_needs_independent_content_review",
+  "watchdog_joined": true,
+  "owned_returncode": 0,
+  "guard_errors": [],
+  "memory_after": {
+    "reclaimable_bytes": 48125542400,
+    "swap_used_bytes": 25389107773
+  },
+  "shared_after": {
+    "command": "/Applications/MLX Core.app/Contents/MacOS/mlx-serve --serve --model <USER_HOME>/.mlx-serve/models/ddalcu/Qwen3.8-27B-MLX-Serve-4bit --model-dir <USER_HOME>/.mlx-serve/models --host 127.0.0.1 --port 11234 --log-level info --log-file <USER_HOME>/.mlx-serve/logs/mlx-serve-11234.log --ctx-size 786432 --no-vision --timeout 300 --metrics --pld --pld-draft-len 5 --pld-key-len 3 --mtp --max-concurrent 2 --kv-quant 4 --prefix-cache-entries 16 --prefix-cache-mem 8GB --prefix-cache-disk 10GB --max-resident-models 3 --max-resident-mem 0 --llama-kv-quant off --llama-cache-entries 4 --tokenize-cache-entries 4 --draft-block-size 4 --temp 0.42 --top-p 0.95 --top-k 0 --max-tokens 16384",
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790799623,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        },
+        {
+          "id": "mlx-community/gemma-4-31b-it-8bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 33763120415,
+          "context_length": 262144,
+          "max_model_len": 262144,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "gemma4",
+            "engine": "mlx",
+            "vocab_size": 262144,
+            "hidden_size": 5376,
+            "num_layers": 60,
+            "quantization": "8-bit",
+            "context_length": 262144,
+            "model_max_tokens": 262144,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 33763120415
+          }
+        },
+        {
+          "id": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 75303252216,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "qwen4_exp",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 2560,
+            "num_layers": 48,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 786432,
+            "is_moe": true,
+            "mtp_available": true,
+            "bytes_on_disk": 75303252216
+          }
+        },
+        {
+          "id": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 3857414009,
+          "context_length": 0,
+          "max_model_len": 0,
+          "capabilities": [
+            "audio"
+          ],
+          "meta": {
+            "architecture": "qwen3_tts",
+            "engine": "mlx",
+            "vocab_size": 0,
+            "hidden_size": 0,
+            "num_layers": 0,
+            "quantization": "0-bit",
+            "context_length": 0,
+            "model_max_tokens": 0,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 3857414009
+          }
+        },
+        {
+          "id": "ddalcu/Krea-2-Turbo-MLX-Serve-mixed-4-8",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 9840816670,
+          "context_length": 0,
+          "max_model_len": 0,
+          "capabilities": [
+            "image"
+          ],
+          "meta": {
+            "architecture": "krea2_turbo",
+            "engine": "mlx",
+            "vocab_size": 0,
+            "hidden_size": 0,
+            "num_layers": 0,
+            "quantization": "0-bit",
+            "context_length": 0,
+            "model_max_tokens": 0,
+            "is_moe": false,
+            "mtp_available": false,
+            "bytes_on_disk": 9840816670
+          }
+        },
+        {
+          "id": "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 54331732144,
+          "context_length": 262144,
+          "max_model_len": 262144,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "json_schema",
+            "vision"
+          ],
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "meta": {
+            "architecture": "qwen4_exp",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 2560,
+            "num_layers": 48,
+            "quantization": "4-bit",
+            "context_length": 262144,
+            "model_max_tokens": 262144,
+            "is_moe": true,
+            "mtp_available": true,
+            "bytes_on_disk": 54331732144
+          }
+        },
+        {
+          "id": "mlx-community/flux2-klein-9b-4bit",
+          "object": "model",
+          "created": 0,
+          "owned_by": "mlx-serve",
+          "loaded": false,
+          "state": "unloaded",
+          "bytes_resident": 0,
+          "bytes_on_disk": 9529658020,
+          "capabilities": [
+            "image"
+          ],
+          "meta": {
+            "architecture": "flux2-klein",
+            "engine": "mlx",
+            "bytes_on_disk": 9529658020
+          }
+        }
+      ]
+    },
+    "metrics": {
+      "counters": {
+        "prompt_tokens_total": 638675,
+        "prefill_tokens_total": 577221,
+        "prefix_cache_tokens_total": 61454,
+        "generation_tokens_total": 6744,
+        "requests_success_total": 124,
+        "requests_cancelled_total": 1,
+        "prefix_cache_queries_total": 125,
+        "prefix_cache_hits_total": 55
+      },
+      "gauges": {
+        "requests_running": 0,
+        "requests_waiting": 0,
+        "gpu_utilization_pct": 22,
+        "memory_mb": 19946,
+        "generation_tokens_live": 6744,
+        "prefill_tokens_live": 0,
+        "prefill_tokens_expected": 0,
+        "requests_prefilling": 0,
+        "mlx_active_bytes": 20209961072,
+        "mlx_cache_bytes": 135266304,
+        "ane_int8_bytes": 0,
+        "ane_layers": 0,
+        "ngram_warm_bytes": 0,
+        "batched_group_size": 0
+      },
+      "decode_serial": {
+        "spec_active": 0,
+        "head_release_pending": 0,
+        "grammar": 0,
+        "logprobs": 0,
+        "embedded_engine": 0,
+        "arch": 0,
+        "pad_waste": 0
+      },
+      "histograms": {
+        "time_to_first_token_seconds": {
+          "count": 124,
+          "sum": 1517.372194324,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            1,
+            10,
+            33,
+            50,
+            58,
+            62,
+            68,
+            124
+          ]
+        },
+        "e2e_request_latency_seconds": {
+          "count": 124,
+          "sum": 2077.939892417,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            15,
+            36,
+            49,
+            54,
+            62,
+            124
+          ]
+        },
+        "prefill_time_seconds": {
+          "count": 124,
+          "sum": 1517.3333411200001,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            0,
+            0,
+            0,
+            1,
+            10,
+            33,
+            50,
+            58,
+            62,
+            68,
+            124
+          ]
+        },
+        "decode_time_seconds": {
+          "count": 124,
+          "sum": 560.567698093,
+          "bounds": [
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1,
+            2.5,
+            5,
+            10
+          ],
+          "bucket_counts": [
+            19,
+            19,
+            20,
+            21,
+            29,
+            41,
+            47,
+            59,
+            93,
+            107,
+            124
+          ]
+        },
+        "prompt_tokens": {
+          "count": 124,
+          "sum": 638675,
+          "bounds": [
+            32,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096,
+            8192
+          ],
+          "bucket_counts": [
+            20,
+            21,
+            53,
+            57,
+            57,
+            57,
+            63,
+            71,
+            124
+          ]
+        },
+        "output_tokens": {
+          "count": 124,
+          "sum": 6744,
+          "bounds": [
+            32,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096,
+            8192
+          ],
+          "bucket_counts": [
+            52,
+            107,
+            123,
+            124,
+            124,
+            124,
+            124,
+            124,
+            124
+          ]
+        }
+      }
+    }
+  },
+  "shared_command_preserved": true,
+  "shared_resident_ids_preserved": true,
+  "network_calls": [
+    {
+      "port": 11234,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/v1/chat/completions",
+      "method": "POST"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11237,
+      "path": "/metrics.json",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/v1/models",
+      "method": "GET"
+    },
+    {
+      "port": 11234,
+      "path": "/metrics.json",
+      "method": "GET"
+    }
+  ],
+  "owned_total_s": 24.072244375012815,
+  "independent_fixture_review": {
+    "reviewer": "parent visual inspection",
+    "left_color": "green",
+    "right_color": "orange",
+    "answer_matches": true
+  },
+  "independent_cleanup_readback": {
+    "owned_pids": [
+      {
+        "pid": 20746,
+        "alive": false
+      },
+      {
+        "pid": 22175,
+        "alive": false
+      },
+      {
+        "pid": 30971,
+        "alive": false
+      },
+      {
+        "pid": 31624,
+        "alive": false
+      }
+    ],
+    "owned_port_connect_ex": 61,
+    "read_utc": "2026-09-30T20:22:56Z"
+  },
+  "redaction": "User home prefix redacted; unredacted raw report retained privately."
+}

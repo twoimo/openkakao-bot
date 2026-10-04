@@ -33,7 +33,7 @@ export function ringTilt(index: number): number {
 }
 
 /**
- * The per-frame signal math for the Jarvis core.
+ * The per-frame signal math for the Alden core.
  *
  * The state object is also the frame result: `step` returns `this`, so the
  * 15-30fps loop reads fields that the math already wrote instead of copying

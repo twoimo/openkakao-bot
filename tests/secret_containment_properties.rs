@@ -31,7 +31,7 @@
 use std::cell::{Cell, RefCell};
 
 use openkakao_cli::collector::{
-    AsideCollector, AsideTransport, Collected, CollectError, CollectFailure, CollectorPath,
+    AsideCollector, AsideTransport, CollectError, CollectFailure, Collected, CollectorPath,
     FallbackCollector, LoopbackEndpoint, RoutingCollector, SwitchReason, TempScope,
 };
 use openkakao_cli::fakes::VirtualClock;

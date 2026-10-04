@@ -1,0 +1,319 @@
+{
+  "schema_version": 1,
+  "version": "0.3.7",
+  "source_commit": "42182f3e3fe1404ed7774c5f7e6292c6469310e0",
+  "ci": {
+    "id": 37035907184,
+    "url": "https://github.com/twoimo/openkakao-bot/actions/runs/37035907184",
+    "head_sha": "42182f3e3fe1404ed7774c5f7e6292c6469310e0",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "Tauri desktop and focused Python tests",
+        "conclusion": "success"
+      },
+      {
+        "name": "Launchd and Python harness",
+        "conclusion": "success"
+      },
+      {
+        "name": "Alden unsigned arm64 release + runtime smoke",
+        "conclusion": "success"
+      },
+      {
+        "name": "macOS cargo test",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "local_install": {
+    "version": "0.3.7",
+    "source_commit": "42182f3e3fe1404ed7774c5f7e6292c6469310e0",
+    "checked_paths": 35,
+    "files": [
+      {
+        "path": "Info.plist",
+        "sha256": "0a533a984df3f853ab3c00c897de018b0bb2cca64ea69b7b1d970fc31e3636eb",
+        "matched": true
+      },
+      {
+        "path": "MacOS/openkakao-alden-desktop",
+        "sha256": "6001254ef55912b114d3c50f86ea55f4d12da4d1153a2a102f86d63555b0a1a0",
+        "matched": true
+      },
+      {
+        "path": "Resources/bin/openkakao-cli",
+        "sha256": "eef5f8dc4ebe68ff5684055747e9258715dde2dbd6d5d19df81f0bddb2056476",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_corpus.py",
+        "sha256": "9a638c99962bde64ab94f2f77383b8f26ecd241db6fe914c49597a077e56e3e8",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_ondevice.py",
+        "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_operator_prompt_store.py",
+        "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+        "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_metrics.py",
+        "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_knowledge_graph.py",
+        "sha256": "5105ac7edf76bba850d7580d0d6cf1161451db55c10da1a60701f501f106a3a2",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_ax_ui.py",
+        "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_history.py",
+        "sha256": "b296a459cb851ce36fa4e9d39fc688484dc466d77472ece38175e487f98e3578",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto-reply-tui.py",
+        "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_abort.py",
+        "sha256": "35f251273637121e513d02de5624c0096af319579b4f00cb19a5863cab2d0e91",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+        "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_reference_search.py",
+        "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/local_mlx_gateway.py",
+        "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_local_http.py",
+        "sha256": "46622df3ba8016c75660d4d911800bf5fb2708bbf7f143f518fafa2d94bf2427",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto-reply-menubar.py",
+        "sha256": "b4fe9d3857d67f344d1fdeaa4330a256444e9aabaa852aa6bf82a01a0076a3c0",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/mlx_serve_lifecycle.py",
+        "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/local_mlx_model_readiness.py",
+        "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_voice.py",
+        "sha256": "756f8ab7fb02e0ad32468f8cf3796e9415ab3bbc7cedd9ae0f6e47e20a85a2dc",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_browser_use.py",
+        "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/bujamentor_operator_prompt_store.py",
+        "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto-reply-operator-prompts.json",
+        "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_transition_journal.py",
+        "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/auto_reply_reference_store.py",
+        "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+        "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_osk.py",
+        "sha256": "84947e6491829214dc5ee7b20f9ae67768088dc844281b689e510751eff0fae7",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_file_content.py",
+        "sha256": "fc5c99eec5721b2f6dc0207cc57301cb86647d7ff47eee958bd70309bc770230",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/bujamentor-tui.py",
+        "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_local_embedding_server.py",
+        "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/alden_tool_runtime.py",
+        "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/libalden_audio.dylib",
+        "sha256": "652d9b9b21f9e4b636ee763281faa1172373fa7c7b109d52f91e5e6728f06ed7",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/vendor/osk-v4.1.2.zip",
+        "sha256": "74feda64efb68c819a45746359de4158e426f87d74f682602f23fb6d46c9d4e3",
+        "matched": true
+      },
+      {
+        "path": "Resources/scripts/vendor/osk-v4.1.2.json",
+        "sha256": "a28d9cd3c8ba2d065f150e121a2f77b2bc3dc44e6ffaf2c67fe4ce69a81ac164",
+        "matched": true
+      }
+    ],
+    "pid": 18375,
+    "signature": {
+      "ad_hoc": true,
+      "deep_strict_verified": true
+    },
+    "stable_files_unchanged": {
+      "config": true,
+      "enrollment": true,
+      "stable_cli": true
+    },
+    "model_pids_unchanged": true,
+    "native_audio_abi": 2,
+    "output_rms_symbol": true,
+    "limits": [
+      "Byte/process/ABI readback is not a primary native screenshot or natural human audio trial."
+    ]
+  },
+  "installed_consumer": {
+    "scope": "Installed MacVoiceAudio consumer initialized and closed without microphone, output device, models or permission request",
+    "module_sha256": "756f8ab7fb02e0ad32468f8cf3796e9415ab3bbc7cedd9ae0f6e47e20a85a2dc",
+    "library_sha256": "652d9b9b21f9e4b636ee763281faa1172373fa7c7b109d52f91e5e6728f06ed7",
+    "abi": 2,
+    "handle_created": false,
+    "before_playback_rms": 0,
+    "after_close_rms": 0,
+    "network_connections": []
+  },
+  "release": {
+    "url": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-2811b9b39f0c40edc71e",
+    "tag": "alden-playback-amplitude-20261003-42182f3",
+    "draft": true,
+    "prerelease": true,
+    "peeled_tag_matches_source": true,
+    "assets": [
+      {
+        "name": "Alden-0.3.7-42182f3-local.zip",
+        "bytes": 12423811,
+        "sha256": "a892f7668317cee84963b3027a7b34a89a124d33cc7f6b4575206277614e87ca",
+        "local_equal": true,
+        "github_digest_equal": true
+      },
+      {
+        "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+        "bytes": 26965707,
+        "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+        "local_equal": true,
+        "github_digest_equal": true
+      },
+      {
+        "name": "alden-menubar-runtime-v1.json",
+        "bytes": 1533,
+        "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+        "local_equal": true,
+        "github_digest_equal": true
+      },
+      {
+        "name": "install-alden-menubar-runtime.sh",
+        "bytes": 12585,
+        "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+        "local_equal": true,
+        "github_digest_equal": true
+      },
+      {
+        "name": "package-manifest.json",
+        "bytes": 10018,
+        "sha256": "2eccecbadb92171834eba043688de90ea175a8af63adb381bedde9098eff2750",
+        "local_equal": true,
+        "github_digest_equal": true
+      },
+      {
+        "name": "SHA256SUMS",
+        "bytes": 494,
+        "sha256": "159f4701497b1fe8bc3714b7c57b3f07a2ac65aaebda5f7a69e37a92e1069b75",
+        "local_equal": true,
+        "github_digest_equal": true
+      }
+    ],
+    "zip_paths_match_install": 35
+  },
+  "models_readback": [
+    {
+      "port": 11234,
+      "data": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "loaded": true,
+          "state": "ready"
+        }
+      ]
+    },
+    {
+      "port": 11236,
+      "data": [
+        {
+          "id": "mlx-community/multilingual-e5-small-mlx@5030c7625865046d350eeea28f427d80353d0ac0",
+          "loaded": true,
+          "state": "ready"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    "RMS precedes mixer/device volume; actual human wake/mic/echo/speaker/physical stop and end-to-playback latency remain unverified.",
+    "Last primary Computer Use timeout remains; no unchanged retry or physical Retina claim.",
+    "Original Kakao collection awaits existing app-data approval; published historical corpus remains authoritative for current retrieval.",
+    "No total power or tokens/s improvement claimed.",
+    "Developer ID/notarization and approved production transition remain pending.",
+    "The full11-section goal remains active."
+  ]
+}

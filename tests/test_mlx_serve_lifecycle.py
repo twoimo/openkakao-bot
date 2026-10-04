@@ -14,9 +14,14 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from scripts.mlx_serve_lifecycle import (
     MLX_SERVE_DEFAULT_PORT,
+    MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID,
+    MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID,
+    MLX_SERVE_FLASH_NEXT_IQ_PORT,
+    MLX_SERVE_FLASH_NEXT_IQ_STATE_NAME,
     MLX_SERVE_OWNER_STATES,
     MLX_SERVE_STATE_MAX_BYTES,
     MLX_SERVE_STATE_NAME,
@@ -30,6 +35,7 @@ from scripts.mlx_serve_lifecycle import (
     launch_app_owned_server,
     ownership_status,
     read_app_owned_state,
+    resolve_app_executable,
     stop_app_owned_server,
     validate_executable,
     write_app_owned_state,
@@ -37,6 +43,9 @@ from scripts.mlx_serve_lifecycle import (
 
 
 RESIDENT_NAME = "Qwen3.8-27B-MLX-Serve-4bit"
+IQ_NAME = "Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw"
+IQ_ID = MLX_SERVE_FLASH_NEXT_IQ_MODEL_ID
+IQ_PREFIXLESS_ID = MLX_SERVE_FLASH_NEXT_IQ_PREFIXLESS_ID
 
 
 class FakeClock:
@@ -51,8 +60,38 @@ class FakeClock:
 
 
 class FakeProcess:
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, poll_result: int | None = None) -> None:
         self.pid = pid
+        self.poll_result = poll_result
+        self.poll_calls = 0
+
+    def poll(self) -> int | None:
+        self.poll_calls += 1
+        return self.poll_result
+
+
+class FakeCatalogResponse:
+    def __init__(self, payload) -> None:
+        self.raw = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self, size: int) -> bytes:
+        return self.raw[:size]
+
+
+class FakeCatalogOpener:
+    def __init__(self, payload) -> None:
+        self.payload = payload
+        self.urls: list[str] = []
+
+    def open(self, request, timeout: float):
+        self.urls.append(request.full_url)
+        return FakeCatalogResponse(self.payload)
 
 
 def make_spec(root: Path, **overrides) -> MlxLaunchSpec:
@@ -74,6 +113,17 @@ def make_spec(root: Path, **overrides) -> MlxLaunchSpec:
     return MlxLaunchSpec(**kwargs)
 
 
+def make_iq_spec(root: Path, **overrides) -> MlxLaunchSpec:
+    resident = root / "models" / IQ_NAME
+    resident.mkdir(parents=True, exist_ok=True)
+    return make_spec(
+        root,
+        resident_model_dir=resident,
+        port=MLX_SERVE_FLASH_NEXT_IQ_PORT,
+        **overrides,
+    )
+
+
 class Harness:
     """Injected seams that model a server coming up without a real process."""
 
@@ -86,6 +136,7 @@ class Harness:
         self.spawn_calls: list[tuple[str, ...]] = []
         self.spawn_error: Exception | None = None
         self.spawn_alive = True
+        self.spawn_poll_result: int | None = None
         self.spawn_listens = True
         self.spawn_command: str | None = None
         self.alive: set[int] = set()
@@ -121,7 +172,7 @@ class Harness:
         if self.spawn_listens:
             self.listeners.add(self.pid)
         self.commands[self.pid] = self.spawn_command or " ".join(command)
-        return FakeProcess(self.pid)
+        return FakeProcess(self.pid, self.spawn_poll_result)
 
     def _catalog(self, host, port):
         index = self.catalog_calls
@@ -181,11 +232,41 @@ class LaunchHappyPathTests(unittest.TestCase):
             spec = make_spec(Path(raw))
             command = spec.command()
             self.assertIsInstance(command, tuple)
-            self.assertEqual(command[:2], (str(spec.executable), "--serve"))
-            self.assertEqual(command[3], str(spec.resident_model_dir))
-            self.assertEqual(command[5], str(spec.models_dir))
+            self.assertEqual(
+                command,
+                (
+                    str(spec.executable),
+                    "--serve",
+                    "--model",
+                    str(spec.resident_model_dir),
+                    "--model-dir",
+                    str(spec.models_dir),
+                    "--host",
+                    spec.host,
+                    "--port",
+                    str(spec.port),
+                    "--ctx-size",
+                    str(spec.ctx_size),
+                    "--timeout",
+                    "120",
+                    "--kv-quant",
+                    str(spec.kv_quant),
+                    "--max-resident-models",
+                    str(spec.max_resident_models),
+                ),
+            )
+            self.assertNotIn("--request-timeout", command)
+            self.assertNotIn("--max-concurrent", command)
             self.assertNotIn(";", " ".join(command))
             self.assertEqual(spec.prefix(), command[:6])
+
+    def test_timeout_argv_ceil_rounds_fractional_seconds(self) -> None:
+        with TemporaryDirectory() as raw:
+            spec = make_spec(Path(raw), request_timeout=120.1)
+            command = spec.command()
+            timeout_index = command.index("--timeout")
+
+            self.assertEqual(command[timeout_index + 1], "121")
 
     def test_catalog_accepts_prefixed_serving_id(self) -> None:
         with TemporaryDirectory() as raw:
@@ -301,6 +382,303 @@ class ForeignOwnershipTests(unittest.TestCase):
             self.assertNotIn("attest_command_mismatch", list(result.stages))
 
 
+class FlashNextIqOwnershipTests(unittest.TestCase):
+    def test_11235_command_uses_exact_supported_mlx_core_argv(self) -> None:
+        with TemporaryDirectory() as raw:
+            spec = make_iq_spec(Path(raw))
+
+            self.assertEqual(
+                spec.command(),
+                (
+                    str(spec.executable),
+                    "--serve",
+                    "--model",
+                    str(spec.resident_model_dir),
+                    "--model-dir",
+                    str(spec.models_dir),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "11235",
+                    "--ctx-size",
+                    str(spec.ctx_size),
+                    "--timeout",
+                    "120",
+                    "--kv-quant",
+                    str(spec.kv_quant),
+                    "--max-resident-models",
+                    str(spec.max_resident_models),
+                ),
+            )
+            self.assertNotIn("--request-timeout", spec.command())
+            self.assertNotIn("--max-concurrent", spec.command())
+
+    def _record(self, spec: MlxLaunchSpec, pid: int) -> AppOwnedServerRecord:
+        return AppOwnedServerRecord(
+            pid,
+            spec.host,
+            spec.port,
+            spec.resident_model_name,
+            spec.prefix(),
+            spec.command_digest(),
+            1_000_000.0,
+            spec.command(),
+        )
+
+    def test_11235_uses_fixed_independent_state_and_ignores_foreign_11234(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            state_root = root / "state"
+            default_spec = make_spec(root)
+            default_record = AppOwnedServerRecord(
+                7001,
+                default_spec.host,
+                default_spec.port,
+                default_spec.resident_model_name,
+                default_spec.prefix(),
+                default_spec.command_digest(),
+                1_000_000.0,
+            )
+            write_app_owned_state(state_root, default_record)
+            default_path = state_root / MLX_SERVE_STATE_NAME
+            default_bytes = default_path.read_bytes()
+
+            spec = make_iq_spec(root)
+            harness = Harness(spec)
+            harness.catalog_sequence = [(IQ_ID,)]
+            foreign_pid = 999_999
+            hooks = harness.hooks()
+            hooks.listener_pids = lambda port: (
+                (foreign_pid,)
+                if port == MLX_SERVE_DEFAULT_PORT
+                else tuple(harness.listeners)
+            )
+
+            before = ownership_status(
+                state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT, hooks=hooks
+            )
+            result = launch_app_owned_server(spec, state_root, hooks=hooks)
+
+            self.assertEqual(before["owner_state"], "stopped")
+            self.assertTrue(result.ok)
+            self.assertEqual(result.pid, harness.pid)
+            self.assertEqual(harness.signals, [])
+            self.assertEqual(default_path.read_bytes(), default_bytes)
+            self.assertEqual(read_app_owned_state(state_root), default_record)
+
+            iq_path = state_root / MLX_SERVE_FLASH_NEXT_IQ_STATE_NAME
+            self.assertEqual(iq_path.name, "mlx-app-owned-server-11235.json")
+            self.assertNotIn("/", iq_path.name)
+            self.assertNotIn("..", iq_path.name)
+            iq_record = read_app_owned_state(
+                state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT
+            )
+            self.assertIsNotNone(iq_record)
+            assert iq_record is not None
+            self.assertEqual(iq_record.port, MLX_SERVE_FLASH_NEXT_IQ_PORT)
+            self.assertEqual(iq_record.command, spec.command())
+
+    def test_11235_stop_requires_exact_recorded_process_command(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            state_root = root / "state"
+            spec = make_iq_spec(root)
+            harness = Harness(spec)
+            record = self._record(spec, harness.pid)
+            write_app_owned_state(
+                state_root, record, port=MLX_SERVE_FLASH_NEXT_IQ_PORT
+            )
+            harness.alive.add(harness.pid)
+            harness.listeners.add(harness.pid)
+            harness.commands[harness.pid] = " ".join(spec.command()[:-1] + ("99",))
+
+            refused = stop_app_owned_server(
+                state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT, hooks=harness.hooks()
+            )
+
+            self.assertFalse(refused.ok)
+            self.assertEqual(refused.reason, "stop_owner_mismatch")
+            self.assertEqual(harness.signals, [])
+            self.assertIsNotNone(
+                read_app_owned_state(state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT)
+            )
+
+            harness.commands[harness.pid] = " ".join(spec.command())
+            stopped = stop_app_owned_server(
+                state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT, hooks=harness.hooks()
+            )
+            self.assertTrue(stopped.ok)
+            self.assertEqual(harness.signals, [(harness.pid, "TERM")])
+            self.assertIsNone(
+                read_app_owned_state(state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT)
+            )
+
+    def test_11235_stop_never_uses_default_11234_record(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            state_root = root / "state"
+            spec = make_spec(root)
+            harness = Harness(spec)
+            default_record = AppOwnedServerRecord(
+                harness.pid,
+                spec.host,
+                spec.port,
+                spec.resident_model_name,
+                spec.prefix(),
+                spec.command_digest(),
+                1_000_000.0,
+            )
+            write_app_owned_state(state_root, default_record)
+            harness.alive.add(harness.pid)
+            harness.listeners.add(harness.pid)
+            harness.commands[harness.pid] = " ".join(spec.command())
+
+            result = stop_app_owned_server(
+                state_root,
+                port=MLX_SERVE_FLASH_NEXT_IQ_PORT,
+                hooks=harness.hooks(),
+            )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.reason, "stop_no_owned_server")
+            self.assertEqual(harness.signals, [])
+            self.assertEqual(read_app_owned_state(state_root), default_record)
+
+    def test_11235_record_port_mismatch_fails_closed(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            state_root = root / "state"
+            default_spec = make_spec(root)
+            default_record = AppOwnedServerRecord(
+                4242,
+                default_spec.host,
+                default_spec.port,
+                default_spec.resident_model_name,
+                default_spec.prefix(),
+                default_spec.command_digest(),
+                1_000_000.0,
+            )
+
+            with self.assertRaises(OSError):
+                write_app_owned_state(
+                    state_root,
+                    default_record,
+                    port=MLX_SERVE_FLASH_NEXT_IQ_PORT,
+                )
+
+            state_root.mkdir(parents=True, exist_ok=True)
+            iq_path = state_root / MLX_SERVE_FLASH_NEXT_IQ_STATE_NAME
+            iq_path.write_text(json.dumps(default_record.payload()), encoding="utf-8")
+            iq_path.chmod(0o600)
+            harness = Harness(default_spec)
+
+            self.assertIsNone(
+                read_app_owned_state(state_root, port=MLX_SERVE_FLASH_NEXT_IQ_PORT)
+            )
+            self.assertEqual(
+                ownership_status(
+                    state_root,
+                    port=MLX_SERVE_FLASH_NEXT_IQ_PORT,
+                    hooks=harness.hooks(),
+                )["owner_state"],
+                "state_invalid",
+            )
+            self.assertEqual(harness.signals, [])
+
+
+class FlashNextIqCatalogReadinessTests(unittest.TestCase):
+    def _launch_with_row(
+        self, root: Path, row: dict
+    ) -> tuple[object, Harness, FakeCatalogOpener]:
+        spec = make_iq_spec(root)
+        harness = Harness(spec)
+        hooks = harness.hooks()
+        hooks.catalog_reader = None
+        opener = FakeCatalogOpener({"data": [row]})
+        with patch(
+            "scripts.mlx_serve_lifecycle.urllib.request.build_opener",
+            return_value=opener,
+        ):
+            result = launch_app_owned_server(spec, root / "state", hooks=hooks)
+        return result, harness, opener
+
+    def test_11235_requires_loaded_true_and_ready_state(self) -> None:
+        for loaded, state in ((True, "loading"), (False, "ready")):
+            with self.subTest(loaded=loaded, state=state), TemporaryDirectory() as raw:
+                result, harness, opener = self._launch_with_row(
+                    Path(raw),
+                    {"id": IQ_PREFIXLESS_ID, "loaded": loaded, "state": state},
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.reason, "launch_startup_timeout")
+                self.assertEqual(harness.signals, [(harness.pid, "TERM")])
+                self.assertTrue(opener.urls)
+                self.assertTrue(
+                    all(url == "http://127.0.0.1:11235/v1/models" for url in opener.urls)
+                )
+
+    def test_11235_requires_exact_iq_catalog_id(self) -> None:
+        for identity, expected_ok in (
+            (IQ_PREFIXLESS_ID, True),
+            (IQ_ID, True),
+            (IQ_NAME, False),
+            (IQ_ID + "-other", False),
+            (IQ_PREFIXLESS_ID + "-other", False),
+            ("cloud/" + IQ_PREFIXLESS_ID, False),
+            ("mlx/mlx/" + IQ_PREFIXLESS_ID, False),
+            (" " + IQ_PREFIXLESS_ID, False),
+        ):
+            with self.subTest(identity=identity), TemporaryDirectory() as raw:
+                result, harness, _opener = self._launch_with_row(
+                    Path(raw),
+                    {"id": identity, "loaded": True, "state": "ready"},
+                )
+
+                self.assertEqual(result.ok, expected_ok)
+                self.assertEqual(
+                    result.reason,
+                    "launch_ready" if expected_ok else "launch_startup_timeout",
+                )
+                self.assertEqual(
+                    harness.signals,
+                    [] if expected_ok else [(harness.pid, "TERM")],
+                )
+
+    def test_11234_keeps_legacy_single_signal_catalog_readiness(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            spec = make_spec(root)
+            harness = Harness(spec)
+            hooks = harness.hooks()
+            hooks.catalog_reader = None
+            opener = FakeCatalogOpener(
+                {
+                    "data": [
+                        {
+                            "id": "mlx/ddalcu/" + RESIDENT_NAME,
+                            "loaded": False,
+                            "state": "ready",
+                        }
+                    ]
+                }
+            )
+
+            with patch(
+                "scripts.mlx_serve_lifecycle.urllib.request.build_opener",
+                return_value=opener,
+            ):
+                result = launch_app_owned_server(spec, root / "state", hooks=hooks)
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.reason, "launch_ready")
+            self.assertEqual(harness.signals, [])
+            self.assertEqual(
+                opener.urls,
+                ["http://127.0.0.1:11234/v1/models"],
+            )
+
+
 class RefusalStageTests(unittest.TestCase):
     def test_insufficient_memory_refuses_before_spawn(self) -> None:
         with TemporaryDirectory() as raw:
@@ -381,18 +759,21 @@ class RefusalStageTests(unittest.TestCase):
 
 
 class StartupAndAttestationTests(unittest.TestCase):
-    def test_child_that_exits_is_reported_and_cleaned_up(self) -> None:
+    def test_child_poll_exit_wins_over_zombie_pid_liveness_without_catalog_polling(self) -> None:
         with TemporaryDirectory() as raw:
             root = Path(raw)
             spec = make_spec(root)
             harness = Harness(spec)
-            harness.spawn_alive = False
+            harness.spawn_alive = True
+            harness.spawn_poll_result = 1
 
             result = launch_app_owned_server(spec, root / "state", hooks=harness.hooks())
 
             self.assertFalse(result.ok)
             self.assertEqual(result.reason, "launch_spawn_exited")
-            self.assertEqual(harness.signals, [(harness.pid, "TERM")])
+            self.assertEqual(harness.catalog_calls, 0)
+            self.assertEqual(harness.clock.now(), 1_000_000.0)
+            self.assertEqual(harness.signals, [])
             self.assertIsNone(read_app_owned_state(root / "state"))
 
     def test_startup_timeout_is_bounded_by_wait_budget(self) -> None:
@@ -782,6 +1163,42 @@ class ExecutableValidationTests(unittest.TestCase):
         binary.write_text("#!/bin/sh\n", encoding="utf-8")
         binary.chmod(0o755)
         return binary
+
+    def test_renamed_bundle_is_found_when_legacy_bundle_is_absent(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            legacy = root / "MLX Core.app/Contents/MacOS/mlx-serve"
+            renamed = root / "MLX-Serve.app/Contents/MacOS/mlx-serve"
+            renamed.parent.mkdir(parents=True)
+            renamed.write_text("#!/bin/sh\n", encoding="utf-8")
+            renamed.chmod(0o755)
+            selected = resolve_app_executable(legacy, renamed)
+            self.assertEqual(selected, renamed)
+            self.assertEqual(validate_executable(
+                selected, home=root, codesign=lambda bundle: "launch_executable_unverified"
+            ), "launch_executable_unverified")
+
+    def test_existing_legacy_bundle_and_unsafe_alias_are_not_bypassed(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            legacy = self._bundle_binary(root)
+            renamed = root / "MLX-Serve.app/Contents/MacOS/mlx-serve"
+            renamed.parent.mkdir(parents=True)
+            renamed.write_text("#!/bin/sh\n", encoding="utf-8")
+            self.assertEqual(resolve_app_executable(legacy, renamed), legacy)
+            legacy.unlink()
+            legacy.symlink_to(root / "missing")
+            selected = resolve_app_executable(legacy, renamed)
+            self.assertEqual(selected, legacy)
+            self.assertEqual(validate_executable(selected, home=root), "launch_executable_unsafe")
+
+    def test_missing_both_bundles_preserves_fail_closed_validation(self) -> None:
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            legacy = root / "MLX Core.app/Contents/MacOS/mlx-serve"
+            renamed = root / "MLX-Serve.app/Contents/MacOS/mlx-serve"
+            selected = resolve_app_executable(legacy, renamed)
+            self.assertEqual(validate_executable(selected, home=root), "launch_executable_unsafe")
 
     def test_rejects_relative_or_misnamed_paths(self) -> None:
         with TemporaryDirectory() as raw:

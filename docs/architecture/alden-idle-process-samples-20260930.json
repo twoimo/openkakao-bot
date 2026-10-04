@@ -1,0 +1,579 @@
+{
+  "schema": "alden-idle-process-samples-v1",
+  "recorded_utc": "2026-09-30T09:48:30.884256+00:00",
+  "installed_version": "0.1.6",
+  "samples": [
+    {
+      "offset_s": 0,
+      "load_average": [
+        14.6416015625,
+        13.69140625,
+        12.62060546875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 1,
+      "load_average": [
+        14.6416015625,
+        13.69140625,
+        12.62060546875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 2,
+      "load_average": [
+        14.6416015625,
+        13.69140625,
+        12.62060546875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 3,
+      "load_average": [
+        14.029296875,
+        13.580078125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 4,
+      "load_average": [
+        14.029296875,
+        13.580078125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 5,
+      "load_average": [
+        14.029296875,
+        13.580078125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.1,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 6,
+      "load_average": [
+        14.029296875,
+        13.580078125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 7,
+      "load_average": [
+        14.029296875,
+        13.580078125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.2,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 8,
+      "load_average": [
+        14.18701171875,
+        13.6201171875,
+        12.60693359375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 9,
+      "load_average": [
+        14.18701171875,
+        13.6201171875,
+        12.60693359375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.3,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 10,
+      "load_average": [
+        14.18701171875,
+        13.6201171875,
+        12.60693359375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105660416,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103184
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 11,
+      "load_average": [
+        14.18701171875,
+        13.6201171875,
+        12.60693359375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105742336,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103264
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 12,
+      "load_average": [
+        13.931640625,
+        13.576171875,
+        12.59716796875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105742336,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103264
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 13,
+      "load_average": [
+        13.931640625,
+        13.576171875,
+        12.59716796875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105742336,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103264
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 14,
+      "load_average": [
+        13.931640625,
+        13.576171875,
+        12.59716796875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105742336,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103264
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 15,
+      "load_average": [
+        13.931640625,
+        13.576171875,
+        12.59716796875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105742336,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103264
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 16,
+      "load_average": [
+        13.931640625,
+        13.576171875,
+        12.59716796875
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105693184,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103216
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 17,
+      "load_average": [
+        13.69677734375,
+        13.533203125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105693184,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103216
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 18,
+      "load_average": [
+        13.69677734375,
+        13.533203125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105693184,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103216
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.1,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    },
+    {
+      "offset_s": 19,
+      "load_average": [
+        13.69677734375,
+        13.533203125,
+        12.58740234375
+      ],
+      "app_tree_process_count": 1,
+      "app_tree_cpu_percent": 0.0,
+      "app_tree_rss_bytes": 105693184,
+      "fixed_processes": {
+        "alden": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 103216
+        },
+        "mlx_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 996384
+        },
+        "embedding_engine": {
+          "ppid": 1,
+          "cpu_percent": 0.0,
+          "rss_kib": 69328
+        }
+      }
+    }
+  ],
+  "summary": {
+    "n": 20,
+    "app_tree_cpu_p50": 0.0,
+    "app_tree_rss_p50_bytes": 105660416.0
+  },
+  "limits": [
+    "ps %cpu is a process lifetime average, not interval CPU usage",
+    "RSS sums double-count shared pages; not whole unified memory",
+    "Native visibility/lock/audio state unavailable via CUA; no confirmed hidden or visible phase",
+    "Concurrent host work recorded; no before/after efficiency gain or GPU/power claim",
+    "Resident shared model engines measured separately; unrelated legacy voice excluded"
+  ]
+}

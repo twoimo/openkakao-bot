@@ -1,0 +1,11 @@
+{
+  "python": "3.11.9 (main, Aug 14 2024, 04:17:21) [Clang 18.1.8 ]",
+  "executable": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+  "adapter_sha256": {
+    "before": "ab9905154b3550275506fd6139a40479614c40b290f58478d0b63a9a2512ee40",
+    "after": "3c65936b3f40e0d99f22e4cfa8ca014e648dd611507d436322eae41f8e2c2795"
+  },
+  "same_fixture_and_outputs": true,
+  "fixture_unchanged": true,
+  "definition": "AB/BA paired v0.1.0 vs v0.2.0 persistent MCP; raw per-call roundtrip, fresh launch-to-first-status; subprocess CPU and peak RSS; offline synthetic fixture, no live app/model calls"
+}

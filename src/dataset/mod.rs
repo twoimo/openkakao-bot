@@ -199,7 +199,9 @@ pub enum DatasetError {
     #[error("데이터셋은 로컬 전용 임베더로만 만들 수 있어요. 외부 임베딩은 사용할 수 없어요.")]
     NonLocalEmbedder,
     /// The conversation source could not be read (R3.2).
-    #[error("카카오톡 기록을 열 수 없어요: {0}. 카카오톡이 켜져 있는지 확인한 뒤 다시 만들어 주세요.")]
+    #[error(
+        "카카오톡 기록을 열 수 없어요: {0}. 카카오톡이 켜져 있는지 확인한 뒤 다시 만들어 주세요."
+    )]
     SourceUnavailable(String),
     /// There were no conversations to build from (R3.2).
     #[error("만들 대화 기록이 없어요. 카카오톡에서 대화를 나눈 뒤 다시 만들어 주세요.")]
@@ -311,7 +313,10 @@ fn build_in_memory(messages: &[DatasetMessage], embedder: &dyn Embedder) -> Buil
     let mut recipients: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for chat_messages in by_chat.values_mut() {
-        chat_messages.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.provenance.cmp(&b.provenance)));
+        chat_messages.sort_by(|a, b| {
+            a.at.cmp(&b.at)
+                .then_with(|| a.provenance.cmp(&b.provenance))
+        });
 
         let mut pending_question: Option<&DatasetMessage> = None;
         for message in chat_messages.iter().copied() {
@@ -324,7 +329,8 @@ fn build_in_memory(messages: &[DatasetMessage], embedder: &dyn Embedder) -> Buil
 
             if message.is_owner {
                 if let Some(question) = pending_question.take() {
-                    let recipient_key = context::provenance_id(&format!("recipient:{}", question.sender));
+                    let recipient_key =
+                        context::provenance_id(&format!("recipient:{}", question.sender));
                     recipients.insert(recipient_key.clone());
                     qa_pairs.push(BuiltQaPair {
                         recipient_key,
@@ -471,8 +477,8 @@ impl SqliteDatasetSink {
 
     /// Open an in-memory store. Primarily for tests.
     pub fn open_in_memory() -> Result<Self, DatasetError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| DatasetError::StoreFailure(e.to_string()))?;
+        let conn =
+            Connection::open_in_memory().map_err(|e| DatasetError::StoreFailure(e.to_string()))?;
         Self::new(conn)
     }
 }

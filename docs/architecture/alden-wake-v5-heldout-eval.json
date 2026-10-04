@@ -1,0 +1,632 @@
+{
+  "backend": "qwen3tts",
+  "baseline": {
+    "custom_model": "voice/models/experimental/alden_ko_ridge_candidate_v4.onnx",
+    "custom_model_bytes": 6404,
+    "custom_model_sha256": "944009e330abaa02bd1823e6f760d31fe23f2ad8fca18deeff4f79434d9bf827",
+    "rows": [
+      {
+        "accepted": false,
+        "custom_max": 0.286554,
+        "frames": 36,
+        "kind": "positive",
+        "name": "pos-dylan-default",
+        "quality": {
+          "frames": 36,
+          "reason": "",
+          "rms": 2503.9609,
+          "seconds": 0.72,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "ead523d70504b9094f101b31a619704730c1e425f2ddf7dce3a66e0ec8ac3d30",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "올든",
+        "voice": "dylan",
+        "wav": "pos-dylan-default.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.275973,
+        "frames": 52,
+        "kind": "positive",
+        "name": "pos-serena-default",
+        "quality": {
+          "frames": 52,
+          "reason": "",
+          "rms": 1853.5517,
+          "seconds": 1.04,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "bd2823822a0b63df82c691a0ac7c890b87d91ba8b3226e9dace8a1eaca277ba3",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "올든",
+        "voice": "serena",
+        "wav": "pos-serena-default.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.460041,
+        "frames": 56,
+        "kind": "negative",
+        "name": "neg-dylan-0",
+        "quality": {
+          "frames": 56,
+          "reason": "",
+          "rms": 1562.3067,
+          "seconds": 1.12,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "bf4f6163e00a5111fd3da3475dbf1c088728069f41a4514a695124776f925674",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "골든 타임이야",
+        "voice": "dylan",
+        "wav": "neg-dylan-0.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.282136,
+        "frames": 76,
+        "kind": "negative",
+        "name": "neg-dylan-1",
+        "quality": {
+          "frames": 76,
+          "reason": "",
+          "rms": 3550.7784,
+          "seconds": 1.52,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "cfc6c184f4f8f740ab6002489094ef45b28edf8fe4ae36fc6404d0d4e32989ac",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "얼른 문을 열어 줘",
+        "voice": "dylan",
+        "wav": "neg-dylan-1.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.332632,
+        "frames": 68,
+        "kind": "negative",
+        "name": "neg-dylan-2",
+        "quality": {
+          "frames": 68,
+          "reason": "",
+          "rms": 2556.0631,
+          "seconds": 1.36,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "7aed4da05559bfc3e970f46a18610036b9bbe97535df348a3be536409643bb2e",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "알던 친구가 맞아",
+        "voice": "dylan",
+        "wav": "neg-dylan-2.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.279139,
+        "frames": 76,
+        "kind": "negative",
+        "name": "neg-dylan-3",
+        "quality": {
+          "frames": 76,
+          "reason": "",
+          "rms": 2595.3595,
+          "seconds": 1.52,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "040f71403c3e0c87954aab65248a336438d566bbe2e9bd326ae3fd37710f4cce",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "오늘 일정 알려 줘",
+        "voice": "dylan",
+        "wav": "neg-dylan-3.wav"
+      },
+      {
+        "accepted": true,
+        "custom_max": 0.67083,
+        "frames": 56,
+        "kind": "negative",
+        "name": "neg-dylan-4",
+        "quality": {
+          "frames": 56,
+          "reason": "",
+          "rms": 2601.6853,
+          "seconds": 1.12,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "ad74237133f0c919ad4a30aa97dc29cd9a6b46ad748e73fc0f081701762cce00",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "음악을 틀어 줘",
+        "voice": "dylan",
+        "wav": "neg-dylan-4.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.278731,
+        "frames": 56,
+        "kind": "negative",
+        "name": "neg-serena-0",
+        "quality": {
+          "frames": 56,
+          "reason": "",
+          "rms": 2211.2582,
+          "seconds": 1.12,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "ee6d4dbf10afdf503292816e9af5c836db88e76f9b90ddcf8613708e25fbd3cd",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "골든 타임이야",
+        "voice": "serena",
+        "wav": "neg-serena-0.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.282559,
+        "frames": 64,
+        "kind": "negative",
+        "name": "neg-serena-1",
+        "quality": {
+          "frames": 64,
+          "reason": "",
+          "rms": 3008.6634,
+          "seconds": 1.28,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "911493103132caf859c64099419070bcf30e08a6b89bb6c752a778311062b962",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "얼른 문을 열어 줘",
+        "voice": "serena",
+        "wav": "neg-serena-1.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.395532,
+        "frames": 76,
+        "kind": "negative",
+        "name": "neg-serena-2",
+        "quality": {
+          "frames": 76,
+          "reason": "",
+          "rms": 1508.4638,
+          "seconds": 1.52,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "4711fe76e9bfb1a8d7156b0a4320523d11024b8b5c1ccd2308409c4819dd4846",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "알던 친구가 맞아",
+        "voice": "serena",
+        "wav": "neg-serena-2.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.549704,
+        "frames": 76,
+        "kind": "negative",
+        "name": "neg-serena-3",
+        "quality": {
+          "frames": 76,
+          "reason": "",
+          "rms": 2349.922,
+          "seconds": 1.52,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "ed676f6cd3945eb1d1aaf4d382e78eb8f6f19b4d754be619ccc94c33a0512fae",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "오늘 일정 알려 줘",
+        "voice": "serena",
+        "wav": "neg-serena-3.wav"
+      },
+      {
+        "accepted": false,
+        "custom_max": 0.646739,
+        "frames": 72,
+        "kind": "negative",
+        "name": "neg-serena-4",
+        "quality": {
+          "frames": 72,
+          "reason": "",
+          "rms": 1771.7979,
+          "seconds": 1.44,
+          "usable": true
+        },
+        "rate_mpr": null,
+        "reason": "",
+        "sha256": "8bc8e0052de73328e8b57ea5453614ba4b41f89cb136885fb91cbaebc00b6c7f",
+        "stock_accepted": false,
+        "stock_max": 0.0,
+        "text": "음악을 틀어 줘",
+        "voice": "serena",
+        "wav": "neg-serena-4.wav"
+      }
+    ],
+    "summary": {
+      "accepted_voices": [],
+      "borderline_negatives": [
+        {
+          "custom_max": 0.67083,
+          "text": "음악을 틀어 줘",
+          "voice": "dylan"
+        },
+        {
+          "custom_max": 0.646739,
+          "text": "음악을 틀어 줘",
+          "voice": "serena"
+        }
+      ],
+      "false_accept_voices": [
+        "dylan"
+      ],
+      "missed_voices": [
+        "dylan",
+        "serena"
+      ],
+      "negative_false_accept_rate": 0.1,
+      "negative_false_accepts": 1,
+      "negative_total": 10,
+      "positive_accept_rate": 0.0,
+      "positive_accepts": 0,
+      "positive_total": 2,
+      "stock_negative_false_accept_rate": 0.0,
+      "stock_negative_false_accepts": 0,
+      "stock_positive_accept_rate": 0.0,
+      "stock_positive_accepts": 0
+    }
+  },
+  "corpus_size": 12,
+  "custom_model": "voice/models/experimental/alden_ko_ridge_candidate_v5.onnx",
+  "custom_model_bytes": 6404,
+  "custom_model_sha256": "f24a706c518843bddb6312ea3123509ed0ed036a8f8c707201e50710debe3062",
+  "evaluator": "scripts/evaluate_alden_korean_wake.py",
+  "evaluator_sha256": "81fac766ac251317eb897534f22c4231f44bd069055cd68dd444f59e1cbace67",
+  "negative_phrases": [
+    "골든 타임이야",
+    "얼른 문을 열어 줘",
+    "알던 친구가 맞아",
+    "오늘 일정 알려 줘",
+    "음악을 틀어 줘"
+  ],
+  "references": [],
+  "rows": [
+    {
+      "accepted": true,
+      "custom_max": 0.725062,
+      "frames": 36,
+      "kind": "positive",
+      "name": "pos-dylan-default",
+      "quality": {
+        "frames": 36,
+        "reason": "",
+        "rms": 2503.9609,
+        "seconds": 0.72,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "ead523d70504b9094f101b31a619704730c1e425f2ddf7dce3a66e0ec8ac3d30",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "올든",
+      "voice": "dylan",
+      "wav": "pos-dylan-default.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.114942,
+      "frames": 52,
+      "kind": "positive",
+      "name": "pos-serena-default",
+      "quality": {
+        "frames": 52,
+        "reason": "",
+        "rms": 1853.5517,
+        "seconds": 1.04,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "bd2823822a0b63df82c691a0ac7c890b87d91ba8b3226e9dace8a1eaca277ba3",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "올든",
+      "voice": "serena",
+      "wav": "pos-serena-default.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.48896,
+      "frames": 56,
+      "kind": "negative",
+      "name": "neg-dylan-0",
+      "quality": {
+        "frames": 56,
+        "reason": "",
+        "rms": 1562.3067,
+        "seconds": 1.12,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "bf4f6163e00a5111fd3da3475dbf1c088728069f41a4514a695124776f925674",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "골든 타임이야",
+      "voice": "dylan",
+      "wav": "neg-dylan-0.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.555827,
+      "frames": 76,
+      "kind": "negative",
+      "name": "neg-dylan-1",
+      "quality": {
+        "frames": 76,
+        "reason": "",
+        "rms": 3550.7784,
+        "seconds": 1.52,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "cfc6c184f4f8f740ab6002489094ef45b28edf8fe4ae36fc6404d0d4e32989ac",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "얼른 문을 열어 줘",
+      "voice": "dylan",
+      "wav": "neg-dylan-1.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.145037,
+      "frames": 68,
+      "kind": "negative",
+      "name": "neg-dylan-2",
+      "quality": {
+        "frames": 68,
+        "reason": "",
+        "rms": 2556.0631,
+        "seconds": 1.36,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "7aed4da05559bfc3e970f46a18610036b9bbe97535df348a3be536409643bb2e",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "알던 친구가 맞아",
+      "voice": "dylan",
+      "wav": "neg-dylan-2.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.579645,
+      "frames": 76,
+      "kind": "negative",
+      "name": "neg-dylan-3",
+      "quality": {
+        "frames": 76,
+        "reason": "",
+        "rms": 2595.3595,
+        "seconds": 1.52,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "040f71403c3e0c87954aab65248a336438d566bbe2e9bd326ae3fd37710f4cce",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "오늘 일정 알려 줘",
+      "voice": "dylan",
+      "wav": "neg-dylan-3.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.108401,
+      "frames": 56,
+      "kind": "negative",
+      "name": "neg-dylan-4",
+      "quality": {
+        "frames": 56,
+        "reason": "",
+        "rms": 2601.6853,
+        "seconds": 1.12,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "ad74237133f0c919ad4a30aa97dc29cd9a6b46ad748e73fc0f081701762cce00",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "음악을 틀어 줘",
+      "voice": "dylan",
+      "wav": "neg-dylan-4.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.099445,
+      "frames": 56,
+      "kind": "negative",
+      "name": "neg-serena-0",
+      "quality": {
+        "frames": 56,
+        "reason": "",
+        "rms": 2211.2582,
+        "seconds": 1.12,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "ee6d4dbf10afdf503292816e9af5c836db88e76f9b90ddcf8613708e25fbd3cd",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "골든 타임이야",
+      "voice": "serena",
+      "wav": "neg-serena-0.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.538415,
+      "frames": 64,
+      "kind": "negative",
+      "name": "neg-serena-1",
+      "quality": {
+        "frames": 64,
+        "reason": "",
+        "rms": 3008.6634,
+        "seconds": 1.28,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "911493103132caf859c64099419070bcf30e08a6b89bb6c752a778311062b962",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "얼른 문을 열어 줘",
+      "voice": "serena",
+      "wav": "neg-serena-1.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.196233,
+      "frames": 76,
+      "kind": "negative",
+      "name": "neg-serena-2",
+      "quality": {
+        "frames": 76,
+        "reason": "",
+        "rms": 1508.4638,
+        "seconds": 1.52,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "4711fe76e9bfb1a8d7156b0a4320523d11024b8b5c1ccd2308409c4819dd4846",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "알던 친구가 맞아",
+      "voice": "serena",
+      "wav": "neg-serena-2.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.267874,
+      "frames": 76,
+      "kind": "negative",
+      "name": "neg-serena-3",
+      "quality": {
+        "frames": 76,
+        "reason": "",
+        "rms": 2349.922,
+        "seconds": 1.52,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "ed676f6cd3945eb1d1aaf4d382e78eb8f6f19b4d754be619ccc94c33a0512fae",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "오늘 일정 알려 줘",
+      "voice": "serena",
+      "wav": "neg-serena-3.wav"
+    },
+    {
+      "accepted": false,
+      "custom_max": 0.183337,
+      "frames": 72,
+      "kind": "negative",
+      "name": "neg-serena-4",
+      "quality": {
+        "frames": 72,
+        "reason": "",
+        "rms": 1771.7979,
+        "seconds": 1.44,
+        "usable": true
+      },
+      "rate_mpr": null,
+      "reason": "",
+      "sha256": "8bc8e0052de73328e8b57ea5453614ba4b41f89cb136885fb91cbaebc00b6c7f",
+      "stock_accepted": false,
+      "stock_max": 0.0,
+      "text": "음악을 틀어 줘",
+      "voice": "serena",
+      "wav": "neg-serena-4.wav"
+    }
+  ],
+  "scope": {
+    "corpus": "held_out_synthetic_voices",
+    "fit_reference": {
+      "method": "openwakeword_embedding_clip_peak_ridge_head",
+      "negative_clips": 17,
+      "positive_clips": 4,
+      "proof_scope": "bounded_synthetic_training_only"
+    },
+    "human_speakers": false,
+    "independent_clip_state_reset": true,
+    "microphones_or_rooms": false,
+    "threshold_changed": false
+  },
+  "split": {
+    "clip_hash_overlap": [],
+    "disjoint_verified": true,
+    "negative_phrase_overlap": [],
+    "training_report": "alden_ko_ridge_candidate_v5.train.json",
+    "voice_overlap": []
+  },
+  "summary": {
+    "accepted_voices": [
+      "dylan"
+    ],
+    "borderline_negatives": [],
+    "false_accept_voices": [],
+    "missed_voices": [
+      "serena"
+    ],
+    "negative_false_accept_rate": 0.0,
+    "negative_false_accepts": 0,
+    "negative_total": 10,
+    "positive_accept_rate": 0.5,
+    "positive_accepts": 1,
+    "positive_total": 2,
+    "stock_negative_false_accept_rate": 0.0,
+    "stock_negative_false_accepts": 0,
+    "stock_positive_accept_rate": 0.0,
+    "stock_positive_accepts": 0
+  },
+  "threshold": 0.65,
+  "unusable_renders": [],
+  "voices": [
+    "dylan",
+    "serena"
+  ]
+}

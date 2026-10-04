@@ -166,6 +166,56 @@ describe("render lifecycle wiring", () => {
     });
   });
 
+  it("rejects DOM resume after native hide until the shell reopens the window", async () => {
+    await withVisibilityAsync("visible", async () => {
+      const { scheduler, signal, loop } = harness(async () => () => undefined);
+      await settle();
+      signal(false);
+      const frozen = loop.renderCount;
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      scheduler.step(5000);
+      expect(scheduler.callbacks.size).toBe(0);
+      expect(loop.renderCount).toBe(frozen);
+      signal(true);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(scheduler.callbacks.size).toBe(1);
+    });
+  });
+
+  it("keeps DOM focus paused during the native boot handshake", async () => {
+    await withVisibilityAsync("visible", async () => {
+      const handshake = deferred<boolean>();
+      const { scheduler } = harness(async () => () => undefined, () => handshake.promise);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(scheduler.callbacks.size).toBe(0);
+      await settle();
+      handshake.settle(false);
+      await settle();
+      window.dispatchEvent(new Event("focus"));
+      expect(scheduler.callbacks.size).toBe(0);
+    });
+  });
+
+  it("does not revoke native hide when a pending boot read fails", async () => {
+    await withVisibilityAsync("visible", async () => {
+      let rejectRead: ((reason: Error) => void) | undefined;
+      const read = new Promise<boolean>((_, reject) => { rejectRead = reject; });
+      const { scheduler, signal } = harness(async () => () => undefined, () => read);
+      await settle();
+      signal(false);
+      rejectRead?.(new Error("bridge closed"));
+      await settle();
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(scheduler.callbacks.size).toBe(0);
+      signal(true);
+      expect(scheduler.callbacks.size).toBe(1);
+    });
+  });
+
   it("follows document visibility changes without an explicit signal", () => {
     withVisibility("visible", () => {
       const { scheduler } = harness();
@@ -231,8 +281,8 @@ describe("render lifecycle wiring", () => {
 
   it("pins the event name the Rust shell announces", () => {
     const rust = RUST_MAIN;
-    expect(VISIBILITY_EVENT).toBe("jarvis://visibility");
-    expect(rust).toMatch(/const\s+VISIBILITY_EVENT\s*:\s*&str\s*=\s*"jarvis:\/\/visibility";/);
+    expect(VISIBILITY_EVENT).toBe("alden://visibility");
+    expect(rust).toMatch(/const\s+VISIBILITY_EVENT\s*:\s*&str\s*=\s*"alden:\/\/visibility";/);
     // Both hide paths must announce the hidden state only after the OS applied
     // the hide: announcing for a window that is still on screen freezes the
     // core in front of the user.
@@ -253,7 +303,7 @@ describe("render lifecycle wiring", () => {
     // ask what the shell's current state is. Both languages must agree on the
     // command name and the shell must expose it.
     expect(RUST_MAIN).toMatch(/fn window_is_visible\(window: tauri::WebviewWindow\) -> bool/);
-    expect(RUST_MAIN).toMatch(/start_voice_session,\s*window_is_visible\s*\]\)/);
+    expect(RUST_MAIN).toMatch(/start_voice_session,\s*start_manual_voice_session,\s*stop_manual_voice_session,\s*window_is_visible\s*\]\)/);
     expect(wiringSource()).toContain("window_is_visible");
   });
 
@@ -354,6 +404,39 @@ describe("render lifecycle wiring", () => {
       // A torn-down panel must not resume rendering, however late it is told to.
       await settle();
       expect(scheduler.callbacks.size).toBe(0);
+    });
+  });
+
+  it("leaves no DOM or bridge listener after repeated attach and detach", async () => {
+    await withVisibilityAsync("visible", async () => {
+      let released = 0;
+      let transitionsAfterDetach = 0;
+      const subscribers: VisibilityHandler[] = [];
+      const subscriber: VisibilitySubscriber = async (handler) => {
+        subscribers.push(handler);
+        return () => { released += 1; };
+      };
+
+      for (let index = 0; index < 25; index += 1) {
+        let detached = false;
+        const detach = wireRenderLifecycle({
+          transition: () => {
+            if (detached) transitionsAfterDetach += 1;
+          },
+        }, { subscribeVisibility: subscriber });
+        await settle();
+        detached = true;
+        detach();
+        detach();
+      }
+
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      subscribers.forEach((handler) => handler(true));
+
+      expect(released).toBe(25);
+      expect(transitionsAfterDetach).toBe(0);
     });
   });
 });

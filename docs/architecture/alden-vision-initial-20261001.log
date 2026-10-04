@@ -1,0 +1,118 @@
+Logging to /private/tmp/alden-owned-vision-20261001-qqri0nwe/server.log (rotates at 32 MB)
+mlx-serve 26.9.5 (MLX 0.32.2)
+[args] model: /Users/twoimo/.mlx-serve/models/ddalcu/Qwen3.8-27B-MLX-Serve-4bit
+[args] drafter: <none>
+[args] serve: 127.0.0.1:11237, ctx-size=4096, pld=off, no-vision=false, prevent-sleep=false
+[args] kv-quant: affine 4-bit (group=64)
+[args] kv-attn-mode: auto
+Metal GPU: true
+Model: qwen3_5_moe (64 layers, 5120-dim, head_dim=256, 24h/4kv, 4-bit affine quant)
+Loading tokenizer...
+  parsed tokenizer (12 MB) in 77ms
+  loaded 248044 vocab entries in 12ms
+  loaded 247587 merges in 16ms
+Tokenizer loaded: 248077 vocab, 247587 merges, 33 special tokens (byte-level BPE)
+User turn marker: "<|im_start|>user
+" -> 3 tokens
+[registry] max_resident_models=1, max_resident_mem=24.0 GB
+[preflight] weights ~16.95 GB, available 26.62 GB
+Loading model-00003.safetensors...
+Loading model-00004.safetensors...
+Loading model-00001.safetensors...
+Loading model-00002.safetensors...
+Loaded 2207 weights from 4 file(s)
+Precomputing MoE layer weights...
+Batch eval all weights: 9656ms
+[suppress] 14 of 21 flagged specials masked from sampling (template + eos exempt); 243 padding rows past id 248077 of 248320
+[wired] mode=max limit=114688 MB
+MoE routing compiled (kernel fusion enabled)
+GDN gate compiled (kernel fusion enabled)
+[vision] qwen tower prefix: vision_tower.
+[vision] qwen patch_embed layout: channels_last
+Vision encoder: Qwen3-VL ViT (depth=27, hidden=1152, heads=16, merge=2, out_hidden=5120)
+[dtype-trace] moe: residual in = bfloat16, first weight = n/a
+[mlp] fused SwiGLU kernel engaged: n=17408 tg=256
+[attn] fused QK-norm+RoPE (hd-256) engaged: hq=24 hk=4 S=1 rd=64
+[dtype-trace] moe: residual out = bfloat16
+[vqmm] NAX verify lane engaged at 4-bit (nax tile, 16 rows): M=8 K=5120 N=10240 gs=64 (MLX_SERVE_VERIFY_QMM_NAX=0 restores stock)
+[nax-sdpa] engaged: stock fused sdpa (force_fused) serves hd-256 causal prefill and verify blocks > 8 rows; msv_attn_p256 causal arm declined (MLX_SERVE_NAX_SDPA=0 restores)
+[sdpa-split] engaged: qL=8 kL=8 Hq=24 Hkv=4 (MLX_SERVE_SDPA_SPLIT=0 restores the single dispatch)
+Warmup complete (1285 ms).
+Model ready (loaded on inference thread).
+Prometheus metrics: ENABLED — GET http://127.0.0.1:11237/metrics (live panel at GET /)
+Concurrency: --max-concurrent=1, batched decode on
+Prefill chunk: 2048 tokens (memory-sized down from 8192; --prefill-chunk overrides)
+Context size: 4096 tokens (manual)
+Request timeout: 70s
+Model context length: 262144 tokens
+Reasoning budget: unlimited
+default max_tokens for omitted requests: 96
+
+Server listening on http://127.0.0.1:11237
+API key auth: ENABLED for non-loopback requests (localhost is trusted; /health stays open)
+  GET  /
+  GET  /health
+  GET  /props
+  GET  /v1/models
+  POST /v1/chat/completions
+  POST /v1/completions
+  POST /v1/embeddings
+  POST /v1/messages (Anthropic)
+  POST /v1/responses (OpenAI Responses)
+  POST /v1/responses/compact
+  GET  /v1/responses/{id}
+  DEL  /v1/responses/{id}
+  POST /tokenize
+  POST /detokenize
+
+RSS: 2.5G  Mem: 78%  CPU: 60%  GPU: 0%
+[vision] image area capped at 2359296 px (checkpoint declares 16777216): the ViT materializes its full attention
+  Decoded 672x448 image → qwen grid 28x42 (294 tokens, resized 672x448)
+POST /v1/chat/completions (2 msgs, max_tokens=96, temp=0.00, top_p=0.95, top_k=20, stream=true, thinking=false, sys=93b, user=96b, tools=0b, tool_msgs=0)
+  > "사진에 보이는 도형의 색상, 종류, 개수만 한국어 한 문장으�..."
+Multimodal: processing 1 image(s), 0 video(s), 0 audio clip(s)
+[dtype-trace] qwen3vl-vision: residual in = bfloat16, first weight = bfloat16
+[dtype-trace] qwen3vl-vision: residual out = bfloat16
+  Multimodal: → [1,294,5120] tokens (294 vision + 0 video + 0 audio)
+  Inserted 294 image + 0 video + 0 audio soft tokens at position 27 (prompt: 56 -> 352 tokens)
+  M-RoPE: 1 images, 0 videos, position ids over 352 tokens, decode delta -273
+[admission] needed=1000 MB available=16470 MB reclaimable=0 MB width=2048 verdict=admit
+  prompt=352 tokens, max_gen=96, ctx=4096
+[nax-sdpa] force_fused dispatch engaged: qL=351 kL=351 Hq=24 Hkv=4 hd=256
+[gdn] packed prework engaged: Hk=16 Hv=48 S=1 B=1
+[gdn] fused norm-gate engaged: Hv=48 S=1 gate=swish
+  <- 352+15 tokens streamed [prefill: 253.2 tok/s, decode: 26.7 tok/s] [stop]
+POST /v1/chat/completions (4 msgs, max_tokens=96, temp=0.00, top_p=0.95, top_k=20, stream=true, thinking=false, sys=93b, user=174b, tools=0b, tool_msgs=0)
+  > "그중 하나를 가리면 몇 개가 보이나요? 숫자로만 답하세요."
+  prompt=103 tokens, max_gen=96, ctx=4096
+[short-gen] reason=stop emitted=1 realized=1 ids=[17] bytes="2" path=serial
+  <- 103+1 tokens streamed [prefill: 330.1 tok/s, decode: 13.8 tok/s] [stop]
+  Decoded 672x448 image → qwen grid 28x42 (294 tokens, resized 672x448)
+POST /v1/chat/completions (2 msgs, max_tokens=96, temp=0.00, top_p=0.95, top_k=20, stream=true, thinking=false, sys=93b, user=96b, tools=0b, tool_msgs=0)
+  > "사진에 보이는 도형의 색상, 종류, 개수만 한국어 한 문장으�..."
+Multimodal: processing 1 image(s), 0 video(s), 0 audio clip(s)
+  Multimodal: → [1,294,5120] tokens (294 vision + 0 video + 0 audio)
+  Inserted 294 image + 0 video + 0 audio soft tokens at position 27 (prompt: 56 -> 352 tokens)
+  M-RoPE: 1 images, 0 videos, position ids over 352 tokens, decode delta -273
+  prompt=352 tokens, max_gen=96, ctx=4096
+  <- 352+12 tokens streamed [prefill: 314.0 tok/s, decode: 22.2 tok/s] [stop]
+  Decoded 672x448 image → qwen grid 28x42 (294 tokens, resized 672x448)
+POST /v1/chat/completions (2 msgs, max_tokens=96, temp=0.00, top_p=0.95, top_k=20, stream=true, thinking=false, sys=93b, user=100b, tools=0b, tool_msgs=0)
+  > "사진의 왼쪽과 오른쪽 도형의 색상과 종류를 한국어 한 문장..."
+Multimodal: processing 1 image(s), 0 video(s), 0 audio clip(s)
+  Multimodal: → [1,294,5120] tokens (294 vision + 0 video + 0 audio)
+  Inserted 294 image + 0 video + 0 audio soft tokens at position 27 (prompt: 55 -> 351 tokens)
+  M-RoPE: 1 images, 0 videos, position ids over 351 tokens, decode delta -273
+  prompt=351 tokens, max_gen=96, ctx=4096
+  <- 351+19 tokens streamed [prefill: 355.5 tok/s, decode: 27.7 tok/s] [stop]
+  Decoded 672x448 image → qwen grid 28x42 (294 tokens, resized 672x448)
+POST /v1/chat/completions (2 msgs, max_tokens=96, temp=0.00, top_p=0.95, top_k=20, stream=true, thinking=false, sys=93b, user=63b, tools=0b, tool_msgs=0)
+  > "사진에 적힌 영문과 숫자만 그대로 읽어주세요."
+Multimodal: processing 1 image(s), 0 video(s), 0 audio clip(s)
+  Multimodal: → [1,294,5120] tokens (294 vision + 0 video + 0 audio)
+  Inserted 294 image + 0 video + 0 audio soft tokens at position 27 (prompt: 50 -> 346 tokens)
+  M-RoPE: 1 images, 0 videos, position ids over 346 tokens, decode delta -273
+  prompt=346 tokens, max_gen=96, ctx=4096
+  <- 346+7 tokens streamed [prefill: 406.9 tok/s, decode: 25.4 tok/s] [stop]
+
+Shutting down gracefully...

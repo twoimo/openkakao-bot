@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "version": "0.3.4",
+  "scope": "Published historical corpus read-only; private derived stores only. No original Kakao database, permission changes, sends, or model restarts. Three warm samples per condition; no installed UI or full collection pipeline percentile claim.",
+  "audit": {
+    "published_rooms": 1181,
+    "blank_titles": 213,
+    "named_duplicate_groups": 7,
+    "named_duplicate_rooms": 25,
+    "displayed_rooms": 40,
+    "generic_unnamed_before": 23
+  },
+  "benchmarks": {
+    "before": {
+      "n": 3,
+      "median_ms": {
+        "rooms": 59794.115,
+        "people": 3058.324
+      },
+      "source_sha256": "8e4b9ebaa051af8f62633bc1eb5aaa6700f9dff4ccdacc4d0fa7656c1b414c62",
+      "process_peak_rss_bytes": 48840704,
+      "publication_unchanged": true,
+      "published_corpus_unchanged": true,
+      "node_count": 100,
+      "identity_digest": "f443bbf3d41d7a145060596f7b1ed0b2828994e438758dd744cae172bbd003bb",
+      "unnamed_room_count": 23,
+      "duplicate_room_display_groups": 1,
+      "valid_provenance": true
+    },
+    "after": {
+      "n": 3,
+      "median_ms": {
+        "rooms": 1857.479,
+        "people": 1190.905
+      },
+      "source_sha256": "ae03602d73ec804c92573f1702ba6f89f9cd8b9cb5492b4fa8ca825db54db8a3",
+      "process_peak_rss_bytes": 39124992,
+      "publication_unchanged": true,
+      "published_corpus_unchanged": true,
+      "node_count": 100,
+      "identity_digest": "f443bbf3d41d7a145060596f7b1ed0b2828994e438758dd744cae172bbd003bb",
+      "unnamed_room_count": 0,
+      "duplicate_room_display_groups": 0,
+      "valid_provenance": true
+    },
+    "cycle-before": {
+      "n": 3,
+      "median_ms": {
+        "rooms": 1514.138,
+        "people": 1863.003
+      },
+      "source_sha256": "8e4b9ebaa051af8f62633bc1eb5aaa6700f9dff4ccdacc4d0fa7656c1b414c62",
+      "process_peak_rss_bytes": 38535168,
+      "publication_unchanged": true,
+      "published_corpus_unchanged": true,
+      "node_count": 100,
+      "identity_digest": "f443bbf3d41d7a145060596f7b1ed0b2828994e438758dd744cae172bbd003bb",
+      "unnamed_room_count": 23,
+      "duplicate_room_display_groups": 1,
+      "valid_provenance": true,
+      "rooms_people_combined_median_ms": 3228.4049999999997,
+      "including_snapshot_median_ms": 3891.9599999999996
+    },
+    "cycle-after": {
+      "n": 3,
+      "median_ms": {
+        "rooms": 1666.488,
+        "people": 759.168
+      },
+      "source_sha256": "5105ac7edf76bba850d7580d0d6cf1161451db55c10da1a60701f501f106a3a2",
+      "process_peak_rss_bytes": 38715392,
+      "publication_unchanged": true,
+      "published_corpus_unchanged": true,
+      "node_count": 100,
+      "identity_digest": "f443bbf3d41d7a145060596f7b1ed0b2828994e438758dd744cae172bbd003bb",
+      "unnamed_room_count": 0,
+      "duplicate_room_display_groups": 0,
+      "valid_provenance": true,
+      "rooms_people_combined_median_ms": 2382.051,
+      "including_snapshot_median_ms": 3518.2980000000002
+    }
+  },
+  "improvement_percent": {
+    "standalone_rooms": 96.89,
+    "standalone_people": 61.06,
+    "cycle_rooms_people": 26.22,
+    "cycle_including_snapshot": 9.6
+  },
+  "source_checks": {
+    "configured_python_total": 1143,
+    "configured_python_skips": 27,
+    "configured_python_failures_final": 0,
+    "desktop_native": 91,
+    "desktop_ui": 211,
+    "clippy": "passed"
+  },
+  "retrieval": {
+    "fixture_queries": 27,
+    "dev_queries": 12,
+    "heldout_queries": 15,
+    "policy_combinations": 81,
+    "whole_context_leaks": 0,
+    "context_recall": 1.0,
+    "fresh_public_latency_ms": {
+      "n": 27,
+      "p50": 23.25,
+      "p95": 27.404
+    },
+    "selected_policy": {
+      "rrf_k": 60,
+      "candidate_limit": 40,
+      "max_context_chars": 8000,
+      "rrf_weights": [
+        1.0,
+        1.0
+      ]
+    }
+  },
+  "limitations": [
+    "Historical publication is not proof of latest original-source freshness.",
+    "Retraction/identity interval evidence is insufficient to delete a nonretracted older alias; the frozen ranking negative and BM25-only weakness remain visible.",
+    "Original-source app-data access, human voice/wake/physical/Retina, Developer ID/notarization and production transition remain pending.",
+    "Installed primary screen capture remains unavailable through the app connection."
+  ]
+}

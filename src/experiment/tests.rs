@@ -224,9 +224,15 @@ fn run_continues_past_failures_and_keeps_successes() {
     let results = runner.run("v1", &providers).unwrap();
 
     assert_eq!(results.len(), questions.len());
-    let failed = results.iter().find(|r| r.question_id == questions[1].id).unwrap();
+    let failed = results
+        .iter()
+        .find(|r| r.question_id == questions[1].id)
+        .unwrap();
     assert!(matches!(failed.outcome, Outcome::Failed(_)));
-    let timed = results.iter().find(|r| r.question_id == questions[2].id).unwrap();
+    let timed = results
+        .iter()
+        .find(|r| r.question_id == questions[2].id)
+        .unwrap();
     assert_eq!(timed.outcome, Outcome::Timeout);
     // Everything else stayed successful.
     let ok_count = results.iter().filter(|r| r.outcome.is_ok()).count();
@@ -249,10 +255,7 @@ fn compare_single_run_lines_up_answers_per_question() {
     // One row per (question, target); 2 targets => 2 rows per question.
     assert_eq!(table.rows.len(), questions.len() * 2);
     assert!(table.rows.iter().all(|row| row.cells.len() == 1));
-    assert!(table
-        .rows
-        .iter()
-        .all(|row| row.cells[0].answer.is_some()));
+    assert!(table.rows.iter().all(|row| row.cells[0].answer.is_some()));
 }
 
 #[test]
@@ -297,7 +300,11 @@ fn store_records_and_reloads_by_prompt_version() {
 fn store_persists_failure_and_timeout_outcomes() {
     let mut provider = FakeProvider::new("alpha", &["m1"]);
     let questions = default_question_set();
-    provider.set("m1", &questions[0].id, FakeBehavior::Fail("bad thing".into()));
+    provider.set(
+        "m1",
+        &questions[0].id,
+        FakeBehavior::Fail("bad thing".into()),
+    );
     provider.set("m1", &questions[1].id, FakeBehavior::Timeout);
     let providers: Vec<Box<dyn Provider>> = vec![Box::new(provider)];
     let runner = StyleExperimentRunner::new(questions.clone(), StyleTarget::default());
@@ -307,9 +314,15 @@ fn store_persists_failure_and_timeout_outcomes() {
     store.record(&run).unwrap();
     let loaded = store.load_by_prompt_version("v3").unwrap();
 
-    let failed = loaded.iter().find(|r| r.question_id == questions[0].id).unwrap();
+    let failed = loaded
+        .iter()
+        .find(|r| r.question_id == questions[0].id)
+        .unwrap();
     assert!(matches!(failed.outcome, Outcome::Failed(_)));
-    let timed = loaded.iter().find(|r| r.question_id == questions[1].id).unwrap();
+    let timed = loaded
+        .iter()
+        .find(|r| r.question_id == questions[1].id)
+        .unwrap();
     assert_eq!(timed.outcome, Outcome::Timeout);
 }
 

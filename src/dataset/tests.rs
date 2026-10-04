@@ -244,10 +244,8 @@ fn build_aborts_on_zero_conversations() {
 
 #[test]
 fn build_aborts_on_store_failure() {
-    let source = InMemoryConversationSource::new(vec![
-        partner(1, 10, "민수", "질문"),
-        owner(1, 20, "답변"),
-    ]);
+    let source =
+        InMemoryConversationSource::new(vec![partner(1, 10, "민수", "질문"), owner(1, 20, "답변")]);
     let mut sink = FailingSink;
     let mut builder = DatasetBuilder::new(&source, &mut sink);
     let err = builder.build(&LocalHashEmbedder).unwrap_err();
@@ -277,7 +275,9 @@ fn sqlite_sink_round_trip_counts() {
         .unwrap();
     let attach_count: i64 = sink
         .conn
-        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(qa_count, 1);
     assert_eq!(attach_count, 2);
@@ -309,7 +309,9 @@ fn sqlite_sink_failure_preserves_previous_dataset() {
         .query_row("SELECT COUNT(*) FROM qa_pair", [], |r| r.get(0))
         .unwrap();
     let attach_before: i64 = checker
-        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(qa_before, 2);
     assert!(attach_before >= 1);
@@ -337,7 +339,9 @@ fn sqlite_sink_failure_preserves_previous_dataset() {
         .query_row("SELECT COUNT(*) FROM qa_pair", [], |r| r.get(0))
         .unwrap();
     let attach_after: i64 = checker
-        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM attachment_reference", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(qa_after, qa_before, "qa_pair rows must be preserved");
     assert_eq!(

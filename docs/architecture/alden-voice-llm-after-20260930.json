@@ -1,0 +1,881 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T07:23:36Z",
+  "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "adapter_sha256": "524838c2a9986c35427b6cc3518625e8032dd27eaf43f9956b2cd0b999f2864c",
+  "case_sha256": "1237a28987757c44aafa6098f4dda15586a7307ebc9bdc64e3382b84bf392aa2",
+  "architecture": "arm64",
+  "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22937699)\t80%; AC attached; not charging present: true",
+  "condition": "existing resident model; prefix cache and other host jobs remain active",
+  "samples": 12,
+  "correct_fact_count": 12,
+  "adapter_error_count": 0,
+  "full_answer_seconds": {
+    "p50": 0.96995,
+    "p95_nearest_rank": 1.268899
+  },
+  "first_token_seconds": null,
+  "socket_connections": [
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    }
+  ],
+  "rows": [
+    {
+      "repeat": 0,
+      "case": "place_followup",
+      "elapsed_seconds": 0.848253,
+      "reply": "3층으로 올라가십시오.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753004,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 157,
+        "completion_tokens": 7,
+        "total_tokens": 164,
+        "prompt_tokens_details": {
+          "cached_tokens": 126
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 0,
+      "case": "latter_selection",
+      "elapsed_seconds": 0.807729,
+      "reply": "알겠습니다. 목요일 오후 2시로 확정합니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753005,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 159,
+        "completion_tokens": 14,
+        "total_tokens": 173,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 0,
+      "case": "arithmetic_followup",
+      "elapsed_seconds": 0.980572,
+      "reply": "63,000원입니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753006,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 165,
+        "completion_tokens": 9,
+        "total_tokens": 174,
+        "prompt_tokens_details": {
+          "cached_tokens": 92
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 1,
+      "case": "place_followup",
+      "elapsed_seconds": 0.865934,
+      "reply": "3층으로 가십시오.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753007,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 157,
+        "completion_tokens": 6,
+        "total_tokens": 163,
+        "prompt_tokens_details": {
+          "cached_tokens": 126
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 1,
+      "case": "latter_selection",
+      "elapsed_seconds": 0.965765,
+      "reply": "알겠습니다. 목요일 오후 2시로 확정합니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753008,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 159,
+        "completion_tokens": 14,
+        "total_tokens": 173,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 1,
+      "case": "arithmetic_followup",
+      "elapsed_seconds": 0.702225,
+      "reply": "63,000원입니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753009,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 165,
+        "completion_tokens": 9,
+        "total_tokens": 174,
+        "prompt_tokens_details": {
+          "cached_tokens": 134
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 2,
+      "case": "place_followup",
+      "elapsed_seconds": 1.096255,
+      "reply": "3층으로 올라가십시오.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753010,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 157,
+        "completion_tokens": 7,
+        "total_tokens": 164,
+        "prompt_tokens_details": {
+          "cached_tokens": 126
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 2,
+      "case": "latter_selection",
+      "elapsed_seconds": 0.974136,
+      "reply": "알겠습니다. 목요일 오후 2시로 확정하겠습니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753011,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 159,
+        "completion_tokens": 14,
+        "total_tokens": 173,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 2,
+      "case": "arithmetic_followup",
+      "elapsed_seconds": 1.268899,
+      "reply": "63,000원입니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753012,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 165,
+        "completion_tokens": 9,
+        "total_tokens": 174,
+        "prompt_tokens_details": {
+          "cached_tokens": 92
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 3,
+      "case": "place_followup",
+      "elapsed_seconds": 0.50154,
+      "reply": "3층으로 가십시오.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753013,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 157,
+        "completion_tokens": 6,
+        "total_tokens": 163,
+        "prompt_tokens_details": {
+          "cached_tokens": 126
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 3,
+      "case": "latter_selection",
+      "elapsed_seconds": 1.055317,
+      "reply": "알겠습니다. 목요일 오후 2시로 확정하겠습니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753013,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 159,
+        "completion_tokens": 14,
+        "total_tokens": 173,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    },
+    {
+      "repeat": 3,
+      "case": "arithmetic_followup",
+      "elapsed_seconds": 1.103981,
+      "reply": "63,000원입니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790753014,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 165,
+        "completion_tokens": 9,
+        "total_tokens": 174,
+        "prompt_tokens_details": {
+          "cached_tokens": 134
+        }
+      },
+      "response_model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+      "finish_reason": "stop"
+    }
+  ],
+  "limits": [
+    "Public synthetic cases; no natural microphone trial",
+    "Fact-presence checks are not a general language-quality score",
+    "Full-answer latency includes catalog/admission and generation; it is not TTFT",
+    "Small-sample p95 is descriptive only",
+    "Different cache state or concurrent host load can confound before/after speed comparisons"
+  ]
+}

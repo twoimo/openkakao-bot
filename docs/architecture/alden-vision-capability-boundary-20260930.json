@@ -1,0 +1,30 @@
+{
+  "schema": "alden-real-catalog-vision-boundary-v1",
+  "recorded_utc": "2026-09-30T09:57:53.821458+00:00",
+  "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "source_sha256": "9a6c0348aa5a7cae2062c915ae63bfc81e1739813478a4c263da67275f6a228d",
+  "adapter_function_sha256": "73ba69126e84da4a4622c2014638810fbeaa1f137e9f3fb115e6b8f3a943d36e",
+  "requests": [
+    {
+      "url": "http://127.0.0.1:11234/v1/models",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:11234/v1/models",
+      "method": "GET"
+    }
+  ],
+  "generation_posts": 0,
+  "response_code": 1,
+  "reason": "mlx_serve_vision_capability_unavailable",
+  "focused_regression": {
+    "tests": 21,
+    "failed": 0,
+    "log": "/private/tmp/alden-vision-capability-check-fixed-20260930.log"
+  },
+  "limits": [
+    "Real resident-model catalog only; no accepted vision inference or image understanding",
+    "Initial mock patched generic urllib instead of bound local transport; a synthetic local POST returned400 before fix. Corrected final test explicitly blocks unmocked transport",
+    "No Kakao send, shared configuration, queue or service mutation"
+  ]
+}

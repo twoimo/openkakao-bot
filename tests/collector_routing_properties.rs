@@ -37,7 +37,7 @@
 use std::cell::Cell;
 
 use openkakao_cli::collector::{
-    AsideCollector, Collected, CollectError, CollectFailure, CollectorPath, LoopbackEndpoint,
+    AsideCollector, CollectError, CollectFailure, Collected, CollectorPath, LoopbackEndpoint,
     PageCollector, RoutingCollector, SwitchReason, TempScope, ASIDE_COLLECT_TIMEOUT_SECS,
     COLLECT_DEADLINE_SECS, DELETION_DEADLINE_MS, HEALTH_TIMEOUT_SECS,
 };

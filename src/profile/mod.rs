@@ -411,10 +411,7 @@ fn style_profile_count(tx: &Transaction) -> Result<usize, ProfileError> {
 /// after; if any differ it returns [`ProfileError::MigrationCountMismatch`] so
 /// the caller drops the transaction, leaving the previous data untouched and
 /// the migration marker unrecorded (R10.10).
-pub fn migrate_owner_scope(
-    tx: &Transaction,
-    owner: &str,
-) -> Result<MigrationReport, ProfileError> {
+pub fn migrate_owner_scope(tx: &Transaction, owner: &str) -> Result<MigrationReport, ProfileError> {
     // Idempotent: if already applied, report current counts without changes.
     if migration_applied(tx, OWNER_SCOPE_MIGRATION)? {
         return Ok(MigrationReport {

@@ -45,7 +45,9 @@ use crate::experiment::{Prompt, Provider};
 use crate::fakes::{FakePorts, ScenarioShape};
 use crate::geeknews::{self, CursorStore, FeedSource, GeekNewsCursor, PostOutcome, Sender};
 use crate::live_sample::{resolve_target, LiveSampleCollector, SqliteSampleStore};
-use crate::logging::{FlowKind, HistoryStore, PipelineEvent, SqliteHistoryStore, Stage, StageStatus};
+use crate::logging::{
+    FlowKind, HistoryStore, PipelineEvent, SqliteHistoryStore, Stage, StageStatus,
+};
 use crate::ports::{AxReadPort, Clock, MessageSource, NetworkPort, SendPort};
 use crate::safety::{
     DefaultSafetyGate, FenceReason, GuardFence, Origin, OwnerNameStatus, ProfileView, SafetyConfig,
@@ -591,7 +593,10 @@ fn execute(
     };
 
     let rooms = ports.messages.rooms().unwrap_or_default();
-    let messages = ports.messages.messages_after(None, 1_000_000).unwrap_or_default();
+    let messages = ports
+        .messages
+        .messages_after(None, 1_000_000)
+        .unwrap_or_default();
 
     // Suppress the default panic hook while we run so absorbed panics do not
     // spam the console; the harness reports them as counts instead (R1.13).
@@ -621,7 +626,10 @@ fn execute(
             1
         };
         let owner_fp = match ports.messages.authority(chat_id) {
-            Ok(a) => format!("fp-{}", a.owner_display_name.unwrap_or_else(|| "owner".into())),
+            Ok(a) => format!(
+                "fp-{}",
+                a.owner_display_name.unwrap_or_else(|| "owner".into())
+            ),
             Err(_) => "fp-owner".to_string(),
         };
 
@@ -644,7 +652,15 @@ fn execute(
         let start = Instant::now();
         let result = panic::catch_unwind(AssertUnwindSafe(|| {
             process_auto_reply_run(
-                &guard, journal, provider, &cfg, &req, &intent, &trace_id, idx, &ports.clock,
+                &guard,
+                journal,
+                provider,
+                &cfg,
+                &req,
+                &intent,
+                &trace_id,
+                idx,
+                &ports.clock,
                 &ports.send,
             )
         }));

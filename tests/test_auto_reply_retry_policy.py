@@ -43,6 +43,14 @@ class ModelRetryPolicyTests(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
+    def test_model_endpoint_reachability_probes_mlx_gateway_default_port(self):
+        with mock.patch("socket.create_connection") as create_connection:
+            self.assertTrue(self.module._model_endpoint_reachable())
+
+        create_connection.assert_called_once_with(
+            ("127.0.0.1", 11234), timeout=0.8,
+        )
+
     @contextlib.contextmanager
     def isolated_generation(self, runner_kind, runner):
         """Use the real generation and circuit paths with fake external adapters."""
@@ -298,6 +306,7 @@ class ModelRetryPolicyTests(unittest.TestCase):
 
         self.assertEqual(analysis["model_failure_class"], "unparsed_output")
         self.assertEqual(analysis["reason"], "unparsed_model_decision")
+        self.assertEqual(analysis["unparsed_output_retry_count"], 1)
         due_at = m._model_defer_due_at(event, analysis, now=now)
         self.assertIsInstance(due_at, float)
         self.assertTrue(m.math.isfinite(due_at))
@@ -324,6 +333,74 @@ class ModelRetryPolicyTests(unittest.TestCase):
             m._model_defer_due_at(event, analysis, now=expired_now),
             expired_now,
         )
+
+        exhausted_event = {**event, "unparsed_output_retry_count": 1}
+        with mock.patch.object(m, "_reply_turn_hold_reason", return_value=None), \
+             mock.patch.object(m, "_event_recent_conversation", return_value=[]), \
+             mock.patch.object(m, "capture_visible_image", return_value=None), \
+             mock.patch.object(m, "fetch_link_previews", return_value=[]), \
+             mock.patch.object(m, "run_context_reply_bundle", return_value=bundle), \
+             mock.patch.object(m, "event_exceeds_response_window", return_value=False), \
+             mock.patch.object(m, "_conversation_target", return_value={}), \
+             mock.patch.object(m, "_partner_streak_hold_reason", return_value=None), \
+             mock.patch.object(m, "generate_reply", return_value=model_result):
+            exhausted = m.analyze_event(exhausted_event)
+        self.assertEqual(exhausted["reason"], "unparsed_output_retry_exhausted")
+        self.assertNotIn("model_failure_class", exhausted)
+
+    def test_unparsed_referential_question_uses_recent_context_immediately(self):
+        m = self.module
+        now = 1800000000.0
+        recent = [
+            {
+                "evidence_id": "recent:42",
+                "author_nickname": "다른 참여자",
+                "message": "회의실을 3층으로 옮겼어",
+                "is_self": False,
+            }
+        ]
+        event = {
+            "event_id": "retry-policy-contextual-unparsed",
+            "message": "뭐지저건",
+            "author_nickname": "MOM",
+            "sent_at": int(now),
+            "response_window_upper_seconds": m.MIN_REPLY_DELAY_SECONDS,
+        }
+        model_result = {
+            "should_reply": False,
+            "reply": "",
+            "reason": "unparsed_model_decision",
+            "category": "uncertain",
+            "evidence_ids": [],
+            "model_failure_class": "unparsed_output",
+            "model_defer_until": now + m.MODEL_MIN_DEFER_SECONDS,
+            "model_invoked": True,
+            "model": "mlx/flash-next",
+        }
+        bundle = {
+            "context": [{"evidence_id": "context:1", "message": "room shift"}],
+            "styles": [],
+            "prior_decisions": [],
+            "style_profile": {},
+            "recipient_style_profile": {},
+            "response_time": {},
+        }
+        with mock.patch.object(m, "_reply_turn_hold_reason", return_value=None), \
+             mock.patch.object(m, "_event_recent_conversation", return_value=recent), \
+             mock.patch.object(m, "capture_visible_image", return_value=None), \
+             mock.patch.object(m, "fetch_link_previews", return_value=[]), \
+             mock.patch.object(m, "run_context_reply_bundle", return_value=bundle), \
+             mock.patch.object(m, "event_exceeds_response_window", return_value=False), \
+             mock.patch.object(m, "_conversation_target", return_value={}), \
+             mock.patch.object(m, "_partner_streak_hold_reason", return_value=None), \
+             mock.patch.object(m, "generate_reply", return_value=model_result):
+            analysis = m.analyze_event(event)
+
+        self.assertEqual(analysis["decision"], "reply")
+        self.assertEqual(analysis["reason"], "contextual_clarification")
+        self.assertEqual(analysis["reply"], "아까 “회의실을 3층으로 옮겼어” 얘기야?")
+        self.assertIn("recent:42", analysis["evidence_ids"])
+        self.assertNotIn("unparsed_output_retry_count", analysis)
 
     def test_legitimate_non_reply_without_failure_class_is_not_deferred(self):
         m = self.module

@@ -1,0 +1,149 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Alden 대화 그래프 탐색",
+    "quality_profile": "showcase",
+    "animation": "none"
+  },
+  "lanes": [
+    {
+      "id": "view",
+      "label": "탐색 위치"
+    },
+    {
+      "id": "result",
+      "label": "조회 결과와 복원"
+    }
+  ],
+  "mainPath": [
+    "overview",
+    "pick",
+    "neighbor",
+    "lookup",
+    "epoch"
+  ],
+  "nodes": [
+    {
+      "id": "overview",
+      "lane": "view",
+      "col": 0,
+      "type": "frontend",
+      "label": "전체 보기",
+      "sublabel": "요약된 연결"
+    },
+    {
+      "id": "pick",
+      "lane": "view",
+      "col": 1,
+      "type": "frontend",
+      "label": "항목 선택",
+      "sublabel": "이전 위치 보관"
+    },
+    {
+      "id": "neighbor",
+      "lane": "view",
+      "col": 2,
+      "type": "frontend",
+      "label": "주변 연결",
+      "sublabel": "명시적 확장"
+    },
+    {
+      "id": "lookup",
+      "lane": "view",
+      "col": 3,
+      "type": "backend",
+      "label": "관련 대화 조회",
+      "sublabel": "출처가 있는 정보",
+      "width": 150
+    },
+    {
+      "id": "epoch",
+      "lane": "result",
+      "col": 3,
+      "type": "security",
+      "label": "최신 선택 확인",
+      "sublabel": "늦은 응답 폐기",
+      "width": 150
+    },
+    {
+      "id": "detail",
+      "lane": "result",
+      "col": 2,
+      "type": "frontend",
+      "label": "현재 상세 반영",
+      "sublabel": "선택 시점 일치",
+      "width": 150
+    },
+    {
+      "id": "history",
+      "lane": "result",
+      "col": 1,
+      "type": "frontend",
+      "label": "이전 위치로",
+      "sublabel": "초점·깊이 복원"
+    }
+  ],
+  "edges": [
+    {
+      "from": "overview",
+      "to": "pick",
+      "label": "사용자 선택",
+      "role": "main"
+    },
+    {
+      "from": "pick",
+      "to": "neighbor",
+      "label": "국소 확대",
+      "role": "main"
+    },
+    {
+      "from": "neighbor",
+      "to": "lookup",
+      "label": "선택 조회",
+      "role": "main"
+    },
+    {
+      "from": "lookup",
+      "to": "epoch",
+      "label": "비동기 응답",
+      "role": "main"
+    },
+    {
+      "from": "epoch",
+      "to": "detail",
+      "label": "같은 선택",
+      "role": "return"
+    },
+    {
+      "from": "pick",
+      "to": "history",
+      "label": "이전 버튼",
+      "role": "branch"
+    },
+    {
+      "from": "history",
+      "to": "detail",
+      "label": "상태 다시 표시",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "탐색 규칙",
+      "items": [
+        "최대 24개 항목·3단계 확장",
+        "이전 위치 기록은 최대 32단계"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "검증 범위",
+      "items": [
+        "네이티브 감사는 저장된 그래프만 읽음",
+        "검색 품질·실제 전송·음성은 별도"
+      ]
+    }
+  ]
+}

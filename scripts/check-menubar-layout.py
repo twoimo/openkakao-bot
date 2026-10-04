@@ -108,7 +108,7 @@ def uneven_gaps(rows: list[dict]) -> dict[str, list[float]]:
 
 
 def menu_panel_surface_violations(rows: list[dict]) -> dict[str, list[str]]:
-    """Require the menu extra to contain only the Jarvis core and top-right gear."""
+    """Require the menu extra to contain only the Alden core and top-right gear."""
 
     complaints: dict[str, list[str]] = {}
     for window in ("menu-panel", "menu-panel-dark"):
@@ -120,12 +120,12 @@ def menu_panel_surface_violations(rows: list[dict]) -> dict[str, list[str]]:
             and row["path"].rsplit("/", 1)[0] == window
         ]
         issues: list[str] = []
-        cores = [row for row in direct if row["kind"].endswith("JarvisCoreView")]
+        cores = [row for row in direct if row["kind"].endswith("AldenCoreView")]
         buttons = [row for row in direct if row["kind"].endswith("Button")]
         gears = [row for row in buttons if row.get("identifier") == "gear"]
 
         if len(cores) != 1:
-            issues.append(f"JarvisCoreView={len(cores)}")
+            issues.append(f"AldenCoreView={len(cores)}")
         if len(gears) != 1:
             issues.append(f"gear={len(gears)}")
         if len(buttons) != 1:
@@ -174,11 +174,11 @@ def menu_panel_source_violations() -> list[str]:
         source.index("final class CenteredLabelCell")
     ]
     core = source[
-        source.index("final class JarvisCoreView"):
+        source.index("final class AldenCoreView"):
         source.index("final class MenuPanelView")
     ]
     required = (
-        "let coreView = JarvisCoreView(frame: .zero)",
+        "let coreView = AldenCoreView(frame: .zero)",
         'NSUserInterfaceItemIdentifier("gear")',
         "static let panelWidth: CGFloat = 276",
         "static let panelBaseHeight: CGFloat = 260",
@@ -230,7 +230,7 @@ def menu_panel_source_violations() -> list[str]:
 
 
 def intentional_menu_panel_overlap(item: dict) -> bool:
-    """The top-right gear deliberately sits over the Jarvis core's square."""
+    """The top-right gear deliberately sits over the Alden core's square."""
 
     if item.get("window") not in {"menu-panel", "menu-panel-dark"}:
         return False
@@ -238,7 +238,7 @@ def intentional_menu_panel_overlap(item: dict) -> bool:
         str(item.get("a", "")).split(" ", 1)[0],
         str(item.get("b", "")).split(" ", 1)[0],
     }
-    return any(kind.endswith("JarvisCoreView") for kind in kinds) and any(
+    return any(kind.endswith("AldenCoreView") for kind in kinds) and any(
         kind.endswith("Button") for kind in kinds
     )
 
@@ -560,7 +560,7 @@ def main(argv: list[str]) -> int:
     for window, gaps in uneven_gaps(result["rows"]).items():
         problems.append(f"{window}: 형제 간격이 고르지 않습니다 {gaps}")
 
-    # menu extra는 Jarvis 코어와 우측 상단 gear 두 요소만 가진다.
+    # menu extra는 Alden 코어와 우측 상단 gear 두 요소만 가진다.
     for window, issues in menu_panel_surface_violations(result["rows"]).items():
         problems.append(f"{window}: core+gear 구성 위반 {issues}")
     for window, issues in unified_settings_identifier_violations(result["rows"]).items():

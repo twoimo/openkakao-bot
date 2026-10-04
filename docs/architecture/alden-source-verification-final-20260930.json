@@ -1,0 +1,32 @@
+{
+  "schema": "alden-source-verification-final-v1",
+  "python": "/Users/twoimo/Library/Application Support/openkakao/runtimes/voice/bin/python3.11",
+  "selectors": 60,
+  "tests": 959,
+  "unittest_seconds": 97.265,
+  "process_seconds": 97.498,
+  "status": "OK (skipped=2)",
+  "exit_code": 0,
+  "local_log": "/private/tmp/alden-focused-ci-media-prompt-final-20260930.log",
+  "scope": "Exact focused CI selector set, pinned installed CPython 3.11.9; fake DB/process/AX/model adapters and existing offline fixtures",
+  "reused_unmodified_checks": {
+    "root_rust": "1137 passed, 1 ignored; no Rust source edits after that run",
+    "desktop": "191 passed and typecheck; no renderer source edits after that run",
+    "launchd_artifact_harness": "exit 0; launchd scripts unchanged"
+  },
+  "source_sha256": {
+    "scripts/auto-reply-db-watch.py": "b3b858ce681c2b201a83c6e10dd288c3fed9bb793e57aefbe84dd8317bc6164e",
+    "scripts/auto-reply-worker.py": "c9b576a99f163866e42b9ee11494d0dbc76dd23bcc6ca3a8710b4235ff3be4ac",
+    "scripts/auto_reply_knowledge_graph.py": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+    "scripts/alden_voice.py": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+    "tests/test_auto_reply_cli_runtime.py": "f32baa7bed9260a896e41b3ed20d75656f3e10656fc97171a366fb0c045398e9",
+    "tests/test_auto_reply_worker_mlx.py": "d12fa2a45b8b0f93912451862b69e402ac114049591f3864c6120f90459f9c03",
+    ".github/workflows/ci.yml": "7ef59cc7ebda2af7f45335bed1486428d8546a212b32374b4e3cee078a688c2c"
+  },
+  "limits": [
+    "Not installed WKWebView, microphone, physical shortcut or Kakao delivery",
+    "Shared production worker not activated"
+  ],
+  "source_commit": "e03a678fb2416adbfcdbe4a2b96417c2e538a07f",
+  "independent_media_review": "Scoped Astra host turn metadata; 3 fake groups plus final 1-test prompt correction, no actual network/DB/send"
+}

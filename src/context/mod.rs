@@ -1147,7 +1147,7 @@ const INTEREST_TOPICS: &[&str] = &[
 ];
 const TOPIC_LEXICON_VERSION: &str = "2";
 
-fn classify_message_topics(message: &str) -> Vec<&'static str> {
+pub fn classify_message_topics(message: &str) -> Vec<&'static str> {
     let text = message.trim();
     if text.is_empty() {
         return Vec::new();
@@ -1919,10 +1919,7 @@ fn mark_bot_sent_features(features_json: &str, event_id: &str, offset_seconds: i
             "content_kind".to_string(),
             serde_json::json!("bot_sent_reply"),
         );
-        object.insert(
-            "bot_sent_event_id".to_string(),
-            serde_json::json!(event_id),
-        );
+        object.insert("bot_sent_event_id".to_string(), serde_json::json!(event_id));
         object.insert(
             "bot_sent_offset_seconds".to_string(),
             serde_json::json!(offset_seconds),
@@ -2696,10 +2693,7 @@ pub fn index_csv_with_queue(
     }
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM context_messages WHERE source = ?1", [&source])?;
-    tx.execute(
-        "DELETE FROM owner_style WHERE source = ?1",
-        [&source],
-    )?;
+    tx.execute("DELETE FROM owner_style WHERE source = ?1", [&source])?;
     tx.execute(
         "DELETE FROM owner_style_profile WHERE source = ?1",
         [&source],
@@ -2725,7 +2719,8 @@ pub fn index_csv_with_queue(
         // not produce a response-time sample either.
         let bot_send = if user == STYLE_USER {
             row_sent_at.and_then(|sent_at| {
-                let (matched, ambiguous) = match_confirmed_send(&confirmed_sends, &message, sent_at);
+                let (matched, ambiguous) =
+                    match_confirmed_send(&confirmed_sends, &message, sent_at);
                 matched
                     .filter(|_| !ambiguous)
                     .map(|send| (send, sent_at - send.sent_at))
@@ -2932,21 +2927,19 @@ fn response_time_distribution_second_splits(
         }
         let first_midpoint = first_start + (first_end - first_start) / 2;
         let first_split = first_candidates[first_midpoint];
-        let lower =
-            second_candidates.partition_point(|boundary| *boundary < first_split + minimum);
+        let lower = second_candidates.partition_point(|boundary| *boundary < first_split + minimum);
         let scan_start = second_start.max(lower);
         let mut best: Option<(f64, usize)> = None;
         for position in scan_start..=second_end {
             let second_split = second_candidates[position];
-            let sse =
-                response_time_segment_sse(prefix_sum, prefix_square_sum, 0, first_split)
-                    + response_time_segment_sse(
-                        prefix_sum,
-                        prefix_square_sum,
-                        first_split,
-                        second_split,
-                    )
-                    + response_time_segment_sse(prefix_sum, prefix_square_sum, second_split, total);
+            let sse = response_time_segment_sse(prefix_sum, prefix_square_sum, 0, first_split)
+                + response_time_segment_sse(
+                    prefix_sum,
+                    prefix_square_sum,
+                    first_split,
+                    second_split,
+                )
+                + response_time_segment_sse(prefix_sum, prefix_square_sum, second_split, total);
             if best.is_none_or(|(best_sse, _)| sse < best_sse) {
                 best = Some((sse, position));
             }
@@ -3674,8 +3667,14 @@ pub fn record_reply_decision(db_path: &Path, record_json: &str) -> Result<bool> 
         }
     }
     let mut evidence_map = serde_json::Map::new();
-    evidence_map.insert("evidence_ids".into(), serde_json::to_value(&input.evidence_ids)?);
-    evidence_map.insert("style_policy_version".into(), serde_json::to_value(&input.style_policy_version)?);
+    evidence_map.insert(
+        "evidence_ids".into(),
+        serde_json::to_value(&input.evidence_ids)?,
+    );
+    evidence_map.insert(
+        "style_policy_version".into(),
+        serde_json::to_value(&input.style_policy_version)?,
+    );
     if let Some(prov) = &input.provenance {
         evidence_map.insert("provenance".into(), prov.clone());
     }
@@ -4299,7 +4298,15 @@ pub fn search(
 ) -> Result<Vec<ContextResult>> {
     // 기본 경로는 결정적 로컬 해시 임베더를 주입해 리팩터링 이전과 동일한
     // 검색 결과·정렬을 그대로 유지한다.
-    search_with_embedder(db_path, chat, source, query, mode, limit, &LocalHashEmbedder)
+    search_with_embedder(
+        db_path,
+        chat,
+        source,
+        query,
+        mode,
+        limit,
+        &LocalHashEmbedder,
+    )
 }
 
 /// 착탈식 임베더를 주입받는 검색 진입점. 기본 `search`는 `LocalHashEmbedder`를
@@ -5258,8 +5265,9 @@ fn set_context_db_permissions(path: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-                .with_context(|| format!("secure context database directory {}", parent.display()))?;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).with_context(|| {
+                format!("secure context database directory {}", parent.display())
+            })?;
         }
 
         for file in [
@@ -5296,11 +5304,10 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn checkpoint_context_wal_truncate(conn: &Connection) -> Result<()> {
-    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) = conn.query_row(
-        "PRAGMA wal_checkpoint(TRUNCATE)",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
     if busy != 0 {
         anyhow::bail!(
             "context WAL truncate checkpoint remained busy ({checkpointed_frames}/{log_frames} frames checkpointed)"
@@ -6368,11 +6375,10 @@ mod tests {
 
         writer.execute_batch("BEGIN EXCLUSIVE")?;
         let reader = open_db_readonly(&db)?;
-        let messages: i64 = reader.query_row(
-            "SELECT COUNT(*) FROM context_messages",
-            [],
-            |row| row.get(0),
-        )?;
+        let messages: i64 =
+            reader.query_row("SELECT COUNT(*) FROM context_messages", [], |row| {
+                row.get(0)
+            })?;
         writer.execute_batch("ROLLBACK")?;
         assert_eq!(messages, 0);
         Ok(())
@@ -6387,7 +6393,10 @@ mod tests {
         conn.execute(
             "INSERT INTO context_messages(source, chat, date, user_name, message, vector)
              VALUES ('source', 'chat', '2026-09-24', 'user', ?1, ?2)",
-            params![retired_message, vector_to_bytes(&encode_vector(retired_message))],
+            params![
+                retired_message,
+                vector_to_bytes(&encode_vector(retired_message))
+            ],
         )?;
         checkpoint_context_wal_truncate(&conn)?;
 
@@ -6400,7 +6409,9 @@ mod tests {
         let wal = fs::read(sqlite_sidecar_path(&db, "-wal")).unwrap_or_default();
         let main_db = fs::read(&db)?;
         assert_eq!(wal.len(), 0);
-        assert!(!wal.windows(retired_message.len()).any(|w| w == retired_message.as_bytes()));
+        assert!(!wal
+            .windows(retired_message.len())
+            .any(|w| w == retired_message.as_bytes()));
         assert!(!main_db
             .windows(retired_message.len())
             .any(|w| w == retired_message.as_bytes()));
@@ -6422,15 +6433,15 @@ mod tests {
         )?;
         set_context_db_permissions(&db)?;
 
-        assert_eq!(fs::metadata(dir.path())?.permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(dir.path())?.permissions().mode() & 0o777,
+            0o700
+        );
         assert_eq!(fs::metadata(&db)?.permissions().mode() & 0o777, 0o600);
         for suffix in ["-wal", "-shm"] {
             let sidecar = sqlite_sidecar_path(&db, suffix);
             if sidecar.exists() {
-                assert_eq!(
-                    fs::metadata(sidecar)?.permissions().mode() & 0o777,
-                    0o600
-                );
+                assert_eq!(fs::metadata(sidecar)?.permissions().mode() & 0o777, 0o600);
             }
         }
         Ok(())
@@ -6472,12 +6483,8 @@ mod tests {
 
     #[test]
     fn derive_deferential_endings_are_formal_honorific() {
-        let profile = style_profile_with_stats(
-            &[("습니다", 8), ("합니다", 4), ("요", 2)],
-            0,
-            5,
-            &[],
-        );
+        let profile =
+            style_profile_with_stats(&[("습니다", 8), ("합니다", 4), ("요", 2)], 0, 5, &[]);
         let (honorific, formality) = derive_style_profile_honorific_formality(&profile);
         assert_eq!(honorific, Honorific::Honorific);
         assert_eq!(formality, Formality::Formal);
@@ -6486,12 +6493,7 @@ mod tests {
     #[test]
     fn derive_polite_with_emoji_is_informal_honorific() {
         // 해요체 위주 + 이모지/축약이 섞이면 존댓말이지만 비격식체.
-        let profile = style_profile_with_stats(
-            &[("요", 10), ("죠", 3)],
-            6,
-            2,
-            &[("ㅋㅋ", 4)],
-        );
+        let profile = style_profile_with_stats(&[("요", 10), ("죠", 3)], 6, 2, &[("ㅋㅋ", 4)]);
         let (honorific, formality) = derive_style_profile_honorific_formality(&profile);
         assert_eq!(honorific, Honorific::Honorific);
         assert_eq!(formality, Formality::Informal);
@@ -6521,12 +6523,8 @@ mod tests {
     #[test]
     fn derive_deferential_overwhelmed_by_emoji_is_informal() {
         // 합쇼체가 있어도 이모지·축약 신호가 우세하면 비격식체로 본다.
-        let profile = style_profile_with_stats(
-            &[("습니다", 2), ("요", 6)],
-            20,
-            1,
-            &[("ㅋㅋㅋ", 10)],
-        );
+        let profile =
+            style_profile_with_stats(&[("습니다", 2), ("요", 6)], 20, 1, &[("ㅋㅋㅋ", 10)]);
         let (honorific, formality) = derive_style_profile_honorific_formality(&profile);
         assert_eq!(honorific, Honorific::Honorific);
         assert_eq!(formality, Formality::Informal);
@@ -6880,9 +6878,7 @@ mod tests {
 
         let conn = open_db(&db).unwrap();
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM owner_style", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT COUNT(*) FROM owner_style", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -6971,9 +6967,7 @@ mod tests {
     /// Exhaustive reference for the shipped exact split search. Kept in the
     /// test module so every randomized case can assert the optimized path
     /// returns the identical distribution.
-    fn exhaustive_response_time_distribution(
-        delays: &[f64],
-    ) -> Option<ResponseTimeDistribution> {
+    fn exhaustive_response_time_distribution(delays: &[f64]) -> Option<ResponseTimeDistribution> {
         if delays.len() < RESPONSE_TIME_DISTRIBUTION_MIN_SAMPLES
             || delays.iter().any(|delay| {
                 !delay.is_finite() || !(0.0..=MAX_RESPONSE_DELAY_SECONDS as f64).contains(delay)
@@ -7017,8 +7011,7 @@ mod tests {
         let immediate_upper_seconds = delays[first_split - 1].min(global_upper_seconds);
         let short_lower_seconds = delays[first_split].max(MIN_SCHEDULED_RESPONSE_DELAY_SECONDS);
         let short_upper_seconds = delays[second_split - 1].min(global_upper_seconds);
-        let delayed_lower_seconds =
-            delays[second_split].max(MIN_SCHEDULED_RESPONSE_DELAY_SECONDS);
+        let delayed_lower_seconds = delays[second_split].max(MIN_SCHEDULED_RESPONSE_DELAY_SECONDS);
         if immediate_upper_seconds < MIN_SCHEDULED_RESPONSE_DELAY_SECONDS
             || short_lower_seconds > short_upper_seconds
             || delayed_lower_seconds > global_upper_seconds
@@ -7088,7 +7081,9 @@ mod tests {
     }
 
     fn deterministic_delays(seed: u64, count: usize) -> Vec<f64> {
-        let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let mut state = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let mut next = move || {
             state = state
                 .wrapping_mul(6364136223846793005)
@@ -7134,16 +7129,16 @@ mod tests {
                     "split diverged at count={count} seed={seed}"
                 );
                 assert_eq!(fast.global_upper_seconds, reference.global_upper_seconds);
-                assert_eq!(
-                    fast.tail_winsorized_count,
-                    reference.tail_winsorized_count
-                );
+                assert_eq!(fast.tail_winsorized_count, reference.tail_winsorized_count);
                 assert_eq!(fast.sample_count, reference.sample_count);
                 for (optimized, naive) in fast.components.iter().zip(reference.components.iter()) {
                     assert_eq!(optimized.name, naive.name);
                     assert_eq!(optimized.sample_count, naive.sample_count);
                     assert_eq!(optimized.weight, naive.weight);
-                    assert_eq!(optimized.normal_location_seconds, naive.normal_location_seconds);
+                    assert_eq!(
+                        optimized.normal_location_seconds,
+                        naive.normal_location_seconds
+                    );
                     assert_eq!(optimized.normal_scale_seconds, naive.normal_scale_seconds);
                     assert_eq!(optimized.lower_seconds, naive.lower_seconds);
                     assert_eq!(optimized.upper_seconds, naive.upper_seconds);
@@ -7180,7 +7175,9 @@ mod tests {
     }
 
     fn duplicate_heavy_delays(seed: u64, count: usize) -> Vec<f64> {
-        let mut state = seed.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+        let mut state = seed
+            .wrapping_mul(2862933555777941757)
+            .wrapping_add(3037000493);
         let mut next = move || {
             state = state
                 .wrapping_mul(2862933555777941757)
@@ -7246,7 +7243,9 @@ mod tests {
                     );
                     assert_eq!(fast.global_upper_seconds, reference.global_upper_seconds);
                     assert_eq!(fast.tail_winsorized_count, reference.tail_winsorized_count);
-                    for (optimized, naive) in fast.components.iter().zip(reference.components.iter()) {
+                    for (optimized, naive) in
+                        fast.components.iter().zip(reference.components.iter())
+                    {
                         assert_eq!(optimized.name, naive.name);
                         assert_eq!(optimized.sample_count, naive.sample_count);
                         assert_eq!(optimized.weight, naive.weight);
@@ -7413,10 +7412,10 @@ mod tests {
         let db = dir.path().join("relative.sqlite3");
         let path = fixture(dir.path(), "chat.csv", "hello");
         index_csv(&db, "방", &path).unwrap();
-    // Token-less queries (`!!!`) no longer fail the whole vector lookup:
-    // they return an empty hit list so style/timing bundles keep flowing.
-    let hits = search(&db, Some("방"), None, "!!!", "vector", 5).unwrap();
-    assert!(hits.is_empty());
+        // Token-less queries (`!!!`) no longer fail the whole vector lookup:
+        // they return an empty hit list so style/timing bundles keep flowing.
+        let hits = search(&db, Some("방"), None, "!!!", "vector", 5).unwrap();
+        assert!(hits.is_empty());
     }
     #[test]
     fn records_and_searches_reply_decisions() {
@@ -9388,10 +9387,11 @@ mod tests {
                 .unwrap()
                 .to_rfc3339()
         };
-        let sent_at = chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
-            .unwrap()
-            .and_utc()
-            .timestamp();
+        let sent_at =
+            chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap()
+                .and_utc()
+                .timestamp();
         record_sent_reply(
             &db,
             "bot-1",
@@ -9445,10 +9445,11 @@ mod tests {
         let db = dir.path().join("csv-queue-send.sqlite3");
         ensure_live_context_schema(&db).unwrap();
         let reply = "역시 세긴 하네요";
-        let sent_at = chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
-            .unwrap()
-            .and_utc()
-            .timestamp();
+        let sent_at =
+            chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
+                .unwrap()
+                .and_utc()
+                .timestamp();
         let queue = dir.path().join("reply-queue.sqlite3");
         {
             let conn = Connection::open(&queue).unwrap();
@@ -9503,13 +9504,11 @@ mod tests {
         let db = dir.path().join("csv-bot-pacing.sqlite3");
         ensure_live_context_schema(&db).unwrap();
         let bot_reply = "역시 세긴 하네요";
-        let bot_sent_at = chrono::NaiveDateTime::parse_from_str(
-            "2026-01-01 10:00:04",
-            "%Y-%m-%d %H:%M:%S",
-        )
-        .unwrap()
-        .and_utc()
-        .timestamp();
+        let bot_sent_at =
+            chrono::NaiveDateTime::parse_from_str("2026-01-01 10:00:04", "%Y-%m-%d %H:%M:%S")
+                .unwrap()
+                .and_utc()
+                .timestamp();
         record_sent_reply(
             &db,
             "bot-pacing",
@@ -9724,5 +9723,4 @@ mod tests {
         assert_eq!(kind, "bot_sent_reply");
         assert_eq!(eligible, 0);
     }
-
 }

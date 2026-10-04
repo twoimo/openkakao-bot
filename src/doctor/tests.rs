@@ -48,7 +48,8 @@ impl CheckProbe for FlakyProbe {
         self.attempts.set(self.attempts.get() + 1);
     }
     fn guidance(&self) -> String {
-        "여러 번 고쳐 봤지만 아직 문제가 남아 있어요. 카카오톡을 다시 켠 뒤 시도해 주세요.".to_string()
+        "여러 번 고쳐 봤지만 아직 문제가 남아 있어요. 카카오톡을 다시 켠 뒤 시도해 주세요."
+            .to_string()
     }
 }
 

@@ -1,0 +1,21 @@
+{
+  "version": "0.3.10",
+  "success": true,
+  "scope": "owned settings renderer with real persisted graph; other settings unavailable; no GraphRAG lookup/inference/production commands; no primary-process/physical-transition/tray/shortcut/voice attestation",
+  "mode": "isolated-settings-persisted-graph-read-only",
+  "result_sections": [
+    "backExpanded",
+    "backFirst",
+    "backOverview",
+    "compact",
+    "expanded",
+    "first",
+    "initial",
+    "nativeCompact",
+    "reopened",
+    "reset",
+    "scope",
+    "second",
+    "workspaceSignals"
+  ]
+}

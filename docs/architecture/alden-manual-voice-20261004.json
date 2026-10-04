@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-04",
+  "version": "0.3.16",
+  "scope": "Explicit manual microphone path; not automatic wake release or primary physical interaction attestation",
+  "parameters": {
+    "sample_rate_hz": 16000,
+    "frame_samples": 320,
+    "frame_ms": 20,
+    "preroll_frames": 10,
+    "preroll_ms": 200,
+    "end_silence_frames": 30,
+    "end_silence_ms": 600,
+    "idle_frames": 750,
+    "idle_seconds": 15,
+    "ring_seconds": 12,
+    "ring_bytes": 384000,
+    "owned_session_deadline_seconds": 300,
+    "cooperative_stop_grace_seconds": 2
+  },
+  "checks": {
+    "voice_core_total": 55,
+    "voice_core_skipped": 5,
+    "desktop_rust_passed": 98,
+    "ui_full_passed_before_final_changes": 257,
+    "ui_final_affected_passed": 98,
+    "typescript_vite": "pass",
+    "clippy": "pass"
+  },
+  "installed": {
+    "version": "0.3.16",
+    "files_sha_matched": 41,
+    "exact_file_set": true,
+    "ad_hoc_signature": "deep/strict pass",
+    "preserved_configs_and_cli": 3,
+    "preserved_model_preferences": 3,
+    "preserved_processes": 5
+  },
+  "owned_native_render": {
+    "success": true,
+    "default_pages": 7,
+    "compact_pages": 7,
+    "page_errors": 0,
+    "horizontal_overflows": 0,
+    "navigation_samples": 14,
+    "first_frame_p95_ms": 14,
+    "first_frame_max_ms": 14
+  },
+  "physical_voice": "awaiting human microphone input",
+  "primary_ui": "computer-use timeout; unverified",
+  "automatic_wake": "not released; gate unchanged",
+  "goal_status": "active"
+}

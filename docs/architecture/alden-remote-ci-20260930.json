@@ -1,0 +1,88 @@
+{
+  "schema": "alden-remote-ci-readback-v1",
+  "captured_utc": "2026-09-30T11:29:52+00:00",
+  "code_commit": "e03a678fb2416adbfcdbe4a2b96417c2e538a07f",
+  "remote_head": "b987ad151e97010411f346e2c0aec34839551eba",
+  "pr": "https://github.com/twoimo/openkakao-bot/pull/27",
+  "pr_is_draft": true,
+  "merge_state": "CLEAN",
+  "run_id": 36706854755,
+  "run_url": "https://github.com/twoimo/openkakao-bot/actions/runs/36706854755",
+  "checks": [
+    {
+      "name": "Launchd and Python harness",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T11:10:18Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36706854755/job/109859019220"
+    },
+    {
+      "name": "macOS cargo test",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T11:13:45Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36706854755/job/109859019684"
+    },
+    {
+      "name": "Tauri desktop and focused Python tests",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T11:12:19Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36706854755/job/109859019396"
+    },
+    {
+      "name": "Alden unsigned arm64 release + runtime smoke",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T11:13:40Z",
+      "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36706854755/job/109859019651"
+    },
+    {
+      "name": "GitGuardian Security Checks",
+      "conclusion": "SUCCESS",
+      "completed_at": "2026-09-30T11:10:05Z",
+      "url": "https://dashboard.gitguardian.com"
+    }
+  ],
+  "hosted_tests": {
+    "python": {
+      "run": 959,
+      "skipped": 70,
+      "failed": 0,
+      "seconds": 43.459
+    },
+    "frontend": {
+      "tests": 191,
+      "files": 15,
+      "failed": 0
+    },
+    "desktop_rust": {
+      "passed": 85,
+      "failed": 0
+    },
+    "root_rust": {
+      "passed": 1137,
+      "ignored": 1,
+      "failed": 0
+    }
+  },
+  "local_tests": {
+    "python_full_runtime": {
+      "run": 959,
+      "skipped": 2,
+      "failed": 0
+    },
+    "python_no_site_packages": {
+      "run": 959,
+      "skipped": 13,
+      "failed": 0
+    }
+  },
+  "production_source_sha256": {
+    "scripts/alden_voice.py": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+    "scripts/auto-reply-worker.py": "c9b576a99f163866e42b9ee11494d0dbc76dd23bcc6ca3a8710b4235ff3be4ac",
+    "scripts/auto-reply-db-watch.py": "b3b858ce681c2b201a83c6e10dd288c3fed9bb793e57aefbe84dd8317bc6164e",
+    "scripts/auto_reply_knowledge_graph.py": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480"
+  },
+  "limits": [
+    "Hosted log reports aggregate skips, not individual reasons; hosted and local dependency environments differ",
+    "No installed window, microphone, physical shortcut, live send or production worker activation is implied",
+    "Draft PR is not merged; public production release remains unsigned/unpublished"
+  ]
+}

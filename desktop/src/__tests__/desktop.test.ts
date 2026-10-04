@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 import { AnimationLoop, type FrameScheduler } from "../core/animation-loop";
-import { JarvisCore } from "../core/jarvis-core";
+import { AldenCore } from "../core/alden-core";
 import { RenderLifecycle } from "../core/lifecycle";
 import { parseBackground, parseJobEvent, parseOnDevice, parsePipeline, parseRuntimeSnapshot, parseRuntimeSnapshotJson, serializeJobEvent, unavailableSnapshot } from "../contracts";
 import {
@@ -11,15 +11,18 @@ import {
 } from "../knowledge/graph-model";
 import {
   cancelModelSwap,
+  normalizeLocalModelId,
   prepareSwapModel,
   runBrowserTool,
+  selectResidentModel,
   setResidentModel,
+  setSwapModel,
   swapToLargeModel,
   type SettingsInvoke,
 } from "../runtime";
 import { RuntimeSnapshotPoller } from "../runtime-poller";
-import { LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
-import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderHistory, renderRooms, settingsMarkup } from "../ui";
+import { LEGACY_RESIDENT_MODEL_ID, LAYOUT, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "../tokens";
+import { MAIN_PANEL_CONTROLS, mainPanelMarkup, renderBackground, renderRooms, settingsMarkup } from "../ui";
 
 class FakeScheduler implements FrameScheduler {
   nowMs = 0;
@@ -112,10 +115,10 @@ describe("render lifecycle", () => {
     expect(dts[2]).toBeCloseTo(0.06667, 4);
   });
 
-  it("JarvisCore reports zero renders while stopped", () => {
+  it("AldenCore reports zero renders while stopped", () => {
     const scheduler = new FakeScheduler();
     const loop = new AnimationLoop(() => undefined, scheduler);
-    const core = Object.create(JarvisCore.prototype) as JarvisCore;
+    const core = Object.create(AldenCore.prototype) as AldenCore;
     Object.defineProperty(core, "loop", { value: loop });
     core.stop();
     scheduler.step(1000);
@@ -147,7 +150,7 @@ describe("safe shared contracts", () => {
     expect(snapshot.terminal).toEqual({ sent: 3, skipped: 2, deliveryUnknown: 1, burstSuperseded: 4 });
     expect(snapshot.contextSync).toEqual({ mode: "async", waited: false });
     expect(snapshot.jobLoad).toBe(0.7);
-    expect(snapshot.voice).toEqual({ available: true, state: "speaking", rms: 0.42, errorCode: null, wakeSource: "stock", updatedAt: 10, wakePhrase: "", threshold: 0.65, customModelSelected: false });
+    expect(snapshot.voice).toEqual({ available: true, state: "speaking", rms: 0.42, outputRms: 0, errorCode: null, wakeSource: "stock", updatedAt: 10, wakePhrase: "", threshold: 0.65, customModelSelected: false, manualRunning: false });
   });
 
   it("normalizes per-source background state with bounded captions", () => {
@@ -389,79 +392,6 @@ describe("safe shared contracts", () => {
   });
 });
 
-describe("history settings card", () => {
-  it("renders present receipts without forbidden content", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({
-      available: true,
-      rooms: [],
-      jobs: [],
-      context_sync: { mode: "async", waited: false },
-      recent_receipts: [{
-        chatId: 7,
-        title: "부자멘토멘티",
-        displayTime: "09-21 16:00",
-        clock: "16:00",
-        outcome: "sent",
-        outcomeText: "전송 완료",
-        reasonCode: "direct_question about prior conversation topic",
-        reasonText: "기록된 사유",
-        retrievalState: "ok",
-        message: "SHOULD_NOT_RENDER",
-        prompt: "SECRET_PROMPT",
-        token: "SECRET_TOKEN",
-        model_attempts: [{ model: "SECRET_MODEL" }],
-      }],
-    });
-    renderHistory(snapshot);
-    expect(document.getElementById("history-summary")?.textContent).toContain("최근 1건");
-    expect(document.getElementById("history-list")?.textContent).toContain("부자멘토멘티");
-    expect(document.getElementById("history-list")?.textContent).toContain("전송 완료");
-    expect(document.getElementById("history-list")?.textContent).toContain("기록된 사유");
-    expect(document.body.textContent).not.toContain("direct_question about prior conversation topic");
-    expect(document.body.textContent).not.toContain("SHOULD_NOT_RENDER");
-    expect(document.body.textContent).not.toContain("SECRET_PROMPT");
-    expect(document.body.textContent).not.toContain("SECRET_TOKEN");
-    expect(document.body.textContent).not.toContain("SECRET_MODEL");
-  });
-
-  it("renders the empty state", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({ available: true, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } });
-    renderHistory(snapshot);
-    expect(document.getElementById("history-summary")?.textContent).toBe("최근 기록이 없습니다.");
-    expect(document.querySelectorAll("#history-list [role='listitem']")).toHaveLength(0);
-  });
-
-  it("falls back to the outcome code when outcomeText is absent", () => {
-    document.body.innerHTML = settingsMarkup();
-    const snapshot = parseRuntimeSnapshot({
-      available: true,
-      rooms: [],
-      jobs: [],
-      context_sync: { mode: "async", waited: false },
-      recent_receipts: [{
-        chatId: 9,
-        title: "방",
-        displayTime: "09-21 16:00",
-        clock: "16:00",
-        outcome: "scheduled",
-        reasonCode: "social_reply",
-        reasonText: "대화 참여",
-        retrievalState: "skipped",
-      }],
-    });
-    renderHistory(snapshot);
-    expect(document.getElementById("history-list")?.textContent).toContain("예약됨");
-  });
-
-  it("renders the unavailable state", () => {
-    document.body.innerHTML = settingsMarkup();
-    renderHistory(parseRuntimeSnapshot({ available: false, rooms: [], jobs: [], context_sync: { mode: "async", waited: false } }));
-    expect(document.getElementById("history-summary")?.textContent).toBe("최근 답변 기록을 불러오지 못했습니다.");
-  });
-});
-
 describe("background settings activity", () => {
   it("renders valid, empty, and unavailable states", () => {
     document.body.innerHTML = settingsMarkup();
@@ -547,7 +477,7 @@ describe("background signal polling", () => {
       jobs: [],
       job_load: 0.9,
       context_sync: { mode: "async", waited: false },
-      voice: { available: true, rms: 0.2 },
+      voice: { available: true, state: "user_listen", updated_at: Math.floor(Date.now() / 1000), rms: 0.2 },
       background: {
         activity: 0.8,
         replyLoad: 0.25,
@@ -622,7 +552,7 @@ describe("background signal polling", () => {
 
 describe("layout and settings contract", () => {
   it("keeps live Extra geometry", () => {
-    expect(LAYOUT).toMatchObject({ panelWidth: 276, panelHeight: 260, panelInset: 12, coreSize: 236 });
+    expect(LAYOUT).toMatchObject({ panelWidth: 560, panelHeight: 420, panelInset: 12, coreSize: 236 });
   });
 
   it("main panel has zero interactive controls", () => {
@@ -638,12 +568,19 @@ describe("layout and settings contract", () => {
       "settings-sync-card", "settings-knowledge-card",
     ]) expect(markup).toContain(`id="${id}"`);
     expect(markup).toContain('id="voice-status"');
-    expect(markup).toContain('“헤이 자비스”라고 부른 뒤 말씀해 주세요.');
+    expect(markup).toContain('마이크를 켜고 말씀하세요.');
+    expect(markup).not.toContain('호출어: 올든');
+    expect(markup).toContain('마이크가 꺼져 있습니다.');
+    expect(markup).not.toContain("긴급 중단은 ⌘⌥⇧Esc를 누르세요.");
+    expect(markup).toContain('id="settings-tab-settings"');
+    expect(markup).not.toContain('id="settings-gear"');
     expect(markup).toContain('id="voice-start"');
+    expect(markup).toContain('id="voice-start" type="button"');
+    expect(markup).not.toContain('id="voice-start" type="button" disabled');
     expect(mainPanelMarkup()).not.toContain('id="voice-start"');
     expect(markup).toContain('id="knowledge-graph-canvas"');
     expect(markup).toContain('id="knowledge-expand-hop"');
-    for (const technical of ["Qwen3", "MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "permission", "BM25", "RRF"]) {
+    for (const technical of ["MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "permission", "BM25", "RRF"]) {
       expect(markup).not.toContain(technical);
     }
   });
@@ -663,32 +600,41 @@ describe("layout and settings contract", () => {
     expect(markup).not.toContain(SWAP_MODEL_ID);
   });
 
-  it("renders enrolled rooms and populates add-room selector with un-enrolled chats", () => {
+  it("renders the current operating roster separately from automation registration", () => {
     document.body.innerHTML = settingsMarkup();
     const snapshot = unavailableSnapshot();
     snapshot.available = true;
     snapshot.rooms = [
-      { chatId: 417780809780519, title: "부자멘토멘티", live: true, autoReply: true, openJobs: 0 },
+      { chatId: 424242, title: "예시 채팅방", live: true, autoReply: true, openJobs: 0, replyReadiness: "unknown" },
     ];
     snapshot.availableChats = [
-      { chatId: 417780809780519, title: "부자멘토멘티", catalog: true, live: true },
+      { chatId: 424242, title: "예시 채팅방", catalog: true, live: true },
       { chatId: 1234567890, title: "새로운 카카오방", catalog: false, live: false },
     ];
     renderRooms(snapshot);
 
     const enrolledSelect = document.getElementById("settings-room-popup") as HTMLSelectElement;
     expect(enrolledSelect.options.length).toBe(1);
-    expect(enrolledSelect.options[0].value).toBe("417780809780519");
-    expect(enrolledSelect.options[0].textContent).toBe("부자멘토멘티");
+    expect(enrolledSelect.options[0].value).toBe("424242");
+    expect(enrolledSelect.options[0].textContent).toBe("예시 채팅방");
 
-    const addSelect = document.getElementById("settings-add-room-select") as HTMLSelectElement;
-    expect(addSelect.options.length).toBe(2);
-    expect(addSelect.options[1].value).toBe("1234567890");
-    expect(addSelect.options[1].textContent).toBe("새로운 카카오방");
+
   });
 });
 
 describe("local model settings bridge", () => {
+  it("uses the iQ resident identity and recognizes only the fixed legacy alias", () => {
+    expect(RESIDENT_MODEL_ID).toBe("ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw");
+    expect(LEGACY_RESIDENT_MODEL_ID).toBe("ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit");
+    expect(normalizeLocalModelId(RESIDENT_MODEL_ID)).toBe(RESIDENT_MODEL_ID);
+    expect(normalizeLocalModelId(`mlx/${RESIDENT_MODEL_ID}`)).toBe(RESIDENT_MODEL_ID);
+    expect(normalizeLocalModelId(LEGACY_RESIDENT_MODEL_ID)).toBe(RESIDENT_MODEL_ID);
+    expect(normalizeLocalModelId(`mlx/${LEGACY_RESIDENT_MODEL_ID}`)).toBe(RESIDENT_MODEL_ID);
+    expect(normalizeLocalModelId(SWAP_MODEL_ID)).toBe(SWAP_MODEL_ID);
+    expect(normalizeLocalModelId("remote/arbitrary")).toBeNull();
+    expect(normalizeLocalModelId(`${LEGACY_RESIDENT_MODEL_ID}/extra`)).toBeNull();
+  });
+
   it("invokes only the fixed resident save and swap prepare contracts", async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
@@ -718,6 +664,238 @@ describe("local model settings bridge", () => {
     } as T);
     expect((await setResidentModel(throwing)).ok).toBe(false);
     expect((await prepareSwapModel(mismatched)).ok).toBe(false);
+  });
+
+  it("selects an already-ready 27B only through the fixed model-set contract", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        ok: true,
+        action: "model-set",
+        model: SWAP_MODEL_ID,
+        stored: true,
+        prepared: true,
+        needs_prepare: false,
+      } as T;
+    };
+
+    expect(await setSwapModel(fakeInvoke)).toEqual({
+      ok: true,
+      action: "model-set",
+      model: SWAP_MODEL_ID,
+      stored: true,
+      prepared: true,
+      needsPrepare: false,
+    });
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-set", model: SWAP_MODEL_ID } },
+    ]);
+  });
+
+  it("preserves needs_prepare only for an exact failed 27B model-set contract", async () => {
+    const readyFallback: SettingsInvoke = async <T>() => ({
+      ok: false,
+      action: "model-set",
+      model: SWAP_MODEL_ID,
+      stored: false,
+      prepared: false,
+      needs_prepare: true,
+    } as T);
+    const arbitraryModel: SettingsInvoke = async <T>() => ({
+      ok: false,
+      action: "model-set",
+      model: "remote/arbitrary",
+      stored: false,
+      prepared: false,
+      needs_prepare: true,
+    } as T);
+    const malformed: SettingsInvoke = async <T>() => ({
+      ok: false,
+      action: "model-set",
+      model: SWAP_MODEL_ID,
+      stored: false,
+      prepared: false,
+      needs_prepare: "true",
+    } as T);
+
+    expect((await setSwapModel(readyFallback)).needsPrepare).toBe(true);
+    expect((await setSwapModel(arbitraryModel)).needsPrepare).toBe(false);
+    expect((await setSwapModel(malformed)).needsPrepare).toBe(false);
+  });
+
+  it("keeps a ready resident selection to one model-set call", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        ok: true,
+        action: "model-set",
+        model: RESIDENT_MODEL_ID,
+        stored: true,
+        prepared: true,
+        needs_prepare: false,
+      } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke)).toEqual({ ok: true, outcome: "selected" });
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-set", model: RESIDENT_MODEL_ID } },
+    ]);
+  });
+
+  it("launches the exact resident sidecar once and retries model-set after launch_ready", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const phases: string[] = [];
+    let modelSetCalls = 0;
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (args?.action === "mlx-server-launch") {
+        return {
+          ok: true,
+          action: "mlx-server-launch",
+          model: RESIDENT_MODEL_ID.split("/", 2)[1],
+          reason: "launch_ready",
+        } as T;
+      }
+      modelSetCalls += 1;
+      return modelSetCalls === 1
+        ? {
+          ok: false,
+          action: "model-set",
+          model: RESIDENT_MODEL_ID,
+          stored: false,
+          prepared: false,
+          needs_prepare: true,
+        } as T
+        : {
+          ok: true,
+          action: "model-set",
+          model: RESIDENT_MODEL_ID,
+          stored: true,
+          prepared: true,
+          needs_prepare: false,
+        } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke, (phase) => phases.push(phase))).toEqual({
+      ok: true,
+      outcome: "selected",
+    });
+    expect(phases).toEqual(["launching", "retrying"]);
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-set", model: RESIDENT_MODEL_ID } },
+      {
+        command: "fetch_settings_action",
+        args: { action: "mlx-server-launch", model: RESIDENT_MODEL_ID, explicitOptIn: true },
+      },
+      { command: "fetch_settings_action", args: { action: "model-set", model: RESIDENT_MODEL_ID } },
+    ]);
+  });
+
+  it("does not launch for a malformed failed resident model-set payload", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return {
+        ok: false,
+        action: "model-set",
+        model: RESIDENT_MODEL_ID,
+        stored: "false",
+        prepared: false,
+        needs_prepare: true,
+      } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke)).toEqual({ ok: false, outcome: "set_failed" });
+    expect(calls).toEqual([
+      { command: "fetch_settings_action", args: { action: "model-set", model: RESIDENT_MODEL_ID } },
+    ]);
+  });
+
+  it("stops after a sanitized resident launch failure", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const fakeInvoke: SettingsInvoke = async <T>(command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      if (args?.action === "mlx-server-launch") {
+        return {
+          ok: false,
+          action: "mlx-server-launch",
+          model: null,
+          reason: "launch_memory_insufficient",
+        } as T;
+      }
+      return {
+        ok: false,
+        action: "model-set",
+        model: RESIDENT_MODEL_ID,
+        stored: false,
+        prepared: false,
+        needs_prepare: true,
+      } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke)).toEqual({ ok: false, outcome: "launch_failed" });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({
+      command: "fetch_settings_action",
+      args: { action: "mlx-server-launch", model: RESIDENT_MODEL_ID, explicitOptIn: true },
+    });
+  });
+
+  it("does not launch again when the post-launch model-set still needs prepare", async () => {
+    const actions: unknown[] = [];
+    const fakeInvoke: SettingsInvoke = async <T>(_command: string, args?: Record<string, unknown>) => {
+      actions.push(args?.action);
+      if (args?.action === "mlx-server-launch") {
+        return {
+          ok: true,
+          action: "mlx-server-launch",
+          model: RESIDENT_MODEL_ID.split("/", 2)[1],
+          reason: "launch_already_running",
+        } as T;
+      }
+      return {
+        ok: false,
+        action: "model-set",
+        model: RESIDENT_MODEL_ID,
+        stored: false,
+        prepared: false,
+        needs_prepare: true,
+      } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke)).toEqual({ ok: false, outcome: "retry_failed" });
+    expect(actions).toEqual(["model-set", "mlx-server-launch", "model-set"]);
+  });
+
+  it("fails closed when the model-set retry throws after a ready launch", async () => {
+    let modelSetCalls = 0;
+    const actions: unknown[] = [];
+    const fakeInvoke: SettingsInvoke = async <T>(_command: string, args?: Record<string, unknown>) => {
+      actions.push(args?.action);
+      if (args?.action === "mlx-server-launch") {
+        return {
+          ok: true,
+          action: "mlx-server-launch",
+          model: RESIDENT_MODEL_ID.split("/", 2)[1],
+          reason: "launch_ready",
+        } as T;
+      }
+      modelSetCalls += 1;
+      if (modelSetCalls === 2) throw new Error("python_timed_out");
+      return {
+        ok: false,
+        action: "model-set",
+        model: RESIDENT_MODEL_ID,
+        stored: false,
+        prepared: false,
+        needs_prepare: true,
+      } as T;
+    };
+
+    expect(await selectResidentModel(fakeInvoke)).toEqual({ ok: false, outcome: "retry_failed" });
+    expect(actions).toEqual(["model-set", "mlx-server-launch", "model-set"]);
   });
 
   it("keeps a failed 27B readiness check prepare-only without model promotion", async () => {
@@ -987,6 +1165,42 @@ function drilldownGraph(): KnowledgeGraph {
 }
 
 describe("knowledge hologram drilldown", () => {
+  it("retains navigation through a refresh and removes retracted destinations", () => {
+    const graph = drilldownGraph(), model = new KnowledgeDrilldown(graph);
+    model.clickNode("root"); model.expandOneHop(); model.clickNode("a0");
+    model.replaceGraph(graph);
+    expect(model.current().focusId).toBe("a0");
+    expect(model.back().hops).toBe(3);
+    model.clickNode("a0");
+    model.replaceGraph({ nodes: graph.nodes.filter(node => node.id !== "a0"), edges: graph.edges.filter(edge => edge.source !== "a0" && edge.target !== "a0") });
+    expect(model.current().focusId).toBeNull();
+    while (model.canGoBack) expect(model.back().focusId).not.toBe("a0");
+  });
+  it("restores focus, hop depth and overview through bounded navigation history", () => {
+    const model = new KnowledgeDrilldown(drilldownGraph());
+    const overview = model.current();
+    const first = model.clickNode("root");
+    const expanded = model.expandOneHop();
+    model.clickNode("a0");
+    expect(model.back()).toEqual(expanded);
+    expect(model.back()).toEqual(first);
+    expect(model.back()).toEqual(overview);
+    expect(model.canGoBack).toBe(false);
+    expect(model.back()).toEqual(overview);
+  });
+
+  it("ignores invalid and unchanged navigation, and bounds history at 32 entries", () => {
+    const model = new KnowledgeDrilldown(drilldownGraph());
+    model.clickNode("missing"); model.expandOneHop(); model.reset();
+    expect(model.canGoBack).toBe(false);
+    model.clickNode("root"); model.clickNode("root");
+    expect(model.back().focusId).toBe(null);
+    for (let i=0;i<100;i++) model.clickNode(i%2===0?"root":"a0");
+    let count=0;
+    while(model.canGoBack) { model.back(); count++; }
+    expect(count).toBe(32);
+  });
+
   it("click focuses the node at exactly 2 hops; another click does not add a hop", () => {
     const drilldown = new KnowledgeDrilldown(drilldownGraph());
     const focused = drilldown.clickNode("root");

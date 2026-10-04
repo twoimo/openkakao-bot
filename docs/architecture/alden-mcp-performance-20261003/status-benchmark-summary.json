@@ -1,0 +1,158 @@
+{
+  "fresh_process": {
+    "pairs": 30,
+    "calls_per_process": 1,
+    "latency_p50_ms": {
+      "before": 57.729187499999995,
+      "after": 58.7187295,
+      "relative_improvement": -0.01714110388267646,
+      "paired_bootstrap_95ci": [
+        -0.08116630876834784,
+        0.07391172141929941
+      ],
+      "mean_paired_difference": -2.278097166666667,
+      "mean_difference_95ci": [
+        -5.6469404725,
+        0.8952868441666658
+      ]
+    },
+    "latency_p95_ms": {
+      "before": 64.04465205,
+      "after": 69.38875159999999,
+      "relative_improvement": -0.08344333802965827,
+      "paired_bootstrap_95ci": [
+        -0.12524254234419044,
+        0.004628579605384933
+      ],
+      "mean_paired_difference": -2.278097166666667,
+      "mean_difference_95ci": [
+        -5.6469404725,
+        0.8952868441666658
+      ]
+    },
+    "peak_rss_p50_bytes": {
+      "before": 30785536.0,
+      "after": 30932992.0,
+      "relative_improvement": -0.004789781798829164,
+      "paired_bootstrap_95ci": [
+        -0.007466666666666667,
+        -0.0021253985122210413
+      ],
+      "mean_paired_difference": -161109.33333333334,
+      "mean_difference_95ci": [
+        -219545.6,
+        -104857.6
+      ]
+    },
+    "cpu_dispatch_p50_ms": {
+      "before": 2.2935,
+      "after": 2.4635,
+      "relative_improvement": -0.0741225201656856,
+      "paired_bootstrap_95ci": [
+        -0.12829226847918437,
+        -0.003623960775953839
+      ],
+      "mean_paired_difference": -0.1653333333333334,
+      "mean_difference_95ci": [
+        -0.27900083333333336,
+        -0.050999166666666686
+      ]
+    },
+    "semantic_pairs_equal": 30,
+    "failures": 0,
+    "lost_responses": 0,
+    "duplicate_responses": 0
+  },
+  "warm": {
+    "pairs": 30,
+    "calls_per_process": 300,
+    "latency_p50_ms": {
+      "before": 1.36193725,
+      "after": 1.7065835,
+      "relative_improvement": -0.25305589519634625,
+      "paired_bootstrap_95ci": [
+        -0.3275254858327571,
+        -0.0813696167952545
+      ],
+      "mean_paired_difference": -0.2321402333333333,
+      "mean_difference_95ci": [
+        -0.32764310375,
+        -0.1386258104166667
+      ]
+    },
+    "latency_p95_ms": {
+      "before": 1.7918752249999996,
+      "after": 2.08412725,
+      "relative_improvement": -0.16309842388718795,
+      "paired_bootstrap_95ci": [
+        -0.2962465566665859,
+        -0.0800620933458928
+      ],
+      "mean_paired_difference": -0.2321402333333333,
+      "mean_difference_95ci": [
+        -0.32764310375,
+        -0.1386258104166667
+      ]
+    },
+    "peak_rss_p50_bytes": {
+      "before": 32645120.0,
+      "after": 32833536.0,
+      "relative_improvement": -0.005771643663739021,
+      "paired_bootstrap_95ci": [
+        -0.007031642390758413,
+        -0.0035087719298245615
+      ],
+      "mean_paired_difference": -129433.6,
+      "mean_difference_95ci": [
+        -208622.93333333332,
+        -40400.21333333354
+      ]
+    },
+    "cpu_dispatch_p50_ms": {
+      "before": 1.284,
+      "after": 1.42425,
+      "relative_improvement": -0.10922897196261681,
+      "paired_bootstrap_95ci": [
+        -0.1487862176977292,
+        0.01888647098527473
+      ],
+      "mean_paired_difference": -0.04466666666666672,
+      "mean_difference_95ci": [
+        -0.10078416666666674,
+        0.013351666666666585
+      ]
+    },
+    "semantic_pairs_equal": 30,
+    "failures": 0,
+    "lost_responses": 0,
+    "duplicate_responses": 0,
+    "invalid_request_recovery_p50_ms": 1.7430835,
+    "invalid_request_recovery_p95_ms": 3.827750149999999,
+    "raw_call_latency_p50_ms": {
+      "before": 1.4152495,
+      "after": 1.653271,
+      "relative_improvement": -0.16818341924869068,
+      "paired_cluster_bootstrap_95ci": [
+        -0.2571898139027281,
+        -0.08075759401189778
+      ],
+      "pair_count": 30,
+      "before_calls": 9000,
+      "after_calls": 9000,
+      "bootstrap_unit": "paired process blocks, preserving all within-process calls"
+    },
+    "raw_call_latency_p95_ms": {
+      "before": 2.14025,
+      "after": 2.6476017499999998,
+      "relative_improvement": -0.23705256395280913,
+      "paired_cluster_bootstrap_95ci": [
+        -0.526426057965362,
+        -0.1558433866946705
+      ],
+      "pair_count": 30,
+      "before_calls": 9000,
+      "after_calls": 9000,
+      "bootstrap_unit": "paired process blocks, preserving all within-process calls"
+    }
+  }
+}

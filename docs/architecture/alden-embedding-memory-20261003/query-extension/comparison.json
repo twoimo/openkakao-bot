@@ -1,0 +1,59 @@
+{
+  "scope": "same pinned weights and runtime; fresh sequential offline processes; synthetic text; resident services untouched",
+  "fresh_processes_per_variant": 3,
+  "requests_per_process": 44,
+  "model": "mlx-community/multilingual-e5-small-mlx@5030c7625865046d350eeea28f427d80353d0ac0",
+  "runtime": {
+    "mlx": "0.32.2",
+    "numpy": "2.5.3",
+    "tokenizers": "0.22.2"
+  },
+  "before_median_footprint_bytes": 14261962240,
+  "after_median_footprint_bytes": 1664861456,
+  "footprint_reduction_percent": 88.32656104409936,
+  "output_sha256": "23c1d587005ebc29779db89e693d68a52313d4e4387d13a15d0be0f4c240c923",
+  "output_bytes_match": true,
+  "after_max_idle_cache_bytes": 0,
+  "before_load_seconds": [
+    0.27547179185785353,
+    0.3185803338419646,
+    0.37948262481950223
+  ],
+  "after_load_seconds": [
+    0.43739033304154873,
+    0.3522577921394259,
+    0.3697387089487165
+  ],
+  "before_workload_seconds": [
+    0.5077218287624419,
+    0.5454565361142159,
+    0.5801460847724229
+  ],
+  "after_workload_seconds": [
+    0.7354358392767608,
+    0.7733040044549853,
+    0.871461333706975
+  ],
+  "limits": [
+    "RSS, kernel footprint and MLX pools overlap; never sum them",
+    "few fresh processes and shared-host/cache variability; no general latency p95 or causal speedup claim",
+    "not whole-app power, resident LLM, microphone or speaker measurements"
+  ],
+  "warm_query_samples_per_process": 20,
+  "before_warm_query_median_seconds": [
+    0.0027680834755301476,
+    0.005955020431429148,
+    0.005295624956488609
+  ],
+  "after_warm_query_median_seconds": [
+    0.0026746869552880526,
+    0.007647104095667601,
+    0.004134937538765371
+  ],
+  "baseline_ref": "63267e9fe4846afb8ceea2c605573c21b2e8614b",
+  "host": {
+    "chip": "Apple M5 Max",
+    "memory_bytes": 137438953472,
+    "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22937699)\t80%; AC attached; not charging present: true"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "artifact": {
+    "path": "alden-voice-cancellation.html",
+    "sha256": "1f366d80c9091bf1f453a66514f01d535e01c6155c90ed9b1434e4897a4b72a8",
+    "bytes": 808989
+  },
+  "deterministic": {
+    "quality": "showcase",
+    "checks": 9,
+    "errors": 0,
+    "warnings": 0
+  },
+  "browser_evidence": "pass",
+  "browser_viewports": [
+    "1440x900",
+    "1600x1000",
+    "1920x1080",
+    "2048x1320"
+  ],
+  "visual_review": "passed",
+  "manual_review": [
+    "1440x900 light",
+    "2048x1320 dark"
+  ],
+  "viewerLanguage": "English UI with Korean authored labels",
+  "limitations": "Browser and image review cover the exact diagram HTML; they do not prove installed app, microphone, or physical emergency shortcut behavior."
+}

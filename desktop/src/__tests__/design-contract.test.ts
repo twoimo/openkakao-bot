@@ -11,8 +11,9 @@ const read = (relative: string): string =>
 
 const STYLES = read("../styles.css");
 const DESIGN = read("../../DESIGN.md");
-const CORE = read("../core/jarvis-core.ts");
+const CORE = read("../core/alden-core.ts");
 const HOLOGRAM = read("../knowledge/hologram.ts");
+const COSMOS = read("../knowledge/cosmos.ts");
 const TOKENS_SOURCE = read("../tokens.ts");
 
 const hexCodes = (text: string): string[] =>
@@ -26,7 +27,7 @@ const paletteLine = (label: string): string[] => {
 
 const DESIGN_LIGHT = paletteLine("Light");
 const DESIGN_DARK = paletteLine("Dark");
-const DESIGN_PALETTE = new Set([...DESIGN_LIGHT, ...DESIGN_DARK]);
+const DESIGN_PALETTE = new Set([...DESIGN_LIGHT, ...DESIGN_DARK, ...paletteLine("Cosmos")]);
 
 const linearChannel = (value: number): number => {
   const channel = value / 255;
@@ -95,7 +96,7 @@ describe("design contract", () => {
   });
 
   it("the shell and the 3D core introduce no color outside the DESIGN.md palette", () => {
-    const offenders = [...hexCodes(CORE), ...hexCodes(HOLOGRAM)].filter(
+    const offenders = [...hexCodes(CORE), ...hexCodes(HOLOGRAM), ...hexCodes(COSMOS)].filter(
       (value) => !DESIGN_PALETTE.has(value)
     );
     expect(offenders).toEqual([]);
@@ -104,7 +105,7 @@ describe("design contract", () => {
   it("no neon, bloom, glow, or cyberpunk treatment is applied", () => {
     const surfaces: Array<[string, string]> = [
       ["styles.css", STYLES],
-      ["core/jarvis-core.ts", CORE],
+      ["core/alden-core.ts", CORE],
     ];
     for (const [name, source] of surfaces) {
       const match = source.match(/neon|bloom|glow|cyberpunk|drop-shadow/i);
@@ -127,6 +128,8 @@ describe("design contract", () => {
     expect(STYLES).toMatch(/@media \(max-width: 799px\)[\s\S]*\.settings-shell \{ width: calc\(100% - 32px\)/);
     expect(STYLES).toContain("font-size: 16px; line-height: 1.3");
     expect(STYLES).toContain("font-size: 14px; line-height: 1.5");
-    expect(STYLES).toContain("#knowledge-graph-canvas { height: 230px; }");
+    expect(STYLES).toContain('section[aria-labelledby="history-title"] { grid-column: 1 / -1; }');
+    expect(STYLES).toContain("#knowledge-graph-canvas { height: 320px; }");
+    expect(STYLES).toContain("#history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }");
   });
 });

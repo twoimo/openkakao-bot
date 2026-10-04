@@ -1,0 +1,16 @@
+{
+  "captured_at_utc": "2026-09-27T14:30:27.257806+00:00",
+  "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "endpoint": "http://127.0.0.1:11234/v1",
+  "elapsed_seconds": 0.9315841670613736,
+  "scoring_probe": {
+    "mode": "completions_echo",
+    "string_similarity_used": false,
+    "probe_executed": true,
+    "status": "ok",
+    "reason": "echo_unsupported",
+    "supports_response_scoring": false,
+    "echo_preview": " epsilon"
+  },
+  "standard_dpo_completed": false
+}

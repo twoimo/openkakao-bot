@@ -23,9 +23,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use openkakao_cli::room_catalog::{
-    InMemoryRoomCatalog, MapRoomDirectory, RoomCatalog, Toggle,
-};
+use openkakao_cli::room_catalog::{InMemoryRoomCatalog, MapRoomDirectory, RoomCatalog, Toggle};
 use proptest::prelude::*;
 
 const CHAT_ID: i64 = 42;
@@ -34,7 +32,10 @@ const CHAT_ID: i64 = 42;
 /// toggle starting off. The room is added through the public API, so the fake
 /// directory is the only source of truth for accessibility.
 fn catalog() -> InMemoryRoomCatalog {
-    let directory = Arc::new(MapRoomDirectory::new([(CHAT_ID, "부자멘토멘티".to_string())]));
+    let directory = Arc::new(MapRoomDirectory::new([(
+        CHAT_ID,
+        "부자멘토멘티".to_string(),
+    )]));
     let catalog = InMemoryRoomCatalog::new(directory);
     catalog.add(CHAT_ID).expect("accessible room adds");
     catalog

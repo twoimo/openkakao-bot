@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "result": {
+    "phase": "evaluated",
+    "scope": "greedy_synthetic_validation_generation_no_promotion",
+    "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+    "source_sha256": "060c3018c6deea64075a6bcd83a746172655e6ccf1990f3d2a6aa119747fb948",
+    "base_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+    "max_tokens": 64,
+    "temperature": 0,
+    "validation_pairs": 3,
+    "final_test_evaluated": false,
+    "model_promoted": false,
+    "quality_improvement_claimed": false,
+    "runs": [
+      {
+        "phase": "base",
+        "pair_id": "validation-meeting",
+        "answer": "오전 10시",
+        "first_text_seconds": 0.69285195809789,
+        "full_seconds": 0.9108332910109311,
+        "peak_bytes": 17304388840,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 43,
+        "generation_tokens": 7,
+        "prompt_tps": 144.9677846789646,
+        "generation_tps": 34.48267371060439,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "base",
+        "pair_id": "validation-latest",
+        "answer": "두 권",
+        "first_text_seconds": 0.45353766600601375,
+        "full_seconds": 0.5341688750777394,
+        "peak_bytes": 17314574254,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 46,
+        "generation_tokens": 3,
+        "prompt_tps": 242.70297288701536,
+        "generation_tps": 45.48627706168147,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "base",
+        "pair_id": "validation-no-pixels",
+        "answer": "이미지 바이트를 읽지 못했으므로, 사진의 색감을 확인할 수 없습니다.",
+        "first_text_seconds": 0.43313504103571177,
+        "full_seconds": 1.0743373329751194,
+        "peak_bytes": 17262703760,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 50,
+        "generation_tokens": 20,
+        "prompt_tps": 235.47072068426965,
+        "generation_tps": 32.283142528611464,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "validation-meeting",
+        "answer": "오전 10시",
+        "first_text_seconds": 0.8312740828841925,
+        "full_seconds": 1.062442832859233,
+        "peak_bytes": 17305416228,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 43,
+        "generation_tokens": 7,
+        "prompt_tps": 133.83891242378206,
+        "generation_tps": 32.6362260582014,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "validation-latest",
+        "answer": "두 권",
+        "first_text_seconds": 0.4143843750935048,
+        "full_seconds": 0.4963655830360949,
+        "peak_bytes": 17315073970,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 46,
+        "generation_tokens": 3,
+        "prompt_tps": 256.4658910969332,
+        "generation_tps": 45.05375463664272,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "validation-no-pixels",
+        "answer": "이미지 바이트를 읽지 못했으므로, 사진의 색감을 확인할 수 없습니다.",
+        "first_text_seconds": 0.3993718340061605,
+        "full_seconds": 1.1285440418869257,
+        "peak_bytes": 17328280049,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 50,
+        "generation_tokens": 20,
+        "prompt_tps": 273.8238748187519,
+        "generation_tps": 28.220707343485923,
+        "finish_reason": "stop"
+      }
+    ],
+    "base_adapter_source_unchanged": true
+  },
+  "process": {
+    "wall_seconds": 28.26255,
+    "guard_reasons": [],
+    "instrumentation": {
+      "model_load_calls": [
+        {
+          "requested_format": "mlx-serve-qwen3_5-converted",
+          "phase": "base"
+        },
+        {
+          "requested_format": "mlx-serve-qwen3_5-converted",
+          "phase": "adapter"
+        }
+      ],
+      "runtime_network_attempts": [],
+      "negative_probe_denied": true,
+      "wall_seconds": 28.068798707798123,
+      "process_peak_rss_bytes": 17451548672,
+      "exit_code": 0
+    }
+  },
+  "memory_before": {
+    "available_bytes": 52199358464,
+    "swap_used_bytes": 25389107773
+  },
+  "memory_after": {
+    "available_bytes": 46354694144,
+    "swap_used_bytes": 25389107773
+  },
+  "shared_command_preserved": true,
+  "shared_success_counters": [
+    124,
+    124
+  ],
+  "parent_fact_review": {
+    "method": "preexisting explicit fixture facts and direct reading of all generated answers",
+    "base_correct": 3,
+    "adapter_correct": 3,
+    "same_answers": 3,
+    "total_each": 3,
+    "product_quality_acceptance": false,
+    "quality_improvement_claimed": false
+  },
+  "raw_private_report_sha256": "5ec0c6fb32417b189daeee3df59e156f8127566d78f7cf40054bc53bbd6b23c8",
+  "owned_child_sha256": "92070aa0f341021324d11ed4e31b5d99fe90d6ce48c40ec877c7cd6fd9555132"
+}

@@ -1,0 +1,129 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Alden 네이티브 화면 검증",
+    "quality_profile": "showcase",
+    "animation": "none"
+  },
+  "lanes": [
+    {
+      "id": "native",
+      "label": "별도 네이티브 인스턴스"
+    },
+    {
+      "id": "evidence",
+      "label": "화면과 측정 근거"
+    }
+  ],
+  "mainPath": [
+    "entry",
+    "window",
+    "pause",
+    "restore",
+    "snapshot",
+    "receipt"
+  ],
+  "nodes": [
+    {
+      "id": "entry",
+      "lane": "native",
+      "col": 0,
+      "type": "security",
+      "label": "명시적 검증 시작",
+      "sublabel": "전용 CLI 인자",
+      "width": 172
+    },
+    {
+      "id": "window",
+      "lane": "native",
+      "col": 1,
+      "type": "frontend",
+      "label": "실제 WKWebView",
+      "sublabel": "같은 Three 렌더러"
+    },
+    {
+      "id": "pause",
+      "lane": "native",
+      "col": 2,
+      "type": "backend",
+      "label": "네이티브 숨김",
+      "sublabel": "현재 pause 확인"
+    },
+    {
+      "id": "restore",
+      "lane": "native",
+      "col": 3,
+      "type": "frontend",
+      "label": "10회 숨김·복원",
+      "sublabel": "추가 프레임과 재개"
+    },
+    {
+      "id": "snapshot",
+      "lane": "evidence",
+      "col": 3,
+      "type": "backend",
+      "label": "자체 화면 캡처",
+      "sublabel": "WebKit 비동기 PNG"
+    },
+    {
+      "id": "receipt",
+      "lane": "evidence",
+      "col": 4,
+      "type": "database",
+      "label": "비공개 검증 파일",
+      "sublabel": "배율·레이아웃·수치",
+      "width": 172
+    }
+  ],
+  "edges": [
+    {
+      "from": "entry",
+      "to": "window",
+      "label": "작업 연결 제외",
+      "role": "main"
+    },
+    {
+      "from": "window",
+      "to": "pause",
+      "label": "OS hide 호출",
+      "role": "main"
+    },
+    {
+      "from": "pause",
+      "to": "restore",
+      "label": "중단 관측",
+      "role": "main"
+    },
+    {
+      "from": "restore",
+      "to": "snapshot",
+      "label": "복원 뒤 캡처",
+      "role": "main"
+    },
+    {
+      "from": "snapshot",
+      "to": "receipt",
+      "label": "배타적 기록",
+      "role": "main"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "검증 대상",
+      "items": [
+        "실제 창·Three 코어·숨김·복원",
+        "지원 화면의 실제 배율 확인"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "증거 범위",
+      "items": [
+        "생산 작업·전역 단축키 연결 없음",
+        "기존 프로세스·음성·잠금은 별도"
+      ]
+    }
+  ]
+}

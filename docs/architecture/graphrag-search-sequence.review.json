@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "7b6cc961e19998c377aa3f2d90e3d255a9cf77f155899aad7691736ee7f63b88",
+  "reviewer": "parent image review",
+  "captures": [
+    "graphrag-search-sequence.visual-check.1440x900.light.png",
+    "graphrag-search-sequence.visual-check.2048x1320.dark.png"
+  ],
+  "result": "두 캡처에서 8개 책임 영역과 전체 질문·방·인물·기간, 정규화·검색·출처·융합·원문 복원 흐름을 확인했다. 화살표와 라벨의 겹침이나 잘림은 보이지 않는다. 고정 뷰어 UI는 영어, 작성된 설명은 한국어다.",
+  "browser_containment": "1440x900,1600x1000,1920x1080,2048x1320 passed",
+  "deterministic_checks": 9
+}

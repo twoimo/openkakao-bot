@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "올든 음성 턴과 취소",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1360,
+      660
+    ]
+  },
+  "participants": [
+    {
+      "id": "input",
+      "type": "external",
+      "label": "사용자 입력"
+    },
+    {
+      "id": "turn",
+      "type": "backend",
+      "label": "대화 상태"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "음성·로컬 검색"
+    },
+    {
+      "id": "mlx",
+      "type": "backend",
+      "label": "로컬 모델"
+    },
+    {
+      "id": "tts",
+      "type": "backend",
+      "label": "오디오 엔진"
+    },
+    {
+      "id": "abort",
+      "type": "security",
+      "label": "비상 중단"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 300,
+      "label": "확정 맥락·인용 자료"
+    },
+    {
+      "from": 310,
+      "to": 455,
+      "label": "새 입력은 이전 턴 취소"
+    },
+    {
+      "from": 455,
+      "to": 575,
+      "label": "재생과 비상 중단"
+    }
+  ],
+  "messages": [
+    {
+      "from": "input",
+      "to": "turn",
+      "y": 170,
+      "label": "새 사용자 입력",
+      "variant": "emphasis"
+    },
+    {
+      "from": "turn",
+      "to": "worker",
+      "y": 200,
+      "label": "턴 토큰",
+      "variant": "emphasis"
+    },
+    {
+      "from": "worker",
+      "to": "turn",
+      "y": 230,
+      "label": "확정 발화",
+      "variant": "return"
+    },
+    {
+      "from": "worker",
+      "to": "mlx",
+      "y": 260,
+      "label": "조회 자료·최신 발화",
+      "variant": "emphasis"
+    },
+    {
+      "from": "mlx",
+      "to": "worker",
+      "y": 290,
+      "label": "응답 스트림",
+      "variant": "return"
+    },
+    {
+      "from": "input",
+      "to": "turn",
+      "y": 320,
+      "label": "새 발화 / 텍스트",
+      "variant": "emphasis"
+    },
+    {
+      "from": "turn",
+      "to": "worker",
+      "y": 350,
+      "label": "이전 턴 취소",
+      "variant": "security"
+    },
+    {
+      "from": "worker",
+      "to": "mlx",
+      "y": 380,
+      "label": "모델 소켓 취소",
+      "variant": "security"
+    },
+    {
+      "from": "mlx",
+      "to": "worker",
+      "y": 410,
+      "label": "늦은 결과 폐기",
+      "variant": "dashed"
+    },
+    {
+      "from": "turn",
+      "to": "worker",
+      "y": 440,
+      "label": "최신 턴만 실행",
+      "variant": "emphasis"
+    },
+    {
+      "from": "worker",
+      "to": "tts",
+      "y": 470,
+      "label": "확정 응답·재생 티켓",
+      "variant": "emphasis"
+    },
+    {
+      "from": "input",
+      "to": "turn",
+      "y": 500,
+      "label": "에코 처리 후 연속 발화",
+      "variant": "emphasis"
+    },
+    {
+      "from": "turn",
+      "to": "tts",
+      "y": 530,
+      "label": "합성·재생 중단·새 발화 보존",
+      "variant": "security"
+    },
+    {
+      "from": "abort",
+      "to": "worker",
+      "y": 560,
+      "label": "중단 epoch·재개 전 실행 금지",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "현재 구현",
+      "items": [
+        "취소된 STT·LLM 결과는 최신 상태를 바꾸지 않는다.",
+        "에코 처리 입력의 연속 3프레임으로 이전 재생을 중단한다.",
+        "출력 PCM은 실제 재생 커서의 완료 구간만 표시하며 취소 시 0으로 처리한다."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "검증이 남은 경계",
+      "items": [
+        "실제 입출력과 녹음된 기준음 재생은 확인했다. 사람의 발화·에코 품질은 미검증이다.",
+        "wake·STT·LLM·TTS 전체 턴과 물리 단축키는 별도로 확인한다."
+      ]
+    }
+  ]
+}

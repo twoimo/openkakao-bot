@@ -39,6 +39,7 @@ from local_mlx_gateway import (
 
 MLX_GATEWAY_CANDIDATES = (MLX_GATEWAY_BASE_URL,)
 FLASH_NEXT_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+FLASH_NEXT_IQ_MODEL_ID = "mlx/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw"
 QWEN38_27B_MODEL_ID = "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
 QWEN38_27B_MIN_MEMORY_GB = 32.0
 QWEN38_27B_DEFAULT_LOADED = False
@@ -54,6 +55,12 @@ MODEL_RESIDENCY_STATE_MAX_AGE_SECONDS = 30.0
 QWEN38_27B_REQUIRED_BYTES = 40 * 1024**3
 # Admission includes runtime/KV headroom, not just weight bytes on disk.
 FLASH_NEXT_REQUIRED_BYTES = 88 * 1024**3
+# Local iQ preflight at 8,192 context estimated 50.60 GB of weights with
+# 66.77 GB available and completed an exact HTTP 200 probe. 60 GiB keeps
+# substantial runtime headroom over the estimate while staying inside that
+# verified admission envelope. The mixed4/8 threshold remains unchanged.
+FLASH_NEXT_IQ_REQUIRED_BYTES = 60 * 1024**3
+FLASH_NEXT_IQ_CONTEXT_SIZE = 8192
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -273,7 +280,9 @@ class ModelResidencyManager:
     opt in; constructing this manager or reading status can never load it.
     """
 
-    _ALLOWED_TEXT_MODELS = frozenset({FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID})
+    _ALLOWED_TEXT_MODELS = frozenset(
+        {FLASH_NEXT_MODEL_ID, FLASH_NEXT_IQ_MODEL_ID, QWEN38_27B_MODEL_ID}
+    )
 
     def __init__(
         self,
@@ -291,6 +300,7 @@ class ModelResidencyManager:
         self.memory_budget = memory_budget or (lambda: MemoryBudget(0))
         self.required_bytes = {
             FLASH_NEXT_MODEL_ID: FLASH_NEXT_REQUIRED_BYTES,
+            FLASH_NEXT_IQ_MODEL_ID: FLASH_NEXT_IQ_REQUIRED_BYTES,
             QWEN38_27B_MODEL_ID: QWEN38_27B_REQUIRED_BYTES,
         }
         for model, amount in (required_bytes or {}).items():
@@ -579,7 +589,11 @@ def _canonical_managed_model_id(value: Any) -> str:
     candidate = str(value or "").strip()
     if candidate and not candidate.startswith("mlx/"):
         candidate = f"mlx/{candidate}"
-    if candidate in {FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID}:
+    if candidate in {
+        FLASH_NEXT_MODEL_ID,
+        FLASH_NEXT_IQ_MODEL_ID,
+        QWEN38_27B_MODEL_ID,
+    }:
         return candidate
     return ""
 
@@ -1012,6 +1026,13 @@ def _read_mlx_gateway_models(
                 model["state"] = str(item.get("state") or "")
             if "bytes_resident" in item:
                 model["bytes_resident"] = item["bytes_resident"]
+            capabilities = item.get("capabilities")
+            if isinstance(capabilities, list):
+                model["capabilities"] = [
+                    value.strip()
+                    for value in capabilities[:32]
+                    if isinstance(value, str) and value.strip()
+                ]
             models.append(model)
     return True, models
 

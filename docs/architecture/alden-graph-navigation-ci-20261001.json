@@ -1,0 +1,33 @@
+{
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "evidenceCommit": "5cfea2b9a48093671b3a06e478b459a091e2870a",
+  "run": 36799335869,
+  "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36799335869",
+  "conclusion": "success",
+  "successfulJobs": 4,
+  "jobs": [
+    {
+      "name": "Launchd and Python harness",
+      "conclusion": "success"
+    },
+    {
+      "name": "Tauri desktop and focused Python tests",
+      "conclusion": "success"
+    },
+    {
+      "name": "Alden unsigned arm64 release + runtime smoke",
+      "conclusion": "success"
+    },
+    {
+      "name": "macOS cargo test",
+      "conclusion": "success"
+    }
+  ],
+  "hostedPython": {
+    "tests": 1056,
+    "skipped": 83,
+    "failed": 0,
+    "seconds": 45.479
+  },
+  "localScope": "UI199/Rust90/local pinned Python1056/26skip; actual native runs separate; hosted skip/runtime differ"
+}

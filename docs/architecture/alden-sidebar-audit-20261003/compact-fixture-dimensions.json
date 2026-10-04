@@ -1,0 +1,37 @@
+[
+  {
+    "height": 680,
+    "page": "memory",
+    "scrollWidth": 640,
+    "visiblePanels": 1,
+    "width": 640
+  },
+  {
+    "height": 680,
+    "page": "conversation",
+    "scrollWidth": 640,
+    "visiblePanels": 1,
+    "width": 640
+  },
+  {
+    "height": 680,
+    "page": "voice",
+    "scrollWidth": 640,
+    "visiblePanels": 1,
+    "width": 640
+  },
+  {
+    "height": 680,
+    "page": "history",
+    "scrollWidth": 640,
+    "visiblePanels": 1,
+    "width": 640
+  },
+  {
+    "height": 680,
+    "page": "settings",
+    "scrollWidth": 640,
+    "visiblePanels": 1,
+    "width": 640
+  }
+]

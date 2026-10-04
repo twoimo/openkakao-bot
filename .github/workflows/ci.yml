@@ -88,12 +88,9 @@ jobs:
           OPENKAKAO_MENUBAR_BACKEND: swift
         run: sh scripts/build-auto-reply-menubar.sh
 
-      # tests.test_auto_reply_menubar cannot run here: the menu extra's Python
-      # implementation ships as a frozen .pyc that is not in the repository, so
-      # the module raises frozen_menubar_missing on a fresh checkout. Run those
-      # tests on a machine that has the baked runtime instead:
-      #   python3 -m unittest tests.test_auto_reply_menubar
-      # (2026-09-16)
+      # The pinned CPython 3.11 menu bytecode is now tracked. The legacy Swift
+      # audit below still uses the runner's Python; the separate desktop job
+      # sets up Python 3.11 for the Alden runtime checks.
       # The windows cannot be seen from CI, so the app dumps every view frame
       # and a PNG of each window off-screen, and the audit reads them back.
       - name: Audit menu layout
@@ -122,12 +119,13 @@ jobs:
 
       - name: Validate Tauri launcher contracts
         run: |
-          sh -n scripts/build-jarvis-desktop.sh
-          sh -n scripts/install-jarvis-desktop.sh
+          sh -n scripts/build-alden-desktop.sh
+          sh -n scripts/build-alden-voice-audio.sh
+          sh -n scripts/install-alden-desktop.sh
           sh -n scripts/build-auto-reply-menubar.sh
           sh -n scripts/install-auto-reply-menubar.sh
           sh -n scripts/start-auto-reply-menubar.command
-          /usr/bin/plutil -lint desktop/launchd/com.openkakao.jarvis.desktop.plist.example
+          /usr/bin/plutil -lint desktop/launchd/com.openkakao.alden.desktop.plist.example
 
   desktop:
     name: Tauri desktop and focused Python tests
@@ -155,9 +153,30 @@ jobs:
           tests.test_auto_reply_ondevice
           tests.test_auto_reply_reference_search
           tests.test_auto_reply_knowledge_graph
+          tests.test_alden_local_embedding_server
+          tests.test_alden_local_embedding_launchd
+          tests.test_alden_embedding_memory_measurement
+          tests.test_alden_voice_llm_measurement
+          tests.test_alden_graph_snapshot_cycle
+          tests.test_alden_file_content
+          tests.test_alden_retrieval_eval
           tests.test_auto_reply_finetune
-          tests.test_jarvis_unit4
-          tests.test_jarvis_desktop_launchers
+          tests.test_alden_dpo_scorer
+          tests.test_alden_model_evaluation
+          tests.test_alden_dpo_training
+          tests.test_alden_worker_abort
+          tests.test_alden_unit3
+          tests.test_alden_unit4
+          tests.test_alden_osk
+          tests.test_alden_status_mcp
+          tests.test_alden_history
+          tests.test_alden_automation_history
+          tests.test_alden_osk_sources
+          tests.test_alden_osk_delta
+          tests.test_alden_corpus_topics
+          tests.test_alden_corpus
+          tests.test_alden_desktop_launchers
+          tests.test_alden_menubar_runtime_payload
           tests.test_local_mlx_model_readiness
           tests.test_verify_local_models
           tests.test_mlx_serve_lifecycle
@@ -166,10 +185,31 @@ jobs:
           tests.test_menubar_layout_check
           tests.test_auto_reply_turn_holds
           tests.test_auto_reply_worker_mlx
+          tests.test_auto_reply_photo_context
           tests.test_auto_reply_retry_policy
           tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_send_uses_bounded_exact_room_readback
           tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_does_not_confirm_an_old_matching_message_in_same_second
           tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_geeknews_operator_does_not_send_without_a_room_baseline
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_photo_fallback_states_missing_pixels_without_visual_judgment
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_image_rank_fallback_does_not_invent_pixel_observations
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_photo_fallback_uses_current_recipient_and_explicit_register
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_unreadable_image_is_named_and_never_answered_blind
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_readable_image_is_still_attached_as_a_data_url
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_empty_image_list_leaves_the_text_message_alone
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_missing_image_input_does_not_fallback_or_open_model_cooldown
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_cooldown_fallback_image_error_is_terminal_without_provider_failure
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_fresh_media_unavailable_clarification_uses_standard_scheduler
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_stale_media_unavailable_replay_is_terminal_skip
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_media_unavailable_clarification_requires_exact_singleton_shape
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_sharp_search_card_enriches_summary_without_raw_blob
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_recent_tail_urls_are_bounded_canonical_and_ordered
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_recent_tail_persists_across_polls_in_log_order
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_db_watch_off_tail_quote_requires_exact_authoritative_poll_row
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_db_watch_file_provenance_distinguishes_type26_quote_and_alias_conflicts
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_local_context_refresh_restores_authoritative_attachment_urls
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_metadata_only_file_uses_one_fixed_clarification_without_model
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_file_provenance_survives_refresh_and_guards_grounded_followup
+          tests.test_auto_reply_cli_runtime.AutoReplyCliRuntimeTests.test_recent_file_metadata_does_not_break_normal_question_prompt
           tests.test_auto_reply_fallback_lease
           tests.test_auto_reply_reference_store
           tests.test_auto_reply_session_monitor
@@ -178,11 +218,20 @@ jobs:
           tests.test_auto_reply_service_entry
           tests.test_auto_reply_dw_starting_takeover
           tests.test_auto_reply_db_watch_retry
-          tests.test_jarvis_browser_use
-          tests.test_jarvis_wake_eval
-          tests.test_jarvis_wake_evidence
-          tests.test_jarvis_browser_runtime
-          tests.test_jarvis_desktop_render_check
+          tests.test_alden_browser_use
+          tests.test_alden_tool_runtime
+          tests.test_alden_voice_runtime
+          tests.test_alden_manual_voice
+          tests.test_alden_voice_turns
+          tests.test_alden_voice_retrieval
+          tests.test_alden_voice_bargein
+          tests.test_alden_playback_envelope
+          tests.test_alden_voice_amplitude
+          tests.test_alden_wake_eval
+          tests.test_alden_wake_evidence
+          tests.test_alden_wake_disjoint
+          tests.test_alden_browser_runtime
+          tests.test_alden_desktop_render_check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -242,3 +291,150 @@ jobs:
       # These Rust steps are source-level Tauri checks, not packaged app proof.
       # A packaged build still requires the fail-closed frozen CPython and CLI
       # resources and is validated separately after trusted provisioning.
+
+  alden-pr-release-smoke:
+    name: Alden unsigned arm64 release + runtime smoke
+    if: github.event_name == 'pull_request'
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Bind checkout and require Apple Silicon runner
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(/usr/bin/uname -s)" = "Darwin"
+          test "$(/usr/bin/uname -m)" = "arm64"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Cache release build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            desktop/src-tauri/target
+          key: alden-pr-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'desktop/src-tauri/Cargo.lock') }}
+          restore-keys: alden-pr-release-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build unsigned Alden release bundle
+        run: |
+          set -euo pipefail
+          unset OPENKAKAO_SIGN_IDENTITY APPLE_SIGNING_IDENTITY
+          /bin/sh scripts/build-alden-desktop.sh
+
+      - name: Verify arm64 bundle identity and exact resource allowlist
+        run: |
+          set -euo pipefail
+          app="desktop/src-tauri/target/release/bundle/macos/Alden.app"
+          main="$app/Contents/MacOS/openkakao-alden-desktop"
+          embedded_cli="$app/Contents/Resources/bin/openkakao-cli"
+          embedded_audio="$app/Contents/Resources/scripts/libalden_audio.dylib"
+          release_cli="target/release/openkakao-cli"
+
+          test -x "$main"
+          test -x "$embedded_cli"
+          test -x "$release_cli"
+          test ! -e "$app/Contents/_CodeSignature"
+          test "$(/usr/bin/lipo -archs "$main")" = "arm64"
+          test "$(/usr/bin/lipo -archs "$embedded_cli")" = "arm64"
+          test "$(/usr/bin/lipo -archs "$embedded_audio")" = "arm64"
+          /usr/bin/codesign --verify --strict "$embedded_audio"
+          test "$(/usr/bin/lipo -archs "$release_cli")" = "arm64"
+          /usr/bin/cmp -s "$embedded_cli" "$release_cli"
+
+          APP_PATH="$app" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import plistlib
+
+          app = pathlib.Path(os.environ["APP_PATH"])
+          config = json.loads(pathlib.Path("desktop/src-tauri/tauri.conf.json").read_text())
+          info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+          if info.get("CFBundleIdentifier") != config["identifier"]:
+              raise SystemExit("Alden bundle identifier does not match tauri.conf.json")
+          if info.get("CFBundleShortVersionString") != config["version"]:
+              raise SystemExit("Alden bundle version does not match tauri.conf.json")
+          if info.get("CFBundleExecutable") != "openkakao-alden-desktop":
+              raise SystemExit("unexpected Alden bundle executable")
+
+          resources = config["bundle"]["resources"]
+          if not resources:
+              raise SystemExit("Tauri bundle resource allowlist is empty")
+          root = app / "Contents/Resources"
+          for source, destination in sorted(resources.items()):
+              path = root / destination
+              if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+                  raise SystemExit(f"missing/empty bundled resource {destination} from {source}")
+          PY
+
+      - name: Package and offline-install pinned menubar CPython sidecar
+        env:
+          EXPECTED_RUNTIME_SHA256: e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547
+        run: |
+          set -euo pipefail
+          source_url="$(/bin/sh scripts/alden-menubar-runtime.sh source-url)"
+          source_archive="$RUNNER_TEMP/alden-menubar-cpython-source.tar.gz"
+          sidecar_dir="$RUNNER_TEMP/alden-menubar-sidecar"
+          runtime_home="$RUNNER_TEMP/alden-menubar-home"
+          expected_manifest="$RUNNER_TEMP/alden-menubar-runtime-expected.json"
+          packaged_archive="$sidecar_dir/Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz"
+          packaged_manifest="$sidecar_dir/alden-menubar-runtime-v1.json"
+          packaged_installer="$sidecar_dir/install-alden-menubar-runtime.sh"
+
+          /bin/mkdir -p "$sidecar_dir" "$runtime_home"
+          /usr/bin/curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 20 \
+            --max-time 180 \
+            --max-filesize 30000000 \
+            --output "$source_archive" \
+            "$source_url"
+
+          actual_sha256="$(/usr/bin/shasum -a 256 "$source_archive" | /usr/bin/awk '{print $1}')"
+          test "$actual_sha256" = "$EXPECTED_RUNTIME_SHA256"
+          /bin/sh scripts/alden-menubar-runtime.sh package "$source_archive" "$sidecar_dir"
+          /bin/sh scripts/alden-menubar-runtime.sh manifest > "$expected_manifest"
+          /usr/bin/cmp -s "$source_archive" "$packaged_archive"
+          /usr/bin/cmp -s "$expected_manifest" "$packaged_manifest"
+
+          HOME="$runtime_home" TMPDIR="$RUNNER_TEMP" \
+            /bin/sh "$packaged_installer" install "$packaged_archive" "$packaged_manifest"
+
+          python_bin="$runtime_home/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11"
+          test -x "$python_bin"
+          test "$(/usr/bin/lipo -archs "$python_bin")" = "arm64"
+          probe_output=$(
+            /usr/bin/env -i HOME="$runtime_home" PATH='/usr/bin:/bin' \
+              "$python_bin" -I -S -c \
+              'import platform,sys; ok=sys.implementation.name=="cpython" and sys.version_info[:3]==(3,11,16) and platform.machine()=="arm64"; print("ALDEN_CI_CPYTHON_3_11_16_ARM64_OK") if ok else None; raise SystemExit(0 if ok else 3)'
+          )
+          test "$probe_output" = "ALDEN_CI_CPYTHON_3_11_16_ARM64_OK"

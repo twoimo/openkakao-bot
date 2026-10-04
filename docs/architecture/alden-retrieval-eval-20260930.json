@@ -1,0 +1,5448 @@
+{
+  "schema_version": 1,
+  "evaluated_at_utc": "2026-09-30T08:06:39.937685+00:00",
+  "scope": {
+    "dataset": "bounded synthetic Korean GraphRAG retrieval",
+    "fixture_entities": 20,
+    "fixture_relations": 3,
+    "queries": 13,
+    "splits": {
+      "dev": 6,
+      "heldout": 7
+    },
+    "k_values": [
+      1,
+      3,
+      5
+    ],
+    "original_kakao_db_accessed": false,
+    "persistent_index_accessed": false,
+    "writes": "isolated temporary directories plus explicitly requested report paths"
+  },
+  "fixture": {
+    "directory": "tests/fixtures/alden-retrieval",
+    "corpus_sha256": "92ebd14dd8d3e4a0ec4a5a1836231e2e8881befab023af8fa965dd824e5aa914",
+    "queries_sha256": "241c86a1f4f1c245be8d777d950dad315a79f53c039a246d4e8964ed8317de0a"
+  },
+  "runtime": {
+    "python": "3.14.7",
+    "sqlite": "3.53.4",
+    "logical_cpu_count": 18,
+    "load_average_start_1m_5m_15m": [
+      15.77,
+      14.67,
+      15.08
+    ],
+    "load_average_end_1m_5m_15m": [
+      15.77,
+      14.67,
+      15.08
+    ],
+    "production_file": "scripts/auto_reply_knowledge_graph.py",
+    "production_sha256": "2ec1853a7b55563bd6080d96f2d099ce578b86ea53690f8fd92d5500bfcece57",
+    "search_index_version": "unit4-rrf-bm25-dense-v1"
+  },
+  "modes": {
+    "bm25": {
+      "scope": {
+        "production_bm25": true,
+        "production_rrf": false,
+        "encoder_invoked": false,
+        "dense_ranking_source": "none_dense_forced_unavailable"
+      },
+      "graph_counts": {
+        "entities_with_product_seeds": 23,
+        "relations_with_product_seeds": 7
+      },
+      "dense_refresh": null,
+      "overall": {
+        "queries": 13,
+        "positive_queries": 11,
+        "negative_queries": 2,
+        "metrics": {
+          "1": {
+            "macro_recall": 0.6818,
+            "macro_ndcg": 0.7273,
+            "forbidden_query_rate": 0.2857
+          },
+          "3": {
+            "macro_recall": 0.8182,
+            "macro_ndcg": 0.7846,
+            "forbidden_query_rate": 0.5714
+          },
+          "5": {
+            "macro_recall": 0.8182,
+            "macro_ndcg": 0.7846,
+            "forbidden_query_rate": 0.5714
+          }
+        },
+        "evidence_check_pass_rate": 0.8182,
+        "forbidden_fact_query_count": 0,
+        "search_mode_counts": {
+          "bm25_only": 13
+        },
+        "latency_ms": {
+          "n": 13,
+          "p50": 2.252,
+          "p95": 3.964
+        }
+      },
+      "by_split": {
+        "dev": {
+          "queries": 6,
+          "positive_queries": 6,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.6667,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 0.6667,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 0.6667,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 0.6667,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 6
+          },
+          "latency_ms": {
+            "n": 6,
+            "p50": 2.571,
+            "p95": 3.964
+          }
+        },
+        "heldout": {
+          "queries": 7,
+          "positive_queries": 5,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.7,
+              "macro_ndcg": 0.8,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 7
+          },
+          "latency_ms": {
+            "n": 7,
+            "p50": 2.207,
+            "p95": 2.346
+          }
+        }
+      },
+      "by_tag": {
+        "alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 3.353,
+            "p95": 3.353
+          }
+        },
+        "context_gate": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 0.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.252,
+            "p95": 2.252
+          }
+        },
+        "cross_script": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 3.964,
+            "p95": 3.964
+          }
+        },
+        "deletion": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.169,
+            "p95": 2.169
+          }
+        },
+        "dense_rescue": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 0.5,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 1.745,
+            "p95": 2.571
+          }
+        },
+        "duplicate_topic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.297,
+            "p95": 2.297
+          }
+        },
+        "freshness": {
+          "queries": 3,
+          "positive_queries": 3,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 3
+          },
+          "latency_ms": {
+            "n": 3,
+            "p50": 2.169,
+            "p95": 2.297
+          }
+        },
+        "homonym": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 2.041,
+            "p95": 2.241
+          }
+        },
+        "korean_abbreviation": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 0.5,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 2.252,
+            "p95": 3.353
+          }
+        },
+        "korean_alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 3.964,
+            "p95": 3.964
+          }
+        },
+        "negative": {
+          "queries": 2,
+          "positive_queries": 0,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 2.207,
+            "p95": 2.346
+          }
+        },
+        "normalization": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.799,
+            "p95": 2.799
+          }
+        },
+        "participant_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.241,
+            "p95": 2.241
+          }
+        },
+        "particle": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.799,
+            "p95": 2.799
+          }
+        },
+        "prefix_collision": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.346,
+            "p95": 2.346
+          }
+        },
+        "relation": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.8,
+            "p95": 1.8
+          }
+        },
+        "room_scope": {
+          "queries": 2,
+          "positive_queries": 1,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 2.041,
+            "p95": 2.346
+          }
+        },
+        "semantic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.745,
+            "p95": 1.745
+          }
+        },
+        "source_room": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.207,
+            "p95": 2.207
+          }
+        },
+        "spacing": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 0.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.571,
+            "p95": 2.571
+          }
+        },
+        "time_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.8,
+            "p95": 1.8
+          }
+        },
+        "typo": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "bm25_only": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.799,
+            "p95": 2.799
+          }
+        }
+      },
+      "query_results": [
+        {
+          "id": "dev-abbreviation-computer-use",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "alias"
+          ],
+          "text": "컴유 자동화 알려줘",
+          "relevant": {
+            "topic:tool:computer-use": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:tool:computer-use"
+          ],
+          "entity_facts": [
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)"
+          ],
+          "relation_facts": [
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:tool:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 3.353,
+          "violations": []
+        },
+        {
+          "id": "dev-english-alias-korean-query",
+          "split": "dev",
+          "tags": [
+            "korean_alias",
+            "cross_script"
+          ],
+          "text": "클로드 비교해줘",
+          "relevant": {
+            "topic:model:claude": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:model:claude"
+          ],
+          "entity_facts": [
+            "[모델] Anthropic Claude: 합성 평가에 쓰는 영어 정식 이름의 모델 항목 (핵심 맥락: 한국어 별칭으로도 검색되어야 한다)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:model:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:model:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 3.964,
+          "violations": []
+        },
+        {
+          "id": "dev-spacing-joined",
+          "split": "dev",
+          "tags": [
+            "spacing",
+            "dense_rescue"
+          ],
+          "text": "서울맛집 추천해줘",
+          "relevant": {
+            "topic:place:seoul-food": 3
+          },
+          "forbidden": [],
+          "candidates": [],
+          "entity_facts": [],
+          "relation_facts": [],
+          "returned_evidence_ids": [],
+          "expected_evidence_ids": [
+            "synthetic:place:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 0,
+          "dense_count": 0,
+          "elapsed_ms": 2.571,
+          "violations": [
+            {
+              "code": "expected_evidence_missing",
+              "values": [
+                "synthetic:place:1"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "dev-typo-particle",
+          "split": "dev",
+          "tags": [
+            "typo",
+            "particle",
+            "normalization"
+          ],
+          "text": "러닝박에 못 뛰었어",
+          "relevant": {
+            "ent:activity:running": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:activity:running"
+          ],
+          "entity_facts": [
+            "[활동] 러닝: 달리기와 마라톤 훈련 (핵심 맥락: 오타와 조사가 붙어도 검색되어야 한다)"
+          ],
+          "relation_facts": [
+            "[관계] moon_seunghyun —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:running:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:running:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 2.799,
+          "violations": []
+        },
+        {
+          "id": "dev-contextual-abbreviation",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "context_gate"
+          ],
+          "text": "알쫀쿠 쿠폰 만료일 알려줘",
+          "relevant": {
+            "ent:tech:alizonku": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:channel:bujamentor",
+            "ent:person:moon_seunghyun"
+          ],
+          "entity_facts": [
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)"
+          ],
+          "relation_facts": [
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ alizonku: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ running: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함"
+          ],
+          "returned_evidence_ids": [],
+          "expected_evidence_ids": [
+            "synthetic:cloud:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 2,
+          "dense_count": 0,
+          "elapsed_ms": 2.252,
+          "violations": [
+            {
+              "code": "expected_evidence_missing",
+              "values": [
+                "synthetic:cloud:1"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "dev-homonym-room-isolation",
+          "split": "dev",
+          "tags": [
+            "homonym",
+            "room_scope"
+          ],
+          "text": "민수 담당이 뭐였지",
+          "relevant": {
+            "person:알파방:minsu-alpha": 3
+          },
+          "forbidden": [
+            "person:베타방:minsu-beta"
+          ],
+          "candidates": [
+            "person:알파방:minsu-alpha",
+            "person:알파방:design-002",
+            "person:알파방:dev-001"
+          ],
+          "entity_facts": [
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)"
+          ],
+          "relation_facts": [
+            "[관계] 민수 —(USES)→ computer-use: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:relation:minsu:tool"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:minsu"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 3,
+          "dense_count": 0,
+          "elapsed_ms": 2.041,
+          "violations": []
+        },
+        {
+          "id": "heldout-room-prefix-isolation",
+          "split": "heldout",
+          "tags": [
+            "room_scope",
+            "prefix_collision",
+            "negative"
+          ],
+          "text": "영희가 한 말 찾아줘",
+          "relevant": {},
+          "forbidden": [
+            "person:알파방-스터디:younghee-study"
+          ],
+          "candidates": [],
+          "entity_facts": [],
+          "relation_facts": [],
+          "returned_evidence_ids": [],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 0,
+          "dense_count": 0,
+          "elapsed_ms": 2.346,
+          "violations": []
+        },
+        {
+          "id": "heldout-participant-disambiguation",
+          "split": "heldout",
+          "tags": [
+            "homonym",
+            "participant_scope"
+          ],
+          "text": "김서준 메모 보여줘",
+          "relevant": {
+            "person:알파방:dev-001": 3
+          },
+          "forbidden": [
+            "person:알파방:design-002"
+          ],
+          "candidates": [
+            "person:알파방:dev-001"
+          ],
+          "entity_facts": [
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:person:alpha:dev-001"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:dev-001"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 2.241,
+          "violations": []
+        },
+        {
+          "id": "heldout-retracted-entity",
+          "split": "heldout",
+          "tags": [
+            "deletion",
+            "freshness"
+          ],
+          "text": "오로라 일정 알려줘",
+          "relevant": {
+            "topic:project:z-current": 3
+          },
+          "forbidden": [
+            "topic:project:a-deleted"
+          ],
+          "candidates": [
+            "topic:project:z-current",
+            "topic:project:a-deleted",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:release:alden"
+          ],
+          "entity_facts": [
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:aurora:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 5,
+          "dense_count": 0,
+          "elapsed_ms": 2.169,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:project:a-deleted"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-latest-entity",
+          "split": "heldout",
+          "tags": [
+            "freshness",
+            "duplicate_topic"
+          ],
+          "text": "올든 요금 뭐가 최신이야",
+          "relevant": {
+            "topic:pricing:z-current": 3
+          },
+          "forbidden": [
+            "topic:pricing:a-old"
+          ],
+          "candidates": [
+            "topic:pricing:a-old",
+            "topic:pricing:z-current"
+          ],
+          "entity_facts": [
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:pricing:current",
+            "synthetic:pricing:old"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:pricing:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 2,
+          "dense_count": 0,
+          "elapsed_ms": 2.297,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:pricing:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-provenance-room-leak",
+          "split": "heldout",
+          "tags": [
+            "source_room",
+            "negative"
+          ],
+          "text": "베타 전용 코드가 뭐야",
+          "relevant": {},
+          "forbidden": [
+            "topic:secret:beta"
+          ],
+          "candidates": [
+            "topic:secret:beta"
+          ],
+          "entity_facts": [
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:secret:beta"
+          ],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 2.207,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:secret:beta"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-relation-time-scope",
+          "split": "heldout",
+          "tags": [
+            "time_scope",
+            "freshness",
+            "relation"
+          ],
+          "text": "알든 출시 일정 알려줘",
+          "relevant": {
+            "topic:release:alden": 3,
+            "time:release:z-current": 2
+          },
+          "forbidden": [
+            "time:release:a-old"
+          ],
+          "candidates": [
+            "topic:release:alden",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:project:z-current",
+            "topic:project:a-deleted"
+          ],
+          "entity_facts": [
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:relation:release:current",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:relation:release:current",
+            "synthetic:release:root"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.5,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 5,
+          "dense_count": 0,
+          "elapsed_ms": 1.8,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "time:release:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-semantic-dense-rescue",
+          "split": "heldout",
+          "tags": [
+            "semantic",
+            "dense_rescue"
+          ],
+          "text": "구독한 돈 돌려받는 법",
+          "relevant": {
+            "topic:semantic:a-refund": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:semantic:a-refund"
+          ],
+          "entity_facts": [
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:refund:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:refund:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "bm25_only",
+          "bm25_count": 1,
+          "dense_count": 0,
+          "elapsed_ms": 1.745,
+          "violations": []
+        }
+      ]
+    },
+    "fixture-rrf": {
+      "scope": {
+        "production_bm25": true,
+        "production_rrf": true,
+        "encoder_invoked": false,
+        "dense_ranking_source": "fixed_synthetic_fixture"
+      },
+      "graph_counts": {
+        "entities_with_product_seeds": 23,
+        "relations_with_product_seeds": 7
+      },
+      "dense_refresh": null,
+      "overall": {
+        "queries": 13,
+        "positive_queries": 11,
+        "negative_queries": 2,
+        "metrics": {
+          "1": {
+            "macro_recall": 0.7727,
+            "macro_ndcg": 0.8182,
+            "forbidden_query_rate": 0.2857
+          },
+          "3": {
+            "macro_recall": 1.0,
+            "macro_ndcg": 0.9329,
+            "forbidden_query_rate": 0.5714
+          },
+          "5": {
+            "macro_recall": 1.0,
+            "macro_ndcg": 0.9329,
+            "forbidden_query_rate": 0.5714
+          }
+        },
+        "evidence_check_pass_rate": 1.0,
+        "forbidden_fact_query_count": 0,
+        "search_mode_counts": {
+          "rrf": 13
+        },
+        "latency_ms": {
+          "n": 13,
+          "p50": 1.857,
+          "p95": 2.392
+        }
+      },
+      "by_split": {
+        "dev": {
+          "queries": 6,
+          "positive_queries": 6,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.8333,
+              "macro_ndcg": 0.8333,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9385,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9385,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 6
+          },
+          "latency_ms": {
+            "n": 6,
+            "p50": 1.941,
+            "p95": 2.392
+          }
+        },
+        "heldout": {
+          "queries": 7,
+          "positive_queries": 5,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.7,
+              "macro_ndcg": 0.8,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 7
+          },
+          "latency_ms": {
+            "n": 7,
+            "p50": 1.779,
+            "p95": 2.219
+          }
+        }
+      },
+      "by_tag": {
+        "alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.947,
+            "p95": 1.947
+          }
+        },
+        "context_gate": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.521,
+            "p95": 1.521
+          }
+        },
+        "cross_script": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.857,
+            "p95": 1.857
+          }
+        },
+        "deletion": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.76,
+            "p95": 1.76
+          }
+        },
+        "dense_rescue": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 2.219,
+            "p95": 2.392
+          }
+        },
+        "duplicate_topic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.866,
+            "p95": 1.866
+          }
+        },
+        "freshness": {
+          "queries": 3,
+          "positive_queries": 3,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 3
+          },
+          "latency_ms": {
+            "n": 3,
+            "p50": 1.779,
+            "p95": 1.866
+          }
+        },
+        "homonym": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 1.673,
+            "p95": 1.941
+          }
+        },
+        "korean_abbreviation": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.8155,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.8155,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 1.521,
+            "p95": 1.947
+          }
+        },
+        "korean_alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.857,
+            "p95": 1.857
+          }
+        },
+        "negative": {
+          "queries": 2,
+          "positive_queries": 0,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 1.689,
+            "p95": 1.857
+          }
+        },
+        "normalization": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.053,
+            "p95": 2.053
+          }
+        },
+        "participant_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.673,
+            "p95": 1.673
+          }
+        },
+        "particle": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.053,
+            "p95": 2.053
+          }
+        },
+        "prefix_collision": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.857,
+            "p95": 1.857
+          }
+        },
+        "relation": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.779,
+            "p95": 1.779
+          }
+        },
+        "room_scope": {
+          "queries": 2,
+          "positive_queries": 1,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 1.857,
+            "p95": 1.941
+          }
+        },
+        "semantic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.219,
+            "p95": 2.219
+          }
+        },
+        "source_room": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.689,
+            "p95": 1.689
+          }
+        },
+        "spacing": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.392,
+            "p95": 2.392
+          }
+        },
+        "time_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 1.779,
+            "p95": 1.779
+          }
+        },
+        "typo": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 2.053,
+            "p95": 2.053
+          }
+        }
+      },
+      "query_results": [
+        {
+          "id": "dev-abbreviation-computer-use",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "alias"
+          ],
+          "text": "컴유 자동화 알려줘",
+          "relevant": {
+            "topic:tool:computer-use": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:tool:computer-use",
+            "topic:model:claude",
+            "topic:semantic:z-payment-history"
+          ],
+          "entity_facts": [
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)",
+            "[모델] Anthropic Claude: 합성 평가에 쓰는 영어 정식 이름의 모델 항목 (핵심 맥락: 한국어 별칭으로도 검색되어야 한다)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)"
+          ],
+          "relation_facts": [
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:tool:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 3,
+          "elapsed_ms": 1.947,
+          "violations": []
+        },
+        {
+          "id": "dev-english-alias-korean-query",
+          "split": "dev",
+          "tags": [
+            "korean_alias",
+            "cross_script"
+          ],
+          "text": "클로드 비교해줘",
+          "relevant": {
+            "topic:model:claude": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:model:claude",
+            "topic:tool:computer-use"
+          ],
+          "entity_facts": [
+            "[모델] Anthropic Claude: 합성 평가에 쓰는 영어 정식 이름의 모델 항목 (핵심 맥락: 한국어 별칭으로도 검색되어야 한다)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)"
+          ],
+          "relation_facts": [
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:model:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:model:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 2,
+          "elapsed_ms": 1.857,
+          "violations": []
+        },
+        {
+          "id": "dev-spacing-joined",
+          "split": "dev",
+          "tags": [
+            "spacing",
+            "dense_rescue"
+          ],
+          "text": "서울맛집 추천해줘",
+          "relevant": {
+            "topic:place:seoul-food": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:place:seoul-food",
+            "topic:semantic:z-payment-history"
+          ],
+          "entity_facts": [
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:payment-history:1",
+            "synthetic:place:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:place:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 0,
+          "dense_count": 2,
+          "elapsed_ms": 2.392,
+          "violations": []
+        },
+        {
+          "id": "dev-typo-particle",
+          "split": "dev",
+          "tags": [
+            "typo",
+            "particle",
+            "normalization"
+          ],
+          "text": "러닝박에 못 뛰었어",
+          "relevant": {
+            "ent:activity:running": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:activity:running",
+            "topic:place:seoul-food"
+          ],
+          "entity_facts": [
+            "[활동] 러닝: 달리기와 마라톤 훈련 (핵심 맥락: 오타와 조사가 붙어도 검색되어야 한다)",
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)"
+          ],
+          "relation_facts": [
+            "[관계] moon_seunghyun —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:place:1",
+            "synthetic:running:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:running:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 2,
+          "elapsed_ms": 2.053,
+          "violations": []
+        },
+        {
+          "id": "dev-contextual-abbreviation",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "context_gate"
+          ],
+          "text": "알쫀쿠 쿠폰 만료일 알려줘",
+          "relevant": {
+            "ent:tech:alizonku": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:channel:bujamentor",
+            "ent:tech:alizonku",
+            "ent:person:moon_seunghyun",
+            "topic:tool:computer-use"
+          ],
+          "entity_facts": [
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)"
+          ],
+          "relation_facts": [
+            "[관계] choi_yeonwoo —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ running: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:cloud:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:cloud:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 2,
+          "dense_count": 2,
+          "elapsed_ms": 1.521,
+          "violations": []
+        },
+        {
+          "id": "dev-homonym-room-isolation",
+          "split": "dev",
+          "tags": [
+            "homonym",
+            "room_scope"
+          ],
+          "text": "민수 담당이 뭐였지",
+          "relevant": {
+            "person:알파방:minsu-alpha": 3
+          },
+          "forbidden": [
+            "person:베타방:minsu-beta"
+          ],
+          "candidates": [
+            "person:알파방:minsu-alpha",
+            "person:알파방:design-002",
+            "topic:tool:computer-use",
+            "person:알파방:dev-001"
+          ],
+          "entity_facts": [
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)"
+          ],
+          "relation_facts": [
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:minsu"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 3,
+          "dense_count": 2,
+          "elapsed_ms": 1.941,
+          "violations": []
+        },
+        {
+          "id": "heldout-room-prefix-isolation",
+          "split": "heldout",
+          "tags": [
+            "room_scope",
+            "prefix_collision",
+            "negative"
+          ],
+          "text": "영희가 한 말 찾아줘",
+          "relevant": {},
+          "forbidden": [
+            "person:알파방-스터디:younghee-study"
+          ],
+          "candidates": [
+            "person:알파방:minsu-alpha"
+          ],
+          "entity_facts": [
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)"
+          ],
+          "relation_facts": [
+            "[관계] 민수 —(USES)→ computer-use: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:person:alpha:minsu",
+            "synthetic:relation:minsu:tool"
+          ],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 0,
+          "dense_count": 1,
+          "elapsed_ms": 1.857,
+          "violations": []
+        },
+        {
+          "id": "heldout-participant-disambiguation",
+          "split": "heldout",
+          "tags": [
+            "homonym",
+            "participant_scope"
+          ],
+          "text": "김서준 메모 보여줘",
+          "relevant": {
+            "person:알파방:dev-001": 3
+          },
+          "forbidden": [
+            "person:알파방:design-002"
+          ],
+          "candidates": [
+            "person:알파방:dev-001"
+          ],
+          "entity_facts": [
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:person:alpha:dev-001"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:dev-001"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 1,
+          "elapsed_ms": 1.673,
+          "violations": []
+        },
+        {
+          "id": "heldout-retracted-entity",
+          "split": "heldout",
+          "tags": [
+            "deletion",
+            "freshness"
+          ],
+          "text": "오로라 일정 알려줘",
+          "relevant": {
+            "topic:project:z-current": 3
+          },
+          "forbidden": [
+            "topic:project:a-deleted"
+          ],
+          "candidates": [
+            "topic:project:z-current",
+            "topic:project:a-deleted",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:release:alden"
+          ],
+          "entity_facts": [
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:aurora:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 5,
+          "dense_count": 2,
+          "elapsed_ms": 1.76,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:project:a-deleted"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-latest-entity",
+          "split": "heldout",
+          "tags": [
+            "freshness",
+            "duplicate_topic"
+          ],
+          "text": "올든 요금 뭐가 최신이야",
+          "relevant": {
+            "topic:pricing:z-current": 3
+          },
+          "forbidden": [
+            "topic:pricing:a-old"
+          ],
+          "candidates": [
+            "topic:pricing:a-old",
+            "topic:pricing:z-current"
+          ],
+          "entity_facts": [
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)"
+          ],
+          "relation_facts": [],
+          "returned_evidence_ids": [
+            "synthetic:pricing:current",
+            "synthetic:pricing:old"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:pricing:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 2,
+          "dense_count": 2,
+          "elapsed_ms": 1.866,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:pricing:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-provenance-room-leak",
+          "split": "heldout",
+          "tags": [
+            "source_room",
+            "negative"
+          ],
+          "text": "베타 전용 코드가 뭐야",
+          "relevant": {},
+          "forbidden": [
+            "topic:secret:beta"
+          ],
+          "candidates": [
+            "topic:secret:beta",
+            "topic:tool:computer-use"
+          ],
+          "entity_facts": [
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)"
+          ],
+          "relation_facts": [
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:relation:minsu:tool",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 2,
+          "elapsed_ms": 1.689,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:secret:beta"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-relation-time-scope",
+          "split": "heldout",
+          "tags": [
+            "time_scope",
+            "freshness",
+            "relation"
+          ],
+          "text": "알든 출시 일정 알려줘",
+          "relevant": {
+            "topic:release:alden": 3,
+            "time:release:z-current": 2
+          },
+          "forbidden": [
+            "time:release:a-old"
+          ],
+          "candidates": [
+            "topic:release:alden",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:project:z-current",
+            "topic:project:a-deleted"
+          ],
+          "entity_facts": [
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:relation:release:current",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:relation:release:current",
+            "synthetic:release:root"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.5,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 5,
+          "dense_count": 3,
+          "elapsed_ms": 1.779,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "time:release:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-semantic-dense-rescue",
+          "split": "heldout",
+          "tags": [
+            "semantic",
+            "dense_rescue"
+          ],
+          "text": "구독한 돈 돌려받는 법",
+          "relevant": {
+            "topic:semantic:a-refund": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:semantic:a-refund",
+            "topic:semantic:z-payment-history",
+            "topic:tool:computer-use"
+          ],
+          "entity_facts": [
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)"
+          ],
+          "relation_facts": [
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:payment-history:1",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:refund:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 3,
+          "elapsed_ms": 2.219,
+          "violations": []
+        }
+      ]
+    },
+    "live-rrf": {
+      "scope": {
+        "production_bm25": true,
+        "production_rrf": true,
+        "encoder_invoked": true,
+        "dense_ranking_source": "configured_loopback_embedding_adapter"
+      },
+      "graph_counts": {
+        "entities_with_product_seeds": 23,
+        "relations_with_product_seeds": 7
+      },
+      "dense_refresh": {
+        "status": "indexed",
+        "indexed": 23,
+        "watermark": "synthetic-20260930-v1",
+        "elapsed_ms": 235.56,
+        "model_id": "mlx-community/multilingual-e5-small-mlx@5030c7625865046d350eeea28f427d80353d0ac0",
+        "endpoint": "5956b9388ba26ec18062d7a95c02b4d02eb01a467e383f7ddd505ecba2508844"
+      },
+      "overall": {
+        "queries": 13,
+        "positive_queries": 11,
+        "negative_queries": 2,
+        "metrics": {
+          "1": {
+            "macro_recall": 0.7727,
+            "macro_ndcg": 0.8182,
+            "forbidden_query_rate": 0.2857
+          },
+          "3": {
+            "macro_recall": 0.9091,
+            "macro_ndcg": 0.8755,
+            "forbidden_query_rate": 0.5714
+          },
+          "5": {
+            "macro_recall": 0.9091,
+            "macro_ndcg": 0.8755,
+            "forbidden_query_rate": 0.5714
+          }
+        },
+        "evidence_check_pass_rate": 1.0,
+        "forbidden_fact_query_count": 0,
+        "search_mode_counts": {
+          "rrf": 13
+        },
+        "latency_ms": {
+          "n": 13,
+          "p50": 31.42,
+          "p95": 40.564
+        }
+      },
+      "by_split": {
+        "dev": {
+          "queries": 6,
+          "positive_queries": 6,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.8333,
+              "macro_ndcg": 0.8333,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 0.8333,
+              "macro_ndcg": 0.8333,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 0.8333,
+              "macro_ndcg": 0.8333,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 6
+          },
+          "latency_ms": {
+            "n": 6,
+            "p50": 30.273,
+            "p95": 34.011
+          }
+        },
+        "heldout": {
+          "queries": 7,
+          "positive_queries": 5,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.7,
+              "macro_ndcg": 0.8,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.9262,
+              "forbidden_query_rate": 0.6667
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 7
+          },
+          "latency_ms": {
+            "n": 7,
+            "p50": 32.152,
+            "p95": 40.564
+          }
+        }
+      },
+      "by_tag": {
+        "alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 30.722,
+            "p95": 30.722
+          }
+        },
+        "context_gate": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 28.009,
+            "p95": 28.009
+          }
+        },
+        "cross_script": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 30.273,
+            "p95": 30.273
+          }
+        },
+        "deletion": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 28.075,
+            "p95": 28.075
+          }
+        },
+        "dense_rescue": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 34.011,
+            "p95": 37.296
+          }
+        },
+        "duplicate_topic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.0,
+              "macro_ndcg": 0.0,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.6309,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 32.152,
+            "p95": 32.152
+          }
+        },
+        "freshness": {
+          "queries": 3,
+          "positive_queries": 3,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.6667,
+              "forbidden_query_rate": 0.3333
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 0.877,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 3
+          },
+          "latency_ms": {
+            "n": 3,
+            "p50": 32.152,
+            "p95": 34.237
+          }
+        },
+        "homonym": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 25.055,
+            "p95": 31.073
+          }
+        },
+        "korean_abbreviation": {
+          "queries": 2,
+          "positive_queries": 2,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 0.5,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 28.009,
+            "p95": 30.722
+          }
+        },
+        "korean_alias": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 30.273,
+            "p95": 30.273
+          }
+        },
+        "negative": {
+          "queries": 2,
+          "positive_queries": 0,
+          "negative_queries": 2,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.5
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 31.42,
+            "p95": 40.564
+          }
+        },
+        "normalization": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 31.72,
+            "p95": 31.72
+          }
+        },
+        "participant_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 31.073,
+            "p95": 31.073
+          }
+        },
+        "particle": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 31.72,
+            "p95": 31.72
+          }
+        },
+        "prefix_collision": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 40.564,
+            "p95": 40.564
+          }
+        },
+        "relation": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 34.237,
+            "p95": 34.237
+          }
+        },
+        "room_scope": {
+          "queries": 2,
+          "positive_queries": 1,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 2
+          },
+          "latency_ms": {
+            "n": 2,
+            "p50": 25.055,
+            "p95": 40.564
+          }
+        },
+        "semantic": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 37.296,
+            "p95": 37.296
+          }
+        },
+        "source_room": {
+          "queries": 1,
+          "positive_queries": 0,
+          "negative_queries": 1,
+          "metrics": {
+            "1": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "3": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": null,
+              "macro_ndcg": null,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": null,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 31.42,
+            "p95": 31.42
+          }
+        },
+        "spacing": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 34.011,
+            "p95": 34.011
+          }
+        },
+        "time_scope": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 0.5,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 0.0
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": 1.0
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 34.237,
+            "p95": 34.237
+          }
+        },
+        "typo": {
+          "queries": 1,
+          "positive_queries": 1,
+          "negative_queries": 0,
+          "metrics": {
+            "1": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "3": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            },
+            "5": {
+              "macro_recall": 1.0,
+              "macro_ndcg": 1.0,
+              "forbidden_query_rate": null
+            }
+          },
+          "evidence_check_pass_rate": 1.0,
+          "forbidden_fact_query_count": 0,
+          "search_mode_counts": {
+            "rrf": 1
+          },
+          "latency_ms": {
+            "n": 1,
+            "p50": 31.72,
+            "p95": 31.72
+          }
+        }
+      },
+      "query_results": [
+        {
+          "id": "dev-abbreviation-computer-use",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "alias"
+          ],
+          "text": "컴유 자동화 알려줘",
+          "relevant": {
+            "topic:tool:computer-use": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:tool:computer-use",
+            "ent:person:choi_yeonwoo",
+            "ent:channel:bujamentor",
+            "time:release:z-current",
+            "topic:secret:beta",
+            "ent:person:moon_seunghyun",
+            "person:알파방:dev-001",
+            "ent:tech:alizonku",
+            "time:release:a-old",
+            "person:알파방:minsu-alpha"
+          ],
+          "entity_facts": [
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:tool:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 21,
+          "elapsed_ms": 30.722,
+          "violations": []
+        },
+        {
+          "id": "dev-english-alias-korean-query",
+          "split": "dev",
+          "tags": [
+            "korean_alias",
+            "cross_script"
+          ],
+          "text": "클로드 비교해줘",
+          "relevant": {
+            "topic:model:claude": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:model:claude",
+            "topic:secret:beta",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "person:알파방:minsu-alpha",
+            "person:알파방:design-002",
+            "person:알파방:dev-001",
+            "topic:place:seoul-food",
+            "topic:project:a-deleted",
+            "time:release:a-old"
+          ],
+          "entity_facts": [
+            "[모델] Anthropic Claude: 합성 평가에 쓰는 영어 정식 이름의 모델 항목 (핵심 맥락: 한국어 별칭으로도 검색되어야 한다)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ alizonku: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:model:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 19,
+          "elapsed_ms": 30.273,
+          "violations": []
+        },
+        {
+          "id": "dev-spacing-joined",
+          "split": "dev",
+          "tags": [
+            "spacing",
+            "dense_rescue"
+          ],
+          "text": "서울맛집 추천해줘",
+          "relevant": {
+            "topic:place:seoul-food": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:place:seoul-food",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "ent:person:choi_yeonwoo",
+            "topic:pricing:a-old",
+            "person:알파방:design-002",
+            "topic:pricing:z-current",
+            "topic:semantic:a-refund",
+            "time:release:z-current",
+            "topic:secret:beta"
+          ],
+          "entity_facts": [
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:place:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 0,
+          "dense_count": 21,
+          "elapsed_ms": 34.011,
+          "violations": []
+        },
+        {
+          "id": "dev-typo-particle",
+          "split": "dev",
+          "tags": [
+            "typo",
+            "particle",
+            "normalization"
+          ],
+          "text": "러닝박에 못 뛰었어",
+          "relevant": {
+            "ent:activity:running": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:activity:running",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "person:알파방:design-002",
+            "topic:semantic:a-refund",
+            "person:알파방:dev-001",
+            "topic:secret:beta",
+            "ent:person:choi_yeonwoo",
+            "person:알파방:minsu-alpha",
+            "time:release:a-old"
+          ],
+          "entity_facts": [
+            "[활동] 러닝: 달리기와 마라톤 훈련 (핵심 맥락: 오타와 조사가 붙어도 검색되어야 한다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:running:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 21,
+          "elapsed_ms": 31.72,
+          "violations": []
+        },
+        {
+          "id": "dev-contextual-abbreviation",
+          "split": "dev",
+          "tags": [
+            "korean_abbreviation",
+            "context_gate"
+          ],
+          "text": "알쫀쿠 쿠폰 만료일 알려줘",
+          "relevant": {
+            "ent:tech:alizonku": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "ent:channel:bujamentor",
+            "ent:person:moon_seunghyun",
+            "time:release:a-old",
+            "topic:pricing:z-current",
+            "time:release:z-current",
+            "topic:secret:beta",
+            "topic:pricing:a-old",
+            "topic:release:alden",
+            "person:알파방:minsu-alpha",
+            "topic:project:a-deleted"
+          ],
+          "entity_facts": [
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:cloud:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 2,
+          "dense_count": 21,
+          "elapsed_ms": 28.009,
+          "violations": []
+        },
+        {
+          "id": "dev-homonym-room-isolation",
+          "split": "dev",
+          "tags": [
+            "homonym",
+            "room_scope"
+          ],
+          "text": "민수 담당이 뭐였지",
+          "relevant": {
+            "person:알파방:minsu-alpha": 3
+          },
+          "forbidden": [
+            "person:베타방:minsu-beta"
+          ],
+          "candidates": [
+            "person:알파방:minsu-alpha",
+            "person:알파방:design-002",
+            "ent:person:moon_seunghyun",
+            "ent:person:choi_yeonwoo",
+            "person:알파방:dev-001",
+            "ent:channel:bujamentor",
+            "topic:semantic:a-refund",
+            "topic:secret:beta",
+            "topic:semantic:z-payment-history",
+            "topic:place:seoul-food"
+          ],
+          "entity_facts": [
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)",
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ alizonku: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] alden —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ alizonku: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ running: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ computer-use: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:deleted",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:old",
+            "synthetic:release:old-node",
+            "synthetic:secret:beta"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:minsu"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 3,
+          "dense_count": 11,
+          "elapsed_ms": 25.055,
+          "violations": []
+        },
+        {
+          "id": "heldout-room-prefix-isolation",
+          "split": "heldout",
+          "tags": [
+            "room_scope",
+            "prefix_collision",
+            "negative"
+          ],
+          "text": "영희가 한 말 찾아줘",
+          "relevant": {},
+          "forbidden": [
+            "person:알파방-스터디:younghee-study"
+          ],
+          "candidates": [
+            "ent:person:choi_yeonwoo",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "person:알파방:minsu-alpha",
+            "topic:secret:beta",
+            "topic:semantic:z-payment-history",
+            "topic:semantic:a-refund",
+            "ent:activity:running",
+            "ent:tech:alizonku",
+            "person:알파방:design-002"
+          ],
+          "entity_facts": [
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[인물] 민수: 알파방에서 백엔드를 담당하는 합성 인물 (핵심 맥락: 동명이인 알파)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)",
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[활동] 러닝: 달리기와 마라톤 훈련 (핵심 맥락: 오타와 조사가 붙어도 검색되어야 한다)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)",
+            "[인물] 김서준: 알파방의 디자인 담당 합성 인물 (핵심 맥락: participant_id design-002)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 0,
+          "dense_count": 21,
+          "elapsed_ms": 40.564,
+          "violations": []
+        },
+        {
+          "id": "heldout-participant-disambiguation",
+          "split": "heldout",
+          "tags": [
+            "homonym",
+            "participant_scope"
+          ],
+          "text": "김서준 메모 보여줘",
+          "relevant": {
+            "person:알파방:dev-001": 3
+          },
+          "forbidden": [
+            "person:알파방:design-002"
+          ],
+          "candidates": [
+            "person:알파방:dev-001",
+            "ent:person:choi_yeonwoo",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "topic:secret:beta",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:pricing:z-current",
+            "topic:place:seoul-food",
+            "topic:model:claude"
+          ],
+          "entity_facts": [
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)",
+            "[모델] Anthropic Claude: 합성 평가에 쓰는 영어 정식 이름의 모델 항목 (핵심 맥락: 한국어 별칭으로도 검색되어야 한다)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] minsu-alpha —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:person:alpha:dev-001"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 19,
+          "elapsed_ms": 31.073,
+          "violations": []
+        },
+        {
+          "id": "heldout-retracted-entity",
+          "split": "heldout",
+          "tags": [
+            "deletion",
+            "freshness"
+          ],
+          "text": "오로라 일정 알려줘",
+          "relevant": {
+            "topic:project:z-current": 3
+          },
+          "forbidden": [
+            "topic:project:a-deleted"
+          ],
+          "candidates": [
+            "topic:project:z-current",
+            "topic:project:a-deleted",
+            "time:release:a-old",
+            "time:release:z-current",
+            "topic:release:alden",
+            "topic:pricing:a-old",
+            "topic:pricing:z-current",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "topic:place:seoul-food"
+          ],
+          "entity_facts": [
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[장소] 서울 맛집: 서울의 식당과 카페 추천을 모은 합성 항목 (핵심 맥락: 붙여 쓴 질의도 같은 항목을 찾아야 한다)"
+          ],
+          "relation_facts": [
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ alizonku: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:aurora:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "topic:project:a-deleted"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 5,
+          "dense_count": 19,
+          "elapsed_ms": 28.075,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:project:a-deleted"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-latest-entity",
+          "split": "heldout",
+          "tags": [
+            "freshness",
+            "duplicate_topic"
+          ],
+          "text": "올든 요금 뭐가 최신이야",
+          "relevant": {
+            "topic:pricing:z-current": 3
+          },
+          "forbidden": [
+            "topic:pricing:a-old"
+          ],
+          "candidates": [
+            "topic:pricing:a-old",
+            "topic:pricing:z-current",
+            "topic:release:alden",
+            "time:release:z-current",
+            "ent:channel:bujamentor",
+            "topic:project:z-current",
+            "ent:person:choi_yeonwoo",
+            "ent:person:moon_seunghyun",
+            "topic:secret:beta",
+            "ent:tech:alizonku"
+          ],
+          "entity_facts": [
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:pricing:current"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.0,
+              "ndcg": 0.0,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 0.6309,
+              "forbidden_hits": [
+                "topic:pricing:a-old"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 2,
+          "dense_count": 21,
+          "elapsed_ms": 32.152,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:pricing:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-provenance-room-leak",
+          "split": "heldout",
+          "tags": [
+            "source_room",
+            "negative"
+          ],
+          "text": "베타 전용 코드가 뭐야",
+          "relevant": {},
+          "forbidden": [
+            "topic:secret:beta"
+          ],
+          "candidates": [
+            "topic:secret:beta",
+            "ent:person:choi_yeonwoo",
+            "time:release:z-current",
+            "ent:person:moon_seunghyun",
+            "ent:channel:bujamentor",
+            "ent:tech:alizonku",
+            "topic:pricing:a-old",
+            "topic:tool:computer-use",
+            "time:release:a-old",
+            "topic:pricing:z-current"
+          ],
+          "entity_facts": [
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[도구] 컴퓨터 유즈: 브라우저와 데스크톱을 제어하는 자동화 도구 (핵심 맥락: 결정적인 작업은 기존 CLI와 API를 먼저 사용한다)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [],
+          "metrics": {
+            "1": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "3": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            },
+            "5": {
+              "recall": null,
+              "ndcg": null,
+              "forbidden_hits": [
+                "topic:secret:beta"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 21,
+          "elapsed_ms": 31.42,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "topic:secret:beta"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-relation-time-scope",
+          "split": "heldout",
+          "tags": [
+            "time_scope",
+            "freshness",
+            "relation"
+          ],
+          "text": "알든 출시 일정 알려줘",
+          "relevant": {
+            "topic:release:alden": 3,
+            "time:release:z-current": 2
+          },
+          "forbidden": [
+            "time:release:a-old"
+          ],
+          "candidates": [
+            "topic:release:alden",
+            "time:release:z-current",
+            "time:release:a-old",
+            "topic:project:z-current",
+            "topic:project:a-deleted",
+            "topic:pricing:z-current",
+            "topic:pricing:a-old",
+            "topic:secret:beta",
+            "person:알파방:dev-001",
+            "ent:channel:bujamentor"
+          ],
+          "entity_facts": [
+            "[릴리즈] 알든 출시 일정: 알든의 현재 출시 계획 (핵심 맥락: 관계 유효기간으로 최신 일정을 구분한다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)",
+            "[시점] 9월 30일 출시: 더는 유효하지 않은 출시일 (핵심 맥락: 만료된 일정)",
+            "[프로젝트] 오로라 일정 최신안: 확정된 10월 7일 일정 (핵심 맥락: 현재 유효한 일정)",
+            "[프로젝트] 오로라 일정 폐기안: 철회된 9월 30일 일정 (핵심 맥락: 이 일정은 삭제되어 검색 결과에 나오면 안 된다)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[인물] 김서준: 알파방의 개발 담당 합성 인물 (핵심 맥락: participant_id dev-001)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:relation:release:current",
+            "synthetic:release:root"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 0.5,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": [
+                "time:release:a-old"
+              ]
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 5,
+          "dense_count": 21,
+          "elapsed_ms": 34.237,
+          "violations": [
+            {
+              "code": "forbidden_entity_returned",
+              "values": [
+                "time:release:a-old"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heldout-semantic-dense-rescue",
+          "split": "heldout",
+          "tags": [
+            "semantic",
+            "dense_rescue"
+          ],
+          "text": "구독한 돈 돌려받는 법",
+          "relevant": {
+            "topic:semantic:a-refund": 3
+          },
+          "forbidden": [],
+          "candidates": [
+            "topic:semantic:a-refund",
+            "topic:semantic:z-payment-history",
+            "ent:channel:bujamentor",
+            "topic:pricing:a-old",
+            "topic:pricing:z-current",
+            "ent:tech:alizonku",
+            "ent:person:moon_seunghyun",
+            "ent:person:choi_yeonwoo",
+            "topic:secret:beta",
+            "time:release:z-current"
+          ],
+          "entity_facts": [
+            "[결제] 구독 환불 절차: 구독 대금을 돌려받는 절차 (핵심 맥락: 의미 검색 정답)",
+            "[결제] 구독 결제 내역: 과거 결제 목록을 조회하는 항목 (핵심 맥락: 의미 검색의 어휘상 방해 항목)",
+            "[채팅방] 부자멘토멘티: 문승현, 송우섭, 주원, 현준, 최연우가 참여하는 핵심 카카오톡 그룹 채팅방 (ID: 417780809780519). (핵심 맥락: 스타트업 인프라, 클라우드 비용 절감, 일상 라이프스타일 논의; 과거 합의된 맥락(알쫀쿠 가성비 추천)을 일관되게 유지해야 함)",
+            "[정책] 올든 요금 이전안: 월 19000원의 이전 가격 정책 (핵심 맥락: 2026년 8월 기준)",
+            "[정책] 올든 요금 최신안: 월 15000원의 현재 가격 정책 (핵심 맥락: 2026년 9월 29일 확정)",
+            "[클라우드] 알리바바 클라우드 구독: 클라우드 구독 비용 절감 서비스 (핵심 맥락: 한국어 축약어는 문맥이 있을 때 확장한다)",
+            "[대화 상대] 문승현: 부자멘토멘티 채팅방의 핵심 대화 상대. 러닝/운동을 즐기며 인증 사진을 자주 공유함. (핵심 맥락: 취미로 야외 러닝/마라톤 훈련을 진행함; 운동 기록(NRC/가민 등) 및 러닝 후기 사진을 공유함 (음식 사진과 혼동 금지); 최연우의 알쫀쿠 추천 및 테크/스타트업 논의에 호응함)",
+            "[화자] 최연우 (페르소나/본인): 오픈카카오 봇의 사용자 페르소나. 솔직하고 현실적인 말투로 스타트업, 클라우드, 자동화에 대해 실용적 조언을 제공함. (핵심 맥락: 자신감 넘치고 담백한 어투 (과도한 존대나 AI스러운 문체 지양); 클라우드 비용과 인프라 효율성을 매우 중요하게 평가함; 친구들과의 일상 공유(운동, 식사)에 자연스럽고 따뜻하게 반응함)",
+            "[방 전용 정보] 베타 전용 코드: 베타방에서만 확인된 합성 정보 (핵심 맥락: 알파방 검색에 섞이면 안 된다)",
+            "[시점] 10월 15일 출시: 현재 유효한 출시일 (핵심 맥락: 최신 일정)"
+          ],
+          "relation_facts": [
+            "[관계] 최연우 (페르소나/본인) —(RECOMMENDED)→ 알리바바 클라우드 구독: 최연우가 '이게 훨씬 낫죠'라며 알리바바 클라우드(알쫀쿠) 비용 효율성을 강조하고 추천함",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_OLD)→ 9월 30일 출시: 9월 30일 출시는 철회됨",
+            "[관계] 부자멘토멘티 —(DISCUSSED)→ 알리바바 클라우드 구독: 부자멘토멘티 채팅방에서 클라우드 구독 비용 비교 주제로 깊이 논의됨",
+            "[관계] 문승현 —(ACTIVE_MEMBER_OF)→ 부자멘토멘티: 부자멘토멘티 채팅방의 활발한 대화 참여자",
+            "[관계] 알든 출시 일정 —(SCHEDULED_FOR_CURRENT)→ 10월 15일 출시: 10월 15일 출시가 현재 유효함",
+            "[관계] 문승현 —(PARTICIPATES_IN)→ 러닝: 문승현이 러닝 사진 및 운동 기록을 채팅방에 공유함",
+            "[관계] 민수 —(USES)→ 컴퓨터 유즈: 알파방 민수가 컴퓨터 유즈를 사용함"
+          ],
+          "returned_evidence_ids": [
+            "synthetic:aurora:current",
+            "synthetic:aurora:deleted",
+            "synthetic:cloud:1",
+            "synthetic:model:1",
+            "synthetic:payment-history:1",
+            "synthetic:person:alpha:design-002",
+            "synthetic:person:alpha:dev-001",
+            "synthetic:person:alpha:minsu",
+            "synthetic:place:1",
+            "synthetic:pricing:current",
+            "synthetic:pricing:old",
+            "synthetic:refund:1",
+            "synthetic:relation:minsu:tool",
+            "synthetic:relation:release:current",
+            "synthetic:relation:release:old",
+            "synthetic:release:current-node",
+            "synthetic:release:old-node",
+            "synthetic:release:root",
+            "synthetic:running:1",
+            "synthetic:secret:beta",
+            "synthetic:tool:1"
+          ],
+          "expected_evidence_ids": [
+            "synthetic:refund:1"
+          ],
+          "metrics": {
+            "1": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "3": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            },
+            "5": {
+              "recall": 1.0,
+              "ndcg": 1.0,
+              "forbidden_hits": []
+            }
+          },
+          "search_mode": "rrf",
+          "bm25_count": 1,
+          "dense_count": 21,
+          "elapsed_ms": 37.296,
+          "violations": []
+        }
+      ]
+    }
+  },
+  "production_observations": [
+    {
+      "code": "rrf_equal_weight_only",
+      "status": "confirmed_by_source",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_rrf_merge",
+        "line": 3574,
+        "lines": 11
+      },
+      "reason": "The merger accepts k but no per-retriever weights, so evaluation cannot tune w_j without a production change."
+    },
+    {
+      "code": "candidate_provenance_is_aggregated",
+      "status": "confirmed_by_source",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_query_knowledge_ranked",
+        "line": 3913,
+        "lines": 230
+      },
+      "reason": "The result exposes one aggregated evidence_ids list, so a caller cannot bind each candidate to its room and timestamp."
+    },
+    {
+      "code": "joined_spacing_requires_dense_rescue",
+      "status": "observed",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_fts_query_terms",
+        "line": 3534,
+        "lines": 17
+      },
+      "query_ids": [
+        "dev-spacing-joined"
+      ],
+      "reason": "The joined Korean form misses the spaced lexical form in BM25/keyword fallback; fixed dense ranking rescues it."
+    },
+    {
+      "code": "retracted_entity_not_filtered",
+      "status": "observed",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_query_knowledge_ranked",
+        "line": 3913,
+        "lines": 230
+      },
+      "query_ids": [
+        "heldout-retracted-entity"
+      ],
+      "modes": [
+        "bm25",
+        "fixture-rrf",
+        "live-rrf"
+      ],
+      "reason": "Entity evidence is loaded after ranking, but retracted=true is not used to reject candidates."
+    },
+    {
+      "code": "freshness_not_ranked",
+      "status": "observed",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_query_knowledge_ranked",
+        "line": 3913,
+        "lines": 230
+      },
+      "query_ids": [
+        "heldout-latest-entity"
+      ],
+      "modes": [
+        "bm25",
+        "fixture-rrf",
+        "live-rrf"
+      ],
+      "reason": "updated_at is not used in BM25, RRF, or final candidate ordering."
+    },
+    {
+      "code": "entity_provenance_room_not_scoped",
+      "status": "observed",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_query_knowledge_ranked",
+        "line": 3913,
+        "lines": 230
+      },
+      "query_ids": [
+        "heldout-provenance-room-leak"
+      ],
+      "modes": [
+        "bm25",
+        "fixture-rrf",
+        "live-rrf"
+      ],
+      "reason": "Room filtering uses person/chat entity IDs; a global topic from another evidence room can pass."
+    },
+    {
+      "code": "entity_time_scope_not_applied",
+      "status": "observed",
+      "source": {
+        "file": "scripts/auto_reply_knowledge_graph.py",
+        "function": "_query_knowledge_ranked",
+        "line": 3913,
+        "lines": 230
+      },
+      "query_ids": [
+        "heldout-relation-time-scope"
+      ],
+      "modes": [
+        "bm25",
+        "fixture-rrf",
+        "live-rrf"
+      ],
+      "reason": "Relation validity is filtered, but old time entities remain eligible candidates."
+    }
+  ],
+  "offline_comparison": {
+    "1": {
+      "macro_recall": 0.0909,
+      "macro_ndcg": 0.0909
+    },
+    "3": {
+      "macro_recall": 0.1818,
+      "macro_ndcg": 0.1483
+    },
+    "5": {
+      "macro_recall": 0.1818,
+      "macro_ndcg": 0.1483
+    }
+  },
+  "live_comparison": {
+    "quality_delta": {
+      "1": {
+        "macro_recall": 0.0909,
+        "macro_ndcg": 0.0909
+      },
+      "3": {
+        "macro_recall": 0.0909,
+        "macro_ndcg": 0.0909
+      },
+      "5": {
+        "macro_recall": 0.0909,
+        "macro_ndcg": 0.0909
+      }
+    },
+    "latency_delta_ms": {
+      "p50": 29.168,
+      "p95": 36.6
+    },
+    "latency_ratio": {
+      "p50": 13.952,
+      "p95": 10.233
+    }
+  }
+}

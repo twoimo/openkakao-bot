@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "올든의 지식 자동 갱신",
+    "subtitle": "OSK v4.1.2 · 로컬 저장 · 사람의 편집 보존",
+    "viewBox": [
+      960,
+      480
+    ],
+    "animation": "none",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    {
+      "label": "대화 출처"
+    },
+    {
+      "label": "앱의 갱신 작업"
+    },
+    {
+      "label": "지식 저장"
+    },
+    {
+      "label": "설정창"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "ere-index",
+      "type": "database",
+      "label": "대화 지식 인덱스",
+      "sublabel": "별도 SQLite 저장소",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "osk-sync",
+      "type": "backend",
+      "label": "OSK 동기화",
+      "sublabel": "앱에서 60초마다 갱신",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "private-vault",
+      "type": "database",
+      "label": "개인 Markdown 지식",
+      "sublabel": "OSK의 쓰기 계약으로 검증",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "graph-view",
+      "type": "frontend",
+      "label": "넓은 지식 그래프",
+      "sublabel": "보이는 동안 15초마다 확인",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "checkpoint",
+      "type": "security",
+      "label": "편집 보존",
+      "sublabel": "진행 기록 · 해시 대조",
+      "stage": 1,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "from": "ere-index",
+      "to": "osk-sync",
+      "label": "변경된 출처",
+      "variant": "emphasis"
+    },
+    {
+      "from": "osk-sync",
+      "to": "private-vault",
+      "label": "검증된 쓰기",
+      "variant": "emphasis"
+    },
+    {
+      "from": "private-vault",
+      "to": "graph-view",
+      "label": "OSK로 다시 읽기",
+      "variant": "emphasis"
+    },
+    {
+      "from": "osk-sync",
+      "to": "checkpoint",
+      "label": "노드마다 진행 저장",
+      "variant": "security",
+      "labelDy": 24
+    }
+  ]
+}

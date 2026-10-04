@@ -6,6 +6,13 @@ export interface FrameScheduler {
   now(): number;
 }
 
+export interface AnimationLoopDiagnostics {
+  running: boolean;
+  pendingFrame: boolean;
+  renderCount: number;
+  lastRenderAtMs: number | null;
+}
+
 const browserScheduler: FrameScheduler = {
   request: (callback) => requestAnimationFrame(callback),
   cancel: (id) => cancelAnimationFrame(id),
@@ -14,10 +21,14 @@ const browserScheduler: FrameScheduler = {
 
 export class AnimationLoop {
   private rafId: number | null = null;
+  private activeTick: FrameRequestCallback | null = null;
   private running = false;
   private lastTickMs = 0;
   private lastRenderMs = 0;
+  private lastRenderAtMs: number | null = null;
   private busyLoad = 0;
+  private voiceActive = false;
+  private interactive = false;
   private readonly maxDtSeconds = 0.25;
   renderCount = 0;
 
@@ -30,17 +41,27 @@ export class AnimationLoop {
     this.busyLoad = Number.isFinite(load) ? Math.min(1, Math.max(0, load)) : 0;
   }
 
+  setVoiceActive(active: boolean): void { this.voiceActive = active; }
+  setInteractive(active: boolean): void { this.interactive = active; }
+
   start(): void {
     if (this.running) return;
     this.running = true;
     const now = this.scheduler.now();
     this.lastTickMs = now;
     this.lastRenderMs = now - this.frameIntervalMs();
-    this.rafId = this.scheduler.request(this.tick);
+    // One stable callback belongs to one visible generation. A callback from a
+    // prior generation can still be delivered after cancelAnimationFrame when
+    // hide lands inside that callback. Identity keeps it from rearming itself
+    // after a newer generation has started.
+    const owner: FrameRequestCallback = (nowMs) => this.tick(nowMs, owner);
+    this.activeTick = owner;
+    this.rafId = this.scheduler.request(owner);
   }
 
   stop(): void {
     this.running = false;
+    this.activeTick = null;
     if (this.rafId !== null) {
       this.scheduler.cancel(this.rafId);
       this.rafId = null;
@@ -56,21 +77,38 @@ export class AnimationLoop {
     return this.running;
   }
 
-  private frameIntervalMs(): number {
-    return this.busyLoad > 0.08 ? 1000 / 30 : 1000 / 15;
+  diagnostics(): AnimationLoopDiagnostics {
+    return {
+      running: this.running,
+      pendingFrame: this.rafId !== null,
+      renderCount: this.renderCount,
+      lastRenderAtMs: this.lastRenderAtMs,
+    };
   }
 
-  private readonly tick = (nowMs: number): void => {
-    if (!this.running) return;
+  private frameIntervalMs(): number {
+    return this.interactive || this.voiceActive || this.busyLoad > 0.08 ? 1000 / 30 : 1000 / 15;
+  }
+
+  private tick(nowMs: number, owner: FrameRequestCallback): void {
+    if (!this.running || this.activeTick !== owner) return;
+    // The callback is executing, so there is no cancellable future frame until
+    // this method explicitly schedules one below.
+    this.rafId = null;
     const elapsedRender = nowMs - this.lastRenderMs;
-    if (elapsedRender >= this.frameIntervalMs()) {
+    const interval = this.frameIntervalMs();
+    if (elapsedRender + 0.5 >= interval) {
       const rawDt = Number.isFinite(nowMs) ? Math.max(0, nowMs - this.lastTickMs) / 1000 : 0;
       const dt = Math.min(this.maxDtSeconds, rawDt);
       this.lastTickMs = nowMs;
-      this.lastRenderMs = nowMs;
+      // Keep the cadence phase: rounding around 33.33 ms must not repeatedly
+      // skip to a third 60 Hz display refresh and turn a 30 fps cap into 23 fps.
+      this.lastRenderMs += Math.max(1, Math.floor((elapsedRender + 0.5) / interval)) * interval;
       this.renderFrame(dt, nowMs);
       this.renderCount += 1;
+      this.lastRenderAtMs = Number.isFinite(nowMs) ? nowMs : this.scheduler.now();
     }
-    this.rafId = this.scheduler.request(this.tick);
-  };
+    if (!this.running || this.activeTick !== owner) return;
+    this.rafId = this.scheduler.request(owner);
+  }
 }

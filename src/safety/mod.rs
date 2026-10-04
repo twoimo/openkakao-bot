@@ -147,8 +147,7 @@ impl SafetyGate for DefaultSafetyGate {
         }
         // Database-authoritative identity: exact, non-empty fingerprint match
         // (R11.6). An empty authoritative fingerprint can never match.
-        if cfg.authoritative_account_fp.is_empty()
-            || req.account_fp != cfg.authoritative_account_fp
+        if cfg.authoritative_account_fp.is_empty() || req.account_fp != cfg.authoritative_account_fp
         {
             return SendDecision::Fenced(FenceReason::IdentityMismatch);
         }

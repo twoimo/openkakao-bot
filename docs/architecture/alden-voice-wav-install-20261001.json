@@ -1,0 +1,49 @@
+{
+  "schema": "alden-wav-installed-readback-v1",
+  "captured_utc": "2026-09-30T17:50:56.716164+00:00",
+  "code_commit": "bd551b55c7bd3342ebdf6b8d9b24df2752883670",
+  "version": "0.1.6",
+  "bundle_files": 30,
+  "bundle_byte_equal": true,
+  "resource_files": 27,
+  "resource_byte_equal": true,
+  "source_sha256": {
+    "alden_voice.py": "409b4040ef081c8bfb8d85a0e5c5e539799dfc5dccffdbe6a4190917ddea2f03",
+    "alden_abort.py": "35f251273637121e513d02de5624c0096af319579b4f00cb19a5863cab2d0e91"
+  },
+  "launchagent_pid": 60225,
+  "executable_verified": true,
+  "signature_verified": true,
+  "installed_probe": [
+    {
+      "case": "numpy_conversion_cancel",
+      "cancelled": true,
+      "existing_artifact_preserved": true,
+      "staging_clean": true
+    },
+    {
+      "case": "new_nested_root",
+      "normal_completed": true,
+      "root_mode": "0o700",
+      "file_mode": "0o600",
+      "riff": true
+    }
+  ],
+  "native_ui_verified": false,
+  "voice_end_to_end_verified": false,
+  "model_calls": 0,
+  "preservation": {
+    "enrollment_unchanged": true,
+    "queue_file_identities_preserved": 5,
+    "local_cli_unchanged": true,
+    "shared_stable_cli_unchanged_during_candidate_preparation": true
+  },
+  "backend_aggregate": {
+    "updated_at": "2026-09-30T17:50:55.958756+00:00",
+    "room_count": 3,
+    "ready_room_count": 3,
+    "readiness": "ready",
+    "authoritative": true,
+    "state": "running"
+  }
+}

@@ -1,0 +1,311 @@
+{
+  "error": null,
+  "mode": "isolated-own-webview-no-production-bridge",
+  "result": {
+    "before": {
+      "canvas": {
+        "contextLost": false,
+        "cssHeight": 236,
+        "cssWidth": 236,
+        "height": 236,
+        "width": 236,
+        "x": 20,
+        "y": 12
+      },
+      "dpr": 1,
+      "height": 260,
+      "loop": {
+        "pendingFrame": true,
+        "running": true
+      },
+      "pause": {
+        "eventAtMs": 21,
+        "eventToLastFrameMs": 0,
+        "lastRenderAtMs": null,
+        "observedAtMs": 22,
+        "pendingFrame": false,
+        "rendersAfterEvent": 0,
+        "running": false,
+        "state": "hidden"
+      },
+      "ready": true,
+      "renderCount": 4,
+      "scrollHeight": 260,
+      "scrollWidth": 276,
+      "width": 276
+    },
+    "cycles": [
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 3.163584,
+        "hideRequestToStoppedObservationUpperBoundMs": 15.892041999999998,
+        "index": 0,
+        "pause": {
+          "eventAtMs": 282,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 251,
+          "observedAtMs": 651,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 0.31625000000000003,
+        "hideRequestToStoppedObservationUpperBoundMs": 26.51725,
+        "index": 1,
+        "pause": {
+          "eventAtMs": 916,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 885,
+          "observedAtMs": 1285,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 3.9219579999999996,
+        "hideRequestToStoppedObservationUpperBoundMs": 19.592875,
+        "index": 2,
+        "pause": {
+          "eventAtMs": 1549,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 1502,
+          "observedAtMs": 1915,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 4.756542,
+        "hideRequestToStoppedObservationUpperBoundMs": 16.587457999999998,
+        "index": 3,
+        "pause": {
+          "eventAtMs": 2182,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 2135,
+          "observedAtMs": 2552,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 3
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 1.309333,
+        "hideRequestToStoppedObservationUpperBoundMs": 12.500041,
+        "index": 4,
+        "pause": {
+          "eventAtMs": 2815,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 2734,
+          "observedAtMs": 3179.0000000000005,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 0.342708,
+        "hideRequestToStoppedObservationUpperBoundMs": 13.365,
+        "index": 5,
+        "pause": {
+          "eventAtMs": 3449.0000000000005,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 3435,
+          "observedAtMs": 3809,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 3
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 0.330542,
+        "hideRequestToStoppedObservationUpperBoundMs": 11.802417,
+        "index": 6,
+        "pause": {
+          "eventAtMs": 4066,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 3985,
+          "observedAtMs": 4430,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 0.318166,
+        "hideRequestToStoppedObservationUpperBoundMs": 12.974791,
+        "index": 7,
+        "pause": {
+          "eventAtMs": 4699,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 4667,
+          "observedAtMs": 5059,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 3
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 2.529083,
+        "hideRequestToStoppedObservationUpperBoundMs": 2.8766249999999998,
+        "index": 8,
+        "pause": {
+          "eventAtMs": 5317,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 5235,
+          "observedAtMs": 5675,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 3
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "hideRequestToNativeReturnMs": 2.7148749999999997,
+        "hideRequestToStoppedObservationUpperBoundMs": 18.319041000000002,
+        "index": 9,
+        "pause": {
+          "eventAtMs": 5932,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 5852,
+          "observedAtMs": 6298,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "resumeRenderDelta": 4
+      }
+    ],
+    "monitorScaleFactors": [
+      1.0
+    ],
+    "nativeScaleFactor": 1.0,
+    "restored": {
+      "canvas": {
+        "contextLost": false,
+        "cssHeight": 236,
+        "cssWidth": 236,
+        "height": 236,
+        "width": 236,
+        "x": 20,
+        "y": 12
+      },
+      "dpr": 1,
+      "height": 260,
+      "loop": {
+        "pendingFrame": true,
+        "running": true
+      },
+      "pause": {
+        "eventAtMs": 5932,
+        "eventToLastFrameMs": 0,
+        "lastRenderAtMs": 5852,
+        "observedAtMs": 6314,
+        "pendingFrame": false,
+        "rendersAfterEvent": 0,
+        "running": false,
+        "state": "hidden"
+      },
+      "ready": true,
+      "renderCount": 40,
+      "scrollHeight": 260,
+      "scrollWidth": 276,
+      "width": 276
+    },
+    "retina": {
+      "available": false
+    },
+    "workspaceSignals": [
+      {
+        "bothNativeWindowsHidden": true,
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "notificationCountDelta": 1,
+        "pause": {
+          "eventAtMs": 6882.000000000001,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 6851,
+          "observedAtMs": 7252,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "postToStoppedObservationUpperBoundMs": 28.188584,
+        "scope": "process-local synthetic NSWorkspace notification; not physical sleep, switch or lock",
+        "settingsRenderScope": "native visibility only; backend-free settings renderer unexercised",
+        "signal": "display-sleep"
+      },
+      {
+        "bothNativeWindowsHidden": true,
+        "hiddenRenderDelta": 0,
+        "hiddenSampleMs": 350,
+        "notificationCountDelta": 1,
+        "pause": {
+          "eventAtMs": 7516,
+          "eventToLastFrameMs": 0,
+          "lastRenderAtMs": 7485,
+          "observedAtMs": 7878,
+          "pendingFrame": false,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "postToStoppedObservationUpperBoundMs": 22.485166,
+        "scope": "process-local synthetic NSWorkspace notification; not physical sleep, switch or lock",
+        "settingsRenderScope": "native visibility only; backend-free settings renderer unexercised",
+        "signal": "session-inactive"
+      }
+    ]
+  },
+  "schema": 1,
+  "scope": "own native WKWebView; no existing-process, OS-lock, tray click, shortcut, voice or inference attestation",
+  "success": true,
+  "version": "0.1.6",
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "metadataRedacted": [
+    "pid",
+    "executable"
+  ],
+  "capturePolicy": "native PNGs private, excluded from Git and release"
+}

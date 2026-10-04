@@ -1,0 +1,22 @@
+{
+  "sourceCommit": "8791ea1cc23073a58806bed5e6537a4512dbb54d",
+  "agentId": "01a0f40f-ff7e-7f02-8bca-e5ffbd418d78",
+  "requestedRoute": "gpt-6-astra/max",
+  "routeAttestation": "unavailable; no substitution",
+  "scope": "independent read-only source and owned installed-audit review",
+  "remainingSourceFindings": 0,
+  "findingsClosed": [
+    "run_return enables explicit native observer guard cleanup",
+    "native-hidden state fences DOM resume and pending boot-read failure",
+    "retained tokens on matching NSWorkspace center/mainQueue; actual native hidden readback",
+    "pre-post running renderer and both native windows visible; fresh pause and counter delivery",
+    "settings native visibility only and physical transition/lock/2x scope limitations"
+  ],
+  "installedEvidenceReview": "pass: both real core PNGs, PID/exit/report/exec SHA match; 2 synthetic signals and 10 hide/resume cycles",
+  "reviewedSha256": {
+    "desktop/src-tauri/src/workspace_visibility.rs": "0f5818492eeab234432f37fed4609a92cde6f46afbdb9912b5d8f0d5e926ab0c",
+    "desktop/src-tauri/src/main.rs": "6005b5657f7b75f058d877d41bfd0c76ab05e5a18a27a21a63b0bcbdb92103ab",
+    "desktop/src-tauri/src/render_audit.rs": "8128f1cac779b44252151d73b0b59638baa435b528cf8ab988f7b4592655ef0c",
+    "desktop/src/core/lifecycle-wiring.ts": "a865805629b1f6ebbd7dd0b90fc349aa89dbed7e863cc8cdb85e188e5c407619"
+  }
+}

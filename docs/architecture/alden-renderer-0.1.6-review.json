@@ -1,0 +1,37 @@
+{
+  "schema": "alden-renderer-0.1.6-visual-review-v1",
+  "renderer": "Built 0.1.6 assets in Aside Chromium/WebGL2",
+  "fixture": "synthetic-public-empty; zero rooms and replies",
+  "reviewed_by": "parent agent; directly viewed all three image files",
+  "images": [
+    {
+      "file": "alden-renderer-0.1.6-default.png",
+      "sha256": "bd52564bb10c2ceaf640c32be95eaf4da4ae17ab53118eb8a3e6c3072790dd68",
+      "width": 276,
+      "height": 260
+    },
+    {
+      "file": "alden-renderer-0.1.6-compact.png",
+      "sha256": "8c8cba18e6bf18ee06882a84de72907115fd2eaf3730f6ba3ba46e5c6c6c71b2",
+      "width": 640,
+      "height": 700
+    },
+    {
+      "file": "alden-renderer-0.1.6-retina2x.png",
+      "sha256": "a66273273cafa5581ff249030df050dfed2b50afd05cf9b8410c701302c5cf45",
+      "width": 552,
+      "height": 520
+    }
+  ],
+  "observations": [
+    "Default and 2x core rings stay within the image, with a centered warm-gold sphere and no decorative HUD text",
+    "Compact 640px settings show one readable column without horizontal crop; content below the viewport is vertically scrollable",
+    "The empty public fixture accurately shows unavailable model-setting and wake-model state; it is not a live backend response"
+  ],
+  "cleanup": "Child reports owned capture tabs, temporary server and harness closed; no native app access",
+  "limits": [
+    "Not a capture of the installed Tauri WKWebView or physical Retina window",
+    "2x image uses browser device-pixel-ratio emulation and canvas backing store, not native display verification",
+    "No additional lifecycle, latency or battery measurement"
+  ]
+}

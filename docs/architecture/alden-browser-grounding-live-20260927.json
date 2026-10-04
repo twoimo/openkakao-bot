@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "python": "3.11.9",
+    "browser_use": "0.13.10",
+    "playwright": "1.63.0",
+    "local_llm": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
+  },
+  "cases": [
+    {
+      "task": "example.com document.title",
+      "seconds_including_independent_probe": 33.872,
+      "ok": true,
+      "error": "",
+      "result": "Example Domain",
+      "evidence": [
+        {
+          "kind": "document_title",
+          "value": "Example Domain",
+          "url": "https://example.com/",
+          "source": "document.title"
+        }
+      ],
+      "independent_dom_value": "Example Domain",
+      "independent_http_status": 200,
+      "exact_match": true,
+      "source_sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+      "source_unchanged": true
+    },
+    {
+      "task": "Wikipedia first result",
+      "seconds_including_independent_probe": 47.307,
+      "ok": true,
+      "error": "",
+      "result": "Tauri (software framework)",
+      "evidence": [
+        {
+          "kind": "first_search_result",
+          "value": "Tauri (software framework)",
+          "url": "https://en.wikipedia.org/wiki/Special:Search?search=Tauri+software&ns0=1",
+          "source": ".mw-search-result-heading a"
+        }
+      ],
+      "independent_dom_value": "Tauri (software framework)",
+      "independent_http_status": 200,
+      "exact_match": true,
+      "source_sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+      "source_unchanged": true
+    }
+  ],
+  "exact_field_accuracy": {
+    "correct": 2,
+    "total": 2
+  },
+  "limitations": [
+    "Two supported exact-field tasks only",
+    "Source BrowserUseRunner tested; installed desktop bridge not exercised",
+    "Times include independent DOM probes and are not latency improvement evidence"
+  ]
+}

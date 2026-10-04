@@ -1,0 +1,32 @@
+{
+  "schema": "alden-source-verification-final-media-v1",
+  "python": "/Users/twoimo/Library/Application Support/openkakao/runtimes/voice/bin/python3.11",
+  "selectors": 59,
+  "tests": 958,
+  "unittest_seconds": 102.504,
+  "process_seconds": 102.823,
+  "status": "OK (skipped=2)",
+  "exit_code": 0,
+  "source_sha256": {
+    "scripts/auto-reply-db-watch.py": "b3b858ce681c2b201a83c6e10dd288c3fed9bb793e57aefbe84dd8317bc6164e",
+    "scripts/auto-reply-worker.py": "64114bb47747f9e69ac8de68a8876dcbb187ebc6d573848da61ea2d1945bac6d",
+    "scripts/auto_reply_knowledge_graph.py": "4cc5367e9ca0943b9c352dfe54ab96c178430f8e9e42ef41498637ad5c6cb480",
+    "scripts/alden_voice.py": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+    "tests/test_auto_reply_cli_runtime.py": "af07db0aba8f96e1f6424bf9e8f8f5a1c093121a058544d0e0353b436b38d77d",
+    "tests/test_auto_reply_worker_mlx.py": "d12fa2a45b8b0f93912451862b69e402ac114049591f3864c6120f90459f9c03",
+    ".github/workflows/ci.yml": "254e23d4d9f1ab3142e8a054accdeb95028b3796dbac075d799a82ffea14604c"
+  },
+  "local_log": "/private/tmp/alden-focused-ci-media-final-20260930.log",
+  "scope": "Exact focused CI selector set, pinned installed CPython 3.11.9; fake DB/process/AX/model adapters and existing offline fixtures",
+  "reused_unmodified_checks": {
+    "root_rust": "1137 passed, 1 ignored; no Rust source edits after that run",
+    "desktop": "191 passed and typecheck; no renderer source edits after that run",
+    "launchd_artifact_harness": "exit 0; launchd scripts unchanged"
+  },
+  "limits": [
+    "Not installed WKWebView, microphone, physical shortcut or Kakao delivery",
+    "Shared production worker not activated",
+    "Astra final scoped media review pending"
+  ],
+  "superseded_by_source_fix": "Recent-file source P2 fixed after this historical receipt; refreshed final receipt is pending"
+}

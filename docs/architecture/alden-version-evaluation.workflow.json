@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {"title": "Alden 버전별 로컬 평가", "quality_profile": "showcase"},
+  "lanes": [
+    {"id": "evaluation", "label": "빌드 · 오프라인 평가"},
+    {"id": "limits", "label": "실행 제한", "variant": "exception"}
+  ],
+  "mainPath": ["version", "dataset", "identity", "score", "receipt"],
+  "nodes": [
+    {"id": "version", "type": "backend", "label": "버전 변경", "sublabel": "명시한 로컬 구성", "lane": "evaluation", "col": 0},
+    {"id": "dataset", "type": "security", "label": "문항 검증", "sublabel": "출처 · 분할 · 중복", "lane": "evaluation", "col": 1},
+    {"id": "identity", "type": "security", "label": "변경 대조", "sublabel": "소스 · 모델 · 문항", "lane": "evaluation", "col": 2},
+    {"id": "score", "type": "backend", "label": "로컬 채점", "sublabel": "응답 로그확률 · DPO", "lane": "evaluation", "col": 3},
+    {"id": "receipt", "type": "database", "label": "결과 보존", "sublabel": "잠금 · 취소 epoch", "lane": "evaluation", "col": 4},
+    {"id": "unavailable", "type": "security", "label": "평가 불가", "sublabel": "메모리 · 취소 · 오류", "lane": "limits", "col": 3}
+  ],
+  "edges": [
+    {"from": "version", "to": "dataset"},
+    {"from": "dataset", "to": "identity"},
+    {"from": "identity", "to": "score", "label": "변경 있음"},
+    {"from": "score", "to": "receipt"},
+    {"id": "reuse", "from": "identity", "to": "receipt", "label": "동일 입력 재사용", "variant": "emphasis", "role": "branch"},
+    {"id": "decline", "from": "score", "to": "unavailable", "label": "성공 확정 차단", "variant": "security", "role": "error"}
+  ],
+  "cards": [
+    {"dot": "emerald", "title": "자동 평가의 범위", "items": ["검증 분할만 기본 채점 · 최종 test는 명시 실행", "같은 버전도 소스 · 모델 · 문항 · runtime 변경 시 재평가"]},
+    {"dot": "amber", "title": "학습과 제품 적용", "items": ["평가는 가중치를 학습하거나 제품 모델을 교체하지 않음", "기존 SFT와 실제 DPO 가중치 학습은 별도 경로 · 후자는 미완료"]}
+  ]
+}

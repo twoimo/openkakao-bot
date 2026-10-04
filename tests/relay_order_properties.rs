@@ -27,7 +27,7 @@ use openkakao_cli::fakes::{BlockingRealSendPort, FakeAxReadPort, ForbiddenNetwor
 use openkakao_cli::forward::{ImageLadder, StepAttempt, STEP_TIMEOUT_MS};
 use openkakao_cli::logging::{FlowKind, HistoryStore, SqliteHistoryStore};
 use openkakao_cli::ports::{
-    AcquireError, DetectMode, ExcludedAttachment, ImageAcquisition, ImageAcquirer, ImageBlob,
+    AcquireError, DetectMode, ExcludedAttachment, ImageAcquirer, ImageAcquisition, ImageBlob,
     ImageRef, LinkRef, NetworkPort, SendPort, TelegramMessage,
 };
 use openkakao_cli::relay::{

@@ -1,0 +1,31 @@
+{
+  "schema": "alden-ci-fixture-isolation-v1",
+  "failed_remote_run": 36705693575,
+  "failed_remote_head": "e485c422ce2203871dd06a4fa03dd489bccae7cb",
+  "failure_count": 2,
+  "failure": "Scheduler fixtures used the actual default operator abort root and were deferred as alden_global_abort on CI",
+  "fix": "Three scheduler fixtures now resolve operator state exclusively to their owned private temporary directory",
+  "production_changes": "none; worker, abort guard, installed bundle and candidate bytes unchanged",
+  "focused_validation": "23 tests passed in 1.021s, including worker abort tests",
+  "bare_runtime_validation": {
+    "python": "/Users/twoimo/Library/Application Support/openkakao/runtimes/voice/bin/python3.11",
+    "site_packages": false,
+    "selectors": 60,
+    "elapsed_seconds": 100.579,
+    "exit_code": 0,
+    "log": "/private/tmp/alden-focused-ci-bare-final-20260930.log",
+    "unittest_results": [
+      [
+        "959",
+        "100.396",
+        "OK (skipped=13)"
+      ]
+    ]
+  },
+  "test_sha256": "e232f15dc04ed36fa283eee908f46792c12b7a2a07c8299ec5ce8fc810323b45",
+  "limits": [
+    "-S omits site packages, but this local runtime is not identical to the hosted runner",
+    "Local pinned full-runtime validation was 959 tests with 2 skips before this fixture-only correction",
+    "Remote final corrected SHA CI still required"
+  ]
+}

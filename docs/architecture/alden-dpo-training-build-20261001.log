@@ -1,0 +1,61 @@
+scripts/_auto_reply_menubar_wrapper.cpython-311.pyc: OK
+scripts/_bujamentor_menubar_overlay.cpython-311.pyc: OK
+scripts/_bujamentor_menubar_impl.cpython-311.pyc: OK
+{"key": {"schema_version": 1, "version": "0.1.6", "source_sha256": "060c3018c6deea64075a6bcd83a746172655e6ccf1990f3d2a6aa119747fb948", "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333", "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1", "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1", "checkpoint_format": "mlx-serve-qwen3_5-converted", "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0", "split": "validation", "beta": 0.1, "runtime_versions": {"python": "3.11.16", "mlx": "0.32.2", "mlx-lm": "0.31.3", "transformers": "5.17.0"}}, "phase": "evaluated", "scoring": {"status": "ok", "reason": "dpo_teacher_forced", "scoring_method": "mlx_direct_teacher_forcing", "string_similarity_used": false, "pair_count": 3, "evaluated": 3, "mean_loss": 0.6926794938161391, "runtime_seconds": 14.876916, "peak_bytes": 17362436100, "peak_bytes_scope": "scoring_after_model_load", "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1", "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0", "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1", "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f", "reference_frozen": true, "reference_reused": false, "requested_checkpoint_format": "mlx-serve-qwen3_5-converted", "policy_checkpoint_format": "mlx-serve-qwen3_5-converted", "reference_checkpoint_format": "mlx-serve-qwen3_5-converted", "identical_checkpoint_delta_zero": false, "versions": {"python": "3.11.16", "mlx": "0.32.2", "mlx-lm": "0.31.3", "transformers": "5.17.0"}, "pairs": [{"pair_id": "validation-meeting", "chosen_tokens": 8, "rejected_tokens": 8, "policy_chosen_logprob": -6.681828021573892, "policy_rejected_logprob": -29.79251331090927, "reference_chosen_logprob": -6.681827444124792, "reference_rejected_logprob": -29.861458986997604, "delta": -0.06894625353743322, "loss": 0.696600435207394}, {"pair_id": "validation-latest", "chosen_tokens": 4, "rejected_tokens": 4, "policy_chosen_logprob": -5.685380592942238, "policy_rejected_logprob": -12.031896259635687, "reference_chosen_logprob": -5.685352478176355, "reference_rejected_logprob": -12.019163057208061, "delta": 0.012705087661743164, "loss": 0.6925121279509102}, {"pair_id": "validation-no-pixels", "chosen_tokens": 7, "rejected_tokens": 5, "policy_chosen_logprob": -11.978592072147876, "policy_rejected_logprob": -34.55071610212326, "reference_chosen_logprob": -11.955785505007952, "reference_rejected_logprob": -34.44330534338951, "delta": 0.08460419159382582, "loss": 0.6889259182901133}]}, "split_counts": {"train": 3, "validation": 3, "test": 3}, "weights_trained": false, "model_promoted": false, "runtime_seconds": 23.465826, "cached": false, "evaluation_id": "cd2e359c70bd9921fddf237cc352492380d30ef1a434b37d94a442c7902ffcb3"}
+<workspace>/scripts/libalden_audio.dylib.build-79655: replacing existing signature
+<workspace>/scripts/libalden_audio.dylib
+    Finished `release` profile [optimized] target(s) in 0.62s
+
+> openkakao-alden-desktop@0.1.6 build
+> tsc -p tsconfig.json && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 26 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                           0.44 kB │ gzip:   0.28 kB
+dist/assets/index-CW_PueMM.css            9.21 kB │ gzip:   2.40 kB
+dist/assets/hologram-Bn9UWvEd.js          4.94 kB │ gzip:   2.11 kB
+dist/assets/alden-core-BvNbrE0-.js        8.89 kB │ gzip:   3.38 kB
+dist/assets/index-eygyYkRY.js            49.50 kB │ gzip:  16.01 kB
+dist/assets/animation-loop-gE9zh8DR.js  481.98 kB │ gzip: 119.80 kB
+✓ built in 742ms
+
+> openkakao-alden-desktop@0.1.6 tauri
+> tauri build --bundles app
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+
+> openkakao-alden-desktop@0.1.6 build
+> tsc -p tsconfig.json && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 26 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                           0.44 kB │ gzip:   0.28 kB
+dist/assets/index-CW_PueMM.css            9.21 kB │ gzip:   2.40 kB
+dist/assets/hologram-Bn9UWvEd.js          4.94 kB │ gzip:   2.11 kB
+dist/assets/alden-core-BvNbrE0-.js        8.89 kB │ gzip:   3.38 kB
+dist/assets/index-eygyYkRY.js            49.50 kB │ gzip:  16.01 kB
+dist/assets/animation-loop-gE9zh8DR.js  481.98 kB │ gzip: 119.80 kB
+✓ built in 889ms
+   Compiling openkakao-alden-desktop v0.1.6 (<workspace>/desktop/src-tauri)
+    Finished `release` profile [optimized] target(s) in 22.22s
+       Built application at: <workspace>/desktop/src-tauri/target/release/openkakao-alden-desktop
+    Bundling Alden.app (<workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app)
+     Signing with identity "-"
+Signing with identity "-"
+Signing <workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app/Contents/MacOS/openkakao-alden-desktop
+<workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app/Contents/MacOS/openkakao-alden-desktop: replacing existing signature
+Signing with identity "-"
+Signing <workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app
+<workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app: replacing existing signature
+        Warn skipping app notarization, no APPLE_ID & APPLE_PASSWORD & APPLE_TEAM_ID or APPLE_API_KEY & APPLE_API_ISSUER & APPLE_API_KEY_PATH environment variables found
+    Finished 1 bundle at:
+        <workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app
+
+<workspace>/desktop/src-tauri/target/release/bundle/macos/Alden.app

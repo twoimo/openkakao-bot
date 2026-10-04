@@ -1,0 +1,49 @@
+{
+  "version": "0.3.12",
+  "scope": "Isolated installed read-only audit windows, scripted navigation and process-local notifications. No human input, microphone or physical screen lock.",
+  "binary_sha256": "850f30a2762597b33ee2bcef2d9dfce8db94b529439df91787a1cfcf7180e355",
+  "workspaces_pass": true,
+  "popover_pass": true,
+  "navigation_first_frame_ms": [
+    2,
+    2,
+    2,
+    4,
+    5,
+    7,
+    8.99999999999909,
+    9.00000000000091,
+    11.00000000000091,
+    13
+  ],
+  "navigation_sample_count": 10,
+  "navigation_first_frame_p95_ms": 13,
+  "navigation_first_frame_max_ms": 13,
+  "native_window_sizes": {
+    "contentHeight": 680.0,
+    "contentWidth": 640.0,
+    "layoutHeight": 648.0,
+    "layoutWidth": 640.0,
+    "webviewHeight": 680.0,
+    "webviewWidth": 640.0
+  },
+  "workspace_signals": [
+    {
+      "hiddenRenderDelta": 0,
+      "postToStoppedObservationUpperBoundMs": 20.063750000000002,
+      "sampleMs": 350,
+      "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+      "signal": "display-sleep"
+    },
+    {
+      "hiddenRenderDelta": 0,
+      "postToStoppedObservationUpperBoundMs": 28.663917,
+      "sampleMs": 350,
+      "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+      "signal": "session-inactive"
+    }
+  ],
+  "native_retina": {
+    "available": false
+  }
+}

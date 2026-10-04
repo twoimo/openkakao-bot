@@ -32,7 +32,9 @@ fn upsert_rejects_over_limit_value() {
     // 1000 characters is allowed; 1001 is refused. Use a multi-byte Korean
     // character to prove the limit is counted in characters, not bytes.
     let ok_text: String = "가".repeat(MEMORY_NOTE_MAX_CHARS);
-    store.upsert(note(&ok_text)).expect("1000 chars should be accepted");
+    store
+        .upsert(note(&ok_text))
+        .expect("1000 chars should be accepted");
 
     let too_long: String = "가".repeat(MEMORY_NOTE_MAX_CHARS + 1);
     let err = store
@@ -138,11 +140,17 @@ fn store_failure_preserves_existing_data() {
     let insert_err = store
         .upsert(note("실패해야 하는 새 기억"))
         .expect_err("insert should fail");
-    assert!(matches!(insert_err, MemoryError::Db(_)), "got {insert_err:?}");
+    assert!(
+        matches!(insert_err, MemoryError::Db(_)),
+        "got {insert_err:?}"
+    );
 
     // A delete now fails at the database layer (R8.7).
     let delete_err = store.delete(kept_a.id).expect_err("delete should fail");
-    assert!(matches!(delete_err, MemoryError::Db(_)), "got {delete_err:?}");
+    assert!(
+        matches!(delete_err, MemoryError::Db(_)),
+        "got {delete_err:?}"
+    );
 
     // Both original notes are still present and unchanged.
     let items = store.list(MemoryKind::Note).expect("list");
@@ -214,7 +222,10 @@ fn rag_comparisons_lists_stored_experiment_results() {
 #[test]
 fn reference_packs_are_empty_when_table_absent() {
     let store = SqliteMemoryStore::open_in_memory().expect("open");
-    assert!(store.list(MemoryKind::ReferencePack).expect("list").is_empty());
+    assert!(store
+        .list(MemoryKind::ReferencePack)
+        .expect("list")
+        .is_empty());
 }
 
 #[test]

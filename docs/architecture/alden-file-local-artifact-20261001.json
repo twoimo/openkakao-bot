@@ -1,0 +1,16 @@
+{
+  "schema": "alden-file-local-artifact-v1",
+  "captured_utc": "2026-09-30T17:07:06.742483+00:00",
+  "code_commit": "c29e263e158db4bb5b0ddd28d2962bc74bfd1c78",
+  "directory": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/dist/alden-0.1.6-local",
+  "zip": {
+    "file": "Alden-0.1.6-macos-arm64-local.zip",
+    "bytes": 11567997,
+    "sha256": "a728b8b6be9403d5643f3387f0eff2e012a7630f60ada6f48fa48a2f7fe47d55",
+    "installed_files_byte_equal": 30
+  },
+  "checksum_entries": 7,
+  "prior_artifact_preserved": "/Users/twoimo/.codex/worktrees/ef78/openkakao-bot/dist/alden-0.1.6-local-history/pre-file-content-20260930T170410Z",
+  "signed_public_release": false,
+  "goal_complete": false
+}

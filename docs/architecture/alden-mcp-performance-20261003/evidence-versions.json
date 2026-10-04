@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "current_status_version": "0.2.0",
+  "current_status_source_sha256": "3c65936b3f40e0d99f22e4cfa8ca014e648dd611507d436322eae41f8e2c2795",
+  "current_tests_source_sha256": "973b1bc5851e4f935ccd0dc5a57da3ff79dfb0cc11a2a9a6bf093f6aacbc2acb",
+  "current_v0_2": [
+    "evidence/status-benchmark-raw.json",
+    "evidence/status-benchmark-summary.json",
+    "evidence/status-benchmark-provenance.json",
+    "evidence/status-benchmark-final.log",
+    "evidence/status-hardening-raw.json",
+    "evidence/status-hardening-summary.json",
+    "evidence/status-hardening-provenance.json",
+    "evidence/status-hardening.log",
+    "evidence/status-control-comparison.json",
+    "evidence/status-control-comparison.log",
+    "evidence/status-mcp-v0.2-tests.log",
+    "evidence/call-quantiles-v0.2.log",
+    "evidence/status-cost-analysis.json",
+    "evidence/live-metadata-v0.2-offline.json",
+    "evidence/regression-summary.json",
+    "evidence/final-regressions.log",
+    "evidence/change-manifest.json",
+    "evidence/patch-roundtrip.json"
+  ],
+  "historical_v0_1": [
+    "evidence/prior-status-v0.1.0/",
+    "evidence/status-timeout-cancellation.json",
+    "evidence/status-timeout-cancellation.log",
+    "evidence/live-mcp-readback.json",
+    "evidence/live-metadata-loopback.json"
+  ],
+  "mixed_historical_call_quantiles_log": {
+    "path": "evidence/call-quantiles-final.log",
+    "osk": "still applicable because OSK source unchanged",
+    "status": "historical0.1.0; use call-quantiles-v0.2.log and current status JSON"
+  },
+  "historical_app_snapshots": [
+    "evidence/closing-readonly-verification.json"
+  ],
+  "limits": "No pooling across status cohorts/versions; no current installed0.3.11 or Dot attestation; fixture and benchmark Python versions recorded in each provenance"
+}

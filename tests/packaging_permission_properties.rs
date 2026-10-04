@@ -70,9 +70,7 @@ const STAGES: [SignStage; 3] = [SignStage::Codesign, SignStage::Notarize, SignSt
 fn documented_scope(permission: Permission) -> BTreeSet<Capability> {
     match permission {
         // 손쉬운 사용 → AX 전송·텔레그램 읽기만 (R9.8).
-        Permission::Accessibility => {
-            BTreeSet::from([Capability::AxSend, Capability::TelegramRead])
-        }
+        Permission::Accessibility => BTreeSet::from([Capability::AxSend, Capability::TelegramRead]),
         // 전체 디스크 접근 → 로컬 DB 의존 기능만 (R9.9).
         Permission::FullDiskAccess => BTreeSet::from([
             Capability::LocalRead,
@@ -110,7 +108,10 @@ fn assert_partition_invariants(state: &PermissionState) {
     // both halves (disjoint, union = all) (R9.11).
     let mut seen: BTreeSet<Capability> = BTreeSet::new();
     for &c in &map.available {
-        assert!(seen.insert(c), "capability {c:?} appeared twice in available");
+        assert!(
+            seen.insert(c),
+            "capability {c:?} appeared twice in available"
+        );
     }
     for (c, _perm, _how) in &map.blocked {
         assert!(seen.insert(*c), "capability {c:?} appeared in both halves");
@@ -126,8 +127,14 @@ fn assert_partition_invariants(state: &PermissionState) {
             Some(*perm),
             "blocked capability {cap:?} must name its own required permission",
         );
-        assert!(!state.is_granted(*perm), "blocked permission must be denied");
-        assert!(!how.is_empty(), "unblock method must be plain language, not empty");
+        assert!(
+            !state.is_granted(*perm),
+            "blocked permission must be denied"
+        );
+        assert!(
+            !how.is_empty(),
+            "unblock method must be plain language, not empty"
+        );
     }
 
     // Each denied permission blocks exactly its documented scope; each granted
@@ -154,14 +161,23 @@ fn assert_partition_invariants(state: &PermissionState) {
     // blocked entries) are a subset of the three required permissions (R9.7).
     let all_permissions: BTreeSet<Permission> = Permission::ALL.into_iter().collect();
     for (_cap, perm, _how) in &map.blocked {
-        assert!(all_permissions.contains(perm), "displayed permission {perm:?} is off-list");
+        assert!(
+            all_permissions.contains(perm),
+            "displayed permission {perm:?} is off-list"
+        );
     }
     for p in state.granted() {
-        assert!(all_permissions.contains(&p), "granted permission {p:?} is off-list");
+        assert!(
+            all_permissions.contains(&p),
+            "granted permission {p:?} is off-list"
+        );
     }
 
     // The app keeps running in every combination (R9.13).
-    assert!(map.keeps_running(), "at least one capability must stay available");
+    assert!(
+        map.keeps_running(),
+        "at least one capability must stay available"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +259,11 @@ fn assert_packaging_invariants(ok: [bool; 3]) {
             assert_eq!(report.extra_installers, 0);
             assert_eq!(report.setup_commands, 0);
             assert_eq!(report.dmg, plan().dmg_path());
-            assert_eq!(tools.dmg_calls.get(), 1, "DMG built exactly once on success");
+            assert_eq!(
+                tools.dmg_calls.get(),
+                1,
+                "DMG built exactly once on success"
+            );
         }
         Some(idx) => {
             // Any stage failing → zero artifacts + failure info (R9.5).
@@ -290,8 +310,11 @@ fn capabilities_partition_over_all_eight_combos() {
 #[test]
 fn single_permission_denial_blocks_exactly_its_scope() {
     for &denied in &PERMISSIONS {
-        let granted: Vec<Permission> =
-            PERMISSIONS.iter().copied().filter(|p| *p != denied).collect();
+        let granted: Vec<Permission> = PERMISSIONS
+            .iter()
+            .copied()
+            .filter(|p| *p != denied)
+            .collect();
         let state = PermissionState::from_granted(granted);
         let map = capabilities(&state);
         assert_eq!(
@@ -336,11 +359,7 @@ proptest! {
 #[test]
 fn package_artifact_iff_all_stages_succeed_over_all_combos() {
     for bits in 0u8..8 {
-        let ok = [
-            bits & 0b001 != 0,
-            bits & 0b010 != 0,
-            bits & 0b100 != 0,
-        ];
+        let ok = [bits & 0b001 != 0, bits & 0b010 != 0, bits & 0b100 != 0];
         assert_packaging_invariants(ok);
     }
 }

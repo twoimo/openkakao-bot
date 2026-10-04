@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +183,16 @@ class SessionRuntimePackagerTests(unittest.TestCase):
                 {"openkakao-cli", "config.toml", *module.RUNTIME_SCRIPT_NAMES,
                  *module.RUNTIME_DATA_NAMES},
             )
+            alden_source = ROOT / "scripts" / "alden_abort.py"
+            alden_asset = manifest["assets"]["alden_abort.py"]
+            self.assertEqual(
+                alden_asset["sha256"],
+                hashlib.sha256(alden_source.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                Path(alden_asset["path"]).read_bytes(),
+                alden_source.read_bytes(),
+            )
 
     def test_runtime_copy_list_covers_repository_import_closure(self):
         module = load("session_packager_import_closure_test")
@@ -199,7 +210,7 @@ class SessionRuntimePackagerTests(unittest.TestCase):
             "auto_reply_ondevice.py",
             "auto_reply_reference_search.py",
             "auto_reply_reference_store.py",
-            "jarvis_abort.py",
+            "alden_abort.py",
             "local_mlx_gateway.py",
         }
         self.assertTrue(required <= set(module.RUNTIME_SCRIPT_NAMES))
@@ -211,7 +222,7 @@ class SessionRuntimePackagerTests(unittest.TestCase):
             "auto_reply_ondevice.py",
             "auto_reply_reference_search.py",
             "auto_reply_reference_store.py",
-            "jarvis_abort.py",
+            "alden_abort.py",
             "local_mlx_gateway.py",
         }
         reduced = tuple(
@@ -380,6 +391,82 @@ class SessionRuntimePackagerTests(unittest.TestCase):
             self.assertEqual(staged.stat().st_nlink, 1)
             self.assertNotEqual(staged.stat().st_ino, (source / staged.name).stat().st_ino)
             self.assertNotIn("/Cellar/python@", str(python))
+
+    def test_existing_stable_binary_input_is_idempotent_and_does_not_activate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            module, source, binary, config, python, state = self.fixture(root)
+            self.set_config_chats(config, "id:42")
+            stable_dir = root / "bin"
+            stable_dir.mkdir(mode=0o700)
+            stable = stable_dir / "openkakao-cli"
+            shutil.copy2(binary, stable)
+            stable.chmod(0o500)
+            before_stat = stable.stat()
+            before_hash = hashlib.sha256(stable.read_bytes()).hexdigest()
+
+            def fake_sign(path: Path) -> None:
+                path.chmod(0o700)
+                try:
+                    path.write_bytes(path.read_bytes() + b"\nmock-signature\n")
+                finally:
+                    path.chmod(0o500)
+
+            with mock.patch.object(module, "_sign_binary", side_effect=fake_sign):
+                result = module.stage_runtime(
+                    binary=stable.resolve(),
+                    python=python,
+                    config=config,
+                    source_dir=source.resolve(),
+                    state_root=state.resolve(),
+                    runtime_parent=(state / "runtime").resolve(),
+                    chats=("id:42",),
+                    release_id="stable-input",
+                )
+
+            runtime_copy = Path(result["runtime_root"]) / "openkakao-cli"
+            self.assertNotEqual(
+                hashlib.sha256(runtime_copy.read_bytes()).hexdigest(), before_hash
+            )
+            self.assertEqual(
+                hashlib.sha256(stable.read_bytes()).hexdigest(), before_hash
+            )
+            after_stat = stable.stat()
+            self.assertEqual(after_stat.st_dev, before_stat.st_dev)
+            self.assertEqual(after_stat.st_ino, before_stat.st_ino)
+            self.assertEqual(after_stat.st_mtime_ns, before_stat.st_mtime_ns)
+            self.assertFalse(result["activated"])
+            self.assertFalse((state / "session-monitor-status.json").exists())
+
+    def test_rejects_ambiguous_symlink_at_stable_binary_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            module, source, binary, config, python, state = self.fixture(root)
+            self.set_config_chats(config, "id:42")
+            stable_dir = root / "bin"
+            stable_dir.mkdir(mode=0o700)
+            target = root / "stable-target"
+            shutil.copy2(binary, target)
+            target.chmod(0o500)
+            stable = stable_dir / "openkakao-cli"
+            stable.symlink_to(target)
+            target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+
+            with self.assertRaisesRegex(module.PackagingError, "stable binary path is unsafe"):
+                module.stage_runtime(
+                    binary=binary,
+                    python=python,
+                    config=config,
+                    source_dir=source.resolve(),
+                    state_root=state.resolve(),
+                    runtime_parent=(state / "runtime").resolve(),
+                    chats=("id:42",),
+                    release_id="unsafe-stable-link",
+                )
+
+            self.assertTrue(stable.is_symlink())
+            self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), target_hash)
+            self.assertFalse((state / "runtime/unsafe-stable-link").exists())
 
     def test_rejects_cellar_python_and_keeps_opt_keg_string(self):
         module = load("session_packager_python_pin")

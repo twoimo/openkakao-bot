@@ -86,10 +86,16 @@ fn base_obs() -> ReplyObservation {
 fn detect_low_quality_boundary() {
     let mut obs = base_obs();
     obs.quality_score = 59;
-    let sigs: Vec<_> = detect_signals(&obs, 0.5).into_iter().map(|(k, _)| k).collect();
+    let sigs: Vec<_> = detect_signals(&obs, 0.5)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
     assert!(sigs.contains(&SignalKind::LowQuality));
     obs.quality_score = 60;
-    let sigs: Vec<_> = detect_signals(&obs, 0.5).into_iter().map(|(k, _)| k).collect();
+    let sigs: Vec<_> = detect_signals(&obs, 0.5)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
     assert!(!sigs.contains(&SignalKind::LowQuality));
 }
 
@@ -97,10 +103,16 @@ fn detect_low_quality_boundary() {
 fn detect_reask_within_window() {
     let mut obs = base_obs();
     obs.reask_secs = Some(120);
-    let sigs: Vec<_> = detect_signals(&obs, 0.5).into_iter().map(|(k, _)| k).collect();
+    let sigs: Vec<_> = detect_signals(&obs, 0.5)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
     assert!(sigs.contains(&SignalKind::Reask));
     obs.reask_secs = Some(121);
-    let sigs: Vec<_> = detect_signals(&obs, 0.5).into_iter().map(|(k, _)| k).collect();
+    let sigs: Vec<_> = detect_signals(&obs, 0.5)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
     assert!(!sigs.contains(&SignalKind::Reask));
 }
 
@@ -439,7 +451,9 @@ fn sig(kind: SignalKind, at: i64) -> SignalRecord {
 #[test]
 fn store_records_and_reads_active_signals() {
     let store = SqliteImproveStore::open_in_memory().unwrap();
-    store.record_signal(&sig(SignalKind::LowQuality, 100)).unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, 100))
+        .unwrap();
     store.record_signal(&sig(SignalKind::Reask, 200)).unwrap();
     let active = store.active_signals_since("room-1", 0).unwrap();
     assert_eq!(active.len(), 2);
@@ -450,8 +464,15 @@ fn store_records_and_reads_active_signals() {
 #[test]
 fn store_dismiss_increments_false_positive_and_hides_signal() {
     let store = SqliteImproveStore::open_in_memory().unwrap();
-    store.record_signal(&sig(SignalKind::LowQuality, 100)).unwrap();
-    assert_eq!(store.false_positive_count("room-1", SignalKind::LowQuality).unwrap(), 0);
+    store
+        .record_signal(&sig(SignalKind::LowQuality, 100))
+        .unwrap();
+    assert_eq!(
+        store
+            .false_positive_count("room-1", SignalKind::LowQuality)
+            .unwrap(),
+        0
+    );
     assert_eq!(store.dismiss("room-1", SignalKind::LowQuality).unwrap(), 1);
     assert_eq!(store.dismiss("room-1", SignalKind::LowQuality).unwrap(), 2);
     // Dismissed signals no longer count as active.
@@ -463,7 +484,10 @@ fn store_attempts_bump_clamps_at_three() {
     let store = SqliteImproveStore::open_in_memory().unwrap();
     assert_eq!(store.attempts("room-1", SignalKind::Reask).unwrap(), 0);
     for expected in [1, 2, 3, 3, 3] {
-        assert_eq!(store.bump_attempt("room-1", SignalKind::Reask).unwrap(), expected);
+        assert_eq!(
+            store.bump_attempt("room-1", SignalKind::Reask).unwrap(),
+            expected
+        );
     }
 }
 
@@ -518,7 +542,13 @@ fn store_rolled_back_and_history_and_holdout() {
 // SelfImprover
 // ---------------------------------------------------------------------------
 
-fn improver_env() -> (SqliteImproveStore, InMemoryKnobStore, FakeReplyModel, ForbiddenNetwork, VirtualClock) {
+fn improver_env() -> (
+    SqliteImproveStore,
+    InMemoryKnobStore,
+    FakeReplyModel,
+    ForbiddenNetwork,
+    VirtualClock,
+) {
     (
         SqliteImproveStore::open_in_memory().unwrap(),
         InMemoryKnobStore::new(knobs("v1")).unwrap(),
@@ -534,7 +564,15 @@ fn improver_env() -> (SqliteImproveStore, InMemoryKnobStore, FakeReplyModel, For
 #[test]
 fn improver_observe_records_detected_signals() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let obs = ReplyObservation {
         room_pid: "room-1".to_string(),
         at: 1_000_000,
@@ -553,20 +591,42 @@ fn improver_observe_records_detected_signals() {
 #[test]
 fn improver_should_start_on_two_same_kind() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let now = clock.now_ms();
-    store.record_signal(&sig(SignalKind::LowQuality, now)).unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, now))
+        .unwrap();
     assert!(!improver.should_start("room-1").unwrap());
-    store.record_signal(&sig(SignalKind::LowQuality, now)).unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, now))
+        .unwrap();
     assert!(improver.should_start("room-1").unwrap());
 }
 
 #[test]
 fn improver_should_start_on_two_distinct_kinds() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let now = clock.now_ms();
-    store.record_signal(&sig(SignalKind::LowQuality, now)).unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, now))
+        .unwrap();
     store.record_signal(&sig(SignalKind::Reask, now)).unwrap();
     assert!(improver.should_start("room-1").unwrap());
 }
@@ -574,11 +634,23 @@ fn improver_should_start_on_two_distinct_kinds() {
 #[test]
 fn improver_should_start_excludes_dismissed_kind() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let now = clock.now_ms();
     // Two low-quality signals, but the kind is dismissed 3 times → excluded.
-    store.record_signal(&sig(SignalKind::LowQuality, now)).unwrap();
-    store.record_signal(&sig(SignalKind::LowQuality, now)).unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, now))
+        .unwrap();
+    store
+        .record_signal(&sig(SignalKind::LowQuality, now))
+        .unwrap();
     for _ in 0..3 {
         store.dismiss("room-1", SignalKind::LowQuality).unwrap();
     }
@@ -588,7 +660,15 @@ fn improver_should_start_excludes_dismissed_kind() {
 #[test]
 fn improver_diagnose_is_nonempty_subset_of_four() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let diag = improver.diagnose(&[sig(SignalKind::TopicDrift, 1)]);
     assert!(!diag.causes.is_empty());
     assert_eq!(diag.causes, vec![KnobKey::RetrievalWeights]);
@@ -599,7 +679,15 @@ fn improver_diagnose_is_nonempty_subset_of_four() {
 #[test]
 fn improver_evaluate_runs_locally_with_zero_egress() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let (_, holdout) = HoldoutSet::split(samples(60), 3);
     let summary = improver.evaluate(&knobs("v2"), &holdout);
     assert_eq!(summary.evaluated, holdout.len());
@@ -611,7 +699,15 @@ fn improver_evaluate_runs_locally_with_zero_egress() {
 #[test]
 fn improver_promote_insufficient_holdout() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let out = improver
         .promote(
             ("room-1".to_string(), SignalKind::LowQuality),
@@ -631,7 +727,15 @@ fn improver_promote_insufficient_holdout() {
 #[test]
 fn improver_promote_success_swaps_and_records() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let out = improver
         .promote(
             ("room-1".to_string(), SignalKind::LowQuality),
@@ -643,7 +747,12 @@ fn improver_promote_success_swaps_and_records() {
         )
         .unwrap();
     match out {
-        PromotionOutcome::Promoted { generation, changed_keys, delta, .. } => {
+        PromotionOutcome::Promoted {
+            generation,
+            changed_keys,
+            delta,
+            ..
+        } => {
             assert_eq!(generation, 2);
             assert_eq!(changed_keys, vec![KnobKey::PromptVersion]);
             assert!((delta - 8.0).abs() < 1e-3);
@@ -658,7 +767,15 @@ fn improver_promote_success_swaps_and_records() {
 #[test]
 fn improver_promote_rejected_counts_attempt() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let out = improver
         .promote(
             ("room-1".to_string(), SignalKind::LowQuality),
@@ -669,7 +786,10 @@ fn improver_promote_rejected_counts_attempt() {
             &[80; 20],
         )
         .unwrap();
-    assert!(matches!(out, PromotionOutcome::Rejected(RejectReason::GainTooSmall { .. })));
+    assert!(matches!(
+        out,
+        PromotionOutcome::Rejected(RejectReason::GainTooSmall { .. })
+    ));
     // Config unchanged, attempt counted (R8.14).
     assert_eq!(knob_store.current().1, knobs("v1"));
     assert_eq!(store.attempts("room-1", SignalKind::LowQuality).unwrap(), 1);
@@ -678,7 +798,15 @@ fn improver_promote_rejected_counts_attempt() {
 #[test]
 fn improver_auto_rollback_restores_and_blocks_repromote() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     let cand = knobs("v2");
     // Promote with a high baseline.
     improver
@@ -701,7 +829,10 @@ fn improver_auto_rollback_restores_and_blocks_repromote() {
     // Reverted to the prior config (round-trip restore, R12.12).
     assert_eq!(knob_store.current().1, knobs("v1"));
     // The rolled-back candidate cannot be promoted again (R8.19).
-    assert!(store.rolled_back_digests().unwrap().contains(&cand.digest()));
+    assert!(store
+        .rolled_back_digests()
+        .unwrap()
+        .contains(&cand.digest()));
 
     // Re-promoting the same candidate is rejected as previously rolled back.
     let out = improver
@@ -714,13 +845,24 @@ fn improver_auto_rollback_restores_and_blocks_repromote() {
             &[85; 20],
         )
         .unwrap();
-    assert_eq!(out, PromotionOutcome::Rejected(RejectReason::PreviouslyRolledBack));
+    assert_eq!(
+        out,
+        PromotionOutcome::Rejected(RejectReason::PreviouslyRolledBack)
+    );
 }
 
 #[test]
 fn improver_watch_no_rollback_when_quality_holds() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     improver
         .promote(
             ("room-1".to_string(), SignalKind::LowQuality),
@@ -739,7 +881,15 @@ fn improver_watch_no_rollback_when_quality_holds() {
 #[test]
 fn improver_manual_rollback_round_trips() {
     let (store, knob_store, model, net, clock) = improver_env();
-    let mut improver = SelfImprover::new(&store, &knob_store, &model, &net, &clock, StyleTarget::default(), None);
+    let mut improver = SelfImprover::new(
+        &store,
+        &knob_store,
+        &model,
+        &net,
+        &clock,
+        StyleTarget::default(),
+        None,
+    );
     // gen 1 = v1, gen 2 = v2.
     knob_store.apply(knobs("v2")).unwrap();
     assert_eq!(knob_store.current().1, knobs("v2"));

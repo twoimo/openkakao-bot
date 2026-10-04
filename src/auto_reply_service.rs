@@ -1319,7 +1319,12 @@ impl<'a> FlowRecorder<'a> {
         duration_ms: u64,
     ) -> Result<Vec<ObservedMessage>, StoreError> {
         let targets = select_reply_targets(account_user_id, observed);
-        self.record(Stage::Detect, StageStatus::Success, DETECTED_CODE, duration_ms)?;
+        self.record(
+            Stage::Detect,
+            StageStatus::Success,
+            DETECTED_CODE,
+            duration_ms,
+        )?;
         if targets.len() < observed.len() {
             // 최연우's own outgoing messages were removed from the reply set;
             // mark that exclusion point explicitly.
@@ -1336,11 +1341,7 @@ impl<'a> FlowRecorder<'a> {
     /// Record the Authorize stage from a safety-gate decision (R2.1). An
     /// `Allow` is a successful authorization; a `Fenced` decision is a failed
     /// stage carrying the fence reason.
-    pub fn authorize(
-        &self,
-        decision: &SendDecision,
-        duration_ms: u64,
-    ) -> Result<(), StoreError> {
+    pub fn authorize(&self, decision: &SendDecision, duration_ms: u64) -> Result<(), StoreError> {
         let (status, code) = decision_stage_outcome(decision);
         self.record(Stage::Authorize, status, code, duration_ms)
     }
@@ -1377,11 +1378,7 @@ impl<'a> FlowRecorder<'a> {
 
     /// Record the final pre-send safety check from a safety-gate decision. Like
     /// [`FlowRecorder::authorize`], a fenced decision is a failed stage.
-    pub fn pre_send(
-        &self,
-        decision: &SendDecision,
-        duration_ms: u64,
-    ) -> Result<(), StoreError> {
+    pub fn pre_send(&self, decision: &SendDecision, duration_ms: u64) -> Result<(), StoreError> {
         let (status, code) = decision_stage_outcome(decision);
         self.record(Stage::PreSend, status, code, duration_ms)
     }
@@ -1536,10 +1533,7 @@ mod instrumentation_tests {
         let store = SqliteHistoryStore::open_in_memory().expect("open");
         let recorder = FlowRecorder::auto_reply(&store, "trace-fenced");
         recorder
-            .authorize(
-                &SendDecision::Fenced(FenceReason::ChatNotAllowlisted),
-                0,
-            )
+            .authorize(&SendDecision::Fenced(FenceReason::ChatNotAllowlisted), 0)
             .expect("authorize");
         let events = store.recent(10).expect("recent");
         assert_eq!(events.len(), 1);

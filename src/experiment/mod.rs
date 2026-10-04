@@ -312,8 +312,7 @@ impl StyleTarget {
     /// Derive a scoring target from a recipient/global style profile (R4.5),
     /// reusing the same honorific/formality derivation the dataset builder uses.
     pub fn from_style_profile(profile: &StyleProfile) -> Self {
-        let (honorific, formality) =
-            context::derive_style_profile_honorific_formality(profile);
+        let (honorific, formality) = context::derive_style_profile_honorific_formality(profile);
         let target_len = profile.average_character_length.round().max(1.0) as usize;
         StyleTarget {
             honorific,
@@ -347,7 +346,8 @@ fn accumulate_segment_ending(token: &str, signals: &mut StyleSignals) {
         signals.contraction_count += 1;
         return;
     }
-    if trimmed.ends_with("습니다") || trimmed.ends_with("합니다") || trimmed.ends_with("됩니다") {
+    if trimmed.ends_with("습니다") || trimmed.ends_with("합니다") || trimmed.ends_with("됩니다")
+    {
         signals.deferential_ending_count += 1;
     } else if trimmed.ends_with('요') || trimmed.ends_with('죠') {
         signals.honorific_ending_count += 1;
@@ -717,13 +717,7 @@ impl ExperimentRunner for StyleExperimentRunner {
                 // A single failure/timeout is recorded; the batch continues
                 // (R4.8).
                 let generated = provider.generate(&target.model, &prompt);
-                results.push(self.measure(
-                    &run_id,
-                    prompt_version,
-                    target,
-                    question,
-                    generated,
-                ));
+                results.push(self.measure(&run_id, prompt_version, target, question, generated));
             }
         }
 
@@ -744,9 +738,7 @@ pub fn build_comparison(runs: &[Vec<ExperimentResult>]) -> ComparisonTable {
     for (run_index, run) in runs.iter().enumerate() {
         for result in run {
             let key = (result.question_id.clone(), result.target_label());
-            let cells = grouped
-                .entry(key)
-                .or_insert_with(|| vec![None; runs.len()]);
+            let cells = grouped.entry(key).or_insert_with(|| vec![None; runs.len()]);
             let (quality, latency) = if result.outcome.is_ok() {
                 (Some(result.quality_score), Some(result.latency_ms))
             } else {

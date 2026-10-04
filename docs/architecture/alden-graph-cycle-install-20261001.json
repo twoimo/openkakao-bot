@@ -1,0 +1,84 @@
+{
+  "schema": "alden-graph-cycle-install-v1",
+  "code_commit": "1a728e8329e0c2959aa1e4ffd5ec0e07878703f7",
+  "installed_app": "/Applications/Alden.app",
+  "version": "0.1.6",
+  "bundle_files": 29,
+  "resource_files": 26,
+  "bundle_matches_installed": true,
+  "source_sha256": "3be77fe7229bc976b0c37d30e77d9e30da32c112c4b5fc2b96c7a471d56880dc",
+  "launchagent_pid": 92542,
+  "executable_verified": true,
+  "signature": "strict deep ad-hoc verified",
+  "native_ui_verified": false,
+  "worker_cutover": false,
+  "captured_utc": "2026-09-30T15:35:16.221589+00:00",
+  "preservation": {
+    "enrollment_unchanged": true,
+    "queue_file_identities_preserved": 5,
+    "queue_contents_may_change_with_natural_traffic": true,
+    "other_session_runtime_cutover": false
+  },
+  "backend_aggregate": {
+    "updated_at": "2026-09-30T15:35:15.653879+00:00",
+    "room_count": 3,
+    "ready_room_count": 3,
+    "readiness": "ready",
+    "authoritative": true,
+    "state": "running"
+  },
+  "graph_refresh": {
+    "schema_version": 1,
+    "captured_at": "2026-09-30T15:33:46.893078+00:00",
+    "kind": "installed-coordinated-one-shot-graph-refresh",
+    "backup": "/Users/twoimo/Library/Application Support/openkakao/install-backups/alden-graph/20261001-6l9oyhcp",
+    "backup_integrity": "ok",
+    "backup_files": [
+      {
+        "file": "knowledge-graph.sqlite3",
+        "bytes": 434176,
+        "sha256": "79fe7e4a2199c3b9fab45181c928213293f2309bdb9af48c65fddf77a37858e9"
+      },
+      {
+        "file": "knowledge-dense-ann.sqlite3",
+        "bytes": 2940928,
+        "sha256": "190cccb5e91d8610f976957e31e832c7ce78f013fe0a00dca88efa725b165a68"
+      }
+    ],
+    "installed_source_sha256": "3be77fe7229bc976b0c37d30e77d9e30da32c112c4b5fc2b96c7a471d56880dc",
+    "python_executable": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+    "lock_owned": true,
+    "sends_by_probe": 0,
+    "worker_restarts": 0,
+    "original_kakao_db_writes": 0,
+    "external_inference": false,
+    "timeout_seconds": 180,
+    "exit_code": 0,
+    "seconds": 3.335498,
+    "children_peak_rss_bytes": 99762176,
+    "enrollment_unchanged": true,
+    "queue_identities_preserved": true,
+    "readback": {
+      "knowledge-graph.sqlite3": {
+        "last_dense_indexed_at": "1790782430",
+        "last_indexed_at": "1790782429",
+        "last_snapshot_status": "copy_ok",
+        "quick_check": "ok",
+        "last_index_error_present": false,
+        "last_dense_status_prefix": "indexed"
+      },
+      "knowledge-dense-ann.sqlite3": {
+        "index_version": "local-embedding-lsh-v2",
+        "watermark": "1790782429",
+        "quick_check": "ok"
+      }
+    },
+    "graph_fresh": true,
+    "dense_watermark_matches_graph": true
+  },
+  "limitations": [
+    "Installed helper and persisted index are verified; native UI, human speech and physical shortcut are unverified.",
+    "The one-shot installed refresh with real E5 is one sample; it is not a comparative benchmark, continuous freshness or retrieval relevance evaluation.",
+    "Source pairing excludes dense stage; no p95 or whole-app energy improvement claimed."
+  ]
+}

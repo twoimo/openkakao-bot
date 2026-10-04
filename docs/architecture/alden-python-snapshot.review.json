@@ -1,0 +1,6 @@
+{
+  "artifact_sha256": "4ee7b5463e4a87f14f67bd4d198377eb2005348ff9881b4fcd2d719a51ffc99f",
+  "reviewer": "parent image review",
+  "capture": "alden-python-snapshot.visual-check.1440x900.light.png",
+  "result": "제목·5개 책임 영역·두 단계와 원본/검증 경계 카드가 한 뷰포트에 보임. 경로·본문 겹침 없음. plaintext mirror와 암호화된 원본 범위를 명시."
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {"title": "Alden 오프라인 DPO 학습", "quality_profile": "showcase"},
+  "lanes": [
+    {"id": "offline", "label": "대화와 분리된 로컬 학습"},
+    {"id": "stop", "label": "실패 · 취소", "variant": "exception"}
+  ],
+  "mainPath": ["preferences", "reference", "gradient", "reload", "candidate"],
+  "nodes": [
+    {"id": "preferences", "type": "security", "label": "선호 쌍 검증", "sublabel": "출처 · train/validation", "lane": "offline", "col": 0},
+    {"id": "reference", "type": "backend", "label": "기준 점수 고정", "sublabel": "실제 응답 로그확률", "lane": "offline", "col": 1},
+    {"id": "gradient", "type": "backend", "label": "LoRA 업데이트", "sublabel": "응답 mask · DPO 손실", "lane": "offline", "col": 2},
+    {"id": "reload", "type": "security", "label": "새 모델 재로딩", "sublabel": "원본 SHA · 점수 대조", "lane": "offline", "col": 3},
+    {"id": "candidate", "type": "database", "label": "학습 후보 보존", "sublabel": "private · 원자적 확정", "lane": "offline", "col": 4},
+    {"id": "discard", "type": "security", "label": "확정 차단", "sublabel": "소유한 임시 파일 정리", "lane": "stop", "col": 3}
+  ],
+  "edges": [
+    {"from": "preferences", "to": "reference"},
+    {"from": "reference", "to": "gradient"},
+    {"from": "gradient", "to": "reload"},
+    {"from": "reload", "to": "candidate"},
+    {"id": "failure", "from": "reload", "to": "discard", "label": "검증 실패 · 취소", "variant": "security", "role": "error"}
+  ],
+  "cards": [
+    {"dot": "emerald", "title": "분리된 평가", "items": ["train만 업데이트 · validation은 전후 고정 응답 채점", "최종 test는 사용하지 않음 · adapter SHA로 별도 버전 평가"]},
+    {"dot": "amber", "title": "제품 반영은 미완료", "items": ["손실 변화는 대화 품질 향상의 증거가 아님", "실제 정확성 · 검색 · 지연 · 메모리 검증 후 별도 반영"]}
+  ]
+}

@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "version": "0.3.7",
+  "sdk": {
+    "scope": "Actual AVAudioEngine offline DSP and player clock; no microphone, device or speaker playback",
+    "cases": [
+      {
+        "afterStopRms": 0,
+        "beforeRenderRms": 0,
+        "beforeReplacementRenderRms": 0,
+        "frames": 2400,
+        "mismatches": 0,
+        "name": "silence-quarter-half",
+        "windows": 7
+      },
+      {
+        "afterStopRms": 0,
+        "beforeRenderRms": 0,
+        "beforeReplacementRenderRms": 0,
+        "frames": 34560,
+        "mismatches": 0,
+        "name": "pipeline-1.wav",
+        "windows": 74
+      },
+      {
+        "afterStopRms": 0,
+        "beforeRenderRms": 0,
+        "beforeReplacementRenderRms": 0,
+        "frames": 34560,
+        "mismatches": 0,
+        "name": "pipeline-2.wav",
+        "windows": 74
+      }
+    ],
+    "raw_receipt_sha256": "91d40f043e2e95d1d351208425e01346cf5241c60744446f613ec1adf97f23d4"
+  },
+  "voice_browser": {
+    "scope": "Real Chrome/M5 Max Metal; production code with explicit synthetic native status IPC; no primary native screenshot or human audio",
+    "idle_three_1s": [
+      0,
+      0,
+      0
+    ],
+    "input": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 22,
+      "lastRenderAtMs": 4143.2,
+      "voiceRms": 0.16,
+      "voiceSource": "input",
+      "displayedRms": 0.16,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "output": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 41,
+      "lastRenderAtMs": 5126.6,
+      "voiceRms": 0.25,
+      "voiceSource": "output",
+      "displayedRms": 0.25,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "cancel": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 63,
+      "lastRenderAtMs": 6359.8,
+      "voiceRms": 0,
+      "voiceSource": "none",
+      "displayedRms": 0,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "stale": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 63,
+      "lastRenderAtMs": 6359.8,
+      "voiceRms": 0,
+      "voiceSource": "none",
+      "displayedRms": 0,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "hidden": {
+      "calls": 66,
+      "diag": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 63,
+        "lastRenderAtMs": 6359.8,
+        "voiceRms": 0,
+        "voiceSource": "none",
+        "displayedRms": 0,
+        "audioVertices": 128,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "after_hidden_1s": {
+      "calls": 66,
+      "diag": {
+        "running": false,
+        "pendingFrame": false,
+        "renderCount": 63,
+        "lastRenderAtMs": 6359.8,
+        "voiceRms": 0,
+        "voiceSource": "none",
+        "displayedRms": 0,
+        "audioVertices": 128,
+        "nodeCount": 22,
+        "edgeCount": 22,
+        "hops": 0,
+        "focused": false,
+        "focusSlot": -1,
+        "canGoBack": false,
+        "targets": {
+          "camera": [
+            0,
+            0,
+            5.2
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "resume": {
+      "running": false,
+      "pendingFrame": false,
+      "renderCount": 85,
+      "lastRenderAtMs": 8693,
+      "voiceRms": 0.25,
+      "voiceSource": "output",
+      "displayedRms": 0.25,
+      "audioVertices": 128,
+      "nodeCount": 22,
+      "edgeCount": 22,
+      "hops": 0,
+      "focused": false,
+      "focusSlot": -1,
+      "canGoBack": false,
+      "targets": {
+        "camera": [
+          0,
+          0,
+          5.2
+        ],
+        "lookAt": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "repeated_reopens": 5,
+    "errors": []
+  },
+  "layout_browser": {
+    "scope": "real Chrome/Metal rendering of production components with explicit synthetic development fixtures; emulated viewport/scale, not native physical Retina",
+    "cases": [
+      {
+        "viewport": [
+          1200,
+          760
+        ],
+        "scroll": [
+          1200,
+          760
+        ],
+        "nodes": 22,
+        "visibleLabels": 19,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.7",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 235.3,
+          "voiceRms": 0,
+          "voiceSource": "none",
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "wide",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": [],
+        "interaction_checks": {
+          "focus": true,
+          "hidden_frames": 0,
+          "resume": true,
+          "overview": true,
+          "resize_invalidates": true
+        }
+      },
+      {
+        "viewport": [
+          640,
+          680
+        ],
+        "scroll": [
+          640,
+          680
+        ],
+        "nodes": 22,
+        "visibleLabels": 12,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.7",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 136.4,
+          "voiceRms": 0,
+          "voiceSource": "none",
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "minimum",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          1600,
+          1000
+        ],
+        "scroll": [
+          1600,
+          1000
+        ],
+        "nodes": 22,
+        "visibleLabels": 21,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.7",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 113.8,
+          "voiceRms": 0,
+          "voiceSource": "none",
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "expanded",
+        "device_scale": 1,
+        "scheme": "dark",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          1200,
+          760
+        ],
+        "scroll": [
+          1200,
+          760
+        ],
+        "nodes": 22,
+        "visibleLabels": 19,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": "v0.3.7",
+        "versionCenterOffset": 0.5,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 164.1,
+          "voiceRms": 0,
+          "voiceSource": "none",
+          "displayedRms": 0,
+          "audioVertices": 128,
+          "nodeCount": 22,
+          "edgeCount": 22,
+          "hops": 0,
+          "focused": false,
+          "focusSlot": -1,
+          "canGoBack": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "name": "retina",
+        "device_scale": 2,
+        "scheme": "dark",
+        "errors": [],
+        "failed_responses": []
+      },
+      {
+        "viewport": [
+          560,
+          420
+        ],
+        "scroll": [
+          560,
+          420
+        ],
+        "nodes": 22,
+        "visibleLabels": 11,
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "glError": 0,
+        "version": null,
+        "versionCenterOffset": null,
+        "diagnostics": {
+          "running": false,
+          "pendingFrame": false,
+          "renderCount": 1,
+          "lastRenderAtMs": 90.5,
+          "voiceRms": 0,
+          "voiceSource": "none",
+          "displayedRms": 0,
+          "audioVertices": 128
+        },
+        "name": "panel",
+        "device_scale": 1,
+        "scheme": "light",
+        "errors": [],
+        "failed_responses": []
+      }
+    ]
+  },
+  "source_checks": {
+    "ui": 224,
+    "rust": 92,
+    "clippy": "passed",
+    "python3_11_9": {
+      "tests": 1148,
+      "skipped": 28,
+      "result": "passed"
+    },
+    "voice_runtime_numpy_checks": 16
+  },
+  "failure_and_fix": {
+    "initial_sdk_exit": 134,
+    "cause": "playerTime called with neither sample nor host time valid",
+    "repair": "Validate node time before conversion",
+    "different_from_earlier_recursive_mutex": true
+  },
+  "limits": [
+    "Offline SDK DSP and synthetic browser status are not microphone/speaker/primary UI evidence.",
+    "PCM RMS precedes mixer/device volume.",
+    "No power savings or general speech latency claim.",
+    "Original app-data access, signed public release, production and full goal remain incomplete."
+  ]
+}

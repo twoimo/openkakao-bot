@@ -46,7 +46,16 @@ CHAT_ID = "417780809780519"
 
 def make_state_root(tmp: str) -> Path:
     """A state root with one room ledger, shaped like the real one."""
-    root = Path(tmp)
+    root = Path(tmp) / "state"
+    # A successful graph refresh needs an actual canonical source snapshot.
+    # Previously this fixture omitted it and relied on a false fresh stamp.
+    with sqlite3.connect(Path(tmp) / "context.sqlite3") as context:
+        context.executescript("""
+            CREATE TABLE context_messages(id INTEGER PRIMARY KEY,source TEXT,
+                chat TEXT,date TEXT,user_name TEXT,message TEXT,vector BLOB);
+            CREATE TABLE context_topic_stats(chat TEXT,topic TEXT,message_count INTEGER);
+            CREATE TABLE context_message_topics(message_id INTEGER,topic TEXT);
+        """)
     room = root / "rooms" / CHAT_ID
     room.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -72,6 +81,62 @@ def make_state_root(tmp: str) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+class PersistedReadOnlyViewTests(unittest.TestCase):
+    def test_waited_refresh_reports_retained_graph_as_stale_after_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_state_root(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            KG.ensure_seeded(conn)
+            KG.write_meta(conn, "last_indexed_at", "100")
+            conn.commit()
+            conn.close()
+
+            def fail_refresh(conn, *args, **kwargs):
+                KG.write_meta(conn, "last_index_error", "rooms: source unavailable")
+                conn.commit()
+
+            with mock.patch.object(KG, "_reindex_all", side_effect=fail_refresh):
+                result = KG.collect_knowledge_graph(
+                    root / "context.sqlite3", state_root=root,
+                    force_reindex=True, wait_for_reindex=True,
+                )
+            self.assertTrue(result["stale"])
+            self.assertEqual(result["indexed_at"], 100)
+            self.assertTrue(result["nodes"])
+
+    def test_read_only_view_never_seeds_migrates_reindexes_or_embeds(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / KG.KNOWLEDGE_GRAPH_DB_NAME
+            conn = KG._connect_kg(path)
+            KG.ensure_seeded(conn)
+            KG.write_meta(conn, "last_indexed_at", "1")
+            conn.commit()
+            conn.close()
+            before = hashlib.sha256(path.read_bytes()).hexdigest()
+            with mock.patch.object(KG, "_connect_kg", side_effect=AssertionError("no writable connector")), \
+                 mock.patch.object(KG, "ensure_seeded", side_effect=AssertionError("no seed")), \
+                 mock.patch.object(KG, "_start_background_reindex", side_effect=AssertionError("no process")), \
+                 mock.patch.object(KG, "_reindex_all", side_effect=AssertionError("no indexing")), \
+                 mock.patch.object(KG, "_local_dense_embeddings", side_effect=AssertionError("no inference")):
+                result = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root,
+                    read_only=True, force_reindex=True, wait_for_reindex=True)
+            self.assertTrue(result["ok"])
+            self.assertGreater(result["node_count"], 0)
+            self.assertTrue(result["stale"])
+            self.assertIsNone(result["reindex"])
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before)
+            self.assertFalse((root / "context.sqlite3").exists())
+
+    def test_missing_read_only_store_does_not_create_files_or_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "missing"
+            result = KG.collect_knowledge_graph(root / "context.sqlite3", state_root=root, read_only=True)
+            self.assertFalse(result["ok"])
+            self.assertFalse(root.exists())
 
 
 class GraphShapeTests(unittest.TestCase):
@@ -615,6 +680,7 @@ class RealIndexPathTests(unittest.TestCase):
 
     def test_reindex_is_decoupled_from_dream_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
+            self._write_index(Path(tmp))
             root = self._state_root(Path(tmp))
             conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
             try:
@@ -759,6 +825,57 @@ class IsolatedReadOnlyConnectionTests(unittest.TestCase):
             self.assertGreaterEqual(
                 calls["count"], 4, "the mutated first copy must be rejected and redone"
             )
+
+    def test_source_shm_churn_does_not_copy_reader_state_or_reject_stable_wal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "context.sqlite3"
+            writer = sqlite3.connect(db)
+            try:
+                writer.execute("PRAGMA journal_mode = WAL")
+                writer.execute("PRAGMA wal_autocheckpoint = 0")
+                writer.execute("CREATE TABLE sample (value TEXT)")
+                writer.execute("INSERT INTO sample VALUES ('latest committed row')")
+                writer.commit()
+                source_shm = db.with_name(db.name + "-shm")
+                self.assertTrue(source_shm.exists())
+                payload_before = {p: p.read_bytes() for p in (db, db.with_name(db.name + "-wal"))}
+                real_copy = KG.shutil.copy2
+                copied_sources = []
+
+                def shm_churn(source, target, *args, **kwargs):
+                    copied_sources.append(Path(source))
+                    result = real_copy(source, target, *args, **kwargs)
+                    # Another reader can touch SHM while no committed data changes.
+                    stat = source_shm.stat()
+                    os.utime(source_shm, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+                    return result
+
+                destination = root / "copy"
+                destination.mkdir()
+                with mock.patch.object(KG.shutil, "copy2", side_effect=shm_churn):
+                    copied = KG._copy_consistent_sqlite_replica(db, destination)
+                self.assertNotIn(source_shm, copied_sources)
+                self.assertEqual(len(copied_sources), 2, "SHM activity must not force a data retry")
+                self.assertFalse(copied.with_name(copied.name + "-shm").exists())
+                with sqlite3.connect(copied.as_uri() + "?mode=ro", uri=True) as reader:
+                    self.assertEqual(reader.execute("SELECT value FROM sample").fetchone()[0], "latest committed row")
+                    self.assertEqual(reader.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(payload_before, {p: p.read_bytes() for p in payload_before})
+                self.assertEqual(writer.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            finally:
+                writer.close()
+
+    def test_hot_rollback_journal_fails_closed_without_opening_live_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = self._write_source_db(root)
+            db.with_name(db.name + "-journal").write_bytes(b"pending rollback data")
+            with mock.patch.object(KG.sqlite3, "connect") as connect:
+                with self.assertRaisesRegex(sqlite3.OperationalError, "isolated read-only snapshot unavailable"):
+                    with KG._open_isolated_ro_conn(db):
+                        self.fail("a rollback journal cannot be omitted")
+                connect.assert_not_called()
 
     def test_a_source_that_never_settles_fails_closed_at_the_public_boundary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1098,18 +1215,18 @@ class DenseRefreshBatchingTests(unittest.TestCase):
         self._model_patch.stop()
         self._lease_state_patch.stop()
 
-    def test_default_dense_endpoint_uses_shared_local_mlx_gateway_and_passes_loopback_guard(self):
+    def test_default_dense_endpoint_uses_dedicated_local_adapter_and_passes_loopback_guard(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENKAKAO_LOCAL_EMBEDDING_URL", None)
             default_kg = load_graph("kg_default_dense_endpoint_test")
         try:
-            self.assertIs(
+            self.assertEqual(
                 default_kg.DEFAULT_DENSE_EMBEDDING_URL,
-                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+                "http://127.0.0.1:11236/v1/embeddings",
             )
             self.assertEqual(
                 default_kg.DENSE_EMBEDDING_URL,
-                "http://127.0.0.1:11234/v1/embeddings",
+                "http://127.0.0.1:11236/v1/embeddings",
             )
 
             class Response:
@@ -1139,8 +1256,13 @@ class DenseRefreshBatchingTests(unittest.TestCase):
                 vectors = default_kg._local_dense_embeddings(["로컬 임베딩"])
 
             request = open_request.call_args.args[0]
-            self.assertEqual(request.full_url, LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL)
-            self.assertEqual(json.loads(request.data)["model"], "mlx/test-model")
+            self.assertEqual(
+                request.full_url,
+                "http://127.0.0.1:11236/v1/embeddings",
+            )
+            request_payload = json.loads(request.data)
+            self.assertEqual(request_payload["model"], "mlx/test-model")
+            self.assertEqual(request_payload["input_type"], KG.DENSE_INPUT_TYPE_QUERY)
             self.assertEqual(
                 open_request.call_args.kwargs["timeout"],
                 default_kg.DENSE_EMBEDDING_TIMEOUT_SECONDS,
@@ -1161,17 +1283,18 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             self.assertEqual(override_kg.DENSE_EMBEDDING_URL, override)
             self.assertEqual(
                 override_kg.DEFAULT_DENSE_EMBEDDING_URL,
-                LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+                "http://127.0.0.1:11236/v1/embeddings",
             )
         finally:
             sys.modules.pop("kg_dense_endpoint_override_test", None)
 
-    def test_mlx_gateway_endpoint_constants_have_one_shared_source(self):
+    def test_generation_gateway_and_dense_adapter_use_distinct_default_ports(self):
         self.assertIs(ONDEVICE.MLX_GATEWAY_BASE_URL, LOCAL_MLX.MLX_GATEWAY_BASE_URL)
-        self.assertIs(
+        self.assertEqual(
             KG.DEFAULT_DENSE_EMBEDDING_URL,
-            LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL,
+            "http://127.0.0.1:11236/v1/embeddings",
         )
+        self.assertEqual(LOCAL_MLX.MLX_GATEWAY_EMBEDDINGS_URL, "http://127.0.0.1:11234/v1/embeddings")
 
     def _make_graph(self, root: Path, count: int) -> sqlite3.Connection:
         conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
@@ -1341,11 +1464,13 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 texts,
                 *,
+                input_type=KG.DENSE_INPUT_TYPE_QUERY,
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
                 state_root=None,
             ):
+                self.assertEqual(input_type, KG.DENSE_INPUT_TYPE_PASSAGE)
                 calls.append((len(texts), timeout_seconds))
                 raise KG._DenseEmbeddingTimeoutError("local dense embedding unavailable")
 
@@ -1391,11 +1516,13 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 _texts,
                 *,
+                input_type=KG.DENSE_INPUT_TYPE_QUERY,
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
                 state_root=None,
             ):
+                self.assertEqual(input_type, KG.DENSE_INPUT_TYPE_PASSAGE)
                 nonlocal calls
                 calls += 1
                 self.assertEqual(
@@ -1518,11 +1645,13 @@ class DenseRefreshBatchingTests(unittest.TestCase):
             def fake_embeddings(
                 texts,
                 *,
+                input_type=KG.DENSE_INPUT_TYPE_QUERY,
                 model_id=None,
                 timeout_seconds=KG.DENSE_EMBEDDING_TIMEOUT_SECONDS,
                 _budget=None,
                 state_root=None,
             ):
+                self.assertEqual(input_type, KG.DENSE_INPUT_TYPE_PASSAGE)
                 return [(1.0, 0.0)] * len(texts)
 
             try:
@@ -2253,6 +2382,447 @@ class RoomIsolationTests(unittest.TestCase):
                 "테스트인물", state_root=root, include_relations=False
             )
             self.assertTrue(any("테스트인물" in h for h in hits), repr(hits))
+
+
+class RetrievalCandidateBoundaryTests(unittest.TestCase):
+    @staticmethod
+    def _insert_entity(
+        conn,
+        entity_id,
+        *,
+        room_id="room-alpha",
+        retracted=False,
+        updated_at=100,
+    ):
+        evidence = {
+            "kind": "ledger",
+            "source_event_ids": [f"synthetic:{entity_id}"],
+            "chat_id": room_id,
+            "confirmed_at": "2026-09-29T10:00:00+09:00",
+            "retracted": retracted,
+        }
+        conn.execute(
+            "INSERT INTO kg_entities"
+            " (entity_id,name,category,aliases_json,description,key_facts_json,"
+            " importance,evidence_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                entity_id,
+                "출시 일정",
+                "합성",
+                json.dumps(["출시 일정"], ensure_ascii=False),
+                entity_id,
+                "[]",
+                50,
+                json.dumps(evidence, ensure_ascii=False),
+                updated_at,
+            ),
+        )
+
+    def test_candidates_fail_closed_on_retraction_source_room_and_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "menubar-room-catalog.json").write_text(
+                json.dumps(
+                    {
+                        "rooms": [
+                            {"chat_id": "room-alpha", "title": "알파방"},
+                            {"chat_id": "room-beta", "title": "베타방"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._insert_entity(conn, "topic:release:root", updated_at=110)
+                self._insert_entity(
+                    conn, "topic:release:retracted", retracted=True, updated_at=120
+                )
+                self._insert_entity(
+                    conn, "topic:release:other-room", room_id="room-beta", updated_at=130
+                )
+                self._insert_entity(conn, "time:release:old", updated_at=90)
+                self._insert_entity(conn, "time:release:current", updated_at=140)
+                self._insert_entity(conn, "time:release:malformed", updated_at=150)
+                self._insert_entity(conn, "topic:release:malformed-source", updated_at=160)
+                self._insert_entity(conn, "topic:release:cross-room-only", updated_at=170)
+                self._insert_entity(conn, "topic:relation:room-leak-target", updated_at=171)
+                self._insert_entity(conn, "topic:relation:retracted-target", updated_at=172)
+                self._insert_entity(conn, "topic:relation:cross-room-anchor", updated_at=173)
+                conn.execute(
+                    "UPDATE kg_entities SET evidence_json=?"
+                    " WHERE entity_id='topic:release:malformed-source'",
+                    (json.dumps({"chat_id": "room-alpha", "retracted": False}),),
+                )
+                conn.execute(
+                    "UPDATE kg_entities SET name='관계 전용',aliases_json='[]'"
+                    " WHERE entity_id IN"
+                    " ('topic:relation:room-leak-target',"
+                    " 'topic:relation:retracted-target',"
+                    " 'topic:relation:cross-room-anchor')"
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,valid_from,valid_to,"
+                    " evidence_message_id,context,weight,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:root",
+                        "OLD_DATE",
+                        "time:release:old",
+                        "room-alpha",
+                        "2026-09-01T00:00:00+09:00",
+                        "2026-09-20T23:59:59+09:00",
+                        "synthetic:relation:old",
+                        "만료된 일정",
+                        90,
+                        90,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,valid_from,valid_to,"
+                    " evidence_message_id,context,weight,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:root",
+                        "MALFORMED_DATE",
+                        "time:release:malformed",
+                        "room-alpha",
+                        "not-a-time",
+                        "2026-12-31T23:59:59+09:00",
+                        "synthetic:relation:malformed",
+                        "잘못된 시간",
+                        100,
+                        150,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,valid_from,valid_to,"
+                    " evidence_message_id,context,weight,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:root",
+                        "CURRENT_DATE",
+                        "time:release:current",
+                        "room-alpha",
+                        "2026-09-21T00:00:00+09:00",
+                        "2026-12-31T23:59:59+09:00",
+                        "synthetic:relation:current",
+                        "현재 일정",
+                        80,
+                        140,
+                    ),
+                )
+                beta_relation_evidence = json.dumps(
+                    {
+                        "kind": "ledger",
+                        "source_event_ids": ["synthetic:relation:room-beta"],
+                        "chat_id": "room-beta",
+                        "confirmed_at": "2020-01-01T00:00:00+09:00",
+                        "retracted": False,
+                    },
+                    ensure_ascii=False,
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,valid_from,valid_to,"
+                    " evidence_message_id,context,weight,evidence_json,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:cross-room-only",
+                        "BETA_2020_ONLY",
+                        "topic:relation:cross-room-anchor",
+                        "",
+                        "2020-01-01T00:00:00+09:00",
+                        "2020-12-31T23:59:59+09:00",
+                        "synthetic:relation:room-beta",
+                        "베타 2020 관계 누출",
+                        120,
+                        beta_relation_evidence,
+                        170,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,evidence_message_id,"
+                    " context,weight,evidence_json,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:root",
+                        "ROOM_EVIDENCE_LEAK",
+                        "topic:relation:room-leak-target",
+                        "",
+                        "synthetic:relation:room-leak",
+                        "베타 증거 관계 누출",
+                        119,
+                        beta_relation_evidence,
+                        171,
+                    ),
+                )
+                retracted_relation_evidence = json.dumps(
+                    {
+                        "kind": "ledger",
+                        "source_event_ids": ["synthetic:relation:retracted"],
+                        "chat_id": "room-alpha",
+                        "confirmed_at": "2026-09-29T10:00:00+09:00",
+                        "retracted": True,
+                    },
+                    ensure_ascii=False,
+                )
+                conn.execute(
+                    "INSERT INTO kg_relations"
+                    " (source_id,relation,target_id,room_id,evidence_message_id,"
+                    " context,weight,evidence_json,updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        "topic:release:root",
+                        "RETRACTED_RELATION",
+                        "topic:relation:retracted-target",
+                        "room-alpha",
+                        "synthetic:relation:retracted",
+                        "철회 관계 누출",
+                        118,
+                        retracted_relation_evidence,
+                        172,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            dense = [
+                ("topic:release:retracted", 0.99),
+                ("topic:release:other-room", 0.98),
+                ("time:release:old", 0.97),
+                ("topic:release:root", 0.96),
+                ("time:release:current", 0.95),
+                ("time:release:malformed", 0.94),
+                ("topic:release:malformed-source", 0.93),
+                ("topic:release:cross-room-only", 0.92),
+            ]
+            with mock.patch.object(KG, "_dense_ann_query", return_value=(dense, "w1")):
+                result = KG._query_knowledge_ranked(
+                    "출시 일정",
+                    state_root=root,
+                    chat_id="room-alpha",
+                    time_from="2026-10-01T00:00:00+09:00",
+                    time_to="2026-10-31T23:59:59+09:00",
+                )
+
+        self.assertIn("topic:release:root", result["candidates"])
+        self.assertIn("time:release:current", result["candidates"])
+        self.assertNotIn("topic:release:retracted", result["candidates"])
+        self.assertNotIn("topic:release:other-room", result["candidates"])
+        self.assertNotIn("time:release:old", result["candidates"])
+        self.assertNotIn("time:release:malformed", result["candidates"])
+        self.assertNotIn("topic:release:malformed-source", result["candidates"])
+        self.assertIn("topic:release:cross-room-only", result["candidates"])
+        self.assertNotIn("synthetic:topic:release:retracted", result["evidence_ids"])
+        self.assertNotIn("synthetic:topic:release:other-room", result["evidence_ids"])
+        self.assertNotIn("synthetic:time:release:old", result["evidence_ids"])
+        self.assertEqual(
+            [item["entity_id"] for item in result["candidate_provenance"]],
+            result["candidates"],
+        )
+        for provenance in result["candidate_provenance"]:
+            self.assertFalse(provenance["retracted"])
+            self.assertTrue(provenance["provenance_valid"])
+            self.assertEqual(provenance["room_id"], "room-alpha")
+            self.assertTrue(provenance["source_event_ids"])
+            self.assertTrue(provenance["confirmed_at"])
+
+        relation_text = "\n".join(result["relation_facts"])
+        self.assertIn("현재 일정", relation_text)
+        self.assertNotIn("베타 2020 관계 누출", relation_text)
+        self.assertNotIn("베타 증거 관계 누출", relation_text)
+        self.assertNotIn("철회 관계 누출", relation_text)
+        self.assertNotIn("synthetic:relation:room-beta", result["evidence_ids"])
+        self.assertNotIn("synthetic:relation:room-leak", result["evidence_ids"])
+        self.assertNotIn("synthetic:relation:retracted", result["evidence_ids"])
+        self.assertEqual(
+            [item["relation"] for item in result["relation_provenance"]],
+            ["CURRENT_DATE"],
+        )
+        self.assertEqual(
+            result["relation_provenance"][0]["source_event_ids"],
+            ["synthetic:relation:current"],
+        )
+
+    def test_rrf_weight_bounds_and_dense_preference(self):
+        bm25 = [("a", 0.0), ("b", 0.0)]
+        dense = [("b", 1.0), ("a", 0.5)]
+        self.assertEqual(KG._rrf_merge(bm25, dense)[0][0], "a")
+        self.assertEqual(
+            KG._rrf_merge(bm25, dense, weights=(1.0, 2.0))[0][0], "b"
+        )
+        self.assertEqual(
+            [item[0] for item in KG._rrf_merge(bm25, dense, weights=(0.0, 1.0))],
+            ["b", "a"],
+        )
+        for weights in (
+            (-0.1, 1.0),
+            (float("nan"), 1.0),
+            (KG.RRF_WEIGHT_MAX + 0.1, 1.0),
+            (0.0, 0.0),
+            (1.0,),
+            (),
+            ("not-a-number", 1.0),
+        ):
+            with self.subTest(weights=weights), self.assertRaises(ValueError):
+                KG._rrf_merge(bm25, dense, weights=weights)
+
+    def test_public_bundle_reuses_filtered_relation_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "menubar-room-catalog.json").write_text(
+                json.dumps(
+                    {
+                        "rooms": [
+                            {"chat_id": "room-alpha", "title": "알파방"},
+                            {"chat_id": "room-beta", "title": "베타방"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                for entity_id in (
+                    "topic:bundle:root",
+                    "topic:bundle:allowed",
+                    "topic:bundle:room-leak",
+                    "topic:bundle:retracted",
+                ):
+                    self._insert_entity(conn, entity_id)
+                conn.execute(
+                    "UPDATE kg_entities SET name='관계 전용',aliases_json='[]'"
+                    " WHERE entity_id != 'topic:bundle:root'"
+                )
+
+                def add_relation(relation, target_id, context, evidence):
+                    conn.execute(
+                        "INSERT INTO kg_relations"
+                        " (source_id,relation,target_id,room_id,evidence_message_id,"
+                        " context,weight,evidence_json,updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?)",
+                        (
+                            "topic:bundle:root",
+                            relation,
+                            target_id,
+                            "",
+                            evidence["source_event_ids"][0],
+                            context,
+                            100,
+                            json.dumps(evidence, ensure_ascii=False),
+                            100,
+                        ),
+                    )
+
+                add_relation(
+                    "ALLOWED",
+                    "topic:bundle:allowed",
+                    "알파 허용 관계",
+                    {
+                        "kind": "ledger",
+                        "source_event_ids": ["synthetic:bundle:allowed"],
+                        "chat_id": "room-alpha",
+                        "confirmed_at": "2026-09-29T10:00:00+09:00",
+                        "retracted": False,
+                    },
+                )
+                add_relation(
+                    "ROOM_LEAK",
+                    "topic:bundle:room-leak",
+                    "베타 관계 누출",
+                    {
+                        "kind": "ledger",
+                        "source_event_ids": ["synthetic:bundle:room-beta"],
+                        "chat_id": "room-beta",
+                        "confirmed_at": "2026-09-29T10:00:00+09:00",
+                        "retracted": False,
+                    },
+                )
+                add_relation(
+                    "RETRACTED",
+                    "topic:bundle:retracted",
+                    "철회 관계 누출",
+                    {
+                        "kind": "ledger",
+                        "source_event_ids": ["synthetic:bundle:retracted"],
+                        "chat_id": "room-alpha",
+                        "confirmed_at": "2026-09-29T10:00:00+09:00",
+                        "retracted": True,
+                    },
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            dense = [("topic:bundle:root", 1.0)]
+            with mock.patch.object(KG, "_dense_ann_query", return_value=(dense, "w1")):
+                ranked = KG._query_knowledge_ranked(
+                    "출시 일정", state_root=root, chat_id="room-alpha"
+                )
+                bundle = KG.retrieve_knowledge_bundle(
+                    "출시 일정", state_root=root, chat_id="room-alpha"
+                )
+
+        ranked_relations = "\n".join(ranked["relation_facts"])
+        bundle_facts = "\n".join(bundle["facts"])
+        self.assertIn("알파 허용 관계", ranked_relations)
+        self.assertNotIn("베타 관계 누출", ranked_relations)
+        self.assertNotIn("철회 관계 누출", ranked_relations)
+        self.assertIn("알파 허용 관계", bundle_facts)
+        self.assertNotIn("베타 관계 누출", bundle_facts)
+        self.assertNotIn("철회 관계 누출", bundle_facts)
+        self.assertEqual(
+            [item["relation"] for item in bundle["relation_provenance"]],
+            ["ALLOWED"],
+        )
+        self.assertEqual(
+            len(bundle["facts"]),
+            len(bundle["candidate_provenance"])
+            + len(bundle["relation_provenance"]),
+        )
+        self.assertEqual(len(bundle["facts"]), len(bundle["fact_provenance"]))
+        self.assertEqual(
+            set(bundle["evidence_ids"]),
+            {"synthetic:topic:bundle:root", "synthetic:bundle:allowed"},
+        )
+        self.assertNotIn("synthetic:bundle:room-beta", bundle["evidence_ids"])
+        self.assertNotIn("synthetic:bundle:retracted", bundle["evidence_ids"])
+
+    def test_dense_only_weight_does_not_fallback_to_bm25_on_dense_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            conn = KG._connect_kg(root / KG.KNOWLEDGE_GRAPH_DB_NAME)
+            try:
+                self._insert_entity(conn, "topic:weight:bm25")
+                conn.commit()
+            finally:
+                conn.close()
+
+            with mock.patch.object(KG, "_dense_ann_query", return_value=([], "w1")):
+                dense_empty = KG._query_knowledge_ranked(
+                    "출시 일정", state_root=root, rrf_weights=(0.0, 1.0)
+                )
+            with mock.patch.object(
+                KG, "_dense_ann_query", side_effect=RuntimeError("dense unavailable")
+            ), mock.patch.object(KG, "_trace_graph"):
+                dense_failed = KG._query_knowledge_ranked(
+                    "출시 일정", state_root=root, rrf_weights=(0.0, 1.0)
+                )
+
+        for result in (dense_empty, dense_failed):
+            self.assertGreater(result["bm25_count"], 0)
+            self.assertEqual(result["candidates"], [])
+            self.assertEqual(result["entity_facts"], [])
+            self.assertEqual(result["relation_facts"], [])
+            self.assertEqual(result["relation_provenance"], [])
 
 
 if __name__ == "__main__":

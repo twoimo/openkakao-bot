@@ -38,6 +38,116 @@ pub struct ImageDownloadSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDownloadSource {
+    pub url: String,
+    pub requires_credentials: bool,
+    pub filename: String,
+    pub declared_size: u64,
+}
+
+/// A file is resolved only from an exact local row; quote envelopes are never
+/// interpreted as file locators. Keep the metadata checks aligned with ingress.
+pub fn parse_file_download_source(
+    attachment: &str,
+    message_type: i32,
+) -> Result<FileDownloadSource> {
+    use serde::de::{self, MapAccess, Visitor};
+    use serde::{Deserialize, Deserializer};
+    struct UniqueObject(serde_json::Map<String, serde_json::Value>);
+    impl<'de> Deserialize<'de> for UniqueObject {
+        fn deserialize<D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> std::result::Result<Self, D::Error> {
+            struct ObjectVisitor;
+            impl<'de> Visitor<'de> for ObjectVisitor {
+                type Value = UniqueObject;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a file attachment object with unique keys")
+                }
+                fn visit_map<A: MapAccess<'de>>(
+                    self,
+                    mut access: A,
+                ) -> std::result::Result<Self::Value, A::Error> {
+                    let mut object = serde_json::Map::new();
+                    while let Some((key, value)) =
+                        access.next_entry::<String, serde_json::Value>()?
+                    {
+                        if object.insert(key, value).is_some() {
+                            return Err(de::Error::custom("duplicate file attachment key"));
+                        }
+                    }
+                    Ok(UniqueObject(object))
+                }
+            }
+            deserializer.deserialize_map(ObjectVisitor)
+        }
+    }
+    if ![3, 12, 16, 18, 26].contains(&message_type) || attachment.len() > 64 * 1024 {
+        anyhow::bail!("Not a bounded file attachment");
+    }
+    let UniqueObject(object) = serde_json::from_str(attachment)?;
+    if object.keys().any(|key| key.starts_with("src_")) {
+        anyhow::bail!("A quoted reply is not a file attachment");
+    }
+    fn alias<'a>(
+        object: &'a serde_json::Map<String, serde_json::Value>,
+        names: &[&str],
+    ) -> Result<Option<&'a serde_json::Value>> {
+        let present = names
+            .iter()
+            .filter_map(|name| object.get(*name))
+            .collect::<Vec<_>>();
+        if present.len() > 1 {
+            anyhow::bail!("Ambiguous file metadata aliases");
+        }
+        Ok(present.first().copied())
+    }
+    let filename = alias(&object, &["name", "filename"])?
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| {
+            !name.is_empty()
+                && name.len() <= 512
+                && *name != "."
+                && *name != ".."
+                && !name.contains('/')
+                && !name.contains('\\')
+                && !name.chars().any(char::is_control)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Invalid file name"))?
+        .to_owned();
+    let declared_size = alias(&object, &["size", "s"])?
+        .and_then(serde_json::Value::as_u64)
+        .filter(|size| *size <= MAX_IMAGE_BYTES)
+        .ok_or_else(|| anyhow::anyhow!("Invalid or oversized file size"))?;
+    for names in [&["mt", "type"][..], &["cs", "digest"][..]] {
+        if let Some(value) = alias(&object, names)? {
+            if value.as_str().is_none_or(|s| {
+                s.trim().is_empty() || s.len() > 256 || s.chars().any(char::is_control)
+            }) {
+                anyhow::bail!("Invalid file metadata");
+            }
+        }
+    }
+    for key in ["url", "k"] {
+        if object.get(key).is_some_and(|value| {
+            value
+                .as_str()
+                .is_none_or(|s| s.is_empty() || s.len() > 4096)
+        }) {
+            anyhow::bail!("Invalid file locator");
+        }
+    }
+    let (url, _, requires_credentials) = image_locator(&object)?;
+    Ok(FileDownloadSource {
+        url,
+        requires_credentials,
+        filename,
+        declared_size,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedImageFile {
     pub size: u64,
     pub sha256: String,
@@ -1309,6 +1419,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exact_file_parser_accepts_bound_metadata_and_credentials_policy() {
+        let direct = parse_file_download_source(
+            r#"{"url":"https://talk.kakaocdn.net/report.pdf?token=signed","k":"safe/report.pdf","name":"report.pdf","size":42,"mt":"application/pdf","cs":"opaque"}"#,
+            26,
+        ).unwrap();
+        assert_eq!(direct.filename, "report.pdf");
+        assert_eq!(direct.declared_size, 42);
+        assert!(!direct.requires_credentials);
+        for message_type in [3, 12, 16, 18, 26] {
+            let keyed = parse_file_download_source(
+                r#"{"k":"safe/report.txt","filename":"report.txt","s":42}"#,
+                message_type,
+            )
+            .unwrap();
+            assert!(keyed.requires_credentials);
+            assert_eq!(
+                keyed.url,
+                "https://dn-m.talk.kakao.com/talkm/safe/report.txt"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_file_parser_rejects_quotes_duplicates_aliases_and_invalid_sizes() {
+        for attachment in [
+            r#"{"k":"a","name":"a.txt","name":"b.txt","size":1}"#,
+            r#"{"k":"a","name":"a.txt","filename":"a.txt","size":1}"#,
+            r#"{"k":"a","name":"a.txt","size":1,"s":1}"#,
+            r#"{"k":"a","name":"a.txt","size":1,"mt":"a","type":"a"}"#,
+            r#"{"k":"a","name":"a.txt","size":1,"cs":"a","digest":"a"}"#,
+            r#"{"k":"a","name":"a.txt","size":1,"src_logId":99}"#,
+            r#"{"k":"a","name":"../a.txt","size":1}"#,
+            r#"{"k":"a","name":"a\n.txt","size":1}"#,
+            r#"{"k":"a","name":"a.txt","size":-1}"#,
+            r#"{"k":"a","name":"a.txt","size":true}"#,
+            r#"{"k":"a","name":"a.txt","size":1.5}"#,
+            r#"{"k":"a","name":"a.txt","size":5242881}"#,
+            r#"{"url":42,"k":"a","name":"a.txt","size":1}"#,
+        ] {
+            assert!(
+                parse_file_download_source(attachment, 26).is_err(),
+                "{attachment}"
+            );
+        }
+        assert!(parse_file_download_source(r#"{"k":"a","name":"a.txt","size":1}"#, 2).is_err());
+    }
+
+    #[test]
+    fn exact_file_parser_rejects_foreign_local_and_credential_bearing_urls() {
+        for url in [
+            "http://talk.kakaocdn.net/a",
+            "https://evil.invalid/a",
+            "file:///tmp/a",
+            "https://user:pass@talk.kakaocdn.net/a",
+            "https://talk.kakaocdn.net:444/a",
+            "https://talk.kakaocdn.net/a#fragment",
+        ] {
+            let attachment = serde_json::json!({"url":url,"name":"a.txt","size":1}).to_string();
+            assert!(
+                parse_file_download_source(&attachment, 26).is_err(),
+                "{url}"
+            );
+        }
+        for key in [
+            "../secret",
+            "/absolute",
+            "a?token=x",
+            "a#fragment",
+            "a\\file",
+        ] {
+            let attachment = serde_json::json!({"k":key,"name":"a.txt","size":1}).to_string();
+            assert!(
+                parse_file_download_source(&attachment, 26).is_err(),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_kakao_attachment_key() {
         let result = parse_attachment_url(r#"{"k":"abc/photo.jpg"}"#, 2);
         assert_eq!(
@@ -1860,12 +2049,9 @@ mod tests {
 
         let mut at_cap = encoded.clone();
         at_cap.extend(std::iter::repeat_n(0u8, MAX_JPEG_TRAILING_BYTES));
-        let at_cap_stripped = attested_image_bytes_for_decode(
-            &at_cap,
-            Some(at_cap.len() as u64),
-            Some("jpeg"),
-        )
-        .expect("8KiB trailer is the documented Kakao pad cap");
+        let at_cap_stripped =
+            attested_image_bytes_for_decode(&at_cap, Some(at_cap.len() as u64), Some("jpeg"))
+                .expect("8KiB trailer is the documented Kakao pad cap");
         assert_eq!(at_cap_stripped, encoded.as_slice());
 
         let mut over_cap = encoded.clone();
@@ -1902,25 +2088,18 @@ mod tests {
         let mut body = encoded.clone();
         body.extend_from_slice(&trailer);
         assert!(jpeg_prefix_with_exact_sef_trailer(&body).is_none());
-        let stripped = attested_image_bytes_for_decode(
-            &body,
-            Some(body.len() as u64),
-            Some("jpeg"),
-        )
-        .expect("Kakao padded SEF trailers must decode via bounded EOI strip");
+        let stripped =
+            attested_image_bytes_for_decode(&body, Some(body.len() as u64), Some("jpeg"))
+                .expect("Kakao padded SEF trailers must decode via bounded EOI strip");
         assert_eq!(stripped, encoded.as_slice());
         assert_eq!(
             attested_image_bytes_for_decode(&body, Some(body.len() as u64), None).unwrap(),
             encoded.as_slice()
         );
-        assert!(attested_image_bytes_for_decode(
-            &body,
-            Some(body.len() as u64),
-            Some("png")
-        )
-        .is_err());
+        assert!(
+            attested_image_bytes_for_decode(&body, Some(body.len() as u64), Some("png")).is_err()
+        );
     }
-
 
     #[cfg(unix)]
     #[test]

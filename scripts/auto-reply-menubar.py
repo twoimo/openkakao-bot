@@ -30,13 +30,17 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from local_mlx_model_readiness import (
-    RESIDENT_MODEL_ID as JARVIS_RESIDENT_MODEL_ID,
-    SWAP_MODEL_ID as JARVIS_SWAP_MODEL_ID,
+    IQ_MODEL_ID as ALDEN_IQ_MODEL_ID,
+    RESIDENT_MODEL_ID as ALDEN_RESIDENT_MODEL_ID,
+    SWAP_MODEL_ID as ALDEN_SWAP_MODEL_ID,
     canonical_fixed_local_mlx_model_id,
     read_fixed_local_mlx_readiness,
     resolve_fixed_local_mlx_catalog_model,
 )
 from auto_reply_ondevice import (
+    FLASH_NEXT_IQ_CONTEXT_SIZE,
+    FLASH_NEXT_IQ_MODEL_ID,
+    FLASH_NEXT_IQ_REQUIRED_BYTES,
     FLASH_NEXT_MODEL_ID,
     FLASH_NEXT_REQUIRED_BYTES,
     MLX_GATEWAY_BASE_URL,
@@ -55,9 +59,11 @@ from auto_reply_ondevice import (
     write_managed_model_residency,
 )
 from mlx_serve_lifecycle import (
+    MLX_SERVE_FLASH_NEXT_IQ_PORT,
     MlxLaunchSpec,
     launch_app_owned_server,
     ownership_status,
+    resolve_app_executable,
     stop_app_owned_server,
 )
 from local_mlx_gateway import (
@@ -328,7 +334,7 @@ def _local_reply_model_allowed(model: Any) -> bool:
 
 
 def _qwen38_27b_image_model(model: Any) -> bool:
-    return canonical_fixed_local_mlx_model_id(model) == JARVIS_SWAP_MODEL_ID
+    return canonical_fixed_local_mlx_model_id(model) == ALDEN_SWAP_MODEL_ID
 
 
 def _read_image_reply_model(state_root: Path) -> tuple[str, str]:
@@ -999,6 +1005,13 @@ def _knowledge_graph_focus_payload(
             "reason": "knowledge_graph_focus_query_missing",
         }
     try:
+        try:
+            from alden_osk import read_focus
+            vault_result = read_focus(state_root, selected_id, chat_id=room)
+        except Exception:
+            vault_result = {"ok": False, "facts": []}
+        if selected_id.startswith("osk:") or 'sources' in vault_result or vault_result.get('reason') == 'focus_room_scope_invalid':
+            return vault_result
         from auto_reply_knowledge_graph import retrieve_knowledge_bundle
 
         bundle = retrieve_knowledge_bundle(
@@ -1007,6 +1020,10 @@ def _knowledge_graph_focus_payload(
             chat_id=room or None,
             also=[selected_id] if selected_id else None,
         )
+        if vault_result.get("ok"):
+            bundle["facts"] = list(dict.fromkeys([*vault_result["facts"], *bundle.get("facts", [])]))[:12]
+            bundle["fact_count"] = len(bundle["facts"])
+            if vault_result.get('details'): bundle['details'] = vault_result['details']
         return {"ok": True, **bundle}
     except Exception as exc:  # click drill-down must stay fail-closed
         return {
@@ -1098,7 +1115,20 @@ def _apply_catalog_mutates() -> None:
     # be lost to a concurrent mutation. Serialize across processes and let the
     # impl's atomic writer persist the entry (2026-09-13).
     lock = _catalog_lock(state_root)
+    if lock is None:
+        raise MenubarError('catalog_lock_unavailable')
     try:
+        catalog=state_root/'menubar-room-catalog.json'
+        if catalog.exists():
+            if catalog.is_symlink():raise MenubarError('catalog_path_unsafe')
+            data=catalog.read_bytes()
+            folder=state_root/'catalog-history';folder.mkdir(mode=0o700,exist_ok=True)
+            if folder.is_symlink():raise MenubarError('catalog_history_unsafe')
+            import hashlib
+            backup=folder/(hashlib.sha256(data).hexdigest()+'.json')
+            if not backup.exists():
+                fd=os.open(backup,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+                with os.fdopen(fd,'wb') as saved:saved.write(data);saved.flush();os.fsync(saved.fileno())
         if upsert_raw:
             payload = json.loads(upsert_raw)
             if not isinstance(payload, dict):
@@ -1698,10 +1728,37 @@ def set_reply_model(
         for item in provider.get("models") or []:
             if isinstance(item, dict) and item.get("id"):
                 allowed_model_ids.add(str(item["id"]))
-    local_wanted = resolve_fixed_local_mlx_catalog_model(requested, allowed_model_ids)
+    fixed_requested = canonical_fixed_local_mlx_model_id(requested)
+    # The fixed iQ and 27B models may already be resident even when the display
+    # catalog is stale or omits them. Keep this exception bounded to those
+    # allowlisted IDs and require exact localhost readiness before writing.
+    local_wanted = (
+        fixed_requested
+        if fixed_requested in {ALDEN_IQ_MODEL_ID, ALDEN_SWAP_MODEL_ID}
+        else resolve_fixed_local_mlx_catalog_model(requested, allowed_model_ids)
+    )
     wanted = local_wanted or requested
     allowed = local_wanted is not None or requested in allowed_model_ids
     if allowed:
+        if wanted in {ALDEN_IQ_MODEL_ID, ALDEN_SWAP_MODEL_ID}:
+            readiness = read_fixed_local_mlx_readiness(
+                wanted,
+                state_root=state_root,
+            )
+            if not readiness.prepared:
+                return {
+                    "ok": False,
+                    "action": "model-set",
+                    "privacy": "content_redacted",
+                    "model": wanted,
+                    "reason": readiness.reason,
+                    "stored": False,
+                    "prepared": False,
+                    "needs_prepare": True,
+                    "warnings": [
+                        "고정 MLX 모델은 localhost gateway에서 loaded/ready로 확인된 뒤 선택할 수 있습니다."
+                    ],
+                }
         import time as _time
         stamp = _time.time() if now is None else float(now)
         override_path = _reply_model_override_path(state_root)
@@ -1746,7 +1803,7 @@ def set_reply_model(
             "needs_prepare": wanted.startswith("omlx/"),
             "warnings": [prepare_warning] if prepare_warning else [],
         }
-    # Fixed local IDs must remain on the prefixless Jarvis contract. Do not
+    # Fixed local IDs must remain on the prefixless Alden contract. Do not
     # fall through to a broader legacy resolver that could persist an mlx/
     # alias or reinterpret a fixed local request as a remote model.
     if canonical_fixed_local_mlx_model_id(requested) is not None:
@@ -1927,43 +1984,48 @@ if callable(_orig_reply_model_payload):
 
 
 def prepare_reply_model(state_root: Path, model: str):
-    """Prepare legacy models or read fixed Jarvis readiness without saving.
+    """Prepare legacy models or read fixed Alden readiness without saving.
 
     The recheck path used to call ``model-set`` to prepare, which first saves
     the model. A stale recheck could then overwrite a newer selection. This
-    action never writes the selection. The fixed Jarvis 27B path is GET-only
-    readiness verification and never initiates a model load (2026-09-21).
+    action never writes the selection. The fixed Alden iQ and 27B paths are
+    GET-only readiness verification and never initiate a model load.
     """
 
     requested = str(model or "").strip()
     local_wanted = canonical_fixed_local_mlx_model_id(requested)
-    if local_wanted == JARVIS_RESIDENT_MODEL_ID:
+    if local_wanted == ALDEN_RESIDENT_MODEL_ID:
         return {
             "ok": False,
             "action": "model-prepare",
             "privacy": "content_redacted",
-            "model": JARVIS_RESIDENT_MODEL_ID,
+            "model": ALDEN_RESIDENT_MODEL_ID,
             "needs_prepare": False,
             "prepared": False,
             "reason": "model_prepare_not_allowed",
             "warnings": ["Flash-Next는 27B 준비 확인 대상으로 사용할 수 없습니다."],
         }
-    if local_wanted == JARVIS_SWAP_MODEL_ID:
+    if local_wanted in {ALDEN_IQ_MODEL_ID, ALDEN_SWAP_MODEL_ID}:
         readiness = read_fixed_local_mlx_readiness(
             local_wanted,
             state_root=state_root,
+        )
+        warning = (
+            "iQ 3.3bpw는 localhost MLX gateway에서 loaded/ready로 확인되지 않았습니다."
+            if local_wanted == ALDEN_IQ_MODEL_ID
+            else "27B는 localhost MLX gateway에서 loaded/ready로 확인되지 않았습니다."
         )
         return {
             "ok": readiness.prepared,
             "action": "model-prepare",
             "privacy": "content_redacted",
-            "model": JARVIS_SWAP_MODEL_ID,
+            "model": local_wanted,
             "needs_prepare": not readiness.prepared,
             "prepared": readiness.prepared,
             "reason": readiness.reason,
             "warnings": []
             if readiness.prepared
-            else ["27B는 localhost MLX gateway에서 loaded/ready로 확인되지 않았습니다."],
+            else [warning],
         }
 
     wanted = requested
@@ -1994,7 +2056,7 @@ def _model_swap_result(
     return {
         "ok": bool(ok),
         "action": "model-swap",
-        "model": JARVIS_SWAP_MODEL_ID,
+        "model": ALDEN_SWAP_MODEL_ID,
         "stage": str(stage or "failed")[:32],
         "reason": str(reason or "model_swap_failed")[:96],
         "stages": [str(item)[:32] for item in list(stages)[:12]],
@@ -2031,7 +2093,7 @@ def swap_reply_model(
 
     root = Path(state_root)
     requested = canonical_fixed_local_mlx_model_id(model)
-    if requested != JARVIS_SWAP_MODEL_ID:
+    if requested != ALDEN_SWAP_MODEL_ID:
         return _model_swap_result(
             ok=False, stage="aborted", reason="model_not_allowed"
         )
@@ -2171,7 +2233,7 @@ def _swap_reply_model_locked(
                 _reply_model_override_path(root),
                 {
                     "schema_version": 1,
-                    "model": JARVIS_SWAP_MODEL_ID,
+                    "model": ALDEN_SWAP_MODEL_ID,
                     "updated_at": int(time.time() if now is None else float(now)),
                 },
             )
@@ -2398,16 +2460,16 @@ async def _tool_browser_payload(
             "result": "",
         }
     try:
-        from jarvis_tool_runtime import (
+        from alden_tool_runtime import (
             MAX_TOOL_RESULT_BYTES,
             BrowserToolJob,
-            JarvisToolRuntime,
+            AldenToolRuntime,
         )
     except (ImportError, ModuleNotFoundError):
         return dict(_TOOL_BROWSER_FALLBACK)
 
     try:
-        outcome = await JarvisToolRuntime(state_root).run_browser(
+        outcome = await AldenToolRuntime(state_root).run_browser(
             BrowserToolJob(job_id=job_id, task=task)
         )
     except (ImportError, ModuleNotFoundError):
@@ -2461,8 +2523,9 @@ async def _tool_browser_payload(
 
 _MLX_LIFECYCLE_ACTIONS = frozenset({"mlx-server-launch", "mlx-server-stop"})
 # The app-owned server may only be started from the signed MLX Core bundle that
-# already ships on this machine, serving one of the two fixed local models.
+# already ships on this machine, serving one of the fixed local models.
 _MLX_APP_OWNED_BINARY = Path("/Applications/MLX Core.app/Contents/MacOS/mlx-serve")
+_MLX_RENAMED_APP_BINARY = Path("/Applications/MLX-Serve.app/Contents/MacOS/mlx-serve")
 _MLX_APP_OWNED_MODELS_DIR = Path.home() / ".mlx-serve" / "models"
 
 
@@ -2472,16 +2535,10 @@ def _menubar_state_root() -> Path:
 
 
 def _mlx_app_owned_model_dir(model_id: str | None) -> Path | None:
-    """Resolve one of the two fixed local models to its on-disk directory."""
+    """Resolve one fixed local model to its app-owned on-disk directory."""
 
-    name = str(model_id or "").strip()
-    if name.startswith("mlx/"):
-        name = name[4:]
-    allowed = {
-        FLASH_NEXT_MODEL_ID.removeprefix("mlx/"),
-        QWEN38_27B_MODEL_ID.removeprefix("mlx/"),
-    }
-    if name not in allowed:
+    name = canonical_fixed_local_mlx_model_id(model_id)
+    if name is None:
         return None
     return _MLX_APP_OWNED_MODELS_DIR / name
 
@@ -2492,17 +2549,27 @@ def _mlx_app_owned_spec(state_root: Path, model_id: str | None) -> MlxLaunchSpec
     resident = _mlx_app_owned_model_dir(model_id)
     if resident is None:
         return None
-    required_bytes = (
-        QWEN38_27B_REQUIRED_BYTES
-        if resident.name == JARVIS_SWAP_MODEL_ID.rsplit("/", 1)[-1]
-        else FLASH_NEXT_REQUIRED_BYTES
-    )
+    wanted = canonical_fixed_local_mlx_model_id(model_id)
+    required_bytes = {
+        ALDEN_RESIDENT_MODEL_ID: FLASH_NEXT_REQUIRED_BYTES,
+        ALDEN_IQ_MODEL_ID: FLASH_NEXT_IQ_REQUIRED_BYTES,
+        ALDEN_SWAP_MODEL_ID: QWEN38_27B_REQUIRED_BYTES,
+    }.get(wanted)
+    if required_bytes is None:
+        return None
+    kwargs: dict[str, Any] = {}
+    log_path = state_root / "mlx-app-owned-server.log"
+    if wanted == ALDEN_IQ_MODEL_ID:
+        kwargs["ctx_size"] = FLASH_NEXT_IQ_CONTEXT_SIZE
+        kwargs["port"] = MLX_SERVE_FLASH_NEXT_IQ_PORT
+        log_path = state_root / "mlx-app-owned-server-11235.log"
     return MlxLaunchSpec(
-        executable=_MLX_APP_OWNED_BINARY,
+        executable=resolve_app_executable(_MLX_APP_OWNED_BINARY, _MLX_RENAMED_APP_BINARY),
         resident_model_dir=resident,
         models_dir=_MLX_APP_OWNED_MODELS_DIR,
-        log_path=state_root / "mlx-app-owned-server.log",
+        log_path=log_path,
         minimum_free_bytes=required_bytes,
+        **kwargs,
     )
 
 
@@ -2543,7 +2610,11 @@ def _seed_launched_model_residency(state_root: Path, spec: MlxLaunchSpec, pid: i
             state_root,
             ManagedModelResidency(
                 f"mlx/{current}",
-                (FLASH_NEXT_MODEL_ID, QWEN38_27B_MODEL_ID),
+                (
+                    FLASH_NEXT_MODEL_ID,
+                    FLASH_NEXT_IQ_MODEL_ID,
+                    QWEN38_27B_MODEL_ID,
+                ),
                 pid,
                 True,
                 False,
@@ -2585,7 +2656,7 @@ def _mlx_lifecycle_payload(action: str, state_root: Path) -> dict:
 
     Both actions are gated behind an explicit --explicit-opt-in flag because
     they start or stop a resident model process.  The launch path can only
-    name the signed MLX Core bundle and the two fixed local models, so the
+    name the signed MLX Core bundle and the fixed local models, so the
     request surface stays bounded and auditable.
     """
 
@@ -2598,7 +2669,12 @@ def _mlx_lifecycle_payload(action: str, state_root: Path) -> dict:
         return {"ok": False, "action": action, "reason": "mlx_model_not_supported"}
     result = launch_app_owned_server(spec, state_root)
     report = result.report()
-    if result.ok and type(result.pid) is int and result.pid > 1:
+    if (
+        result.ok
+        and type(result.pid) is int
+        and result.pid > 1
+        and spec.port != MLX_SERVE_FLASH_NEXT_IQ_PORT
+    ):
         report["residency_seeded"] = _seed_launched_model_residency(
             state_root, spec, result.pid
         )
@@ -2623,6 +2699,24 @@ def main():
         )
         return 0
     action = _argv_flag_value("--action")
+    if action in {"history-rooms","history-messages","voice-history-sessions","voice-history-messages","db-sync-history","reply-history","geeknews-history"}:
+        from alden_history import read
+        state_raw=_argv_flag_value("--state-root")
+        state_root=Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        try:
+            _print_json(read(state_root,Path(_argv_flag_value("--bin") or ""),action,_argv_flag_value("--history-query"),_argv_flag_value("--history-chat")))
+        except Exception as error:
+            _print_json({"ok":False,"items":[],"reason":str(error)[:96]})
+        return 0
+    if action in {"room-catalog","room-delete"}:
+        state_raw=_argv_flag_value("--state-root")
+        root=Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
+        try:
+            payload=json.loads((root/"menubar-room-catalog.json").read_text())
+            _print_json({"ok":True,"rooms":[{**room,"chat_id":str(room["chat_id"])} for room in payload.get("rooms",[])]})
+        except FileNotFoundError:
+            _print_json({"ok":True,"rooms":[]})
+        return 0
     if action == "tool-browser":
         task, task_error = _read_tool_browser_task()
         if task_error is not None:
@@ -2631,13 +2725,17 @@ def main():
         if task is None:
             _print_json(_tool_browser_error("browser_task_invalid"))
             return 0
-        payload = asyncio.run(
-            _tool_browser_payload(
-                state_root_raw=_argv_flag_value("--state-root"),
-                job_id=_argv_flag_value("--job-id"),
-                task=task,
+        # Browser-Use and its transitive dependencies may write progress text
+        # to stdout. Keep the desktop bridge contract at exactly one JSON
+        # object by routing all browser-job chatter to stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            payload = asyncio.run(
+                _tool_browser_payload(
+                    state_root_raw=_argv_flag_value("--state-root"),
+                    job_id=_argv_flag_value("--job-id"),
+                    task=task,
+                )
             )
-        )
         _print_json(payload)
         return 0
     if action == "room-upsert":
@@ -2692,11 +2790,8 @@ def main():
         state_raw = _argv_flag_value("--state-root")
         state_root = Path(state_raw).expanduser() if state_raw else _DEFAULT_STATE_ROOT
         try:
-            from auto_reply_knowledge_graph import collect_knowledge_graph
-
-            payload = collect_knowledge_graph(
-                state_root / "context.sqlite3", state_root=state_root
-            )
+            from alden_osk import read_graph
+            payload = read_graph(state_root)
         except Exception as exc:  # never crash the menu: report and keep going
             payload = {
                 "ok": False,
@@ -3099,7 +3194,7 @@ _install_receipt_snapshot_hook()
 # ---------------------------------------------------------------------------
 # 백그라운드 작업 표시
 #
-# 메인 화면의 자비스 코어는 답변 생성만 보고 있었다. 사용자가 실제로 기다리는
+# 메인 화면의 올든 코어는 답변 생성만 보고 있었다. 사용자가 실제로 기다리는
 # 일은 긱뉴스 전송과 카카오톡 DB 동기화라서 그 둘도 같은 코어가 반응해야 한다.
 # 어떤 상태를 몇 세기로 볼지는 여기서 정하고, 화면은 받은 숫자를 그리기만
 # 한다(2026-09-19).
@@ -3107,6 +3202,33 @@ BACKGROUND_STATE_LIMIT_BYTES = 262_144
 BACKGROUND_SYNC_FRESH_SECONDS = 12.0
 BACKGROUND_HEARTBEAT_FRESH_SECONDS = 90.0
 GEEKNEWS_CONFIRMED_FRESH_SECONDS = 20.0
+REPLY_READINESS_HEARTBEAT_FRESH_SECONDS = 15.0
+REPLY_READINESS_FUTURE_TOLERANCE_SECONDS = 5.0
+REPLY_READINESS_CONTEXT_INTERVAL_SECONDS = 60.0
+REPLY_READINESS_CONTEXT_INTERVAL_TOLERANCE_SECONDS = 1.0
+# A periodic context sync may wait 300 seconds for the shared writer slot and
+# then run for 90 seconds. Older proof is not current readiness evidence.
+REPLY_READINESS_CONTEXT_LATE_GRACE_SECONDS = 390.0
+REPLY_READINESS_STARTING_REASONS = frozenset(
+    {"", "context_sync_transient", "context_sync_deferred"}
+)
+REPLY_READINESS_BLOCKED_FENCE_PAIRS = frozenset(
+    {
+        ("context_sync_unavailable", "context_sync_unavailable"),
+        ("owner_epoch_fence", "owner_epoch_fence"),
+        ("reconcile_required", "reconcile_required"),
+        ("sentinel", "sentinel_watermark_requires_reconcile"),
+        ("watermark_regressed", "watermark_regressed"),
+        ("db_unavailable", "poll_fence"),
+        ("db_unavailable", "database_timeout"),
+        ("db_unavailable", "reconcile_required"),
+        ("db_unavailable", "target_fence"),
+        ("db_unavailable", "owner_fence"),
+        ("db_unavailable", "source_epoch_fence"),
+        ("db_unavailable", "db_fence"),
+        ("db_unavailable", "database_unavailable"),
+    }
+)
 BACKGROUND_ROOM_ACTIVE_STATUSES = (
     "pending",
     "processing",
@@ -3140,6 +3262,113 @@ def _bounded_epoch(value: Any) -> float | None:
     if not math.isfinite(number) or number <= 0:
         return None
     return number
+
+
+def _bounded_state_text(value: Any, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if len(value) > limit or value != value.strip():
+        return None
+    return value
+
+
+def _fresh_epoch(value: Any, now: float, max_age: float) -> float | None:
+    if not math.isfinite(now):
+        return None
+    stamp = _bounded_epoch(value)
+    if stamp is None:
+        return None
+    age = now - stamp
+    if age < -REPLY_READINESS_FUTURE_TOLERANCE_SECONDS or age > max_age:
+        return None
+    return stamp
+
+
+def _context_sync_window(
+    state: dict, now: float, heartbeat: float
+) -> tuple[float, float] | None:
+    synced_at = _bounded_epoch(state.get("context_sync_at"))
+    retry_at = _bounded_epoch(state.get("context_sync_retry_at"))
+    if synced_at is None or retry_at is None:
+        return None
+    if now - synced_at < -REPLY_READINESS_FUTURE_TOLERANCE_SECONDS:
+        return None
+    interval = retry_at - synced_at
+    if not math.isclose(
+        interval,
+        REPLY_READINESS_CONTEXT_INTERVAL_SECONDS,
+        rel_tol=0.0,
+        abs_tol=REPLY_READINESS_CONTEXT_INTERVAL_TOLERANCE_SECONDS,
+    ):
+        return None
+    if synced_at - heartbeat > REPLY_READINESS_FUTURE_TOLERANCE_SECONDS:
+        return None
+    return synced_at, retry_at
+
+
+def _context_sync_is_current(context: tuple[float, float], now: float) -> bool:
+    _synced_at, retry_at = context
+    return now - retry_at <= REPLY_READINESS_CONTEXT_LATE_GRACE_SECONDS
+
+
+def _room_delivery_shape(state: dict) -> str:
+    """Validate the producer's exact delivery tuple without using it as a gate."""
+
+    if not state:
+        return "unknown"
+    capability = _bounded_state_text(state.get("capability_state"), 32)
+    fence = _bounded_state_text(state.get("fence"), 32)
+    fence_reason = _bounded_state_text(state.get("fence_reason"), 64)
+    delivery_enabled = state.get("delivery_enabled")
+    if (
+        capability is None
+        or fence is None
+        or fence_reason is None
+        or (delivery_enabled is not True and delivery_enabled is not False)
+    ):
+        return "unknown"
+    if (capability, delivery_enabled, fence, fence_reason) == (
+        "ready",
+        True,
+        "ready",
+        "",
+    ):
+        return "ready"
+    if (
+        capability == "starting"
+        and delivery_enabled is False
+        and fence == "starting"
+        and fence_reason in REPLY_READINESS_STARTING_REASONS
+    ):
+        return "blocked"
+    if (
+        capability == "fenced"
+        and delivery_enabled is False
+        and (fence, fence_reason) in REPLY_READINESS_BLOCKED_FENCE_PAIRS
+    ):
+        return "blocked"
+    return "unknown"
+
+
+def _room_reply_readiness(state: dict, now: float) -> str:
+    """Derive a display-only enum from the current authoritative watcher."""
+
+    shape = _room_delivery_shape(state)
+    if shape == "unknown":
+        return "unknown"
+    heartbeat = _fresh_epoch(
+        state.get("heartbeat_at"), now, REPLY_READINESS_HEARTBEAT_FRESH_SECONDS
+    )
+    if heartbeat is None:
+        return "unknown"
+    if shape == "ready":
+        context = _context_sync_window(state, now, heartbeat)
+        if context is None or not _context_sync_is_current(context, now):
+            return "unknown"
+        return "ready"
+    if shape == "blocked":
+        return "blocked"
+    return "unknown"
 
 
 def _read_background_state(path: Path) -> dict:
@@ -3246,27 +3475,37 @@ def _room_geeknews_background(room_dir: Path, now: float) -> dict[str, Any]:
     }
 
 
-def _room_db_sync_background(room_dir: Path, now: float) -> dict[str, Any]:
+def _room_db_sync_background(state: dict, now: float) -> dict[str, Any]:
     """카카오톡 DB 동기화가 도는지, 뒤처졌는지, 멈췄는지."""
 
-    state = _read_background_state(room_dir / "db-watch-state.json")
-    capability = str(state.get("capability_state") or "").strip()[:32]
-    fence_reason = str(state.get("fence_reason") or "").strip()[:64]
-    synced_at = _bounded_epoch(state.get("context_sync_at"))
-    due_at = _bounded_epoch(state.get("context_sync_retry_at"))
-    heartbeat = _bounded_epoch(state.get("heartbeat_at"))
-    age = None if synced_at is None else max(0.0, now - synced_at)
-    live = (
-        heartbeat is not None
-        and now - heartbeat <= BACKGROUND_HEARTBEAT_FRESH_SECONDS
+    capability = _bounded_state_text(state.get("capability_state"), 32) or ""
+    fence_reason = _bounded_state_text(state.get("fence_reason"), 64) or ""
+    heartbeat_stamp = _bounded_epoch(state.get("heartbeat_at"))
+    heartbeat = _fresh_epoch(
+        state.get("heartbeat_at"), now, BACKGROUND_HEARTBEAT_FRESH_SECONDS
     )
-    if capability and capability != "ready" and live:
+    shape = _room_delivery_shape(state)
+    context = (
+        _context_sync_window(state, now, heartbeat)
+        if heartbeat is not None
+        else None
+    )
+    synced_at, due_at = context if context is not None else (None, None)
+    age = None if synced_at is None else max(0.0, now - synced_at)
+    if not state or shape == "unknown":
+        code, activity = "unknown", 0.0
+    elif heartbeat_stamp is None:
+        code, activity = "unknown", 0.0
+    elif now - heartbeat_stamp < -REPLY_READINESS_FUTURE_TOLERANCE_SECONDS:
+        code, activity = "unknown", 0.0
+    elif heartbeat is None:
+        # 심장이 멈춘 방은 "도는 중"도 "준비됨"도 아니다.
+        code, activity = "stalled", 0.0
+    elif shape == "blocked":
         # 다시 붙는 중이다. 아직 살아 있는 감시자가 도는 중이라는 뜻이다.
         code, activity = "retrying", 0.3
-    elif capability and capability != "ready":
-        # 심장이 멈춘 방은 "도는 중"이 아니다. 코어를 계속 빠르게 두면
-        # 화면이 거짓말을 한다.
-        code, activity = "stalled", 0.0
+    elif context is None or not _context_sync_is_current(context, now):
+        code, activity = "unknown", 0.0
     elif age is not None and age <= BACKGROUND_SYNC_FRESH_SECONDS:
         code, activity = "syncing", 0.6
     elif due_at is not None and now - due_at > BACKGROUND_SYNC_FRESH_SECONDS:
@@ -3283,21 +3522,29 @@ def _room_db_sync_background(room_dir: Path, now: float) -> dict[str, Any]:
     }
 
 
-def _background_sources(room_dir: Path | None, now: float) -> dict[str, Any]:
+def _background_sources(
+    room_dir: Path | None, now: float
+) -> tuple[dict[str, Any], str]:
     """한 방의 두 백그라운드 작업을 한 덩어리로 접는다."""
 
     if room_dir is None or not room_dir.is_dir():
         geeknews = _empty_background_source("geeknews")
         db_sync = _empty_background_source("db_sync")
+        reply_readiness = "unknown"
     else:
+        db_state = _read_background_state(room_dir / "db-watch-state.json")
         geeknews = _room_geeknews_background(room_dir, now)
-        db_sync = _room_db_sync_background(room_dir, now)
-    return {
-        "activity": max(geeknews["activity"], db_sync["activity"]),
-        "caption": geeknews["caption"] or db_sync["caption"],
-        "geeknews": geeknews,
-        "db_sync": db_sync,
-    }
+        db_sync = _room_db_sync_background(db_state, now)
+        reply_readiness = _room_reply_readiness(db_state, now)
+    return (
+        {
+            "activity": max(geeknews["activity"], db_sync["activity"]),
+            "caption": geeknews["caption"] or db_sync["caption"],
+            "geeknews": geeknews,
+            "db_sync": db_sync,
+        },
+        reply_readiness,
+    )
 
 
 def _attach_background_state(
@@ -3310,29 +3557,36 @@ def _attach_background_state(
     (2026-09-19).
     """
 
-    if not isinstance(snap, dict) or "background" in snap:
+    if not isinstance(snap, dict):
         return snap
     root = _resolve_background_state_root(state_root)
-    if root is None:
-        return snap
     try:
         stamp = time.time() if now is None else float(now)
     except (TypeError, ValueError):
         stamp = time.time()
     if not math.isfinite(stamp):
         stamp = time.time()
-    rooms_root = root / "rooms"
+    rooms_root = root / "rooms" if root is not None else None
     entries: list[dict[str, Any]] = []
+    rooms: list[Any] = []
     for room in snap.get("rooms") or []:
         if not isinstance(room, dict):
+            rooms.append(room)
             continue
+        safe_room = dict(room)
         chat_id = room.get("chat_id")
         if isinstance(chat_id, bool) or not isinstance(chat_id, int):
+            safe_room["reply_readiness"] = "unknown"
+            rooms.append(safe_room)
             continue
+        room_dir = rooms_root / str(chat_id) if rooms_root is not None else None
+        sources, reply_readiness = _background_sources(room_dir, stamp)
+        safe_room["reply_readiness"] = reply_readiness
+        rooms.append(safe_room)
         entries.append(
             {
                 "chat_id": chat_id,
-                **_background_sources(rooms_root / str(chat_id), stamp),
+                **sources,
             }
         )
     geeknews = _empty_background_source("geeknews")
@@ -3349,6 +3603,7 @@ def _attach_background_state(
             activity = entry["activity"]
             caption = entry["caption"]
     snap = dict(snap)
+    snap["rooms"] = rooms
     snap["background"] = {
         "schema_version": 1,
         "activity": activity,
@@ -3358,6 +3613,22 @@ def _attach_background_state(
         "rooms": entries,
     }
     return snap
+
+
+def _attach_background_state_once(
+    snap: Any, state_root: Any, *, now: float | None = None
+) -> Any:
+    """Avoid rereading room evidence when nested snapshot wrappers already attached it."""
+
+    if isinstance(snap, dict) and isinstance(snap.get("background"), dict):
+        rooms = snap.get("rooms")
+        if isinstance(rooms, list) and all(
+            not isinstance(room, dict)
+            or room.get("reply_readiness") in {"ready", "blocked", "unknown"}
+            for room in rooms
+        ):
+            return snap
+    return _attach_background_state(snap, state_root, now=now)
 
 
 def _patch_overlay_background(namespace: Any) -> bool:
@@ -3372,7 +3643,7 @@ def _patch_overlay_background(namespace: Any) -> bool:
                 namespace,
                 attr,
                 flag="_openkakao_background",
-                attach=_attach_background_state,
+                attach=_attach_background_state_once,
             )
             or installed
         )
@@ -3698,7 +3969,7 @@ def _scope_menubar_rooms_to_enrollment() -> None:
             # 코어 애니메이션이 반응할 긱뉴스·DB 동기화 상태. 오버레이 훅이
             # 이미 붙였으면 그대로 두고, 이 경로만 도는 배치에서도 빠지지
             # 않게 여기서도 붙인다(2026-09-19).
-            snap = _attach_background_state(snap, state_root)
+            snap = _attach_background_state_once(snap, state_root)
             try:
                 models = collect_reply_models(Path(state_root))
             except Exception:

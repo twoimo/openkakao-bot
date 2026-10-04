@@ -1,0 +1,81 @@
+{
+  "schema": "alden-voice-wav-verification-v1",
+  "code_commit": "bd551b55c7bd3342ebdf6b8d9b24df2752883670",
+  "baseline_installed_probe": {
+    "scope": "Owned fake synthesis, real installed NumPy/WAV writer",
+    "cancelled": true,
+    "existing_artifact_preserved": false,
+    "writer_returned_success": true,
+    "model_calls": 0,
+    "network_calls": 0
+  },
+  "mandatory_python": {
+    "schema": "alden-wav-python-verification-v1",
+    "captured_utc": "2026-09-30T17:45:16.395984+00:00",
+    "python": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+    "python_version": "3.11.9",
+    "selector_count": 63,
+    "exit_code": 0,
+    "elapsed_seconds": 120.69405016722158,
+    "tests": 1020,
+    "test_seconds": 120.317,
+    "skipped": 17,
+    "log_sha256": "31a3ee2d319030ad6659915c0a2e8903cfca37f28518e78d16cd96388cb624d3"
+  },
+  "focused_voice_abort": {
+    "tests": 58,
+    "skips": 0,
+    "failed": 0,
+    "seconds": 0.907,
+    "runtime": "dedicated voice CPython3.11"
+  },
+  "independent_review": {
+    "model": "gpt-6-astra",
+    "effort": "max",
+    "agent_id": "01a0f360-c4e8-7c23-8a9f-5a6db8529d40",
+    "fixed_findings": [
+      "local cancellation race at atomic rename",
+      "new abort root created with unsafe permissions"
+    ],
+    "followup_cases_passed": 4,
+    "scope": "local/turn/session cancel first and shared-lock timeout; private fake adapters only"
+  },
+  "remote_code_ci": {
+    "conclusion": "success",
+    "headSha": "bd551b55c7bd3342ebdf6b8d9b24df2752883670",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "Tauri desktop and focused Python tests",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "Launchd and Python harness",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "macOS cargo test",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "Alden unsigned arm64 release + runtime smoke",
+        "status": "completed"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/twoimo/openkakao-bot/actions/runs/36753986921"
+  },
+  "hosted_python": {
+    "tests": 1020,
+    "seconds": 48.733,
+    "skipped": 74,
+    "failed": 0
+  },
+  "source_sha256": {
+    "alden_voice.py": "409b4040ef081c8bfb8d85a0e5c5e539799dfc5dccffdbe6a4190917ddea2f03",
+    "alden_abort.py": "35f251273637121e513d02de5624c0096af319579b4f00cb19a5863cab2d0e91"
+  }
+}

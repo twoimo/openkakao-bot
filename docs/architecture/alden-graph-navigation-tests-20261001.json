@@ -1,0 +1,59 @@
+{
+  "ui": {
+    "tests": 199,
+    "passed": 199
+  },
+  "desktopRust": {
+    "tests": 90,
+    "passed": 90
+  },
+  "pythonMandatory": {
+    "tests": 1056,
+    "skipped": 26,
+    "failed": 0,
+    "seconds": 108.049,
+    "runtime": "pinned installed CPython 3.11.9",
+    "selection": "exact CI focused local AI unittest list; no indiscriminate live TestCase discovery"
+  },
+  "clippy": "all-targets -D warnings passed",
+  "frontendBuild": "TypeScript and Vite passed",
+  "nativeBuild": "offline network-deny ad-hoc app bundle passed",
+  "logs": {
+    "frontend-final-test.log": {
+      "sha256": "f4b88f5106f04d052bb1cb3cbd5e0bc0f0f5fea3f841feb5ae7729d8ab5e6e34",
+      "bytes": 1245
+    },
+    "frontend-final-build.log": {
+      "sha256": "b4838d78bd5647e79ca993ab2df8f936619189a72ca44ad0990d9f4e4f533fcb",
+      "bytes": 661
+    },
+    "mandatory-python.log": {
+      "sha256": "2118c1cac33166ec094b6e7f3f424c0e91f2c5478249fd7e9a5c6072c817e32b",
+      "bytes": 25718
+    },
+    "rust-sync-resize-test.log": {
+      "sha256": "8c21d005a8b07800a35b1fea79a6e127717770bd4064a7a4ff34cec76d9ca388",
+      "bytes": 8296
+    },
+    "rust-sync-resize-clippy.log": {
+      "sha256": "17892918ddc45834bd9da3b2dc967db8642c9fdd7cb85173e96611c80d6f333f",
+      "bytes": 186
+    },
+    "build-sync-resize.log": {
+      "sha256": "061286e6f203ce498a858d540c09af5e661b26aa5b35d42bf2fe8538c6b2c8d4",
+      "bytes": 3468
+    },
+    "rust-floating-test.log": {
+      "sha256": "fbcc236e3e702d6000f97d64bd345cdac50d93752ca6898efcb1bb855c577430",
+      "bytes": 8296
+    },
+    "rust-floating-clippy.log": {
+      "sha256": "d49b54cdc981de674034bc962c32a6fa8bcebcb8f9c96d5df957fbbe206611ff",
+      "bytes": 186
+    },
+    "build-floating.log": {
+      "sha256": "2c7260902c7e04640c248ad12eaf6b904f7d6c6daad91281180c0f23bfca05e4",
+      "bytes": 3468
+    }
+  }
+}

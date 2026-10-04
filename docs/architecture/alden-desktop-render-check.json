@@ -1,0 +1,539 @@
+{
+  "schema": "alden-desktop-render-check/1",
+  "generated_at": "2026-09-26T23:55:11Z",
+  "dist": {
+    "path": "desktop/dist",
+    "index_sha256": "c876f47448b71cd8e078835f4c37c6d38171e12ff067d88d822daa3b7da879fa",
+    "assets": [
+      "alden-core-0XMkmnpc.js",
+      "animation-loop-DPxJZ1U7.js",
+      "hologram-3Lmeo_a4.js",
+      "index-Bc5tRWwd.css",
+      "index-DMrPagVM.js"
+    ]
+  },
+  "contract": {
+    "path": "desktop/src/__tests__/ui-removal-contract.test.ts",
+    "sha256": "58b1116cb82ea396f7de65d37910faf7e78eb6b49d8b33dbcab85cbf1b1650ed"
+  },
+  "tray_source": {
+    "path": "desktop/src-tauri/src/main.rs",
+    "sha256": "820e98a2ba4e9db221a6a86348d9ff379afb52ef82d898d05f95fa6a8cd97c82",
+    "left_up_toggles_panel": true,
+    "right_up_opens_settings": true,
+    "browser_exercised": false
+  },
+  "expected": {
+    "banned_tokens": [
+      "검증",
+      "점검",
+      "권한",
+      "자기개선",
+      "자가개선",
+      "자동개선",
+      "일괄",
+      "대량",
+      "permission",
+      "verify",
+      "self-improv",
+      "selfimprov",
+      "bulk",
+      "approve",
+      "audit"
+    ],
+    "settings_sections": [
+      "대상 채팅방",
+      "AI 답변",
+      "음성",
+      "카카오톡 대화",
+      "대화에서 찾기",
+      "최근 답변"
+    ]
+  },
+  "browser": {
+    "channel": "chrome",
+    "version": "153.0.8010.53",
+    "executable": "Google Chrome for Testing"
+  },
+  "panel": {
+    "view_state": "ready",
+    "interactive": [],
+    "extra_focusable": [],
+    "headings": [],
+    "mains": 1,
+    "main_classes": [
+      "alden-panel"
+    ],
+    "iframes": 0,
+    "canvases": [
+      {
+        "id": "",
+        "cls": "alden-core",
+        "width": 472,
+        "height": 472,
+        "cssWidth": 236,
+        "cssHeight": 236
+      }
+    ],
+    "webgl": {
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "renderer": "WebKit WebGL",
+      "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "gl_error": "0"
+    },
+    "frames": {
+      "idle": {
+        "counter": "__aldenRenderCount",
+        "frames": 26,
+        "seconds": 2.003,
+        "fps": 12.98
+      },
+      "busy": {
+        "counter": "__aldenRenderCount",
+        "frames": 45,
+        "seconds": 2.002,
+        "fps": 22.47
+      }
+    },
+    "luminance": {
+      "idle": {
+        "width": 552,
+        "height": 520,
+        "meanLuminance": 238.29,
+        "litRatio": 1
+      },
+      "busy": {
+        "width": 552,
+        "height": 520,
+        "meanLuminance": 234.51,
+        "litRatio": 1
+      }
+    },
+    "render_count": {
+      "idle": 17,
+      "busy": 106
+    },
+    "actions": {
+      "snapshot_calls": 4,
+      "commands": [
+        "fetch_runtime_snapshot",
+        "plugin:event|listen",
+        "window_is_visible"
+      ]
+    },
+    "captures": {
+      "idle": {
+        "file": "alden-render-panel.idle.png",
+        "bytes": 80798,
+        "sha256": "5802fd37e7faa749fa76b70983559bf6685061ebca217fd9d1dc3255b7d1b290"
+      },
+      "busy": {
+        "file": "alden-render-panel.busy.png",
+        "bytes": 105901,
+        "sha256": "646f61f4e7fd9a07840a7d15022f5d481636b2735d80b33dc725d43d3ac34cf0"
+      },
+      "light": {
+        "file": "alden-render-panel.light.png",
+        "bytes": 80438,
+        "sha256": "96b8dc877c81844fab54f9664688c31a4a7dfcef7bfc1647ea5e3cd316693332"
+      },
+      "dark": {
+        "file": "alden-render-panel.dark.png",
+        "bytes": 79600,
+        "sha256": "c0deff08e5ef7839f358bc30bfc3b07a16ed5a80699d9664130f69a99d5576ea"
+      }
+    },
+    "text": "",
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"alden-panel\" aria-label=\"올든\">\n    <canvas class=\"alden-core\" width=\"472\" height=\"472\" aria-label=\"올든 화면\" data-engine=\"three.js r180\"></canvas>\n  </main></div>\n  \n\n",
+    "pause": {
+      "listeners": [
+        "alden://visibility"
+      ],
+      "hidden_emitted": true,
+      "visible_emitted": true,
+      "hidden": {
+        "counter": "__aldenRenderCount",
+        "frames": 0,
+        "seconds": 1.503,
+        "fps": 0.0
+      },
+      "visible": {
+        "counter": "__aldenRenderCount",
+        "frames": 34,
+        "seconds": 1.503,
+        "fps": 22.62
+      },
+      "blur": {
+        "counter": "__aldenRenderCount",
+        "frames": 0,
+        "seconds": 1.503,
+        "fps": 0.0
+      },
+      "focus": {
+        "counter": "__aldenRenderCount",
+        "frames": 33,
+        "seconds": 1.503,
+        "fps": 21.96
+      },
+      "hidden_poll_delta": 0
+    }
+  },
+  "settings": {
+    "view_state": "ready",
+    "headings": [
+      "대상 채팅방",
+      "AI 답변",
+      "음성",
+      "카카오톡 대화",
+      "대화에서 찾기",
+      "최근 답변"
+    ],
+    "mains": 1,
+    "main_classes": [
+      "settings-shell"
+    ],
+    "layout": {
+      "viewport_width": 960,
+      "document_width": 960,
+      "grid_columns": "553.719px 342.266px"
+    },
+    "iframes": 0,
+    "canvases": [
+      {
+        "id": "knowledge-graph-canvas",
+        "cls": "",
+        "width": 1742,
+        "height": 640,
+        "cssWidth": 872,
+        "cssHeight": 320
+      }
+    ],
+    "webgl": {
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "renderer": "WebKit WebGL",
+      "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "gl_error": "0"
+    },
+    "captures": {
+      "light": {
+        "file": "alden-render-settings.light.png",
+        "bytes": 172622,
+        "sha256": "c940560f8a19eae20841fb363490c7f27b6235819ffa2b91c4c7488788a374d3"
+      },
+      "dark": {
+        "file": "alden-render-settings.dark.png",
+        "bytes": 172097,
+        "sha256": "d6d9c3fed42dbfea576f56345a85fdf23e4867c65f33cc5ba211c083faf4518c"
+      }
+    },
+    "text": "카카오톡 · 내 컴퓨터에서 실행\n\n올든 설정\n\n대상 채팅방과 답변 상태를 확인합니다. 긴급 중단은 ⌘⌥⇧Esc를 누르세요.\n\n대상 채팅방\n등록 관리\n등록된 채팅방\n예시 채팅방\n새 채팅방 등록\n추가 가능한 새 채팅방 없음\n추가\n\n등록된 채팅방 1개 · 답변 가능 1개\n\nAI 답변\n이 기기에서 실행\n빠른 대화\n일상적인 질문에 빠르게 답합니다.\n기본 사용\n깊은 분석\n어려운 질문에 답할 때 사용합니다.\n필요할 때 사용\n\n깊은 분석이 선택되어 있습니다.\n\n음성\n이 기기에서 처리\n\n‘올든’을 알아듣는 기능이 준비되지 않아 음성 입력이 꺼져 있습니다.\n\n호출어: 올든\n\n마이크 켜기\n카카오톡 대화\n내 기기에서 처리\n\n대화 자료가 준비되었습니다.\n\n작업 현황 · 답변 대기 0건 · 긱뉴스 확인 중 · 대화 준비 완료\n\n대화에서 찾기\n연결된 주제\n\n대화에서 찾은 연결 항목 5개\n\n예시인물예시 조직예시약어예시 문서예시 채팅방\n연결된 항목\n더 보기\n항목을 선택하면 관련 정보를 보여드립니다.\n\n항목을 선택하면 관련 대화를 찾아 보여드립니다.\n\n최근 답변\n요약만 표시\n\n최근 1건 · 메시지 내용은 표시하지 않습니다.\n\n09:41 · 예시 채팅방\n전송\n전송 · 정상 · 대화 찾기 자료 확인됨",
+    "html": "\n    <div id=\"app\" data-state=\"ready\"><main class=\"settings-shell\">\n    <header class=\"settings-header\">\n      <p class=\"eyebrow\">카카오톡 · 내 컴퓨터에서 실행</p>\n      <h1>올든 설정</h1>\n      <p>대상 채팅방과 답변 상태를 확인합니다. 긴급 중단은 ⌘⌥⇧Esc를 누르세요.</p>\n    </header>\n\n    <section class=\"settings-card\" aria-labelledby=\"rooms-title\">\n      <div class=\"section-heading\"><h2 id=\"rooms-title\">대상 채팅방</h2><span class=\"status-tag\">등록 관리</span></div>\n      <label class=\"field-label\" for=\"settings-room-popup\">등록된 채팅방</label>\n      <select id=\"settings-room-popup\" aria-label=\"대상 채팅방\"><option value=\"424242\">예시 채팅방</option></select>\n      <label class=\"field-label\" for=\"settings-add-room-select\">새 채팅방 등록</label>\n      <div class=\"room-action-row\">\n        <select id=\"settings-add-room-select\" aria-label=\"추가할 채팅방 선택\"><option value=\"\">추가 가능한 새 채팅방 없음</option></select>\n        <button id=\"settings-add-room-button\" type=\"button\">추가</button>\n      </div>\n      <p id=\"room-summary\" class=\"muted\" role=\"status\" aria-live=\"polite\">등록된 채팅방 1개 · 답변 가능 1개</p>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"model-title\">\n      <div class=\"section-heading\"><h2 id=\"model-title\">AI 답변</h2><span class=\"tag\">이 기기에서 실행</span></div>\n      <button class=\"model-row\" type=\"button\" data-model-choice=\"fast\" aria-pressed=\"false\">\n        <span class=\"model-copy\"><strong>빠른 대화</strong><span class=\"model-desc\">일상적인 질문에 빠르게 답합니다.</span></span><span class=\"tag\">기본 사용</span>\n      </button>\n      <button class=\"model-row selection\" type=\"button\" data-model-choice=\"deep\" aria-pressed=\"true\">\n        <span class=\"model-copy\"><strong>깊은 분석</strong><span class=\"model-desc\">어려운 질문에 답할 때 사용합니다.</span></span><span class=\"tag muted-tag\">필요할 때 사용</span>\n      </button>\n      <p id=\"model-status\" class=\"model-status-highlight\" role=\"status\" aria-live=\"polite\">깊은 분석이 선택되어 있습니다.</p>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"voice-title\">\n      <div class=\"section-heading\"><h2 id=\"voice-title\">음성</h2><span class=\"tag muted-tag\">이 기기에서 처리</span></div>\n      <p id=\"voice-status\">‘올든’을 알아듣는 기능이 준비되지 않아 음성 입력이 꺼져 있습니다.</p>\n      <p class=\"muted\">호출어: 올든</p>\n      <button id=\"voice-start\" type=\"button\" disabled=\"\">마이크 켜기</button>\n    </section>\n\n    <section id=\"settings-sync-card\" class=\"settings-card knowledge-accent\" aria-labelledby=\"sync-title\">\n      <div class=\"section-heading\"><h2 id=\"sync-title\">카카오톡 대화</h2><span class=\"tag\">내 기기에서 처리</span></div>\n      <p id=\"settings-sync-source\" role=\"status\" aria-live=\"polite\">대화 자료가 준비되었습니다.</p>\n      <p id=\"settings-activity-source\" class=\"muted\">작업 현황 · 답변 대기 0건 · 긱뉴스 확인 중 · 대화 준비 완료</p>\n    </section>\n\n    <section id=\"settings-knowledge-card\" class=\"settings-card knowledge-accent\" aria-labelledby=\"knowledge-title\">\n      <div class=\"section-heading\"><h2 id=\"knowledge-title\">대화에서 찾기</h2><span id=\"knowledge-mode\" class=\"tag\">연결된 주제</span></div>\n      <p id=\"knowledge-summary\">대화에서 찾은 연결 항목 5개</p>\n      <div class=\"knowledge-hologram-shell\">\n        <canvas id=\"knowledge-graph-canvas\" width=\"1742\" height=\"640\" aria-label=\"대화 속 이름과 주제의 연결 그림\" data-engine=\"three.js r180\"></canvas>\n        <div id=\"knowledge-accessible-nodes\" class=\"sr-only\" role=\"region\" aria-label=\"대화 검색 항목 목록\"><button type=\"button\" class=\"knowledge-a11y-node\" data-node-id=\"person:예시인물\" aria-label=\"예시인물 선택\">예시인물</button><button type=\"button\" class=\"knowledge-a11y-node\" data-node-id=\"org:예시조직\" aria-label=\"예시 조직 선택\">예시 조직</button><button type=\"button\" class=\"knowledge-a11y-node\" data-node-id=\"term:예시약어\" aria-label=\"예시약어 선택\">예시약어</button><button type=\"button\" class=\"knowledge-a11y-node\" data-node-id=\"doc:예시문서\" aria-label=\"예시 문서 선택\">예시 문서</button><button type=\"button\" class=\"knowledge-a11y-node\" data-node-id=\"room:424242\" aria-label=\"예시 채팅방 선택\">예시 채팅방</button></div>\n        <div class=\"knowledge-hologram-toolbar\">\n          <span>연결된 항목</span>\n          <button id=\"knowledge-expand-hop\" type=\"button\" disabled=\"\">더 보기</button>\n        </div>\n      </div>\n      <div class=\"knowledge-focus-card\" aria-live=\"polite\">\n        <strong id=\"knowledge-focus-title\">항목을 선택하면 관련 정보를 보여드립니다.</strong>\n        <div id=\"knowledge-relations\" class=\"knowledge-relations\"></div>\n        <p id=\"knowledge-retrieve\">항목을 선택하면 관련 대화를 찾아 보여드립니다.</p>\n      </div>\n    </section>\n\n    <section class=\"settings-card\" aria-labelledby=\"history-title\">\n      <div class=\"section-heading\"><h2 id=\"history-title\">최근 답변</h2><span class=\"tag muted-tag\">요약만 표시</span></div>\n      <p id=\"history-summary\" class=\"muted\" role=\"status\" aria-live=\"polite\">최근 1건 · 메시지 내용은 표시하지 않습니다.</p>\n      <div id=\"history-list\" class=\"knowledge-relations\" role=\"list\" aria-label=\"최근 답변 기록\"><div class=\"history-receipt-card\" role=\"listitem\"><div class=\"history-receipt-header\"><strong class=\"history-receipt-title\">09:41 · 예시 채팅방</strong><span class=\"history-receipt-badge\">전송</span></div><span class=\"history-receipt-detail\">전송 · 정상 · 대화 찾기 자료 확인됨</span></div></div>\n    </section>\n  </main></div>\n  \n\n"
+  },
+  "knowledge": {
+    "canvas_box": {
+      "left": 44,
+      "top": 279.640625,
+      "width": 871.984375,
+      "height": 320
+    },
+    "probes": 1,
+    "focused": true,
+    "overview_title": "항목을 선택하면 관련 정보를 보여드립니다.",
+    "overview_meta": "",
+    "locator": {
+      "probes": 1,
+      "title": "예시 문서",
+      "start_title": "항목을 선택하면 관련 정보를 보여드립니다.",
+      "hit": {
+        "x": 556.1,
+        "y": 541.2
+      },
+      "pitch": 12.0
+    },
+    "hit": {
+      "x": 556.1,
+      "y": 541.2
+    },
+    "focus_title": "예시 문서",
+    "relation_rows": 1,
+    "retrieve": "관련 정보 2건을 찾았습니다. 예시약어 = 예시 조직 축약",
+    "expand_disabled": false,
+    "retrieve_after_settle": "관련 정보 2건을 찾았습니다. 예시약어 = 예시 조직 축약",
+    "expand_disabled_after_expand": true,
+    "frames_after_focus": {
+      "counter": "__knowledgeRenderCount",
+      "frames": 20,
+      "seconds": 1.503,
+      "fps": 13.31
+    },
+    "render_count_after_focus": 76,
+    "settings_focus_capture": {
+      "file": "alden-render-settings.focus.png",
+      "bytes": 169641,
+      "sha256": "a95f697fdf0fc9dad52f117c0fcd9b8c6565953e29320d3d61dbb559bd017685"
+    }
+  },
+  "checks": [
+    {
+      "name": "panel.view_state_ready",
+      "ok": true,
+      "detail": "ready"
+    },
+    {
+      "name": "panel.zero_interactive_elements",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "panel.no_extra_focusable",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "panel.single_main_shell",
+      "ok": true,
+      "detail": {
+        "mains": 1,
+        "classes": [
+          "alden-panel"
+        ]
+      }
+    },
+    {
+      "name": "panel.no_iframe",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "panel.webgl_context_live",
+      "ok": true,
+      "detail": {
+        "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+        "renderer": "WebKit WebGL",
+        "unmasked_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+        "gl_error": "0"
+      }
+    },
+    {
+      "name": "panel.render_loop_advances_idle",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 26,
+        "seconds": 2.003,
+        "fps": 12.98
+      }
+    },
+    {
+      "name": "panel.render_loop_advances_under_load",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 45,
+        "seconds": 2.002,
+        "fps": 22.47
+      }
+    },
+    {
+      "name": "panel.fps_within_cap",
+      "ok": true,
+      "detail": {
+        "idle": 12.98,
+        "busy": 22.47
+      }
+    },
+    {
+      "name": "panel.no_panel_side_open_settings_invocation",
+      "ok": true,
+      "detail": {
+        "snapshot_calls": 4,
+        "commands": [
+          "fetch_runtime_snapshot",
+          "plugin:event|listen",
+          "window_is_visible"
+        ]
+      }
+    },
+    {
+      "name": "panel.no_removed_control_tokens",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "panel.visibility_bridge_subscribed",
+      "ok": true,
+      "detail": [
+        "alden://visibility"
+      ]
+    },
+    {
+      "name": "panel.visibility_bridge_emit_lands",
+      "ok": true,
+      "detail": true
+    },
+    {
+      "name": "panel.render_stops_when_hidden",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 0,
+        "seconds": 1.503,
+        "fps": 0.0
+      }
+    },
+    {
+      "name": "panel.poller_stops_when_hidden",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "panel.render_resumes_when_visible",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 34,
+        "seconds": 1.503,
+        "fps": 22.62
+      }
+    },
+    {
+      "name": "panel.render_stops_on_blur",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 0,
+        "seconds": 1.503,
+        "fps": 0.0
+      }
+    },
+    {
+      "name": "panel.render_resumes_on_focus",
+      "ok": true,
+      "detail": {
+        "counter": "__aldenRenderCount",
+        "frames": 33,
+        "seconds": 1.503,
+        "fps": 21.96
+      }
+    },
+    {
+      "name": "tray_source.right_click_opens_settings_and_left_up_toggles_panel",
+      "ok": true,
+      "detail": {
+        "path": "desktop/src-tauri/src/main.rs",
+        "sha256": "820e98a2ba4e9db221a6a86348d9ff379afb52ef82d898d05f95fa6a8cd97c82",
+        "left_up_toggles_panel": true,
+        "right_up_opens_settings": true,
+        "browser_exercised": false
+      }
+    },
+    {
+      "name": "settings.view_state_ready",
+      "ok": true,
+      "detail": "ready"
+    },
+    {
+      "name": "settings.sections_in_order",
+      "ok": true,
+      "detail": {
+        "actual": [
+          "대상 채팅방",
+          "AI 답변",
+          "음성",
+          "카카오톡 대화",
+          "대화에서 찾기",
+          "최근 답변"
+        ],
+        "expected": [
+          "대상 채팅방",
+          "AI 답변",
+          "음성",
+          "카카오톡 대화",
+          "대화에서 찾기",
+          "최근 답변"
+        ]
+      }
+    },
+    {
+      "name": "settings.single_main_shell",
+      "ok": true,
+      "detail": {
+        "mains": 1,
+        "classes": [
+          "settings-shell"
+        ]
+      }
+    },
+    {
+      "name": "settings.uses_two_columns_without_overflow",
+      "ok": true,
+      "detail": {
+        "viewport_width": 960,
+        "document_width": 960,
+        "grid_columns": "553.719px 342.266px"
+      }
+    },
+    {
+      "name": "settings.no_iframe",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "settings.knowledge_canvas_present",
+      "ok": true,
+      "detail": [
+        {
+          "id": "knowledge-graph-canvas",
+          "cls": "",
+          "width": 1742,
+          "height": 640,
+          "cssWidth": 872,
+          "cssHeight": 320
+        }
+      ]
+    },
+    {
+      "name": "settings.no_removed_control_tokens",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "settings.hides_hardware_and_model_diagnostics",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "knowledge.hologram_renders_frames",
+      "ok": true,
+      "detail": 76
+    },
+    {
+      "name": "knowledge.drilldown_focuses_a_node",
+      "ok": true,
+      "detail": {
+        "probes": 1,
+        "title": "예시 문서"
+      }
+    },
+    {
+      "name": "knowledge.relations_listed",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "name": "knowledge.retrieve_answered_in_plain_language",
+      "ok": true,
+      "detail": "관련 정보 2건을 찾았습니다. 예시약어 = 예시 조직 축약"
+    },
+    {
+      "name": "knowledge.expansion_respects_limit",
+      "ok": true,
+      "detail": true
+    }
+  ],
+  "notes": [
+    "macOS tray routing is source-inspected only; Chromium does not exercise TrayIconEvent",
+    "panel page closed before settings render to avoid simultaneous WebGL contexts"
+  ],
+  "status": "pass"
+}

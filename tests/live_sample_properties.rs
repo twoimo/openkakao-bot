@@ -31,9 +31,7 @@ use openkakao_cli::live_sample::{
 };
 use openkakao_cli::logging::{Stage, StageStatus};
 use openkakao_cli::ports::SendAuthority;
-use openkakao_cli::safety::{
-    GradeLimit, GradePolicy, Origin, PacingSource, SendGrade, SendIntent,
-};
+use openkakao_cli::safety::{GradeLimit, GradePolicy, Origin, PacingSource, SendGrade, SendIntent};
 use proptest::prelude::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;

@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "scope": "frozen 27B adapter, synthetic final test only; no product promotion or quality gain",
+  "code_commit": "de5cdf53e83f44efc2a8ffd34b7e8379e093a633",
+  "dataset": "tests/fixtures/alden-model-evaluation/preferences.json",
+  "key": {
+    "schema_version": 1,
+    "version": "0.3.12-dpo-final-test",
+    "source_sha256": "060c3018c6deea64075a6bcd83a746172655e6ccf1990f3d2a6aa119747fb948",
+    "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+    "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "checkpoint_format": "mlx-serve-qwen3_5-converted",
+    "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+    "split": "test",
+    "beta": 0.1,
+    "runtime_versions": {
+      "python": "3.11.16",
+      "mlx": "0.32.2",
+      "mlx-lm": "0.31.3",
+      "transformers": "5.17.0"
+    }
+  },
+  "scoring": {
+    "status": "ok",
+    "reason": "dpo_teacher_forced",
+    "scoring_method": "mlx_direct_teacher_forcing",
+    "string_similarity_used": false,
+    "pair_count": 3,
+    "evaluated": 3,
+    "mean_loss": 0.6935428869080531,
+    "runtime_seconds": 25.727157,
+    "peak_bytes": 17365610136,
+    "peak_bytes_scope": "scoring_after_model_load",
+    "policy_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "policy_adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+    "reference_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "tokenizer_sha256": "b88fef2f34d97274a0371853bae0fa8820cc7d7fb8db755a040aedf5c54cf26f",
+    "reference_frozen": true,
+    "reference_reused": false,
+    "requested_checkpoint_format": "mlx-serve-qwen3_5-converted",
+    "policy_checkpoint_format": "mlx-serve-qwen3_5-converted",
+    "reference_checkpoint_format": "mlx-serve-qwen3_5-converted",
+    "identical_checkpoint_delta_zero": false,
+    "versions": {
+      "python": "3.11.16",
+      "mlx": "0.32.2",
+      "mlx-lm": "0.31.3",
+      "transformers": "5.17.0"
+    },
+    "pairs": [
+      {
+        "pair_id": "test-file-metadata",
+        "chosen_tokens": 12,
+        "rejected_tokens": 10,
+        "policy_chosen_logprob": -15.836988834198564,
+        "policy_rejected_logprob": -37.202913861721754,
+        "reference_chosen_logprob": -15.834722527069971,
+        "reference_rejected_logprob": -37.251467826310545,
+        "delta": -0.05082027171738446,
+        "loss": 0.6956914225173622
+      },
+      {
+        "pair_id": "test-cancelled",
+        "chosen_tokens": 9,
+        "rejected_tokens": 7,
+        "policy_chosen_logprob": -34.26177702983841,
+        "policy_rejected_logprob": -16.491942958382424,
+        "reference_chosen_logprob": -34.20090977917425,
+        "reference_rejected_logprob": -16.49375426064944,
+        "delta": -0.06267855293117464,
+        "loss": 0.6962860189497125
+      },
+      {
+        "pair_id": "test-role",
+        "chosen_tokens": 6,
+        "rejected_tokens": 8,
+        "policy_chosen_logprob": -8.478911187266931,
+        "policy_rejected_logprob": -19.911504336516373,
+        "reference_chosen_logprob": -8.467703808681108,
+        "reference_rejected_logprob": -19.810174681944773,
+        "delta": 0.09012227598577738,
+        "loss": 0.6886512192570847
+      }
+    ]
+  },
+  "baseline_identical_policy_reference_loss_math": 0.6931471805599453,
+  "loss_increase_percent": 0.05708835860633865,
+  "generation": {
+    "phase": "evaluated",
+    "scope": "greedy_synthetic_final_test_generation_no_promotion",
+    "dataset_sha256": "05b3f11ab8fbf222bb57545803291d69225757407a6256da5d2ad2270cf89333",
+    "source_sha256": "060c3018c6deea64075a6bcd83a746172655e6ccf1990f3d2a6aa119747fb948",
+    "base_sha256": "2607ed9ee6e6776d9a93d9937749ff1cabc5e6fa992656edd661f0f7bc019ae1",
+    "adapter_sha256": "6a73fa7c79f65f453d25a27edd3db1082ae86e7d358d241d0ee77631408c78a0",
+    "max_tokens": 64,
+    "temperature": 0,
+    "test_pairs": 3,
+    "final_test_evaluated": true,
+    "model_promoted": false,
+    "quality_improvement_claimed": false,
+    "runs": [
+      {
+        "phase": "base",
+        "pair_id": "test-file-metadata",
+        "answer": "확인된 정보에 따르면, 파일 이름은 '보고서.pdf'이지만 **본문 내용을 읽지 못했습니다**.\n\n따라서 **결론을 확인할 수 없습니다.**",
+        "first_text_seconds": 0.7960007921792567,
+        "full_seconds": 2.034483917057514,
+        "peak_bytes": 17310294376,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 45,
+        "generation_tokens": 36,
+        "prompt_tps": 95.49651688779761,
+        "generation_tps": 29.420296545501326,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "base",
+        "pair_id": "test-cancelled",
+        "answer": "아니요, 금요일에 방문하실 필요가 없습니다.\n\n최신 기록에 따르면 금요일 방문 예약이 **취소**되었기 때문입니다.",
+        "first_text_seconds": 0.38899062504060566,
+        "full_seconds": 1.4605611248407513,
+        "peak_bytes": 17296222328,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 41,
+        "generation_tokens": 32,
+        "prompt_tps": 232.8142180418195,
+        "generation_tps": 30.285184700426587,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "base",
+        "pair_id": "test-role",
+        "answer": "아니요, 새 사용자 질문이 들어오지 않았습니다.\n\n현재 상태는 **사용자가 \"잠시 기다려주세요\"라고 요청한 상태**이며, 이후 새로운 발화나 입력이 없으므로 대기 중입니다.\n\n추가로 진행할 작업이나 확인이 필요하시면 말씀해 주세요.",
+        "first_text_seconds": 0.3824152918532491,
+        "full_seconds": 2.5359192499890924,
+        "peak_bytes": 17317903864,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 47,
+        "generation_tokens": 63,
+        "prompt_tps": 264.73367377435056,
+        "generation_tps": 29.46218418763195,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "test-file-metadata",
+        "answer": "확인된 정보에 따르면, 파일 이름은 '보고서.pdf'이지만 **본문 내용을 읽지 못했습니다**.\n\n따라서 **결론을 확인할 수 없습니다.**",
+        "first_text_seconds": 0.6554049588739872,
+        "full_seconds": 1.9087799589615315,
+        "peak_bytes": 17311319116,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 45,
+        "generation_tokens": 36,
+        "prompt_tps": 235.89948941136376,
+        "generation_tps": 29.096577528526073,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "test-cancelled",
+        "answer": "아니요, 금요일에 방문하실 필요가 없습니다.\n\n최신 기록에 따르면 금요일 방문 예약이 **취소**되었기 때문입니다.",
+        "first_text_seconds": 0.40604483406059444,
+        "full_seconds": 1.4934637499973178,
+        "peak_bytes": 17296722044,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 41,
+        "generation_tokens": 32,
+        "prompt_tps": 230.5691595492886,
+        "generation_tps": 29.862226650716774,
+        "finish_reason": "stop"
+      },
+      {
+        "phase": "adapter",
+        "pair_id": "test-role",
+        "answer": "아니요, 새 사용자 질문이 들어오지 않았습니다.\n\n현재 상태는 **사용자가 \"잠시 기다려주세요\"라고 요청한 상태**이며, 이후 새로운 발화나 입력이 없으므로 대기 중입니다.\n\n추가로 진행할 작업이나 확인이 필요하시면 말씀해 주세요.",
+        "first_text_seconds": 0.42108362494036555,
+        "full_seconds": 2.562074833083898,
+        "peak_bytes": 17318403580,
+        "peak_bytes_scope": "generation_after_model_load_reset",
+        "prompt_tokens": 47,
+        "generation_tokens": 63,
+        "prompt_tps": 258.7746505332076,
+        "generation_tps": 29.63437008148919,
+        "finish_reason": "stop"
+      }
+    ],
+    "base_adapter_source_unchanged": true
+  },
+  "manual_fact_review": {
+    "reference": "Pre-existing verified_context/verified_reference labels in the fixed public fixture",
+    "file_body_unknown": true,
+    "latest_cancellation_respected": true,
+    "tool_log_not_user_input": true,
+    "base_correct": 3,
+    "adapter_correct": 3,
+    "identical_answers": 3,
+    "general_quality_claimed": false
+  },
+  "promotion_decision": {
+    "promoted": false,
+    "reason": "Two of three preference margins worsened, mean final-test DPO loss rose, and generated factual answers were unchanged. No positive independent gain supports promotion."
+  },
+  "execution": {
+    "score_process_seconds": 34.42985,
+    "generation_process_seconds": 34.644481,
+    "score_peak_rss_bytes": 17430249472,
+    "generation_peak_rss_bytes": 17451122688,
+    "runtime_network_attempts": [],
+    "network_negative_probes_pass": true,
+    "memory_guard_reasons": [],
+    "shared_command_preserved": true,
+    "swap_increase_bytes": 0
+  },
+  "raw_report_sha256": {
+    "score": "f3494574013b25d8f855f2cdbb7dc9630aee5be6665eba59b68dd2c46b4590b2",
+    "generation": "a83037c6960edc7c31e506038c304e4db7a738a39b9ac10c9a33a264689fa900"
+  },
+  "failed_setup_attempts": [
+    {
+      "cause": "Previous temporary interpreter had no usable MLX package metadata/runtime",
+      "exit": 2,
+      "scored_pairs": 0
+    },
+    {
+      "cause": "Copied generation wrapper pointed to a missing legacy candidate directory",
+      "exit": 1,
+      "generated_pairs": 0
+    }
+  ]
+}

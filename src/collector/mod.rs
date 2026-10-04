@@ -720,10 +720,8 @@ mod tests {
     #[test]
     fn uses_aside_when_healthy_and_no_switch() {
         let clock = VirtualClock::new(0);
-        let aside = ScriptedCollector::healthy(
-            CollectorPath::Aside,
-            Ok(collected(CollectorPath::Aside)),
-        );
+        let aside =
+            ScriptedCollector::healthy(CollectorPath::Aside, Ok(collected(CollectorPath::Aside)));
         let fallback = ScriptedCollector::healthy(
             CollectorPath::Fallback,
             Ok(collected(CollectorPath::Fallback)),
@@ -743,8 +741,7 @@ mod tests {
     #[test]
     fn switches_to_fallback_when_aside_not_installed() {
         let clock = VirtualClock::new(0);
-        let aside =
-            ScriptedCollector::unhealthy(CollectorPath::Aside, CollectError::NotInstalled);
+        let aside = ScriptedCollector::unhealthy(CollectorPath::Aside, CollectError::NotInstalled);
         let fallback = ScriptedCollector::healthy(
             CollectorPath::Fallback,
             Ok(collected(CollectorPath::Fallback)),
@@ -764,8 +761,7 @@ mod tests {
     #[test]
     fn private_is_terminal_and_never_tries_fallback() {
         let clock = VirtualClock::new(0);
-        let aside =
-            ScriptedCollector::healthy(CollectorPath::Aside, Err(CollectError::Private));
+        let aside = ScriptedCollector::healthy(CollectorPath::Aside, Err(CollectError::Private));
         let fallback = ScriptedCollector::healthy(
             CollectorPath::Fallback,
             Ok(collected(CollectorPath::Fallback)),
@@ -784,8 +780,7 @@ mod tests {
     #[test]
     fn deleted_is_terminal() {
         let clock = VirtualClock::new(0);
-        let aside =
-            ScriptedCollector::healthy(CollectorPath::Aside, Err(CollectError::Deleted));
+        let aside = ScriptedCollector::healthy(CollectorPath::Aside, Err(CollectError::Deleted));
         let fallback = ScriptedCollector::healthy(
             CollectorPath::Fallback,
             Ok(collected(CollectorPath::Fallback)),
@@ -873,8 +868,7 @@ mod tests {
             now: Cell::new(0),
             step_ms: 21_000,
         };
-        let aside =
-            ScriptedCollector::unhealthy(CollectorPath::Aside, CollectError::NotInstalled);
+        let aside = ScriptedCollector::unhealthy(CollectorPath::Aside, CollectError::NotInstalled);
         let fallback = ScriptedCollector::healthy(
             CollectorPath::Fallback,
             Ok(collected(CollectorPath::Fallback)),
@@ -936,8 +930,7 @@ mod tests {
             clock: clock.clone(),
         };
         let secrets = OkSecrets;
-        let aside =
-            AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
+        let aside = AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
         assert_eq!(aside.health_check(), Err(CollectError::HealthTimeout));
     }
 
@@ -950,8 +943,7 @@ mod tests {
             clock: clock.clone(),
         };
         let secrets = OkSecrets;
-        let aside =
-            AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
+        let aside = AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
         assert!(aside.health_check().is_ok());
     }
 
@@ -964,8 +956,7 @@ mod tests {
             clock: clock.clone(),
         };
         let secrets = MissingSecrets;
-        let aside =
-            AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
+        let aside = AsideCollector::new(LoopbackEndpoint::new(9000), &transport, &secrets, &clock);
         let mut scope = TempScope::new().unwrap();
         assert_eq!(
             aside.collect("https://example.com/post", &mut scope),

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "review": "current-session native Astra independent concurrency/WAL review",
+  "requested_model": "gpt-6-astra",
+  "requested_effort": "max",
+  "provenance": "Local child turn_context confirms model/effort; provider response metadata unavailable",
+  "agent_id": "01a0f13a-2d84-7b42-a6da-4b6849daf11f",
+  "source_sha256": {
+    "scripts/alden_voice.py": "9957e5044f2ea77ade94234c95086310bd180a081a64ee78dfc265b5003cfd70",
+    "scripts/alden_abort.py": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4",
+    "tests/test_alden_voice_turns.py": "2500c1d6a710550fec5cc9f6556c2da001ebda82b95365e8f2f6ec654630feed"
+  },
+  "initial_findings": 6,
+  "followup_findings": 3,
+  "final_scoped_reproductions": 3,
+  "final_scoped_passes": 3,
+  "unresolved_new_findings": 0,
+  "parent_focused_tests": 97,
+  "limits": [
+    "Read-only synthetic review, not actual microphone or installed UI",
+    "Backend cancellation and TTS barge-in remain unmet",
+    "No shared runtime/DB/queue/model mutation"
+  ]
+}

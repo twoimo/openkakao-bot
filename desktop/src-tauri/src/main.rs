@@ -1,15 +1,22 @@
 mod python_bridge;
+#[cfg(target_os = "macos")]
+mod render_audit;
 mod resource_layout;
+#[cfg(target_os = "macos")]
+mod workspace_visibility;
 
-use python_bridge::{PythonBridge, SafeBrowserToolResult, SafeRuntimeSnapshot};
+use python_bridge::{
+    PythonBridge, SafeBrowserToolResult, SafeEmergencyState, SafeRuntimeSnapshot, SafeVoiceStatus,
+};
 use serde_json::Value;
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-const PANEL_WIDTH: f64 = 276.0;
-const VISIBILITY_EVENT: &str = "jarvis://visibility";
+const PANEL_WIDTH: f64 = 560.0;
+const VISIBILITY_EVENT: &str = "alden://visibility";
+const EMERGENCY_EVENT: &str = "alden://emergency-state";
 
 /// Payload for the window visibility event: one boolean, never content.
 fn visibility_payload(visible: bool) -> Value {
@@ -68,6 +75,61 @@ async fn fetch_runtime_snapshot(
         .await
         .map_err(|_| "snapshot_worker_failed".to_string())?
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn fetch_voice_status(
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<SafeVoiceStatus, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.voice_status())
+        .await
+        .map_err(|_| "voice_status_worker_failed".to_string())
+}
+
+#[tauri::command]
+fn fetch_knowledge_revision(bridge: tauri::State<'_, PythonBridge>) -> Option<String> {
+    bridge.knowledge_revision()
+}
+
+#[tauri::command]
+async fn fetch_emergency_state(
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<SafeEmergencyState, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.emergency_state())
+        .await
+        .map_err(|_| "emergency_state_worker_failed".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn operator_resume(
+    bridge: tauri::State<'_, PythonBridge>,
+    explicit_opt_in: bool,
+) -> Result<SafeEmergencyState, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.operator_resume(explicit_opt_in))
+        .await
+        .map_err(|_| "operator_resume_worker_failed".to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn operator_pause(
+    app: tauri::AppHandle,
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<SafeEmergencyState, String> {
+    let bridge = bridge.inner().clone();
+    let state = tauri::async_runtime::spawn_blocking(move || {
+        bridge.global_abort()?;
+        bridge.emergency_state()
+    })
+    .await
+    .map_err(|_| "pause_worker_failed")?
+    .map_err(|e: python_bridge::BridgeError| e.to_string())?;
+    let _ = app.emit(EMERGENCY_EVENT, &state);
+    Ok(state)
 }
 
 // These parameters mirror the invoke payload keys one for one; grouping or
@@ -137,6 +199,28 @@ async fn start_voice_session(bridge: tauri::State<'_, PythonBridge>) -> Result<(
 }
 
 #[tauri::command]
+async fn start_manual_voice_session(
+    bridge: tauri::State<'_, PythonBridge>,
+    conversation_id: Option<String>,
+) -> Result<(), String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge.start_manual_voice_session(conversation_id.as_deref())
+    })
+    .await
+    .map_err(|_| "voice_session_start_failed".to_string())?
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn stop_manual_voice_session(bridge: tauri::State<'_, PythonBridge>) -> Result<bool, String> {
+    let bridge = bridge.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || bridge.stop_manual_voice_session())
+        .await
+        .map_err(|_| "voice_session_stop_failed".to_string())
+}
+
+#[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("settings")
@@ -177,7 +261,7 @@ fn make_tray_icon() -> Image<'static> {
 }
 
 fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
-    let Some(window) = app.get_webview_window("jarvis") else {
+    let Some(window) = app.get_webview_window("alden") else {
         return;
     };
     if window.is_visible().unwrap_or(false) {
@@ -185,8 +269,15 @@ fn toggle_panel(app: &tauri::AppHandle, position: PhysicalPosition<f64>) {
         return;
     }
     let scale = window.scale_factor().unwrap_or(1.0);
-    let x = (position.x - (PANEL_WIDTH * scale / 2.0)).round() as i32;
+    let mut x = (position.x - (PANEL_WIDTH * scale / 2.0)).round() as i32;
     let y = (position.y + 12.0 * scale).round() as i32;
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let minimum = monitor.position().x + 8;
+        let maximum = monitor.position().x + monitor.size().width as i32
+            - (PANEL_WIDTH * scale).round() as i32
+            - 8;
+        x = x.clamp(minimum, maximum.max(minimum));
+    }
     let _ = window.set_position(PhysicalPosition::new(x, y));
     set_window_visible(&window, true);
 }
@@ -199,35 +290,72 @@ fn ignore_terminal_hangup() {
     }
 }
 
+fn global_abort_shortcut() -> Shortcut {
+    // Command-Option-Escape is reserved by macOS for Force Quit. Keep the
+    // system-wide emergency abort on the nearby unreserved three-modifier key.
+    Shortcut::new(
+        Some(Modifiers::SUPER | Modifiers::ALT | Modifiers::SHIFT),
+        Code::Escape,
+    )
+}
+
 fn main() {
     ignore_terminal_hangup();
-    let abort_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "macos")]
+    match render_audit::parse_args(std::env::args_os().skip(1)) {
+        Ok(Some(directory)) => {
+            render_audit::run(directory, context);
+            return;
+        }
+        Err(error) => {
+            eprintln!("Alden render audit: {error}");
+            std::process::exit(2);
+        }
+        Ok(None) => {}
+    }
+    let abort_shortcut = global_abort_shortcut();
+    let app = tauri::Builder::default()
         .manage(PythonBridge::new())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let expected =
-                        Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape);
+                    let expected = global_abort_shortcut();
                     if shortcut == &expected && event.state() == ShortcutState::Pressed {
                         let bridge = app.state::<PythonBridge>();
-                        let _ = bridge.global_abort();
+                        if bridge.global_abort().is_ok() {
+                            if let Ok(state) = bridge.emergency_state() {
+                                let _ = app.emit(EMERGENCY_EVENT, state);
+                            }
+                        }
                     }
                 })
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             fetch_runtime_snapshot,
+            fetch_voice_status,
+            fetch_knowledge_revision,
+            fetch_emergency_state,
+            operator_resume,
+            operator_pause,
             fetch_settings_action,
             run_browser_tool,
             cancel_python,
             cancel_model_swap,
             open_settings,
             start_voice_session,
+            start_manual_voice_session,
+            stop_manual_voice_session,
             window_is_visible
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            let knowledge_bridge = app.state::<PythonBridge>().inner().clone();
+            std::thread::spawn(move || loop {
+                let _ = knowledge_bridge.synchronize_knowledge();
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            });
             handle
                 .global_shortcut()
                 .register(abort_shortcut)
@@ -235,7 +363,7 @@ fn main() {
             TrayIconBuilder::new()
                 .icon(make_tray_icon())
                 .icon_as_template(true)
-                .tooltip("OpenKakao Jarvis")
+                .tooltip("Alden")
                 .on_tray_icon_event(|tray, event| match event {
                     TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -255,37 +383,64 @@ fn main() {
                 .build(&handle)?;
             Ok(())
         })
-        .on_window_event(|window, event| match event {
-            // Only a hide the OS actually applied may pause the renderer:
-            // announcing hidden for a window that is still on screen would
-            // freeze the core while the user is looking at it.
-            WindowEvent::Focused(false) if window.label() == "jarvis" && window.hide().is_ok() => {
+        .on_window_event(handle_window_event)
+        .build(context)
+        .expect("error while running Alden");
+    #[cfg(target_os = "macos")]
+    let workspace_observers = workspace_visibility::install(app.handle())
+        .expect("error while observing Alden workspace visibility");
+    let exit_code = app.run_return(|_, _| {});
+    #[cfg(target_os = "macos")]
+    drop(workspace_observers);
+    std::process::exit(exit_code);
+}
+
+fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
+    match event {
+        // Only a hide the OS actually applied may pause the renderer:
+        // announcing hidden for a window that is still on screen would
+        // freeze the core while the user is looking at it.
+        WindowEvent::Focused(false) if window.label() == "alden" && window.hide().is_ok() => {
+            announce_visibility(window.app_handle(), window.label(), false);
+        }
+        WindowEvent::CloseRequested { api, .. }
+            if window.label() == "alden" || window.label() == "settings" =>
+        {
+            api.prevent_close();
+            if window.hide().is_ok() {
                 announce_visibility(window.app_handle(), window.label(), false);
             }
-            WindowEvent::CloseRequested { api, .. }
-                if window.label() == "jarvis" || window.label() == "settings" =>
-            {
-                api.prevent_close();
-                if window.hide().is_ok() {
-                    announce_visibility(window.app_handle(), window.label(), false);
-                }
-            }
-            // Any focus of an already visible window re-states the visible
-            // state. A tray click that lands while the webview is still
-            // registering its listener would otherwise be the only announce of
-            // that show, and it would be lost.
-            WindowEvent::Focused(true) if window.is_visible().unwrap_or(false) => {
-                announce_visibility(window.app_handle(), window.label(), true);
-            }
-            _ => {}
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running OpenKakao Jarvis");
+        }
+        // Any focus of an already visible window re-states the visible
+        // state. A tray click that lands while the webview is still
+        // registering its listener would otherwise be the only announce of
+        // that show, and it would be lost.
+        WindowEvent::Focused(true) if window.is_visible().unwrap_or(false) => {
+            announce_visibility(window.app_handle(), window.label(), true);
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_abort_shortcut_avoids_the_macos_force_quit_chord() {
+        let emergency = global_abort_shortcut();
+        assert_eq!(
+            emergency,
+            Shortcut::new(
+                Some(Modifiers::SUPER | Modifiers::ALT | Modifiers::SHIFT),
+                Code::Escape,
+            )
+        );
+        assert_ne!(
+            emergency,
+            Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Escape)
+        );
+    }
 
     #[test]
     fn the_visibility_payload_carries_only_the_boolean() {

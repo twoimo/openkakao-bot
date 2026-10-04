@@ -39,9 +39,8 @@ fn rust_rag_eval_matches_python_golden() {
         .and_then(Value::as_array)
         .expect("records array")
         .clone();
-    let status = rag_eval::status_map_from_value(
-        input.get("status_by_event").expect("status_by_event"),
-    );
+    let status =
+        rag_eval::status_map_from_value(input.get("status_by_event").expect("status_by_event"));
 
     // citation_metrics: unrounded (recall, utilization) per record.
     let citation_metrics: Vec<Value> = records

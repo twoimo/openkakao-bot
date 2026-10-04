@@ -174,7 +174,10 @@ fn config_applies_in_range_and_defaults_out_of_range() {
     assert_eq!(RefreshConfig::new(Some(3_600)).period_secs, 3_600);
     assert_eq!(RefreshConfig::new(Some(86_400)).period_secs, 86_400);
     // Out of range or missing → default 3600 (not clamped to the bound).
-    assert_eq!(RefreshConfig::new(Some(899)).period_secs, DEFAULT_PERIOD_SECS);
+    assert_eq!(
+        RefreshConfig::new(Some(899)).period_secs,
+        DEFAULT_PERIOD_SECS
+    );
     assert_eq!(
         RefreshConfig::new(Some(86_401)).period_secs,
         DEFAULT_PERIOD_SECS

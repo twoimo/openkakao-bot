@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "fixed_window_kst": [
+    "2026-09-29T14:00:00+09:00",
+    "2026-09-30T14:00:00+09:00"
+  ],
+  "activation_observation_start_utc": "2026-09-30T05:08:56Z",
+  "observed_at_utc": "2026-09-30T05:27:38.426942+00:00",
+  "rooms": [
+    {
+      "room_index": 1,
+      "supervisor_state": "running",
+      "readiness": "ready",
+      "status_age_s": 1.378,
+      "fixed_window_queue_groups": [],
+      "post_activation_queue_groups": [],
+      "retained_job_count": 45,
+      "latest_job_created_utc": "2026-09-28T03:49:04.689641+00:00",
+      "unresolved_send_count": 0,
+      "local_read_exit_code": 0,
+      "local_read_row_count": 100,
+      "local_read_field_names": [
+        "attachment",
+        "author_id",
+        "chat_id",
+        "is_self",
+        "log_id",
+        "message",
+        "message_type",
+        "sender_name",
+        "sent_at"
+      ],
+      "local_read_self_rows": 78,
+      "watcher_matches_latest_local_log_id": true,
+      "pending_log_id_count": 0,
+      "pending_gap_count": 0,
+      "candidate_idle": true,
+      "timing_diagnostics": {
+        "candidate_ingress_delay_max_observed_at": 1790741314.119931,
+        "candidate_ingress_delay_max_seconds": 173955.12,
+        "candidate_ingress_delay_recent_observed_at": 1790741967.006169,
+        "candidate_ingress_delay_recent_seconds": 8043.006,
+        "poll_envelope_interval_max_observed_at": 1790741314.1189928,
+        "poll_envelope_interval_max_seconds": 173888.599,
+        "poll_envelope_interval_recent_observed_at": 1790746058.194852,
+        "poll_envelope_interval_recent_seconds": 1.165,
+        "poll_envelope_last_success_at": 1790746058.194852
+      }
+    },
+    {
+      "room_index": 2,
+      "supervisor_state": "running",
+      "readiness": "ready",
+      "status_age_s": 4.72,
+      "fixed_window_queue_groups": [
+        {
+          "status": "skipped",
+          "reason": "burst_superseded",
+          "category": "duplicate",
+          "jobs": 7
+        },
+        {
+          "status": "skipped",
+          "reason": "stale_backlog",
+          "category": "policy",
+          "jobs": 17
+        }
+      ],
+      "post_activation_queue_groups": [],
+      "retained_job_count": 2288,
+      "latest_job_created_utc": "2026-09-30T04:20:52.155582+00:00",
+      "unresolved_send_count": 0,
+      "local_read_exit_code": 0,
+      "local_read_row_count": 100,
+      "local_read_field_names": [
+        "attachment",
+        "author_id",
+        "chat_id",
+        "is_self",
+        "log_id",
+        "message",
+        "message_type",
+        "sender_name",
+        "sent_at"
+      ],
+      "local_read_self_rows": 73,
+      "watcher_matches_latest_local_log_id": false,
+      "pending_log_id_count": 0,
+      "pending_gap_count": 0,
+      "candidate_idle": true,
+      "timing_diagnostics": {
+        "candidate_ingress_delay_max_observed_at": 1790741310.7954,
+        "candidate_ingress_delay_max_seconds": 173891.795,
+        "candidate_ingress_delay_recent_observed_at": 1790742316.959893,
+        "candidate_ingress_delay_recent_seconds": 0.96,
+        "poll_envelope_interval_max_observed_at": 1790741310.794684,
+        "poll_envelope_interval_max_seconds": 173887.334,
+        "poll_envelope_interval_recent_observed_at": 1790746054.284218,
+        "poll_envelope_interval_recent_seconds": 1.48,
+        "poll_envelope_last_success_at": 1790746054.284218
+      }
+    },
+    {
+      "room_index": 3,
+      "supervisor_state": "running",
+      "readiness": "ready",
+      "status_age_s": 0.676,
+      "fixed_window_queue_groups": [],
+      "post_activation_queue_groups": [],
+      "retained_job_count": 401,
+      "latest_job_created_utc": "2026-09-28T03:49:03.355720+00:00",
+      "unresolved_send_count": 0,
+      "local_read_exit_code": 0,
+      "local_read_row_count": 100,
+      "local_read_field_names": [
+        "attachment",
+        "author_id",
+        "chat_id",
+        "is_self",
+        "log_id",
+        "message",
+        "message_type",
+        "sender_name",
+        "sent_at"
+      ],
+      "local_read_self_rows": 77,
+      "watcher_matches_latest_local_log_id": true,
+      "pending_log_id_count": 0,
+      "pending_gap_count": 0,
+      "candidate_idle": true,
+      "timing_diagnostics": {
+        "candidate_ingress_delay_max_observed_at": 1790741310.1838799,
+        "candidate_ingress_delay_max_seconds": 173957.184,
+        "candidate_ingress_delay_recent_observed_at": 1790741310.1838799,
+        "candidate_ingress_delay_recent_seconds": 173957.184,
+        "poll_envelope_interval_max_observed_at": 1790741310.182693,
+        "poll_envelope_interval_max_seconds": 173884.158,
+        "poll_envelope_interval_recent_observed_at": 1790746058.7039769,
+        "poll_envelope_interval_recent_seconds": 1.174,
+        "poll_envelope_last_success_at": 1790746058.7039769
+      }
+    }
+  ],
+  "new_test_sends": 0,
+  "fixed_window_jobs": 24,
+  "post_activation_jobs": 0,
+  "stale_age_audit": [
+    {
+      "room_index": 1,
+      "jobs": 0,
+      "stale_age_samples": 0,
+      "stale_age_missing": 0,
+      "stale_ingress_seconds_median": null,
+      "stale_ingress_seconds_range": null,
+      "stale_queue_lifetime_seconds_median": null,
+      "supersession_schema": [
+        "event_id",
+        "superseded_by_event_id",
+        "created_at"
+      ],
+      "supersession_edges_inside_window": 0
+    },
+    {
+      "room_index": 2,
+      "jobs": 24,
+      "stale_age_samples": 17,
+      "stale_age_missing": 0,
+      "stale_ingress_seconds_median": 77888.56974697113,
+      "stale_ingress_seconds_range": [
+        11848.155581951141,
+        166952.708673954
+      ],
+      "stale_queue_lifetime_seconds_median": 77.11497592926025,
+      "supersession_schema": [
+        "event_id",
+        "superseded_by_event_id",
+        "created_at"
+      ],
+      "supersession_edges_inside_window": 7
+    },
+    {
+      "room_index": 3,
+      "jobs": 0,
+      "stale_age_samples": 0,
+      "stale_age_missing": 0,
+      "stale_ingress_seconds_median": null,
+      "stale_ingress_seconds_range": null,
+      "stale_queue_lifetime_seconds_median": null,
+      "supersession_schema": [
+        "event_id",
+        "superseded_by_event_id",
+        "created_at"
+      ],
+      "supersession_edges_inside_window": 0
+    }
+  ],
+  "local_tail_classification": [
+    {
+      "room_index": 1,
+      "local_rows_above_watcher_checkpoint": 0,
+      "above_self_rows": 0,
+      "above_nonself_rows": 0,
+      "watcher_checkpoint_within_returned_rows": true
+    },
+    {
+      "room_index": 2,
+      "local_rows_above_watcher_checkpoint": 1,
+      "above_self_rows": 1,
+      "above_nonself_rows": 0,
+      "watcher_checkpoint_within_returned_rows": true
+    },
+    {
+      "room_index": 3,
+      "local_rows_above_watcher_checkpoint": 0,
+      "above_self_rows": 0,
+      "above_nonself_rows": 0,
+      "watcher_checkpoint_within_returned_rows": true
+    }
+  ],
+  "interpretation": {
+    "fixed_window_jobs": 24,
+    "stale_jobs": 17,
+    "burst_superseded_jobs": 7,
+    "terminal_queue_chains": 17,
+    "distinct_human_conversation_count": "not_established",
+    "new_jobs_after_activation": 0,
+    "live_skip_rate_improvement": "not_measured",
+    "unseen_nonself_rows_in_bounded_local_read": 0,
+    "unresolved_sends": 0
+  },
+  "limitations": [
+    "The 100 latest local rows per room are a bounded sample, not a complete history.",
+    "Jobs are not distinct conversations; supersession-chain counts include policy decisions.",
+    "Ingress age is queue created_at minus message sent_at; it is not the local DB insertion delay.",
+    "Polling intervals and old candidate delay diagnostics do not prove new-turn conversational latency.",
+    "No jobs arrived after activation by this readback, so post-fix skip rate is undefined."
+  ]
+}

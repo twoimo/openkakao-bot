@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "date": "2026-10-01",
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "documentationBase": "6591acb9532095e54cc72f776b14848777e98d41",
+  "installedVersion": "0.1.6",
+  "installedExecutableSha256": "401a1dbb81a03139a6592da9d99b72735233022390819ebad060c56f432fadce",
+  "scope": "actual existing primary process and normal production bridge; native tray input, window-specific capture and primary AX resize/close, no isolated audit process",
+  "cases": [
+    {
+      "mode": "core",
+      "sampleCount": 1,
+      "pngPixels": [
+        276,
+        260
+      ],
+      "imageSha256": "19c645cf487d39fb58c249bd8f4cd56565dd04466cb2c8bab3616a7a1b852cd5",
+      "showObservationUpperBoundMs": 107.6420545578003,
+      "captureExitCode": 0,
+      "cursorRestoreApiCode": 0,
+      "settingsCloseApiCode": null,
+      "requestedMinimumSize": null,
+      "resizeApiCode": null,
+      "restoreSizeApiCode": null,
+      "cgWindowLayer": 5
+    },
+    {
+      "mode": "settings-default",
+      "sampleCount": 1,
+      "pngPixels": [
+        960,
+        880
+      ],
+      "imageSha256": "a8d25de0b1b1a6b7e7e6d479b9ee6dd987581336f9f804b72b90e8d8a2fb6093",
+      "showObservationUpperBoundMs": 129.14395332336426,
+      "captureExitCode": 0,
+      "cursorRestoreApiCode": 0,
+      "settingsCloseApiCode": 0,
+      "requestedMinimumSize": null,
+      "resizeApiCode": null,
+      "restoreSizeApiCode": null,
+      "cgWindowLayer": 0
+    },
+    {
+      "mode": "settings-minimum",
+      "sampleCount": 1,
+      "pngPixels": [
+        640,
+        680
+      ],
+      "imageSha256": "aab6d427dcd85ca104ea9cb3ea665083970bd2719de1da6dbf5cda0e753a9e42",
+      "showObservationUpperBoundMs": 131.68799877166748,
+      "captureExitCode": 0,
+      "cursorRestoreApiCode": 0,
+      "settingsCloseApiCode": 0,
+      "requestedMinimumSize": [
+        640,
+        680
+      ],
+      "resizeApiCode": 0,
+      "restoreSizeApiCode": 0,
+      "cgWindowLayer": 0
+    }
+  ],
+  "metricScope": "one sample per case from before mouseDown; includes40ms holds, mouseUp, polling and native opening animation; not rendered UI latency, p95, improvement or power savings",
+  "observedUi": {
+    "core": "warm gold core/rings visible without diagnostic text",
+    "settingsDefault": "production room/status and real persisted graph visible; voice correctly unavailable",
+    "settingsMinimum": "single-column top controls visible without horizontal clipping; lower graph outside captured viewport",
+    "viewedImages": 3,
+    "minimumRestoredTo": [
+      960,
+      880
+    ],
+    "nativeVisibleWindowsAfterClose": 0
+  },
+  "axTrayPress": {
+    "actionCode": 0,
+    "windowOpened": false,
+    "observationSec": 2.026851058,
+    "fallback": "actual global CG mouse events; no independent virtual cursor claim"
+  },
+  "focusScope": "restore requests accepted; immediate observations lagged; later original foreground app was observed, then another foreground app; no claim of uninterrupted focus or complete focus UX validation",
+  "privacy": "all raw PNGs and receipts kept private; public numeric record omits graph/room identity, PID, window IDs, screen coordinates and private execution paths",
+  "productSourceChanged": false,
+  "productionWorkersReplaced": false,
+  "messageSendActions": 0,
+  "fullGoalComplete": false,
+  "remaining": [
+    "primary graph back/reset/focus-lookup/minimum scroll region still unverified",
+    "rendered UI p95/primary frame counters/physical Retina and emergency shortcut/lock/session tests",
+    "human microphone/wake checkpoint/2GiB free-swap gate",
+    "production worker replacement approval and live media transport with shared no-vision server",
+    "six Apple secrets/Developer ID/public notarized release",
+    "earlier two audit foreign-exception causes"
+  ]
+}

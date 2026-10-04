@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "올든 기록과 지식 갱신",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      500
+    ]
+  },
+  "stages": [
+    {
+      "label": "원본"
+    },
+    {
+      "label": "고정 복제"
+    },
+    {
+      "label": "작업과 기록"
+    },
+    {
+      "label": "원자적 공개"
+    },
+    {
+      "label": "지식과 화면"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "kakao",
+      "type": "database",
+      "label": "카카오톡 DB",
+      "sublabel": "원본은 읽기 전용",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "snapshot",
+      "type": "database",
+      "label": "DB·WAL 복제본",
+      "sublabel": "배치 동안 고정",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "working",
+      "type": "database",
+      "label": "작업 검색 저장소",
+      "sublabel": "원문·커서 함께 저장",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "published",
+      "type": "database",
+      "label": "완료된 검색 자료",
+      "sublabel": "이전 버전 유지",
+      "stage": 3,
+      "row": 0
+    },
+    {
+      "id": "knowledge",
+      "type": "backend",
+      "label": "GraphRAG·OSK",
+      "sublabel": "숫자 ID와 출처",
+      "stage": 4,
+      "row": 0
+    },
+    {
+      "id": "updates",
+      "type": "frontend",
+      "label": "DB 갱신 기록",
+      "sublabel": "수집·정리·대기",
+      "stage": 2,
+      "row": 1
+    },
+    {
+      "id": "graph",
+      "type": "frontend",
+      "label": "3D 지식 그래프",
+      "sublabel": "탐색과 범위 조회",
+      "stage": 4,
+      "row": 1
+    },
+    {
+      "id": "voice",
+      "type": "backend",
+      "label": "음성 대화 턴",
+      "sublabel": "취소와 순서 확인",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "confirmed",
+      "type": "backend",
+      "label": "확정된 대화",
+      "sublabel": "늦은 취소 제외",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "journal",
+      "type": "database",
+      "label": "로컬 대화 기록",
+      "sublabel": "텍스트만 저장",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "voiceview",
+      "type": "frontend",
+      "label": "음성 대화 화면",
+      "sublabel": "세션별 기록 탐색",
+      "stage": 3,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "from": "kakao",
+      "to": "snapshot",
+      "label": "일관성 확인",
+      "variant": "emphasis"
+    },
+    {
+      "from": "snapshot",
+      "to": "working",
+      "label": "중단 뒤 재개",
+      "variant": "emphasis"
+    },
+    {
+      "from": "working",
+      "to": "published",
+      "label": "전체 완료",
+      "variant": "emphasis"
+    },
+    {
+      "from": "published",
+      "to": "knowledge",
+      "label": "지식 갱신",
+      "variant": "emphasis"
+    },
+    {
+      "from": "working",
+      "to": "updates",
+      "label": "단계 기록",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "knowledge",
+      "to": "graph",
+      "label": "읽기 전용",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "voice",
+      "to": "confirmed",
+      "label": "턴 확정",
+      "variant": "emphasis"
+    },
+    {
+      "from": "confirmed",
+      "to": "journal",
+      "label": "기록 저장",
+      "variant": "emphasis"
+    },
+    {
+      "from": "journal",
+      "to": "voiceview",
+      "label": "페이지 조회",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "일관성과 공개",
+      "items": [
+        "DB와 WAL을 함께 고정하고 원본을 변경하지 않습니다.",
+        "검색 저장소는 전체 완료 후 Online Backup으로 공개합니다."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "정체성과 입력 출처",
+      "items": [
+        "같은 이름을 합치지 않고 계정·방·발신자 숫자 ID를 보존합니다.",
+        "과거 발신 기록은 인용 자료이며 새로운 사용자 발화가 아닙니다."
+      ]
+    }
+  ]
+}

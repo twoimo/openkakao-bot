@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "pairs": [
+    {
+      "pair_id": "train-add",
+      "split": "train",
+      "source_group": "arithmetic",
+      "prompt": "2 + 2의 결과만 숫자로 답하세요.",
+      "chosen": "4",
+      "rejected": "5",
+      "label_source": "verified_context",
+      "label_reference": "integer addition"
+    },
+    {
+      "pair_id": "train-subtract",
+      "split": "train",
+      "source_group": "arithmetic",
+      "prompt": "9 - 3의 결과만 숫자로 답하세요.",
+      "chosen": "6",
+      "rejected": "7",
+      "label_source": "verified_context",
+      "label_reference": "integer subtraction"
+    },
+    {
+      "pair_id": "train-count",
+      "split": "train",
+      "source_group": "counting",
+      "prompt": "목록: 사과, 배, 감. 항목 개수만 숫자로 답하세요.",
+      "chosen": "3",
+      "rejected": "4",
+      "label_source": "verified_context",
+      "label_reference": "explicit list length"
+    },
+    {
+      "pair_id": "validation-meeting",
+      "split": "validation",
+      "source_group": "meeting-time",
+      "prompt": "확정 사실: 회의는 수요일 오전 10시입니다. 현재 질문: 그날 몇 시인가요? 시간을 간결하게 답하세요.",
+      "chosen": "오전 10시입니다.",
+      "rejected": "무슨 말인지 모르겠네요.",
+      "label_source": "verified_context",
+      "label_reference": "explicit confirmed meeting time"
+    },
+    {
+      "pair_id": "validation-latest",
+      "split": "validation",
+      "source_group": "confirmed-turn",
+      "prompt": "이전 요청: 책은 세 권. 최신 확정 요청: 책을 두 권으로 바꿔주세요. 현재 질문: 몇 권인가요? 최신 확정 수량만 답하세요.",
+      "chosen": "두 권입니다.",
+      "rejected": "세 권입니다.",
+      "label_source": "verified_context",
+      "label_reference": "latest confirmed request overrides previous"
+    },
+    {
+      "pair_id": "validation-no-pixels",
+      "split": "validation",
+      "source_group": "unreadable-photo",
+      "prompt": "입력 사실: 사진 첨부를 수신했지만 이미지 바이트를 읽지 못했습니다. 현재 질문: 색감 어때요? 확인 가능한 사실만 답하세요.",
+      "chosen": "사진을 읽지 못했습니다.",
+      "rejected": "색감이 별로네요.",
+      "label_source": "verified_context",
+      "label_reference": "no pixel evidence permits no visual judgment"
+    },
+    {
+      "pair_id": "test-file-metadata",
+      "split": "test",
+      "source_group": "file-metadata",
+      "prompt": "확인한 자료: 파일 이름은 보고서.pdf이며 본문을 아직 읽지 못했습니다. 현재 질문: 결론이 무엇인가요? 확인 가능한 범위만 답하세요.",
+      "chosen": "본문을 읽지 못해 결론을 확인할 수 없습니다.",
+      "rejected": "결론은 매출이 늘었다는 것입니다.",
+      "label_source": "verified_context",
+      "label_reference": "filename metadata does not reveal contents"
+    },
+    {
+      "pair_id": "test-cancelled",
+      "split": "test",
+      "source_group": "cancelled-plan",
+      "prompt": "확정 기록: 금요일 방문 예약. 최신 기록: 그 예약은 취소되었습니다. 현재 질문: 금요일에 방문해야 하나요?",
+      "chosen": "예약이 취소되어 방문 일정은 없습니다.",
+      "rejected": "금요일에 방문하시면 됩니다.",
+      "label_source": "verified_context",
+      "label_reference": "latest explicit cancellation"
+    },
+    {
+      "pair_id": "test-role",
+      "split": "test",
+      "source_group": "tool-role",
+      "prompt": "사용자 요청: 잠시 기다려주세요. 도구 로그: 확인 질문을 생성했습니다. 새 사용자 발화는 없습니다. 현재 질문: 새 사용자 질문이 들어왔나요?",
+      "chosen": "새 사용자 질문은 없습니다.",
+      "rejected": "네, 확인 질문이 들어왔습니다.",
+      "label_source": "verified_context",
+      "label_reference": "tool log is not user input"
+    }
+  ]
+}

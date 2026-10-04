@@ -1,0 +1,1257 @@
+{
+  "conditions": "Identical offline fixture, saved0.1.0/current0.2.0, own socketpair only. Cancellation while HTTP response blocked; header/body bytes every30ms for deadline; inflight stdin EOF. 1.5s new caller budget, no live app/model/TCP.",
+  "cancellation_honored": {
+    "before": "0/10",
+    "after": "10/10"
+  },
+  "deadline_enforced": {
+    "before": "0/10",
+    "after": "10/10"
+  },
+  "inflight_eof_replied": {
+    "before": "10/10",
+    "after": "0/10"
+  },
+  "summaries": {
+    "cancel": {
+      "pairs": 10,
+      "first_p50_ms": {
+        "before": 501.497896,
+        "after": 0.093396,
+        "relative_improvement": 0.9998137659185713,
+        "paired_bootstrap_95ci": [
+          0.999733337410849,
+          0.9998410343233736
+        ],
+        "mean_paired_difference": 501.4787085,
+        "mean_difference_95ci": [
+          501.30424619999997,
+          501.6856012225
+        ]
+      },
+      "first_p95_ms": {
+        "before": 502.15461425,
+        "after": 0.1799390999999999,
+        "relative_improvement": 0.9996416659433295,
+        "paired_bootstrap_95ci": [
+          0.9995717362820501,
+          0.99980332019009
+        ],
+        "mean_paired_difference": 501.4787085,
+        "mean_difference_95ci": [
+          501.30424619999997,
+          501.6856012225
+        ]
+      },
+      "cleanup_p50_ms": {
+        "before": 501.5389795,
+        "after": 0.15833350000000002,
+        "relative_improvement": 0.9996843046971985,
+        "paired_bootstrap_95ci": [
+          0.9996121302849308,
+          0.9997065939704144
+        ],
+        "mean_paired_difference": 501.4727127,
+        "mean_difference_95ci": [
+          501.28313779999996,
+          501.69644170000004
+        ]
+      },
+      "cleanup_p95_ms": {
+        "before": 502.25368765,
+        "after": 0.29064779999999985,
+        "relative_improvement": 0.9994213127605694,
+        "paired_bootstrap_95ci": [
+          0.9992965838054271,
+          0.9996800371469421
+        ],
+        "mean_paired_difference": 501.4727127,
+        "mean_difference_95ci": [
+          501.28313779999996,
+          501.69644170000004
+        ]
+      },
+      "case_assertions_passed": 20,
+      "next_valid_p50_ms": {
+        "before": 1.8128125,
+        "after": 1.4279795000000002,
+        "relative_improvement": 0.21228505430098246,
+        "paired_bootstrap_95ci": [
+          0.11134695854117643,
+          0.5823116928096935
+        ],
+        "mean_paired_difference": 0.9559873999999999,
+        "mean_difference_95ci": [
+          0.43299344,
+          1.5147521875
+        ]
+      },
+      "next_valid_p95_ms": {
+        "before": 3.6443608999999997,
+        "after": 1.5486357499999999,
+        "relative_improvement": 0.5750597176037093,
+        "paired_bootstrap_95ci": [
+          0.43593555697885633,
+          0.6042516960852738
+        ],
+        "mean_paired_difference": 0.9559873999999999,
+        "mean_difference_95ci": [
+          0.43299344,
+          1.5147521875
+        ]
+      }
+    },
+    "deadline": {
+      "pairs": 10,
+      "first_p50_ms": {
+        "before": 2307.4871045,
+        "after": 1502.696062,
+        "relative_improvement": 0.3487737985319692,
+        "paired_bootstrap_95ci": [
+          0.3445929093506676,
+          0.3524563466819453
+        ],
+        "mean_paired_difference": 803.7378709999999,
+        "mean_difference_95ci": [
+          793.1887903125,
+          813.7498750099999
+        ]
+      },
+      "first_p95_ms": {
+        "before": 2327.5987731,
+        "after": 1503.69511075,
+        "relative_improvement": 0.35397151427979506,
+        "paired_bootstrap_95ci": [
+          0.3493549850522052,
+          0.35466524875571914
+        ],
+        "mean_paired_difference": 803.7378709999999,
+        "mean_difference_95ci": [
+          793.1887903125,
+          813.7498750099999
+        ]
+      },
+      "cleanup_p50_ms": {
+        "before": 2307.549125,
+        "after": 1502.980583,
+        "relative_improvement": 0.34866800159671574,
+        "paired_bootstrap_95ci": [
+          0.3445402314073702,
+          0.3522785027239946
+        ],
+        "mean_paired_difference": 803.4921168999999,
+        "mean_difference_95ci": [
+          793.0117092600001,
+          813.4820614849999
+        ]
+      },
+      "cleanup_p95_ms": {
+        "before": 2327.65581235,
+        "after": 1503.9029019,
+        "relative_improvement": 0.3538980746549205,
+        "paired_bootstrap_95ci": [
+          0.34929486839756857,
+          0.3545912003894029
+        ],
+        "mean_paired_difference": 803.4921168999999,
+        "mean_difference_95ci": [
+          793.0117092600001,
+          813.4820614849999
+        ]
+      },
+      "case_assertions_passed": 20,
+      "next_valid_p50_ms": {
+        "before": 1.788021,
+        "after": 2.138354,
+        "relative_improvement": -0.1959333810956359,
+        "paired_bootstrap_95ci": [
+          -0.7067928231574125,
+          0.061169353573789165
+        ],
+        "mean_paired_difference": -0.5955834,
+        "mean_difference_95ci": [
+          -1.1460181475,
+          -0.10558661000000007
+        ]
+      },
+      "next_valid_p95_ms": {
+        "before": 1.9000438999999998,
+        "after": 3.7416274499999997,
+        "relative_improvement": -0.9692321056371382,
+        "paired_bootstrap_95ci": [
+          -1.1675463306995966,
+          -0.2985668383767346
+        ],
+        "mean_paired_difference": -0.5955834,
+        "mean_difference_95ci": [
+          -1.1460181475,
+          -0.10558661000000007
+        ]
+      }
+    },
+    "eof": {
+      "pairs": 10,
+      "first_p50_ms": {
+        "before": 514.0082084999999,
+        "after": 7.9634585,
+        "relative_improvement": 0.9845071374964238,
+        "paired_bootstrap_95ci": [
+          0.9810613314443489,
+          0.9854980185595168
+        ],
+        "mean_paired_difference": 504.3279415,
+        "mean_difference_95ci": [
+          502.13097838749997,
+          506.39084684500006
+        ]
+      },
+      "first_p95_ms": {
+        "before": 516.5672625000001,
+        "after": 11.2274087,
+        "relative_improvement": 0.9782653499068769,
+        "paired_bootstrap_95ci": [
+          0.9780963195278374,
+          0.9838462061222722
+        ],
+        "mean_paired_difference": 504.3279415,
+        "mean_difference_95ci": [
+          502.13097838749997,
+          506.39084684500006
+        ]
+      },
+      "cleanup_p50_ms": {
+        "before": 514.0082084999999,
+        "after": 7.9634585,
+        "relative_improvement": 0.9845071374964238,
+        "paired_bootstrap_95ci": [
+          0.9810613314443489,
+          0.9854980185595168
+        ],
+        "mean_paired_difference": 504.3279415,
+        "mean_difference_95ci": [
+          502.13097838749997,
+          506.39084684500006
+        ]
+      },
+      "cleanup_p95_ms": {
+        "before": 516.5672625000001,
+        "after": 11.2274087,
+        "relative_improvement": 0.9782653499068769,
+        "paired_bootstrap_95ci": [
+          0.9780963195278374,
+          0.9838462061222722
+        ],
+        "mean_paired_difference": 504.3279415,
+        "mean_difference_95ci": [
+          502.13097838749997,
+          506.39084684500006
+        ]
+      },
+      "case_assertions_passed": 20
+    }
+  },
+  "raw_pairs": {
+    "cancel": [
+      {
+        "pair": 0,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 501.361709,
+          "cleanup_ms": 501.40375,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.654125,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.167333,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 0.09375,
+          "cleanup_ms": 0.160541,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.409917,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.191291,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 1,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 0.078125,
+          "cleanup_ms": 0.13975,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.384375,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.169584,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 501.243584,
+          "cleanup_ms": 501.348709,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 3.738167,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 500.62125,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 502.251083,
+          "cleanup_ms": 502.351375,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 3.434417,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.643791,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 0.133709,
+          "cleanup_ms": 0.1945,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.499792,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.241542,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 0.076958,
+          "cleanup_ms": 0.147125,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.409834,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.182792,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 501.346958,
+          "cleanup_ms": 501.387958,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.730125,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.167583,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 4,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 501.579375,
+          "cleanup_ms": 501.620917,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.570292,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.330083,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 0.098667,
+          "cleanup_ms": 0.154792,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.446042,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.202459,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 5,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 0.079708,
+          "cleanup_ms": 0.146333,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.387166,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.167375,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 501.416417,
+          "cleanup_ms": 501.457042,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.725125,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.222791,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 6,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 501.6055,
+          "cleanup_ms": 501.683416,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 3.529709,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.242208,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 0.137291,
+          "cleanup_ms": 0.214541,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.454417,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.23825,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 7,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 0.093042,
+          "cleanup_ms": 0.15675,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.504292,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.201667,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 502.036708,
+          "cleanup_ms": 502.134292,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 3.140875,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.336958,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 8,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 501.377667,
+          "cleanup_ms": 501.419417,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.600333,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.190208,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 0.214833,
+          "cleanup_ms": 0.352917,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.584917,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.349167,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 9,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 0.088917,
+          "cleanup_ms": 0.159917,
+          "cancelled_request_response_count": 0,
+          "next_valid_status_ms": 1.378042,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.189375,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 501.663084,
+          "cleanup_ms": 501.747417,
+          "cancelled_request_response_count": 1,
+          "next_valid_status_ms": 1.8955,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.246125,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      }
+    ],
+    "deadline": [
+      {
+        "pair": 0,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 2285.958125,
+          "cleanup_ms": 2286.011375,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.774833,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2285.621167,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 1503.897667,
+          "cleanup_ms": 1504.136208,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.61225,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1504.164417,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 1,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 1503.447542,
+          "cleanup_ms": 1503.61775,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.806958,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1503.686791,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 2309.561584,
+          "cleanup_ms": 2309.616625,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.801209,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2309.425666,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 2325.385,
+          "cleanup_ms": 2325.445958,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.748291,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2325.115041,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 1501.036542,
+          "cleanup_ms": 1501.393625,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.855083,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1501.483333,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 1499.446875,
+          "cleanup_ms": 1499.783083,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 2.467334,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1499.817333,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 2301.25575,
+          "cleanup_ms": 2301.307167,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.758042,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2301.173542,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 4,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 2317.564834,
+          "cleanup_ms": 2317.689167,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.808791,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2317.418083,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 1503.049958,
+          "cleanup_ms": 1503.418167,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 3.51725,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1503.4885,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 5,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 1499.312459,
+          "cleanup_ms": 1499.6565,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 2.421625,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1499.687833,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 2329.410042,
+          "cleanup_ms": 2329.463875,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.560292,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2329.365209,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 6,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 2310.70875,
+          "cleanup_ms": 2310.760042,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.602541,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2310.620292,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 1500.910042,
+          "cleanup_ms": 1501.576667,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 3.925209,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1501.354334,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 7,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 1503.27625,
+          "cleanup_ms": 1503.401375,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.585583,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1503.47575,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 2276.174959,
+          "cleanup_ms": 2276.239459,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.964375,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2275.868917,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 8,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 2295.882792,
+          "cleanup_ms": 2295.936875,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.821417,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2295.758916,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 1502.342166,
+          "cleanup_ms": 1502.559791,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.705875,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1502.678416,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 9,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 1503.21625,
+          "cleanup_ms": 1503.487833,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 2.711083,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 1503.556667,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 2305.412625,
+          "cleanup_ms": 2305.481625,
+          "cancelled_request_response_count": null,
+          "next_valid_status_ms": 1.812625,
+          "busy_retries": 0,
+          "unexpected_or_duplicate_replies": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 2305.237083,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      }
+    ],
+    "eof": [
+      {
+        "pair": 0,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 511.230042,
+          "cleanup_ms": 511.230042,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 500.425708,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 9.613042,
+          "cleanup_ms": 9.613042,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.252,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 1,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 11.167,
+          "cleanup_ms": 11.167,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.232917,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 515.041667,
+          "cleanup_ms": 515.041667,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.178,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 508.652583,
+          "cleanup_ms": 508.652583,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.206792,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 7.372291,
+          "cleanup_ms": 7.372291,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.188041,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 7.432084,
+          "cleanup_ms": 7.432084,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.185916,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 514.58775,
+          "cleanup_ms": 514.58775,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.162792,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 4,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 513.817417,
+          "cleanup_ms": 513.817417,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.179334,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 7.963167,
+          "cleanup_ms": 7.963167,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.206583,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 5,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 7.96375,
+          "cleanup_ms": 7.96375,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.294209,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 517.534875,
+          "cleanup_ms": 517.534875,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 505.876542,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 6,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 515.384625,
+          "cleanup_ms": 515.384625,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.231375,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 7.462542,
+          "cleanup_ms": 7.462542,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.162834,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 7,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 11.276834,
+          "cleanup_ms": 11.276834,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.32025,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 509.805833,
+          "cleanup_ms": 509.805833,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.149959,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 8,
+        "order": [
+          "before",
+          "after"
+        ],
+        "before": {
+          "first_ms": 509.269166,
+          "cleanup_ms": 509.269166,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.173375,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "after": {
+          "first_ms": 8.325417,
+          "cleanup_ms": 8.325417,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.204625,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      },
+      {
+        "pair": 9,
+        "order": [
+          "after",
+          "before"
+        ],
+        "after": {
+          "first_ms": 7.667416,
+          "cleanup_ms": 7.667416,
+          "inflight_response_count": 0,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 0.265667,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        },
+        "before": {
+          "first_ms": 514.199,
+          "cleanup_ms": 514.199,
+          "inflight_response_count": 1,
+          "exit_code": 0,
+          "probe_to_cleanup_ms": 501.223792,
+          "owned_sockets_closed": true,
+          "sender_threads_stopped": true,
+          "tcp_connections": 0,
+          "listener_ports": 0
+        }
+      }
+    ]
+  },
+  "fixture_unchanged": true,
+  "adapter_sha256": {
+    "before": "ab9905154b3550275506fd6139a40479614c40b290f58478d0b63a9a2512ee40",
+    "after": "3c65936b3f40e0d99f22e4cfa8ca014e648dd611507d436322eae41f8e2c2795"
+  },
+  "limit": "Caller budget is not a physical hard real-time guarantee: scheduler/GIL/blocked stdout can delay delivery. Uncooperative OS-stalled worker is limited to one slot; further status calls fail busy until cleanup or process EOF. No installed service control."
+}

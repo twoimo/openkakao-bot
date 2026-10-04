@@ -9,6 +9,8 @@ function voiceElements(): { button: HTMLButtonElement; status: HTMLElement } {
   const button = document.querySelector<HTMLButtonElement>("#voice-start");
   const status = document.querySelector<HTMLElement>("#voice-status");
   if (!button || !status) throw new Error("voice_test_dom_missing");
+  // Explicit microphone input is available without an automatic wake model.
+  expect(button.disabled).toBe(false);
   return { button, status };
 }
 
@@ -31,7 +33,7 @@ describe("settings voice start control", () => {
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith("start_voice_session");
+    expect(invoke).toHaveBeenCalledWith("start_manual_voice_session");
     expect(button.disabled).toBe(true);
     expect(button.getAttribute("aria-busy")).toBe("true");
     expect(status.textContent).toBe("음성 듣기를 준비하고 있습니다…");
@@ -44,6 +46,7 @@ describe("settings voice start control", () => {
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await Promise.resolve();
     expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenLastCalledWith("stop_manual_voice_session");
   });
 
   it.each([
@@ -93,6 +96,18 @@ describe("settings voice start control", () => {
     expect(button.hasAttribute("aria-busy")).toBe(false);
     expect(status.textContent).toBe("음성 듣기를 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     expect(status.textContent).not.toContain(privateFailure);
+  });
+
+  it("does not report a confirmed stop when the native owner cannot confirm it", async () => {
+    const { button, status } = voiceElements();
+    button.dataset.voiceActive = "true";
+    const invoke = vi.fn().mockResolvedValue(false);
+    wireVoiceStart(document, invoke);
+    button.click();
+    await vi.waitFor(() => expect(button.disabled).toBe(false));
+    expect(invoke).toHaveBeenCalledWith("stop_manual_voice_session");
+    expect(status.textContent).toContain("중지를 확인하지 못했습니다");
+    expect(button.dataset.voiceActive).toBe("true");
   });
 
   it("explains local voice memory blocks in plain Korean without exposing codes", () => {

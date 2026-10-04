@@ -1,13 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CancellationToken, RuntimeSnapshot } from "./contracts";
-import { parseRuntimeSnapshot, unavailableSnapshot } from "./contracts";
-import { RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
+import { listen } from "@tauri-apps/api/event";
+import type { CancellationToken, EmergencyState, RuntimeSnapshot, VoiceStatus } from "./contracts";
+import { parseEmergencyState, parseRuntimeSnapshot, parseVoiceStatus, unavailableSnapshot } from "./contracts";
+import { LEGACY_RESIDENT_MODEL_ID, RESIDENT_MODEL_ID, SWAP_MODEL_ID } from "./tokens";
 
 type SettingsAction =
   | "knowledge-graph-status"
   | "knowledge-graph"
   | "knowledge-graph-focus"
-  | "room-upsert";
+  | "room-upsert" | "room-delete" | "room-catalog"
+  | "history-rooms" | "history-messages"
+  | "reply-history" | "geeknews-history"
+  | "voice-history-sessions" | "voice-history-messages" | "db-sync-history";
+
+export async function operatorPause(): Promise<EmergencyState | null> {
+  try { return parseEmergencyState(await invoke<unknown>("operator_pause")); }
+  catch { return null; }
+}
 
 export interface SettingsActionInput {
   query?: string;
@@ -27,6 +36,41 @@ export async function fetchRuntimeSnapshot(token: CancellationToken): Promise<Ru
     return unavailableSnapshot("snapshot_unavailable");
   }
 }
+
+export async function fetchEmergencyState(): Promise<EmergencyState | null> {
+  try {
+    return parseEmergencyState(await invoke<unknown>("fetch_emergency_state"));
+  } catch {
+    return null;
+  }
+}
+
+/** Opaque local checkpoint metadata; no Python process or graph contents. */
+export async function fetchKnowledgeRevision(): Promise<string | null> {
+  try { return await invoke<string | null>('fetch_knowledge_revision'); }
+  catch { return null; }
+}
+
+export async function operatorResume(explicitOptIn: boolean): Promise<EmergencyState | null> {
+  try {
+    return parseEmergencyState(await invoke<unknown>("operator_resume", { explicitOptIn }));
+  } catch {
+    return null;
+  }
+}
+
+export const EMERGENCY_STATE_EVENT = "alden://emergency-state";
+export type EmergencyStateSubscriber = (
+  handler: (state: EmergencyState) => void,
+) => Promise<() => void>;
+
+export const subscribeEmergencyState: EmergencyStateSubscriber = async (handler) => {
+  const unlisten = await listen<unknown>(EMERGENCY_STATE_EVENT, (event) => {
+    const state = parseEmergencyState(event.payload);
+    if (state) handler(state);
+  });
+  return () => unlisten();
+};
 
 export async function cancelRuntimeRequest(token: CancellationToken): Promise<void> {
   if (token.cancelled) return;
@@ -58,6 +102,15 @@ export async function fetchSettingsAction(
 
 export type LocalModelId = typeof RESIDENT_MODEL_ID | typeof SWAP_MODEL_ID;
 export type SettingsInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+
+export function normalizeLocalModelId(modelId: string | null): LocalModelId | null {
+  if (modelId === null) return null;
+  const normalized = modelId.replace(/^mlx\//, "");
+  if (normalized === RESIDENT_MODEL_ID || normalized === LEGACY_RESIDENT_MODEL_ID) {
+    return RESIDENT_MODEL_ID;
+  }
+  return normalized === SWAP_MODEL_ID ? SWAP_MODEL_ID : null;
+}
 
 export type BrowserToolStatus = "completed" | "aborted" | "rejected" | "failed";
 
@@ -176,12 +229,26 @@ function parseModelAction(
 ): ModelActionResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) return failedModelAction(action, model);
   const record = value as Record<string, unknown>;
-  const contractMatches = record.ok === true && record.action === action && record.model === model;
+  const responseMatches = record.action === action && record.model === model;
+  const contractMatches = record.ok === true && responseMatches;
   const stored = record.stored === true;
   const prepared = record.prepared === true;
   const needsPrepare = record.needs_prepare === true;
   const completed = action === "model-set" ? stored : prepared;
-  if (!contractMatches || !completed) return failedModelAction(action, model);
+  if (!contractMatches || !completed) {
+    const failed = failedModelAction(action, model);
+    if (
+      action === "model-set"
+      && responseMatches
+      && record.ok === false
+      && record.stored === false
+      && record.prepared === false
+      && record.needs_prepare === true
+    ) {
+      failed.needsPrepare = true;
+    }
+    return failed;
+  }
   return { ok: true, action, model, stored, prepared, needsPrepare };
 }
 
@@ -200,6 +267,78 @@ async function invokeLocalModelAction(
 
 export async function setResidentModel(invokeFn: SettingsInvoke = invoke): Promise<ModelActionResult> {
   return invokeLocalModelAction("model-set", RESIDENT_MODEL_ID, invokeFn);
+}
+
+export async function setSwapModel(invokeFn: SettingsInvoke = invoke): Promise<ModelActionResult> {
+  return invokeLocalModelAction("model-set", SWAP_MODEL_ID, invokeFn);
+}
+
+type ResidentLaunchReadyReason = "launch_ready" | "launch_already_running";
+
+export interface ResidentLaunchResult {
+  ok: boolean;
+  reason: ResidentLaunchReadyReason | "launch_failed";
+}
+
+export type ResidentModelSelectionPhase = "launching" | "retrying";
+export type ResidentModelSelectionOutcome = "selected" | "set_failed" | "launch_failed" | "retry_failed";
+
+export interface ResidentModelSelectionResult {
+  ok: boolean;
+  outcome: ResidentModelSelectionOutcome;
+}
+
+const RESIDENT_MODEL_NAME = RESIDENT_MODEL_ID.split("/", 2)[1];
+
+function parseResidentLaunch(value: unknown): ResidentLaunchResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, reason: "launch_failed" };
+  }
+  const record = value as Record<string, unknown>;
+  const reason = record.reason === "launch_ready" || record.reason === "launch_already_running"
+    ? record.reason
+    : null;
+  if (
+    record.ok !== true
+    || record.action !== "mlx-server-launch"
+    || record.model !== RESIDENT_MODEL_NAME
+    || reason === null
+  ) {
+    return { ok: false, reason: "launch_failed" };
+  }
+  return { ok: true, reason };
+}
+
+export async function launchResidentModel(invokeFn: SettingsInvoke = invoke): Promise<ResidentLaunchResult> {
+  try {
+    const value = await invokeFn<unknown>("fetch_settings_action", {
+      action: "mlx-server-launch",
+      model: RESIDENT_MODEL_ID,
+      explicitOptIn: true,
+    });
+    return parseResidentLaunch(value);
+  } catch {
+    return { ok: false, reason: "launch_failed" };
+  }
+}
+
+export async function selectResidentModel(
+  invokeFn: SettingsInvoke = invoke,
+  onPhase?: (phase: ResidentModelSelectionPhase) => void,
+): Promise<ResidentModelSelectionResult> {
+  const initial = await setResidentModel(invokeFn);
+  if (initial.ok) return { ok: true, outcome: "selected" };
+  if (!initial.needsPrepare) return { ok: false, outcome: "set_failed" };
+
+  onPhase?.("launching");
+  const launch = await launchResidentModel(invokeFn);
+  if (!launch.ok) return { ok: false, outcome: "launch_failed" };
+
+  onPhase?.("retrying");
+  const retry = await setResidentModel(invokeFn);
+  return retry.ok
+    ? { ok: true, outcome: "selected" }
+    : { ok: false, outcome: "retry_failed" };
 }
 
 export async function prepareSwapModel(invokeFn: SettingsInvoke = invoke): Promise<ModelActionResult> {
@@ -293,4 +432,9 @@ export async function cancelModelSwap(
   } catch {
     // Leave the request retryable; keep waiting for the authoritative outcome.
   }
+}
+
+export async function fetchVoiceStatus(): Promise<VoiceStatus> {
+  try { return parseVoiceStatus(await invoke<unknown>("fetch_voice_status")); }
+  catch { return parseVoiceStatus(null); }
 }

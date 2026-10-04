@@ -9,7 +9,7 @@
 
 use openkakao_cli::auto_reply_service::{select_reply_targets, FlowRecorder, ObservedMessage};
 use openkakao_cli::local_db::is_self_author;
-use openkakao_cli::logging::{SqliteHistoryStore, HistoryStore, Stage};
+use openkakao_cli::logging::{HistoryStore, SqliteHistoryStore, Stage};
 use proptest::prelude::*;
 
 /// Result code the pipeline records at Detect when owner messages are excluded.

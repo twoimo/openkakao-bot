@@ -1,0 +1,43 @@
+{
+  "schema": "alden-source-verification-20260930-v1",
+  "python": {
+    "runtime": "CPython3.11.9 pinned voice runtime",
+    "focused_ci": {
+      "selectors": 45,
+      "tests": 941,
+      "skipped": 2,
+      "failed": 0,
+      "elapsed_s": 100.534
+    },
+    "voice_abort_subset_tests": 97,
+    "photo_subset_tests": 5
+  },
+  "rust_cli": {
+    "passed": 1137,
+    "failed": 0,
+    "ignored": 1,
+    "suites": 42
+  },
+  "frontend": {
+    "vitest": 191,
+    "failed": 0,
+    "typescript": "pass",
+    "renderer_scope": "Chromium/WebGL2 and synthetic Tauri bridge"
+  },
+  "launchd_harness": "pass",
+  "tauri_bundle": "0.1.6; rebuilt final scripts; local ad-hoc",
+  "source_sha256": {
+    "scripts/alden_voice.py": "a74e2ce5a2cc8d9958c3e88c6f28dda1812b67b2d2e99cff9e0061bf1c882985",
+    "scripts/alden_abort.py": "a56768b800742d96368a292f7404fd1bbd021f58a6d42e9b014858460cf88dc4",
+    "scripts/auto-reply-worker.py": "8f48e4bf1fdc64903c1e70c06075fef93375f8db8da94e7bc332160d4b72c804",
+    "scripts/auto_reply_knowledge_graph.py": "66bad941e2c688f0658b0cb69f356b2cfde555d3226fe12b4d1a9961a5e12b0d",
+    "tests/test_alden_voice_turns.py": "9e2b6a055b0a9c132815867cc9488298bb0bcb589e839a3fc988df1da8097ae4",
+    "tests/test_auto_reply_cli_runtime.py": "f316750b71fa997e988711d184599301c20cb3d77abe32bcc0ba744d4276adf8",
+    "tests/test_auto_reply_knowledge_graph.py": "c0af8a33b30032a59f92ebab965d937b5ac861a9bf427d664ac6a1b4508c5ef1"
+  },
+  "limits": [
+    "Focused regression/source checks; not installed UI/microphone/full production delivery",
+    "No live-send test",
+    "Existing shared server and queues preserved"
+  ]
+}

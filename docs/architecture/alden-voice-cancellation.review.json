@@ -1,0 +1,13 @@
+{
+  "artifact_sha256": "ee1bcc155c1da703c78eeec189d656398a7aeddea97c89457ac0f0dd118f1946",
+  "reviewer": "parent image review",
+  "captures": [
+    "alden-voice-cancellation.visual-check.1440x900.light.png",
+    "alden-voice-cancellation.visual-check.2048x1320.dark.png"
+  ],
+  "result": "검토한 두 테마에서 실제 재생 티켓·완료 PCM과 입력/출력 진폭, 취소·대기·숨김 전이가 읽힌다. 라벨·노드·전이의 충돌을 발견하지 않았다. 작성 내용은 한국어, 고정 Viewer UI는 영어다.",
+  "deterministic_checks": 9,
+  "browser_viewports": 4,
+  "visual_review": "passed",
+  "correction_rounds": 0
+}

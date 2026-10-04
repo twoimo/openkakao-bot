@@ -1,0 +1,75 @@
+{
+  "sourceCommit": "51f71c2fd7b5efd2c56a1e063d102779c5825343",
+  "version": "0.1.6",
+  "installedExecutableSha256": "401a1dbb81a03139a6592da9d99b72735233022390819ebad060c56f432fadce",
+  "settings": {
+    "exitCode": 0,
+    "success": true,
+    "elapsedSeconds": 4.906083165900782,
+    "samples": 1,
+    "initialViewport": {
+      "width": 960,
+      "height": 848,
+      "dpr": 1
+    },
+    "compactViewport": {
+      "width": 640,
+      "height": 648,
+      "dpr": 1,
+      "scrollWidth": 623
+    },
+    "nativeCompact": {
+      "contentHeight": 680.0,
+      "contentWidth": 640.0,
+      "layoutHeight": 648.0,
+      "layoutWidth": 640.0,
+      "webviewHeight": 680.0,
+      "webviewWidth": 640.0
+    },
+    "graphNavigationRestored": true,
+    "overviewClearedDetail": true,
+    "workspaceSignals": [
+      {
+        "hiddenRenderDelta": 0,
+        "postToStoppedObservationUpperBoundMs": 13.051290999999999,
+        "sampleMs": 350,
+        "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+        "signal": "display-sleep"
+      },
+      {
+        "hiddenRenderDelta": 0,
+        "postToStoppedObservationUpperBoundMs": 14.568625,
+        "sampleMs": 350,
+        "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+        "signal": "session-inactive"
+      }
+    ],
+    "scope": "real persisted graph and renderer/navigation in owned floating audit window without key-window activation; runtime snapshot/GraphRAG focus lookup intentionally unavailable; captures private"
+  },
+  "core": {
+    "exitCode": 0,
+    "success": true,
+    "elapsedSeconds": 8.58065079106018,
+    "samples": 1,
+    "hideCycles": 10,
+    "hideUpperBoundMedianMs": 14.628521,
+    "hideUpperBoundMaxMs": 26.51725,
+    "hiddenRenderDeltaEvery350ms": 0,
+    "resumeRenderDeltaRange": [
+      3,
+      4
+    ],
+    "physicalMonitorScales": [
+      1.0
+    ]
+  },
+  "statisticsLimits": "no p95 or before/after improvement percentage; latency is request-to-observation upper bound; private RSS scope excludes WebKit/GPU children; no app-wide power claim",
+  "privateEvidence": "native captures, launch process samples and failed attempts preserved privately; no graph IDs/labels/facts published",
+  "failedPreparation": {
+    "compactValidation": "initial code incorrectly compared viewport against full content instead of visible contentLayoutRect; corrected from actual OS dimensions",
+    "occlusion": "normal-level focus-neutral audit showed no frame progress and blank graph; audit-only floating presentation verified actual unoccluded rendering",
+    "foreignExceptionAborts": 2,
+    "foreignExceptionCause": "unresolved; final candidate and installed runs passed; not claimed fixed"
+  },
+  "remaining": "primary normal-level physical UX, tray/shortcut, physical transitions, Retina2x, full settings backend/lookup, human voice, production worker and signed release not attested"
+}

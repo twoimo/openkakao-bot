@@ -1,0 +1,23 @@
+{
+  "before": {
+    "renders": 115,
+    "elapsed_ms": 5002.299999999988,
+    "fps": 22.989424864562356,
+    "interval_p50_ms": 49.5,
+    "interval_p95_ms": 50.10000000000582,
+    "draw_calls": 30,
+    "geometries": 33
+  },
+  "after": {
+    "renders": 151,
+    "elapsed_ms": 5005.500000095366,
+    "fps": 30.16681650127322,
+    "interval_p50_ms": 33.30000000000291,
+    "interval_p95_ms": 35.19999999999709,
+    "draw_calls": 30,
+    "geometries": 33
+  },
+  "scope": "One 5-second sample per variant; synthetic 22-node/22-edge browser fixture, 1200x760, same machine. Frame intervals are not render CPU/GPU duration.",
+  "fps_increase_percent": 31.220405377668413,
+  "interval_p95_reduction_percent": 29.74051896208982
+}

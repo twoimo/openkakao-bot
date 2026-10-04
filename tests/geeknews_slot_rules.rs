@@ -102,21 +102,17 @@ fn feed_ids_strategy() -> impl Strategy<Value = Vec<u32>> {
 /// A pre-existing cursor whose seen ids and posted slots are arbitrary but do
 /// not pre-mark the slot under test (that is handled by the test body).
 fn cursor_strategy() -> impl Strategy<Value = GeekNewsCursor> {
-    (
-        prop::collection::hash_set(1u32..1000, 0..6),
-        0u32..1000,
-    )
-        .prop_map(|(seen, newest)| {
-            let mut seen_ids: Vec<u32> = seen.into_iter().collect();
-            seen_ids.sort_unstable();
-            GeekNewsCursor {
-                feed: "https://news.hada.io/rss/news".to_string(),
-                newest_id: newest,
-                seen_ids,
-                posted_slots: Vec::new(),
-                updated_at: 0,
-            }
-        })
+    (prop::collection::hash_set(1u32..1000, 0..6), 0u32..1000).prop_map(|(seen, newest)| {
+        let mut seen_ids: Vec<u32> = seen.into_iter().collect();
+        seen_ids.sort_unstable();
+        GeekNewsCursor {
+            feed: "https://news.hada.io/rss/news".to_string(),
+            newest_id: newest,
+            seen_ids,
+            posted_slots: Vec::new(),
+            updated_at: 0,
+        }
+    })
 }
 
 proptest! {

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-30T05:43:52.238088+00:00",
+  "case": "synthetic_arithmetic",
+  "exact_adapter": "alden_voice.LocalMlxLlm.generate",
+  "prompt": "2+2는? 숫자만 답해.",
+  "cloud_calls": 0,
+  "new_kakao_sends": 0,
+  "reclaimable_bytes_before": 58816692224,
+  "flash_iq_admission_bytes": 64424509440,
+  "completed": true,
+  "answer": "4",
+  "arithmetic_correct": true,
+  "elapsed_s": 1.484731,
+  "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "base_url": "http://127.0.0.1:11234/v1",
+  "flash_iq_running": false,
+  "flash_iq_admission_passed": false,
+  "limitations": [
+    "One warmed synthetic arithmetic prompt is not general conversation latency or quality.",
+    "This invokes only the LLM adapter; microphone, wake detection, STT and TTS are not exercised.",
+    "The free+inactive+speculative memory estimate is not an allocation guarantee.",
+    "No memory threshold was lowered and no unrelated application was stopped."
+  ]
+}

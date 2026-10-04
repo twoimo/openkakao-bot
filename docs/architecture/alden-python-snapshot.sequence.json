@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "올든의 단일 스냅샷과 원자적 색인",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1360,
+      570
+    ]
+  },
+  "participants": [
+    {
+      "id": "source",
+      "type": "external",
+      "label": "활성 context mirror"
+    },
+    {
+      "id": "copy",
+      "type": "backend",
+      "label": "파일 복사 경계"
+    },
+    {
+      "id": "private",
+      "type": "database",
+      "label": "임시 DB·WAL"
+    },
+    {
+      "id": "read",
+      "type": "backend",
+      "label": "색인 주기 제어"
+    },
+    {
+      "id": "index",
+      "type": "database",
+      "label": "별도 지식 인덱스"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 295,
+      "label": "원본을 열지 않고 안정성 확인"
+    },
+    {
+      "from": 305,
+      "to": 445,
+      "label": "같은 사본을 읽고 전체 변경을 확정"
+    }
+  ],
+  "messages": [
+    {
+      "from": "copy",
+      "to": "source",
+      "y": 170,
+      "label": "DB·WAL·journal 서명 읽기",
+      "variant": "security"
+    },
+    {
+      "from": "source",
+      "to": "copy",
+      "y": 200,
+      "label": "journal 비어 있음 확인",
+      "variant": "return"
+    },
+    {
+      "from": "copy",
+      "to": "private",
+      "y": 230,
+      "label": "주기당 DB·WAL 사본 1개",
+      "variant": "emphasis"
+    },
+    {
+      "from": "copy",
+      "to": "source",
+      "y": 260,
+      "label": "서명 재확인·변경 시 최대 3회"
+    },
+    {
+      "from": "read",
+      "to": "private",
+      "y": 320,
+      "label": "모든 단계 mode=ro·query_only",
+      "variant": "security"
+    },
+    {
+      "from": "private",
+      "to": "read",
+      "y": 350,
+      "label": "같은 버전의 행·사본 SHM",
+      "variant": "return"
+    },
+    {
+      "from": "read",
+      "to": "index",
+      "y": 380,
+      "label": "SAVEPOINT 안에서 색인·FTS",
+      "variant": "emphasis"
+    },
+    {
+      "from": "index",
+      "to": "read",
+      "y": 410,
+      "label": "성공: 전체 확정 → Dense",
+      "variant": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "원본과 독자 보호",
+      "items": [
+        "원본 SQLite 연결·journal_mode 변경·강제 checkpoint 없이 복사한다.",
+        "단계별 commit을 보류하여 다른 독자는 완성된 색인만 읽는다."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "실패와 취소",
+      "items": [
+        "삼켜진 SQLite 오류도 수집하여 행·FTS·이전 watermark를 보존한다.",
+        "실패 시 Dense를 건너뛰며 호출자의 기존 transaction은 확정하지 않는다."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "schema": "alden-file-installed-readback-v1",
+  "code_commit": "c29e263e158db4bb5b0ddd28d2962bc74bfd1c78",
+  "captured_utc": "2026-09-30T16:59:15.271702+00:00",
+  "installed_app": "/Applications/Alden.app",
+  "version": "0.1.6",
+  "bundle_files": 30,
+  "resource_files": 27,
+  "bundle_byte_equal": true,
+  "source_sha256": "fc5c99eec5721b2f6dc0207cc57301cb86647d7ff47eee958bd70309bc770230",
+  "launchagent_pid": 11451,
+  "executable_verified": true,
+  "signature": "strict/deep ad-hoc verified",
+  "installed_document_parsers": [
+    {
+      "fixture": "txt",
+      "text_sha256": "5c2792e0c708a01ec0bf7a0329e0b54f400fa5454e834511a3f2549d1c8bcb89",
+      "same_as_measured_model_input": true
+    },
+    {
+      "fixture": "docx",
+      "text_sha256": "5c2792e0c708a01ec0bf7a0329e0b54f400fa5454e834511a3f2549d1c8bcb89",
+      "same_as_measured_model_input": true
+    },
+    {
+      "fixture": "xlsx",
+      "text_sha256": "396ed28998a1d33b2770c1513e564432c4b114c26c772ed117d8dafe843aabad",
+      "same_as_measured_model_input": true
+    },
+    {
+      "fixture": "pdf",
+      "text_sha256": "6a2fee9fc202339115e3d002f9bbd64c369d0175fca1a8becb47c4a2da7873fb",
+      "same_as_measured_model_input": true
+    }
+  ],
+  "installed_private_parser_child": true,
+  "embedded_cli_file_flags": true,
+  "native_ui_verified": false,
+  "actual_kakao_file_transport": false,
+  "worker_cutover": false,
+  "preservation": {
+    "enrollment_unchanged": true,
+    "queue_file_identities_preserved": 5,
+    "shared_stable_cli_unchanged": true
+  },
+  "backend_aggregate": {
+    "updated_at": "2026-09-30T16:59:15.030149+00:00",
+    "room_count": 3,
+    "ready_room_count": 3,
+    "readiness": "ready",
+    "authoritative": true,
+    "state": "running"
+  }
+}

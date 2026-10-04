@@ -63,10 +63,17 @@ fn all_windows_have_distinct_nonempty_titles_and_keys() {
         let key = w.key();
         assert!(!title.is_empty(), "{w:?} must have a non-empty menu title");
         assert!(!key.is_empty(), "{w:?} must have a non-empty key");
-        assert!(titles.insert(title), "duplicate menu title for {w:?}: {title:?}");
+        assert!(
+            titles.insert(title),
+            "duplicate menu title for {w:?}: {title:?}"
+        );
         assert!(keys.insert(key), "duplicate key for {w:?}: {key:?}");
     }
-    assert_eq!(titles.len(), EXPECTED_WINDOW_COUNT, "every title is distinct");
+    assert_eq!(
+        titles.len(),
+        EXPECTED_WINDOW_COUNT,
+        "every title is distinct"
+    );
     assert_eq!(keys.len(), EXPECTED_WINDOW_COUNT, "every key is distinct");
 }
 
@@ -119,7 +126,11 @@ fn all_five_windows_open_once_and_coexist() {
         assert_eq!(outcome, OpenOutcome::Opened, "{w:?} opens fresh");
     }
     assert_eq!(builds, EXPECTED_WINDOW_COUNT, "each window built once");
-    assert_eq!(shell.open_count(), EXPECTED_WINDOW_COUNT, "all five coexist");
+    assert_eq!(
+        shell.open_count(),
+        EXPECTED_WINDOW_COUNT,
+        "all five coexist"
+    );
 
     // A second pass focuses every window without any further builds.
     for w in AppWindow::all() {
@@ -132,7 +143,10 @@ fn all_five_windows_open_once_and_coexist() {
         assert_eq!(outcome, OpenOutcome::Focused, "{w:?} focuses");
         assert_eq!(shell.front(), Some(w), "{w:?} is frontmost after focus");
     }
-    assert_eq!(builds, EXPECTED_WINDOW_COUNT, "no rebuilds on the second pass");
+    assert_eq!(
+        builds, EXPECTED_WINDOW_COUNT,
+        "no rebuilds on the second pass"
+    );
     assert_eq!(shell.open_count(), EXPECTED_WINDOW_COUNT);
 }
 
@@ -244,9 +258,15 @@ fn failed_open_keeps_prior_windows_and_explains_plainly() {
             .expect_err("target open fails");
 
         // The failed window is not open; every prior window is untouched.
-        assert!(!shell.is_open(target), "{target:?} must not be open after failure");
+        assert!(
+            !shell.is_open(target),
+            "{target:?} must not be open after failure"
+        );
         for w in &priors {
-            assert!(shell.is_open(*w), "prior {w:?} preserved after {target:?} failure");
+            assert!(
+                shell.is_open(*w),
+                "prior {w:?} preserved after {target:?} failure"
+            );
         }
         assert_eq!(shell.open_count(), priors.len(), "no prior window lost");
         assert_eq!(shell.front(), last_front, "frontmost window unchanged");
@@ -273,8 +293,14 @@ fn open_failure_message_is_specific_for_every_window() {
     let mut messages: BTreeSet<String> = BTreeSet::new();
     for w in AppWindow::all() {
         let msg = window_open_failure_message(w);
-        assert!(msg.contains(w.menu_title()), "{w:?} message names the window");
-        assert!(msg.contains("다시 눌러"), "{w:?} message gives a next action");
+        assert!(
+            msg.contains(w.menu_title()),
+            "{w:?} message names the window"
+        );
+        assert!(
+            msg.contains("다시 눌러"),
+            "{w:?} message gives a next action"
+        );
         assert!(messages.insert(msg), "{w:?} message must be distinct");
     }
     assert_eq!(messages.len(), EXPECTED_WINDOW_COUNT);

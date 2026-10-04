@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "measured_at_kst": "2026-09-27T22:52:50",
+  "pid": 73818,
+  "scope": "Installed Alden main process only; excludes WebKit, browser, MLX and other processes",
+  "window_visibility": "not observed",
+  "method": "proc_pid_rusage RUSAGE_INFO_V0; native CPU ticks converted using mach_timebase_info",
+  "mach_timebase": {
+    "numer": 125,
+    "denom": 3
+  },
+  "calibration": {
+    "posix_cpu_seconds": 0.269302,
+    "native_cpu_ticks": 6464887,
+    "converted_ratio": 1.0002535876698528,
+    "raw_nanosecond_assumption_rejected": true
+  },
+  "elapsed_seconds": 20.01494325,
+  "cpu_seconds": 0.0,
+  "cpu_percent_of_one_core": 0.0,
+  "physical_footprint_mib_range": [
+    27.688552856445312,
+    27.688552856445312
+  ],
+  "resident_mib_range": [
+    99.625,
+    99.625
+  ],
+  "samples": [
+    {
+      "monotonic_ns": 1018776253506208,
+      "cpu_ticks": 7176672,
+      "resident_bytes": 104464384,
+      "physical_footprint_bytes": 29033552,
+      "start_abstime": 24421871190433
+    },
+    {
+      "monotonic_ns": 1018781254711166,
+      "cpu_ticks": 7176672,
+      "resident_bytes": 104464384,
+      "physical_footprint_bytes": 29033552,
+      "start_abstime": 24421871190433
+    },
+    {
+      "monotonic_ns": 1018786255645208,
+      "cpu_ticks": 7176672,
+      "resident_bytes": 104464384,
+      "physical_footprint_bytes": 29033552,
+      "start_abstime": 24421871190433
+    },
+    {
+      "monotonic_ns": 1018791258388416,
+      "cpu_ticks": 7176672,
+      "resident_bytes": 104464384,
+      "physical_footprint_bytes": 29033552,
+      "start_abstime": 24421871190433
+    },
+    {
+      "monotonic_ns": 1018796268449458,
+      "cpu_ticks": 7176672,
+      "resident_bytes": 104464384,
+      "physical_footprint_bytes": 29033552,
+      "start_abstime": 24421871190433
+    }
+  ],
+  "limitations": [
+    "No before/after comparison",
+    "No whole-app or whole-system memory claim",
+    "No hidden-window proof",
+    "No GPU or battery power measurement"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "python": "3.11.9 (main, Aug 14 2024, 04:17:21) [Clang 18.1.8 ]",
+  "python_executable": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+  "adapter_sha256": "3c65936b3f40e0d99f22e4cfa8ca014e648dd611507d436322eae41f8e2c2795",
+  "fixture_bytes": 223280,
+  "fixture_unchanged": true,
+  "privacy_canary_in_output": false,
+  "loopback_probes": false,
+  "definition": "cold launch-to-first status; warm direct collector vs persistent MCP roundtrip, process-block medians; dispatch CPU excludes outer serialization; no dot connection"
+}

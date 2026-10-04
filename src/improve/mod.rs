@@ -209,7 +209,10 @@ pub fn detect_signals(obs: &ReplyObservation, drift_threshold: f32) -> Vec<(Sign
         }
     }
     if obs.topic_similarity < drift_threshold {
-        out.push((SignalKind::TopicDrift, format!("drift<{drift_threshold:.2}")));
+        out.push((
+            SignalKind::TopicDrift,
+            format!("drift<{drift_threshold:.2}"),
+        ));
     }
     out
 }
@@ -861,8 +864,7 @@ pub trait ImproveStore {
     fn dismiss(&self, room_pid: &str, kind: SignalKind) -> Result<u32, ImproveError>;
 
     /// 같은 방·종류의 오탐 표시 횟수 (R8.4).
-    fn false_positive_count(&self, room_pid: &str, kind: SignalKind)
-        -> Result<u32, ImproveError>;
+    fn false_positive_count(&self, room_pid: &str, kind: SignalKind) -> Result<u32, ImproveError>;
 
     /// 같은 문제 유형(방·종류)의 개선 시도 횟수 (R8.14).
     fn attempts(&self, room_pid: &str, kind: SignalKind) -> Result<u8, ImproveError>;
@@ -874,8 +876,10 @@ pub trait ImproveStore {
     fn record_generation(&self, rec: &GenerationRecord) -> Result<(), ImproveError>;
 
     /// 세대 하나를 조회한다.
-    fn generation(&self, generation: KnobGeneration)
-        -> Result<Option<GenerationRecord>, ImproveError>;
+    fn generation(
+        &self,
+        generation: KnobGeneration,
+    ) -> Result<Option<GenerationRecord>, ImproveError>;
 
     /// 롤백된 구성 다이제스트 집합 (R8.19).
     fn rolled_back_digests(&self) -> Result<BTreeSet<KnobsDigest>, ImproveError>;
@@ -1053,11 +1057,7 @@ impl ImproveStore for SqliteImproveStore {
         self.false_positive_count(room_pid, kind)
     }
 
-    fn false_positive_count(
-        &self,
-        room_pid: &str,
-        kind: SignalKind,
-    ) -> Result<u32, ImproveError> {
+    fn false_positive_count(&self, room_pid: &str, kind: SignalKind) -> Result<u32, ImproveError> {
         let count: Option<i64> = self
             .conn
             .query_row(

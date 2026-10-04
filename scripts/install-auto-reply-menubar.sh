@@ -7,7 +7,7 @@ BACKEND=${OPENKAKAO_MENUBAR_BACKEND:-tauri}
 
 case "$BACKEND" in
   tauri)
-    exec "$ROOT/scripts/install-jarvis-desktop.sh" "$@"
+    exec "$ROOT/scripts/install-alden-desktop.sh" "$@"
     ;;
   swift)
     exec "$ROOT/scripts/install-swift-auto-reply-menubar.sh" "$@"

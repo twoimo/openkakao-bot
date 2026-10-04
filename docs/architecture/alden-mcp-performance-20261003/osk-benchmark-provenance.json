@@ -1,0 +1,14 @@
+{
+  "elapsed_seconds": 296.2652509212494,
+  "python": "3.11.9 (main, Aug 14 2024, 04:17:21) [Clang 18.1.8 ]",
+  "python_executable": "/Users/twoimo/Library/Application Support/openkakao/runtimes/menubar/bin/python3.11",
+  "pairs_per_condition": 30,
+  "warmup_calls": 5,
+  "warm_calls_per_process": 5,
+  "cold_definition": "fresh interpreter subprocess, includes startup/shutdown; filesystem cache not flushed",
+  "warm_definition": "p50/p95 of process-block medians after five untimed ticks; raw call quantiles stored separately",
+  "source_sha256": {
+    "baseline": "591526b2ebe8b70a066436c88b9950b53404bb2a8bc8bf505ab53c9dce4fc905",
+    "candidate": "b3c7b2c099d64bd379e35b51b091b88754959bfd202fc0d9fe3f79faf35bd741"
+  }
+}

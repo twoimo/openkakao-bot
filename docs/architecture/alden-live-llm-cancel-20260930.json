@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T07:27:04Z",
+  "model": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "samples": 1,
+  "before": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 0.0,
+    "mlx_serve:mlx_active_bytes": 21272588912.0
+  },
+  "running_before_cancel": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 1.0,
+    "mlx_serve:mlx_active_bytes": 21316148540.0
+  },
+  "after": {
+    "vllm:request_cancelled_total": 0.0,
+    "vllm:num_requests_running": 1.0,
+    "mlx_serve:mlx_active_bytes": 21784876437.0
+  },
+  "client_exit_ms": 22.624,
+  "server_idle_observed_ms": 3079.473,
+  "client_thread_stopped": true,
+  "exception": "AldenCancelled",
+  "reply_returned": false,
+  "backend_cancel_counter_delta": 0.0,
+  "limits": [
+    "One owned synthetic inference; not a physical global-shortcut measurement",
+    "No microphone, TTS, Kakao send, model swap, or global latch change",
+    "MLX allocator bytes include cached model resources and are not process RSS"
+  ]
+}

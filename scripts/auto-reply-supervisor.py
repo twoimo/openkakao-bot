@@ -88,7 +88,7 @@ def _find_cli_bin() -> Path:
     if bundle_bin.is_file():
         return bundle_bin
     tauri_app_bin = Path(
-        "/Applications/OpenKakao Jarvis.app/Contents/Resources/bin/openkakao-cli"
+        "/Applications/Alden.app/Contents/Resources/bin/openkakao-cli"
     )
     if tauri_app_bin.is_file():
         return tauri_app_bin

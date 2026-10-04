@@ -165,7 +165,10 @@ pub fn merge_configured_and_catalog_selectors_named(
     Ok(selectors)
 }
 
-fn binding_selector_named(chat: &crate::local_db::LocalChat, group_title: Option<&String>) -> String {
+fn binding_selector_named(
+    chat: &crate::local_db::LocalChat,
+    group_title: Option<&String>,
+) -> String {
     let name = if !chat.chat_name.trim().is_empty() {
         chat.chat_name.trim()
     } else if let Some(title) = group_title.filter(|title| !title.trim().is_empty()) {
@@ -209,7 +212,9 @@ pub enum RoomError {
     #[error("이미 자동화 목록에 있는 채팅방이에요. 목록은 그대로 두었어요.")]
     Duplicate(i64),
     /// The room does not exist or cannot be accessed (R6.4).
-    #[error("그 채팅방을 찾을 수 없거나 열 수 없어요. 채팅방이 있는지 확인한 뒤 다시 추가해 주세요.")]
+    #[error(
+        "그 채팅방을 찾을 수 없거나 열 수 없어요. 채팅방이 있는지 확인한 뒤 다시 추가해 주세요."
+    )]
     NotAccessible(i64),
     /// The room is not in the automation list, so it cannot be removed/toggled.
     #[error("자동화 목록에 없는 채팅방이에요. 먼저 채팅방을 추가해 주세요.")]

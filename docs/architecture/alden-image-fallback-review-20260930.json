@@ -1,0 +1,32 @@
+{
+  "schema": "alden-scoped-image-fallback-review-v1",
+  "reviewer": "Cicero independent tiny fixtures CPython3.11.9",
+  "reviewed_worker_sha256": "6cd1a59aa9ca85cea76a73559583fcf3b7d494b7f0c2c4d7e66804e8077eb77d",
+  "cases": [
+    {
+      "scenario": "primary cooldown then unreadable image",
+      "next_fallback_calls": 0,
+      "fallback_lease_releases": 1,
+      "provider_failure_closures": 0,
+      "model_invoked": false
+    },
+    {
+      "scenario": "synthetic primary429 then unreadable image",
+      "next_fallback_calls": 0,
+      "fallback_lease_releases": 1,
+      "primary_failure_closures": 1,
+      "fallback_failure_closures": 0,
+      "model_invoked": true
+    }
+  ],
+  "fallback_consecutive_failures_before_after": [
+    3,
+    3
+  ],
+  "evidence_ids": [],
+  "limits": [
+    "Fake transport and private temporary circuit DB only",
+    "No source/sharedservice/liveDB/queue/send mutation",
+    "Later attachment changes outside this scoped review"
+  ]
+}

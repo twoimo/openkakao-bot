@@ -11,7 +11,7 @@ import { MAIN_PANEL_CONTROLS, mainPanelMarkup, settingsMarkup } from "../ui";
 const read = (relative: string): string =>
   readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
 
-const STYLES = read("../styles.css");
+const STYLES = read("../styles.css") + read("../settings.css");
 const PANEL = mainPanelMarkup();
 const SETTINGS = settingsMarkup();
 
@@ -35,12 +35,9 @@ const REMOVED_TOKENS = [
 ];
 
 const SETTINGS_SECTIONS = [
-  "대상 채팅방",
-  "AI 답변",
-  "음성",
-  "카카오톡 대화",
-  "대화에서 찾기",
-  "최근 답변",
+  "채팅방 자동화",
+  "대화 모델",
+  "음성 대화",
 ];
 
 const offending = (text: string): string[] =>
@@ -69,9 +66,12 @@ describe("removed UI surfaces stay removed", () => {
 
   it("reintroduces no removed control in the settings markup", () => {
     expect(offending(SETTINGS)).toEqual([]);
-    for (const technical of ["Qwen3", "MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "BM25", "RRF", "threshold", "RMS"]) {
+    // Model names are now an explicit user request; diagnostic jargon remains absent.
+    for (const technical of ["MLX", "GraphRAG", "DREAM-RSI", "E-R-E", "BM25", "RRF", "threshold", "RMS"]) {
       expect(SETTINGS).not.toContain(technical);
     }
+    expect(SETTINGS).toContain('Qwen3.8 Flash Next');
+    expect(SETTINGS).toContain('Qwen3.8 27B');
   });
 
   it("reintroduces no removed control in the stylesheet", () => {
@@ -79,13 +79,14 @@ describe("removed UI surfaces stay removed", () => {
   });
 
   it("keeps the settings window to its declared sections in order", () => {
-    const headings = [...SETTINGS.matchAll(/<h2[^>]*>([^<]+)<\/h2>/g)].map((match) => match[1]);
+    document.body.innerHTML = SETTINGS;
+    const headings = [...document.querySelectorAll("#settings-page-settings h2")].map(node => node.textContent);
     expect(headings).toEqual(SETTINGS_SECTIONS);
   });
 
   it("keeps every settings surface inside the one window", () => {
     expect((SETTINGS.match(/<main\b/g) ?? []).length).toBe(1);
-    expect(SETTINGS).toContain('<main class="settings-shell">');
+    expect(SETTINGS).toContain('<main class="settings-shell" aria-label="올든"');
     expect(SETTINGS).not.toContain("<iframe");
     expect(PANEL).not.toContain("<iframe");
   });

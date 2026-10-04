@@ -1,0 +1,22 @@
+{
+  "rust": {
+    "passed": 89,
+    "skipped": 0,
+    "failed": 0,
+    "runtime": "local pinned Cargo.lock, offline"
+  },
+  "frontend": {
+    "passed": 191,
+    "failed": 0,
+    "durationSec": 1.35
+  },
+  "clippy": "all targets -D warnings passed",
+  "frontendBuild": "passed",
+  "nativeAppBuild": "passed with CARGO_NET_OFFLINE=true, sandbox deny network, ad-hoc identity",
+  "python": "current hosted full focused suite passed; no local repeat for unchanged Python source",
+  "hostedPythonLogSummary": [
+    "Tauri desktop and focused Python tests\tRun focused local AI tests\t2026-09-30T23:08:05.7357350Z Ran 1054 tests in 52.070s",
+    "Tauri desktop and focused Python tests\tRun focused local AI tests\t2026-09-30T23:08:05.7358450Z OK (skipped=83)"
+  ],
+  "remoteCI": "4/4 success for exact source4838fff"
+}

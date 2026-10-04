@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-04",
+  "version": "0.3.15",
+  "scope": "Current installed bundle and isolated-state launcher preflight; no new model inference or latency gain",
+  "bundle": {
+    "name": "MLX-Serve",
+    "id": "com.dalcu.mlx-core",
+    "version": "26.10.1"
+  },
+  "resolution": {
+    "before_reason": "launch_executable_unsafe",
+    "after_reason": "valid",
+    "actual_installed_preflight": {
+      "action": "mlx-server-launch",
+      "model": null,
+      "ok": false,
+      "reason": "launch_memory_insufficient",
+      "stage": "failed",
+      "stages": [
+        "validate",
+        "executable",
+        "model_dir",
+        "models_dir",
+        "port_check",
+        "memory_check"
+      ]
+    }
+  },
+  "memory_observation": {
+    "available_bytes": 53005877248,
+    "required_bytes": 64424509440,
+    "deficit_bytes": 11418632192
+  },
+  "model_inventory": {
+    "shards": 101,
+    "tensor_index_entries": 3167,
+    "missing_shards": 0,
+    "ngram_bytes": 32000153976
+  },
+  "checks": {
+    "focused_cases_passed": 68,
+    "menu_cases_passed": 177,
+    "installed_files_sha_matched": 41,
+    "installed_file_set_exact": true,
+    "signature": "deep/strict ad-hoc valid after corrected -E -B -s audit",
+    "preserved_configs_and_cli": 3,
+    "preserved_model_preferences": 3,
+    "preserved_processes": 5,
+    "model_residency_file_remains_absent": true,
+    "new_server_started": false,
+    "inference": "not_executed",
+    "latency_improvement": "not_measured"
+  },
+  "goal_status": "active"
+}

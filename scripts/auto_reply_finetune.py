@@ -1447,6 +1447,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-batches", type=int, default=4)
     parser.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
     parser.add_argument("--dpo-pairs", type=Path, default=None, help="선호 쌍 JSONL 경로")
+    parser.add_argument("--model-evaluation-dataset", type=Path, default=None,
+                        help="train/validation/test가 분리된 검증 선호 쌍 JSON")
+    parser.add_argument("--evaluation-version", default=None, help="평가 대상 제품 버전")
+    parser.add_argument("--evaluation-root", type=Path, default=None, help="private 버전 평가 receipt 경로")
+    parser.add_argument("--evaluation-final-test", action="store_true", help="최종 held-out test를 명시적으로 평가")
+    parser.add_argument("--evaluation-deadline", type=float, default=120)
+    parser.add_argument("--dpo-beta", type=float, default=0.1)
+    parser.add_argument("--dpo-train-dataset", type=Path, default=None,
+                        help="분리된 선호 쌍 JSON으로 offline DPO adapter를 학습")
+    parser.add_argument("--dpo-training-root", type=Path, default=None, help="private DPO candidate 경로")
+    parser.add_argument("--dpo-training-steps", type=int, default=10)
+    parser.add_argument("--dpo-training-learning-rate", type=float, default=1e-5)
+    parser.add_argument("--dpo-training-rank", type=int, default=8)
+    parser.add_argument("--dpo-training-layers", type=int, default=1)
+    parser.add_argument("--dpo-training-deadline", type=float, default=300)
+    parser.add_argument("--dpo-adapter-dir", type=Path, default=None, help="기본 모델에 묶인 DPO policy adapter")
     parser.add_argument(
         "--dpo-ref-pairs",
         type=Path,
@@ -1457,6 +1473,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--dpo-capture",
         action="store_true",
         help="로컬 게이트웨이에서 응답 토큰 로그확률을 실제로 수집",
+    )
+    parser.add_argument(
+        "--dpo-score-local",
+        action="store_true",
+        help="지정한 로컬 MLX checkpoint로 chosen/rejected를 teacher forcing 채점",
+    )
+    parser.add_argument("--dpo-policy-dir", type=Path, default=None, help="로컬 policy checkpoint 절대경로")
+    parser.add_argument(
+        "--dpo-checkpoint-format",
+        choices=("auto", "mlx-lm", "mlx-serve-qwen3_5-converted"), default="auto",
+        help="로컬 checkpoint 정규화/Conv1d 변환 계약; 추측이 필요한 auto 입력은 평가 불가",
+    )
+    parser.add_argument(
+        "--dpo-reference-dir", type=Path, default=None, help="로컬 frozen reference checkpoint 절대경로"
     )
     parser.add_argument(
         "--dpo-base-url",
@@ -1470,7 +1500,38 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.dpo_train_dataset is not None:
+        if (args.train or args.evaluate or args.prepare_only or args.dpo_pairs is not None
+                or args.dpo_capture or args.dpo_score_local or args.model_evaluation_dataset is not None
+                or args.dpo_adapter_dir is not None or args.evaluation_version is not None
+                or args.evaluation_root is not None or args.evaluation_final_test):
+            parser.error("offline DPO training cannot be mixed with SFT or evaluation modes")
+        if args.dpo_training_root is None:
+            parser.error("offline DPO training requires --dpo-training-root")
+        try:
+            from scripts.alden_dpo_training import run_cli
+        except ImportError:
+            from alden_dpo_training import run_cli
+        return run_cli(args)
+    if args.dpo_training_root is not None:
+        parser.error("--dpo-training-root requires --dpo-train-dataset")
+    if args.model_evaluation_dataset is not None:
+        if (args.train or args.evaluate or args.prepare_only or args.dpo_pairs is not None
+                or args.dpo_capture or args.dpo_score_local):
+            parser.error("version evaluation cannot be mixed with training, preparation or legacy DPO modes")
+        if args.evaluation_version is None or args.evaluation_root is None:
+            parser.error("version evaluation requires --evaluation-version and --evaluation-root")
+        try:
+            from scripts.alden_model_evaluation import run_cli
+        except ImportError:
+            from alden_model_evaluation import run_cli
+        return run_cli(args)
+    if args.evaluation_version is not None or args.evaluation_root is not None or args.evaluation_final_test:
+        parser.error("version evaluation options require --model-evaluation-dataset")
+    if args.dpo_adapter_dir is not None:
+        parser.error("--dpo-adapter-dir requires --model-evaluation-dataset")
     state_root = (args.state_root or _default_state_root()).expanduser()
     golden = (args.golden or _default_golden(state_root)).expanduser()
     data_dir = (args.data_dir or state_root / "finetune" / "data").expanduser()
@@ -1525,20 +1586,52 @@ def main(argv: Sequence[str] | None = None) -> int:
             if "baseline" in report:
                 report["comparison"] = compare_runs(report["baseline"], report["tuned"])
 
-    if args.dpo_pairs is not None:
-        # 로컬 게이트웨이가 생성한 토큰의 실제 로그확률만 사용한다. 값이 없으면
-        # build_dpo_report가 평가 불가로 닫고 문자열 유사도로 대체하지 않는다.
-        report["dpo"] = build_dpo_report(
-            pairs_path=args.dpo_pairs.expanduser(),
-            base_url=args.dpo_base_url,
-            model=args.dpo_model or model,
-            ref_pairs_path=(
-                args.dpo_ref_pairs.expanduser() if args.dpo_ref_pairs is not None else None
-            ),
-            max_tokens=args.dpo_max_tokens,
-            samples=args.dpo_samples,
-            tokenizer_id=args.dpo_model or model,
-        )
+    if args.dpo_score_local and args.dpo_pairs is None:
+        report["dpo"] = {
+            "status": DPO_EVAL_UNAVAILABLE,
+            "reason": "pairs_missing",
+            "scoring_method": "mlx_direct_teacher_forcing",
+            "string_similarity_used": False,
+            "pairs": [],
+        }
+    elif args.dpo_pairs is not None:
+        if args.dpo_score_local:
+            pairs, pair_error = load_preference_pairs(args.dpo_pairs.expanduser())
+            if pair_error:
+                report["dpo"] = {
+                    "status": DPO_EVAL_UNAVAILABLE,
+                    "reason": pair_error,
+                    "scoring_method": "mlx_direct_teacher_forcing",
+                    "string_similarity_used": False,
+                    "pairs": [],
+                }
+            else:
+                try:
+                    from scripts.alden_dpo_scorer import score_local_dpo_pairs
+                except ImportError:  # Direct execution: python scripts/auto_reply_finetune.py
+                    from alden_dpo_scorer import score_local_dpo_pairs
+
+                report["dpo"] = score_local_dpo_pairs(
+                    pairs,
+                    policy_dir=args.dpo_policy_dir,
+                    reference_dir=args.dpo_reference_dir,
+                    checkpoint_format=args.dpo_checkpoint_format,
+                    dpo_loss_fn=dpo_loss_from_logprobs,
+                )
+        else:
+            # 기존 게이트웨이 경로는 생성된 토큰 로그확률을 수집한다. 임의의 고정
+            # 응답 teacher forcing 채점과 구분하며 문자열 유사도로 대체하지 않는다.
+            report["dpo"] = build_dpo_report(
+                pairs_path=args.dpo_pairs.expanduser(),
+                base_url=args.dpo_base_url,
+                model=args.dpo_model or model,
+                ref_pairs_path=(
+                    args.dpo_ref_pairs.expanduser() if args.dpo_ref_pairs is not None else None
+                ),
+                max_tokens=args.dpo_max_tokens,
+                samples=args.dpo_samples,
+                tokenizer_id=args.dpo_model or model,
+            )
 
     report_path = data_dir / "finetune-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1566,17 +1659,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"손실: {cmp_['baseline_loss']} → {cmp_['tuned_loss']} (개선 {cmp_['improved']})")
         if "dpo" in report:
             dpo = report["dpo"]
-            evaluation = dpo.get("evaluation") or {}
-            probe = dpo.get("scoring_probe") or {}
-            captured = dpo.get("capture") or {}
-            print(
-                f"DPO: {dpo.get('status')} · 수집 {captured.get('captured', 0)}쌍 · "
-                f"평가 {evaluation.get('evaluated', 0)} · 평가 불가 {evaluation.get('unavailable', 0)}"
-            )
-            print(
-                "  응답 문자열 채점 지원: "
-                f"{probe.get('supports_response_scoring')} ({probe.get('reason', '')})"
-            )
+            if dpo.get("scoring_method") == "mlx_direct_teacher_forcing":
+                print(
+                    f"DPO(local): {dpo.get('status')} · 평가 {dpo.get('evaluated', 0)} · "
+                    f"loss {dpo.get('mean_loss')}"
+                )
+            else:
+                evaluation = dpo.get("evaluation") or {}
+                probe = dpo.get("scoring_probe") or {}
+                captured = dpo.get("capture") or {}
+                print(
+                    f"DPO: {dpo.get('status')} · 수집 {captured.get('captured', 0)}쌍 · "
+                    f"평가 {evaluation.get('evaluated', 0)} · 평가 불가 {evaluation.get('unavailable', 0)}"
+                )
+                print(
+                    "  응답 문자열 채점 지원: "
+                    f"{probe.get('supports_response_scoring')} ({probe.get('reason', '')})"
+                )
     return 0
 
 

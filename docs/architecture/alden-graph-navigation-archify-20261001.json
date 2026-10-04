@@ -1,0 +1,16 @@
+{
+  "diagram_type": "workflow",
+  "output": "alden-graph-navigation-20261001.html",
+  "specification_sha256": "978f4eeff1e01a12d41884ca6a629a5fda52814076dfa922ae27a3e6c12d53f5",
+  "artifact_sha256": "f088f0d11f8d9d9f70d1a38b37f2e3cb9fb79a009a2a2d0df57d52b251a904fd",
+  "validation": "9/9 showcase, 0 errors, 0 warnings",
+  "browser_evidence": "passed",
+  "visual_review": "passed",
+  "correction_rounds": 2,
+  "reviewer": "parent image-capable assistant",
+  "visualScope": "actual four light/dark screenshots at 1440x900 and 2048x1320; no icon/text overlap or route masking; four viewport containment passed",
+  "viewerLanguage": "Korean authored content; fixed Viewer UI and html lang fall back to English",
+  "metadataRedacted": [
+    "absolute output path"
+  ]
+}

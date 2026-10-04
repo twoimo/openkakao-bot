@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "51a9cc08e9710667ee609853b2216f21d0e65772",
+  "version": "0.1.7",
+  "matchedBundleFiles": 33,
+  "signatureVerification": "deep strict passed; local ad-hoc",
+  "osk": {
+    "nodeCount": 50,
+    "pending": 0,
+    "conflicts": 0,
+    "automaticAppTicksObserved": 3,
+    "helperReadback": true,
+    "focusReadbackFacts": 5
+  },
+  "nativeAudit": {
+    "success": true,
+    "mode": "isolated-settings-persisted-graph-read-only",
+    "scope": "owned settings renderer with real persisted graph; other settings unavailable; no GraphRAG lookup/inference/production commands; no primary-process/physical-transition/tray/shortcut/voice attestation",
+    "defaultWidth": 1200,
+    "compactWidth": 640,
+    "hiddenSamples": [
+      {
+        "signal": "display-sleep",
+        "sampleMs": 350,
+        "hiddenRenderDelta": 0
+      },
+      {
+        "signal": "session-inactive",
+        "sampleMs": 350,
+        "hiddenRenderDelta": 0
+      }
+    ]
+  },
+  "primaryUi": "CUA timeout; no primary window manipulation attestation",
+  "preserved": "model/worker identities and shared config/enrollment/CLI hashes unchanged",
+  "sourceCI": "https://github.com/twoimo/openkakao-bot/actions/runs/36855790019",
+  "production": "not released; Developer ID Application absent, six Apple workflow secrets absent"
+}

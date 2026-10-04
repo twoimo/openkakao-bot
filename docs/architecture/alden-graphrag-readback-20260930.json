@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-30T06:24:31.116094+00:00",
+  "module_source": "installed Alden.app/Contents/Resources/scripts/auto_reply_knowledge_graph.py",
+  "source_sha256": "927a7f98d55d87b224b6e7417a0a6fae205afd6fc72f0a057e534c66febabeec",
+  "status": {
+    "ok": true,
+    "stale": true,
+    "snapshot_status": "copy_ok",
+    "indexed_at": 1790748628,
+    "indexed_count": 31,
+    "dense_status": "indexed:50",
+    "dense_indexed_at": 1790748629
+  },
+  "cases": [
+    {
+      "search_mode": "rrf",
+      "fact_count": 6,
+      "candidate_count": 40,
+      "entities_count": 19,
+      "relations_count": 3,
+      "focus_k": 2,
+      "focus_node_count": 21,
+      "focus_edge_count": 124,
+      "index_version": "unit4-rrf-bm25-dense-v1",
+      "ok": true,
+      "query": "AI",
+      "elapsed_s": 1.631956
+    },
+    {
+      "search_mode": "rrf",
+      "fact_count": 6,
+      "candidate_count": 40,
+      "entities_count": 18,
+      "relations_count": 3,
+      "focus_k": 2,
+      "focus_node_count": 21,
+      "focus_edge_count": 138,
+      "index_version": "unit4-rrf-bm25-dense-v1",
+      "ok": true,
+      "query": "인공지능",
+      "elapsed_s": 0.119357
+    },
+    {
+      "search_mode": "rrf",
+      "fact_count": 6,
+      "candidate_count": 40,
+      "entities_count": 18,
+      "relations_count": 3,
+      "focus_k": 2,
+      "focus_node_count": 21,
+      "focus_edge_count": 121,
+      "index_version": "unit4-rrf-bm25-dense-v1",
+      "ok": true,
+      "query": "RAG",
+      "elapsed_s": 0.03916
+    },
+    {
+      "search_mode": "rrf",
+      "fact_count": 6,
+      "candidate_count": 40,
+      "entities_count": 17,
+      "relations_count": 3,
+      "focus_k": 2,
+      "focus_node_count": 21,
+      "focus_edge_count": 121,
+      "index_version": "unit4-rrf-bm25-dense-v1",
+      "ok": true,
+      "query": "주식",
+      "elapsed_s": 0.041775
+    }
+  ],
+  "new_manual_sends": 0,
+  "cloud_model_calls": 0,
+  "limitations": [
+    "Queries read the existing graph store; no Kakao source reindex is triggered.",
+    "Four query timings are not a latency distribution or comparative speedup.",
+    "Search mode and bounded graph output do not measure factual relevance.",
+    "Installed Python helper invocation does not exercise a Tauri UI event."
+  ],
+  "rrf_case_count": 4,
+  "case_count": 4
+}

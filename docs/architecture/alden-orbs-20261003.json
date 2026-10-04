@@ -1,0 +1,799 @@
+{
+  "schema_version": 1,
+  "version": "0.3.9",
+  "source_commit": "95e8482be841a339de1e0a19ebd87095ef0efd36",
+  "feature_commit": "c4ce8a34be591137287297e204c62adc12d2541a",
+  "verification_levels": {
+    "source": "implemented",
+    "tests": {
+      "ui": 231,
+      "native": 94,
+      "python": 1149,
+      "skipped": 28,
+      "clippy": "passed"
+    },
+    "browser": {
+      "scope": "Cua in-app browser, source code with explicitly synthetic development data",
+      "idle": [
+        {
+          "durationMs": 1000,
+          "graph": 0,
+          "orbs": 0
+        },
+        {
+          "durationMs": 1000,
+          "graph": 0,
+          "orbs": 0
+        },
+        {
+          "durationMs": 1000,
+          "graph": 0,
+          "orbs": 0
+        }
+      ],
+      "screenshots": [
+        "node-evidence.jpg"
+      ],
+      "activeBefore": {
+        "durationMs": 1001.4000000953674,
+        "frames": 23,
+        "graph": {
+          "audioVertices": 128,
+          "canGoBack": false,
+          "displayedRms": 0,
+          "edgeCount": 22,
+          "focusSlot": -1,
+          "focused": false,
+          "hops": 0,
+          "lastRenderAtMs": 227230.2,
+          "nodeCount": 22,
+          "orbActive": true,
+          "orbCacheBytes": 521248,
+          "orbCount": 4,
+          "orbState": "searching",
+          "pendingFrame": true,
+          "renderCount": 5196,
+          "running": true,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          },
+          "voiceRms": 0,
+          "voiceSource": "none"
+        },
+        "labelMutations": 138,
+        "orbs": {
+          "animated": 3,
+          "cacheBytes": 521248,
+          "lastRenderAtMs": 227230.2,
+          "pendingFrame": true,
+          "renderCount": 5196,
+          "running": true
+        }
+      },
+      "activeBeforeSamples": [
+        {
+          "durationMs": 1001.4000000953674,
+          "frames": 23,
+          "graph": {
+            "audioVertices": 128,
+            "canGoBack": false,
+            "displayedRms": 0,
+            "edgeCount": 22,
+            "focusSlot": -1,
+            "focused": false,
+            "hops": 0,
+            "lastRenderAtMs": 227230.2,
+            "nodeCount": 22,
+            "orbActive": true,
+            "orbCacheBytes": 521248,
+            "orbCount": 4,
+            "orbState": "searching",
+            "pendingFrame": true,
+            "renderCount": 5196,
+            "running": true,
+            "targets": {
+              "camera": [
+                0,
+                0,
+                5.2
+              ],
+              "lookAt": [
+                0,
+                0,
+                0
+              ]
+            },
+            "voiceRms": 0,
+            "voiceSource": "none"
+          },
+          "labelMutations": 138,
+          "orbs": {
+            "animated": 3,
+            "cacheBytes": 521248,
+            "lastRenderAtMs": 227230.2,
+            "pendingFrame": true,
+            "renderCount": 5196,
+            "running": true
+          }
+        },
+        {
+          "durationMs": 1002.0999999046326,
+          "frames": 23,
+          "labelMutations": 138
+        },
+        {
+          "durationMs": 1001.5,
+          "frames": 23,
+          "labelMutations": 138
+        }
+      ],
+      "activeAfterSamples": [
+        {
+          "durationMs": 1002.7000000476836,
+          "frames": 22,
+          "labelMutations": 0
+        },
+        {
+          "durationMs": 1002.2999999523164,
+          "frames": 23,
+          "labelMutations": 0
+        },
+        {
+          "durationMs": 1001.7000000476836,
+          "frames": 22,
+          "labelMutations": 0
+        }
+      ],
+      "hidden": {
+        "graphFrames": 0,
+        "graphPause": {
+          "eventAtMs": 411388.90000009537,
+          "eventToLastFrameMs": 0,
+          "lastFrameOffsetFromEventMs": -5.70000009535579,
+          "lastRenderAtMs": 411383.2,
+          "observedAtMs": 412390.5,
+          "pendingFrame": false,
+          "renderCountAtEvent": 9347,
+          "renderCountAtObservation": 9347,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        },
+        "orbFrames": 0,
+        "orbPause": {
+          "eventAtMs": 411388.7000000477,
+          "eventToLastFrameMs": 0,
+          "lastFrameOffsetFromEventMs": -5.500000047672074,
+          "lastRenderAtMs": 411383.2,
+          "observedAtMs": 412390.5,
+          "pendingFrame": false,
+          "renderCountAtEvent": 9347,
+          "renderCountAtObservation": 9347,
+          "rendersAfterEvent": 0,
+          "running": false,
+          "state": "hidden"
+        }
+      },
+      "reopens": [
+        {
+          "graphPending": true,
+          "graphRunning": true,
+          "orbsAnimated": 3,
+          "orbsRunning": true
+        },
+        {
+          "graphPending": true,
+          "graphRunning": true,
+          "orbsAnimated": 3,
+          "orbsRunning": true
+        },
+        {
+          "graphPending": true,
+          "graphRunning": true,
+          "orbsAnimated": 3,
+          "orbsRunning": true
+        },
+        {
+          "graphPending": true,
+          "graphRunning": true,
+          "orbsAnimated": 3,
+          "orbsRunning": true
+        },
+        {
+          "graphPending": true,
+          "graphRunning": true,
+          "orbsAnimated": 3,
+          "orbsRunning": true
+        }
+      ],
+      "viewports": [
+        {
+          "size": [
+            1200,
+            760
+          ],
+          "scroll": [
+            1200,
+            760
+          ],
+          "version": "v0.3.8",
+          "centerOffset": 0.5,
+          "nodes": 22,
+          "graph": {
+            "running": false,
+            "pendingFrame": false,
+            "renderCount": 1,
+            "lastRenderAtMs": 131.2,
+            "voiceRms": 0,
+            "voiceSource": "none",
+            "displayedRms": 0,
+            "audioVertices": 128,
+            "orbCount": 4,
+            "orbState": "solving",
+            "orbActive": false,
+            "orbCacheBytes": 20728,
+            "nodeCount": 22,
+            "edgeCount": 22,
+            "hops": 0,
+            "focused": false,
+            "focusSlot": -1,
+            "canGoBack": false,
+            "targets": {
+              "camera": [
+                0,
+                0,
+                5.2
+              ],
+              "lookAt": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          "name": "wide",
+          "deviceScale": 1
+        },
+        {
+          "size": [
+            640,
+            680
+          ],
+          "scroll": [
+            640,
+            680
+          ],
+          "version": "v0.3.8",
+          "centerOffset": 0.5,
+          "nodes": 22,
+          "graph": {
+            "running": false,
+            "pendingFrame": false,
+            "renderCount": 1,
+            "lastRenderAtMs": 79.3,
+            "voiceRms": 0,
+            "voiceSource": "none",
+            "displayedRms": 0,
+            "audioVertices": 128,
+            "orbCount": 4,
+            "orbState": "solving",
+            "orbActive": false,
+            "orbCacheBytes": 20728,
+            "nodeCount": 22,
+            "edgeCount": 22,
+            "hops": 0,
+            "focused": false,
+            "focusSlot": -1,
+            "canGoBack": false,
+            "targets": {
+              "camera": [
+                0,
+                0,
+                5.2
+              ],
+              "lookAt": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          "name": "minimum",
+          "deviceScale": 1
+        },
+        {
+          "size": [
+            1600,
+            1000
+          ],
+          "scroll": [
+            1600,
+            1000
+          ],
+          "version": "v0.3.8",
+          "centerOffset": 0.5,
+          "nodes": 22,
+          "graph": {
+            "running": false,
+            "pendingFrame": false,
+            "renderCount": 1,
+            "lastRenderAtMs": 116.4,
+            "voiceRms": 0,
+            "voiceSource": "none",
+            "displayedRms": 0,
+            "audioVertices": 128,
+            "orbCount": 4,
+            "orbState": "solving",
+            "orbActive": false,
+            "orbCacheBytes": 20728,
+            "nodeCount": 22,
+            "edgeCount": 22,
+            "hops": 0,
+            "focused": false,
+            "focusSlot": -1,
+            "canGoBack": false,
+            "targets": {
+              "camera": [
+                0,
+                0,
+                5.2
+              ],
+              "lookAt": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          "name": "expanded",
+          "deviceScale": 1
+        },
+        {
+          "size": [
+            1200,
+            760
+          ],
+          "scroll": [
+            1200,
+            760
+          ],
+          "version": "v0.3.8",
+          "centerOffset": 0.5,
+          "nodes": 22,
+          "graph": {
+            "running": false,
+            "pendingFrame": false,
+            "renderCount": 1,
+            "lastRenderAtMs": 106.9,
+            "voiceRms": 0,
+            "voiceSource": "none",
+            "displayedRms": 0,
+            "audioVertices": 128,
+            "orbCount": 4,
+            "orbState": "solving",
+            "orbActive": false,
+            "orbCacheBytes": 20728,
+            "nodeCount": 22,
+            "edgeCount": 22,
+            "hops": 0,
+            "focused": false,
+            "focusSlot": -1,
+            "canGoBack": false,
+            "targets": {
+              "camera": [
+                0,
+                0,
+                5.2
+              ],
+              "lookAt": [
+                0,
+                0,
+                0
+              ]
+            }
+          },
+          "name": "retina-emulated",
+          "deviceScale": 2
+        }
+      ],
+      "reducedMotion": {
+        "graph": {
+          "audioVertices": 128,
+          "canGoBack": false,
+          "displayedRms": 0,
+          "edgeCount": 22,
+          "focusSlot": -1,
+          "focused": false,
+          "hops": 0,
+          "lastRenderAtMs": 221.8,
+          "nodeCount": 22,
+          "orbActive": false,
+          "orbCacheBytes": 521248,
+          "orbCount": 4,
+          "orbState": "searching",
+          "pendingFrame": false,
+          "renderCount": 3,
+          "running": false,
+          "targets": {
+            "camera": [
+              0,
+              0,
+              5.2
+            ],
+            "lookAt": [
+              0,
+              0,
+              0
+            ]
+          },
+          "voiceRms": 0,
+          "voiceSource": "none"
+        },
+        "graphFrames": 0,
+        "orbFrames": 0,
+        "orbs": {
+          "animated": 0,
+          "cacheBytes": 521248,
+          "lastRenderAtMs": 171.8,
+          "pendingFrame": false,
+          "renderCount": 2,
+          "running": false
+        }
+      }
+    },
+    "native_settings": {
+      "success": true,
+      "mode": "isolated-settings-persisted-graph-read-only",
+      "scope": "owned settings renderer with real persisted graph; other settings unavailable; no GraphRAG lookup/inference/production commands; no primary-process/physical-transition/tray/shortcut/voice attestation",
+      "default_css": [
+        1200,
+        728
+      ],
+      "compact_css": [
+        640,
+        648
+      ],
+      "workspace_signals": [
+        {
+          "hiddenRenderDelta": 0,
+          "postToStoppedObservationUpperBoundMs": 15.589584,
+          "sampleMs": 350,
+          "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+          "signal": "display-sleep"
+        },
+        {
+          "hiddenRenderDelta": 0,
+          "postToStoppedObservationUpperBoundMs": 11.246625,
+          "sampleMs": 350,
+          "scope": "process-local synthetic notification; no physical sleep/session/lock test",
+          "signal": "session-inactive"
+        }
+      ]
+    },
+    "native_popover": {
+      "success": true,
+      "scope": "owned native graph WKWebView with fixed persisted graph reads; no existing-process, OS-lock, tray click, shortcut, voice or inference attestation",
+      "cycles": 10,
+      "hidden_delta": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "retina_available": false
+    },
+    "installed": {
+      "version": "0.3.9",
+      "source_commit": "95e8482be841a339de1e0a19ebd87095ef0efd36",
+      "paths": 35,
+      "files": [
+        {
+          "path": "Info.plist",
+          "sha256": "c947c255e3c18089c30c9f2b9f169c63a24aa779ca9a6e679e762089fdcfc67e",
+          "matched": true
+        },
+        {
+          "path": "MacOS/openkakao-alden-desktop",
+          "sha256": "1098c8f5b454ee303aa5722c81916e15071ee2586a2cb9ac527393db91d514d9",
+          "matched": true
+        },
+        {
+          "path": "Resources/bin/openkakao-cli",
+          "sha256": "eef5f8dc4ebe68ff5684055747e9258715dde2dbd6d5d19df81f0bddb2056476",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_corpus.py",
+          "sha256": "9a638c99962bde64ab94f2f77383b8f26ecd241db6fe914c49597a077e56e3e8",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_ondevice.py",
+          "sha256": "609adc92615d198a459f74e5845637561a792285377ea52b475c1fa0b4a7f4dd",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_operator_prompt_store.py",
+          "sha256": "e9493db5089c39b619821b04d89f825269766f6f1e22e64cfec35f335c46247c",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/_auto_reply_menubar_wrapper.cpython-311.pyc",
+          "sha256": "d8d5be33eab0b2002715379e2c8fd63a92772c821b4f1e234bca3921154f06c3",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_metrics.py",
+          "sha256": "7a90aa5ef45190ee8f7aa98050d261c1ec665daa506dfa78f5f802081934bad9",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_knowledge_graph.py",
+          "sha256": "5105ac7edf76bba850d7580d0d6cf1161451db55c10da1a60701f501f106a3a2",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_ax_ui.py",
+          "sha256": "eaabd2aab9b34ee0d250378a1e8db4bbf5a751beafb0b8fce49888ae17e04a8e",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_history.py",
+          "sha256": "b296a459cb851ce36fa4e9d39fc688484dc466d77472ece38175e487f98e3578",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto-reply-tui.py",
+          "sha256": "9064a679c1f2fbccb3e5b293e23cdacfa3a39fb969bc1c5bad978e19bea9dc8c",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_abort.py",
+          "sha256": "35f251273637121e513d02de5624c0096af319579b4f00cb19a5863cab2d0e91",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/_bujamentor_menubar_overlay.cpython-311.pyc",
+          "sha256": "9529e24dc90398cffe6f0a63c950505f6dd346af7fe82f680f116573afeae6fe",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_reference_search.py",
+          "sha256": "2f6539e38a476c45b2174fa07b93063e1b7d5cfbebd9de944994fb81cc19c2ac",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/local_mlx_gateway.py",
+          "sha256": "892dbd617adab11c6ee939649f244357ddfabd4040b5ad6df2fabd79477ddfce",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_local_http.py",
+          "sha256": "46622df3ba8016c75660d4d911800bf5fb2708bbf7f143f518fafa2d94bf2427",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto-reply-menubar.py",
+          "sha256": "7610060cab2602fa7314586dfbee057a7d8acdebe63cc531fe54f79c07d4fb2d",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/mlx_serve_lifecycle.py",
+          "sha256": "724fda67091ecf02d00eb43a6b55afaf46732cdeb77215be7c5e922d1275343f",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/local_mlx_model_readiness.py",
+          "sha256": "f74168c68564302b1646492c4ff9bc879476c03e1d59d0fe928a56153d0435cd",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_voice.py",
+          "sha256": "756f8ab7fb02e0ad32468f8cf3796e9415ab3bbc7cedd9ae0f6e47e20a85a2dc",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_browser_use.py",
+          "sha256": "2f272249857cf3f393a158a411e3435346a619d0cb04e0a9007f3d488015fd7e",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/bujamentor_operator_prompt_store.py",
+          "sha256": "119d09006d5da50ad8a02f82a4a5fb8320a380db928d6c6e1cd8afb221841013",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto-reply-operator-prompts.json",
+          "sha256": "10ede597c62f510692516d4f2419197ab3668f5cbffdb8d91165f4437c3b93dc",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_transition_journal.py",
+          "sha256": "af5c105ccc2d594c643a02723245ff843b0b16c6db7c7c713d3d33f5fc5cf197",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/auto_reply_reference_store.py",
+          "sha256": "42680d8f67cc37735ba91a3eab357c63816af7f0ec697bb904d1dded227df22c",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/_bujamentor_menubar_impl.cpython-311.pyc",
+          "sha256": "7fe60ef509c3b47a4de71c861ad1dbbabe0ac258fceb0bd69dc08555da83fc16",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_osk.py",
+          "sha256": "591526b2ebe8b70a066436c88b9950b53404bb2a8bc8bf505ab53c9dce4fc905",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_file_content.py",
+          "sha256": "fc5c99eec5721b2f6dc0207cc57301cb86647d7ff47eee958bd70309bc770230",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/bujamentor-tui.py",
+          "sha256": "ff34c3cd91c086940b50305112084c95228651ba026727386b19e01444d6adc1",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_local_embedding_server.py",
+          "sha256": "437ea03c34ac05fcd5f67b58358532412da7a3527048510eccea2a21abfa7820",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/alden_tool_runtime.py",
+          "sha256": "ecb5037cc588c464b75e61b6111a4cda2cc203721f83c2d3159b0f925f38335c",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/libalden_audio.dylib",
+          "sha256": "652d9b9b21f9e4b636ee763281faa1172373fa7c7b109d52f91e5e6728f06ed7",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/vendor/osk-v4.1.2.zip",
+          "sha256": "74feda64efb68c819a45746359de4158e426f87d74f682602f23fb6d46c9d4e3",
+          "matched": true
+        },
+        {
+          "path": "Resources/scripts/vendor/osk-v4.1.2.json",
+          "sha256": "a28d9cd3c8ba2d065f150e121a2f77b2bc3dc44e6ffaf2c67fe4ce69a81ac164",
+          "matched": true
+        }
+      ],
+      "pid": 68135,
+      "stable_files_unchanged": {
+        "config": true,
+        "enrollment": true,
+        "stable_cli": true
+      },
+      "model_pids_unchanged": true,
+      "signature": "ad-hoc; deep/strict verified",
+      "limits": [
+        "File/process readback does not prove physical Retina, voice, primary window interactions or signed production."
+      ]
+    },
+    "installed_readonly_details": {
+      "scope": "Existing installed OSK/corpus helper at0.3.8; its bytes are unchanged in verified0.3.9; no socket, model or original collector",
+      "nodes": [
+        {
+          "kind": "대화 상대",
+          "sources": 6,
+          "summary_chars": 14,
+          "seconds": 0.6284145000390708,
+          "provenance_valid": true
+        },
+        {
+          "kind": "대화방",
+          "sources": 6,
+          "summary_chars": 36,
+          "seconds": 0.2100963331758976,
+          "provenance_valid": true
+        }
+      ]
+    }
+  },
+  "limits": [
+    "Browser data is explicitly synthetic;2x is emulated",
+    "Native audits use separate owned WKWebViews and fixed persisted graph reads; other settings are unavailable",
+    "Primary Cua GUI access timed out (-10005); no primary tray/physical stop/Retina claim",
+    "Original Kakao freshness still needs pending app-data approval",
+    "Wake/natural mic/echo/speaker, Apple credentials, independent final evaluation and production transition remain pending"
+  ],
+  "full_goal": "active",
+  "release": {
+    "url": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-d07220ab2b62bc8a89e9",
+    "draft": true,
+    "tag": "alden-orbs-evidence-20261003-95e8482",
+    "source_commit": "95e8482be841a339de1e0a19ebd87095ef0efd36",
+    "peeled_tag_matches": true,
+    "assets": [
+      {
+        "name": "Alden-0.3.9-95e8482-local.zip",
+        "bytes": 12428908,
+        "sha256": "c2231308e37ad184c2d89511c3557f4a4581ac0d7ef4d618fdaa4c7808ba397d",
+        "digest_match": true,
+        "download_match": true
+      },
+      {
+        "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+        "bytes": 26965707,
+        "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+        "digest_match": true,
+        "download_match": true
+      },
+      {
+        "name": "alden-menubar-runtime-v1.json",
+        "bytes": 1533,
+        "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+        "digest_match": true,
+        "download_match": true
+      },
+      {
+        "name": "install-alden-menubar-runtime.sh",
+        "bytes": 12585,
+        "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+        "digest_match": true,
+        "download_match": true
+      },
+      {
+        "name": "package-manifest.json",
+        "bytes": 9413,
+        "sha256": "64bbead14dc5b6d751f06e0e1a56fc8771e0f7abdfd9741b0f6a01d19fcd9a2e",
+        "digest_match": true,
+        "download_match": true
+      },
+      {
+        "name": "SHA256SUMS",
+        "bytes": 494,
+        "sha256": "3ef16d6da51520585cef1100473b537f307898dc835a894a842598b46a2e3f21",
+        "digest_match": true,
+        "download_match": true
+      }
+    ],
+    "zip_paths_matched": 35,
+    "limits": [
+      "Draft/ad-hoc package; not notarized or production promoted"
+    ]
+  },
+  "ci": {
+    "id": 37055925287,
+    "source": "95e8482be841a339de1e0a19ebd87095ef0efd36",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "Launchd and Python harness",
+        "conclusion": "success"
+      },
+      {
+        "name": "Alden unsigned arm64 release + runtime smoke",
+        "conclusion": "success"
+      },
+      {
+        "name": "macOS cargo test",
+        "conclusion": "success"
+      },
+      {
+        "name": "Tauri desktop and focused Python tests",
+        "conclusion": "success"
+      }
+    ]
+  }
+}

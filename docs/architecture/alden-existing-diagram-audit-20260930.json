@@ -1,0 +1,70 @@
+{
+  "scope": "Existing specifications; structural validation only, not fresh rendered visual review",
+  "rows": [
+    {
+      "file": "alden-system.architecture.json",
+      "type": "architecture",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": [],
+      "repository_evidence": "current checkout supplied"
+    },
+    {
+      "file": "alden-three-render-lifecycle.archify.json",
+      "type": "lifecycle",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "alden-core-load-mapping.archify.json",
+      "type": "dataflow",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "graphrag-search-sequence.archify.json",
+      "type": "sequence",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "openkakao-graphrag.sequence.json",
+      "type": "sequence",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "dream-rsi-provenance-loop.archify.json",
+      "type": "dataflow",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "alden-model-request-drain.archify.json",
+      "type": "sequence",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "file": "alden-openkakao-units1-4.archify.json",
+      "type": "architecture",
+      "exit_code": 0,
+      "ok": true,
+      "error": null,
+      "diagnostics": []
+    }
+  ]
+}

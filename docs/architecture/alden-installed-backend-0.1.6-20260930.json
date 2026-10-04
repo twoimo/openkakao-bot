@@ -1,0 +1,41 @@
+{
+  "schema": "alden-installed-backend-summary-v2",
+  "installed_version": "0.1.6",
+  "snapshot_sha256": "259d8c2c770ee6f67fce8cfc4ad015b633093f30808fc5bd999996b276502e2b",
+  "state_root": "existing legacy bujamentor selected by installed bridge enrollment rule",
+  "room_count": 3,
+  "room_states": [
+    {
+      "level": "green"
+    },
+    {
+      "level": "green"
+    },
+    {
+      "level": "green"
+    }
+  ],
+  "reply_model": {
+    "canonical": "omlx",
+    "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+    "label": "omlx",
+    "provider": "ddalcu",
+    "source": "override"
+  },
+  "delivery_unknown": 0,
+  "snapshot_returncode": 0,
+  "prior_probe": "Explicit auto-reply root lacked enrollment and returned0rooms; not actual installed bridge state",
+  "scope": "Installed menubar runtime/script read-only snapshot; private names/content omitted; not actual send/UI",
+  "health": {
+    "ax": "ok",
+    "model": "ok",
+    "supervisor": "ok",
+    "watchdog": "ok",
+    "worker": "ok"
+  },
+  "reply_readiness": [
+    "ready",
+    "ready",
+    "ready"
+  ]
+}

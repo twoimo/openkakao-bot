@@ -1,0 +1,74 @@
+{
+  "sourceCommit": "8791ea1cc23073a58806bed5e6537a4512dbb54d",
+  "installedExeSha256": "360d2346e7525ddc9f2c8ed935779be85c2c5f7bea15bd044c0bc6b14ef2d7d6",
+  "ownedInstalledAuditPid": 82885,
+  "primaryInstalledPid": 77434,
+  "processExitCode": 0,
+  "reportSuccess": true,
+  "elapsedSec": 8.499175334116444,
+  "nativeProcessPeakRssBytes": 108658688,
+  "rssScope": "main owned audit process only; excludes WebKit/GPU children",
+  "ordinaryHideCycles": 10,
+  "medianHideRequestToStoppedObservationUpperBoundMs": 11.911208,
+  "maxHideRequestToStoppedObservationUpperBoundMs": 18.824834,
+  "hiddenRenderDeltaTotal": 0,
+  "workspaceSignals": [
+    {
+      "bothNativeWindowsHidden": true,
+      "hiddenRenderDelta": 0,
+      "hiddenSampleMs": 350,
+      "notificationCountDelta": 1,
+      "pause": {
+        "eventAtMs": 6790,
+        "eventToLastFrameMs": 0,
+        "lastRenderAtMs": 6732,
+        "observedAtMs": 7153.000000000001,
+        "pendingFrame": false,
+        "rendersAfterEvent": 0,
+        "running": false,
+        "state": "hidden"
+      },
+      "postToStoppedObservationUpperBoundMs": 13.303709,
+      "scope": "process-local synthetic NSWorkspace notification; not physical sleep, switch or lock",
+      "settingsRenderScope": "native visibility only; backend-free settings renderer unexercised",
+      "signal": "display-sleep"
+    },
+    {
+      "bothNativeWindowsHidden": true,
+      "hiddenRenderDelta": 0,
+      "hiddenSampleMs": 350,
+      "notificationCountDelta": 1,
+      "pause": {
+        "eventAtMs": 7424,
+        "eventToLastFrameMs": 0,
+        "lastRenderAtMs": 7382,
+        "observedAtMs": 7779,
+        "pendingFrame": false,
+        "rendersAfterEvent": 0,
+        "running": false,
+        "state": "hidden"
+      },
+      "postToStoppedObservationUpperBoundMs": 16.683416,
+      "scope": "process-local synthetic NSWorkspace notification; not physical sleep, switch or lock",
+      "settingsRenderScope": "native visibility only; backend-free settings renderer unexercised",
+      "signal": "session-inactive"
+    }
+  ],
+  "retina": {
+    "available": false
+  },
+  "networkPolicy": "sandbox-exec deny network*; no PythonBridge or production commands registered",
+  "physicalTransitionsAttested": false,
+  "performanceImprovementPercent": null,
+  "baseline": "previous source had no direct workspace notification observer; no physical-event performance baseline",
+  "visualReview": "parent image-capable review of both real installed-binary idle captures: full core/rings, no clipping or overflow",
+  "newArchify": {
+    "status": "not delivered",
+    "errors": 1,
+    "warnings": 0,
+    "correctionRounds": 2,
+    "diagnostic": "composition/desktop-readability",
+    "privateCandidatePreserved": true
+  },
+  "priorAcceptedArchify": "alden-native-render-20261001.html; frozen prior audit flow, does not include new workspace observer"
+}

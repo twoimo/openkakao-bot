@@ -19,12 +19,24 @@ const CHAT: &str = "부자멘토멘티";
 /// contract: `index_csv` assigns row ids in insertion order, and search
 /// tie-breaks on those ids.
 const FIXTURE_ROWS: &[(&str, &str, &str)] = &[
-    ("2026-01-01 09:00:00", "민수", "프로젝트 회의 일정 언제 잡을까"),
+    (
+        "2026-01-01 09:00:00",
+        "민수",
+        "프로젝트 회의 일정 언제 잡을까",
+    ),
     ("2026-01-01 09:05:00", "최연우", "회의 자료 먼저 정리할게"),
     ("2026-01-01 09:10:00", "민수", "점심 메뉴 뭐 먹을까"),
-    ("2026-01-01 09:15:00", "최연우", "회의 끝나고 점심 회의 자료 공유"),
+    (
+        "2026-01-01 09:15:00",
+        "최연우",
+        "회의 끝나고 점심 회의 자료 공유",
+    ),
     ("2026-01-01 09:20:00", "민수", "주말에 등산 갈 사람"),
-    ("2026-01-01 09:25:00", "최연우", "자료 준비 다 됐어 회의 하자"),
+    (
+        "2026-01-01 09:25:00",
+        "최연우",
+        "자료 준비 다 됐어 회의 하자",
+    ),
 ];
 
 const QUERY: &str = "회의 자료";
@@ -45,7 +57,9 @@ fn messages(results: &[ContextResult]) -> Vec<String> {
 
 /// Fully comparable projection of a result. `ContextResult` does not derive
 /// `PartialEq`, and `f32` scores are compared bit-for-bit so parity is exact.
-fn fingerprint(results: &[ContextResult]) -> Vec<(String, String, String, String, String, u32, String)> {
+fn fingerprint(
+    results: &[ContextResult],
+) -> Vec<(String, String, String, String, String, u32, String)> {
     results
         .iter()
         .map(|r| {
@@ -66,8 +80,7 @@ fn run_modes(db_path: &Path) -> Vec<(&'static str, Vec<String>)> {
     let mut out = Vec::new();
     for mode in ["keyword", "vector", "hybrid"] {
         // Default entry point: injects LocalHashEmbedder internally.
-        let default_results =
-            context::search(db_path, Some(CHAT), None, QUERY, mode, 10).unwrap();
+        let default_results = context::search(db_path, Some(CHAT), None, QUERY, mode, 10).unwrap();
         // Explicitly injected default embedder.
         let injected_results = context::search_with_embedder(
             db_path,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, read-only checks for the two fixed Jarvis MLX models."""
+"""Bounded, read-only checks for the fixed Alden MLX models."""
 
 from __future__ import annotations
 
@@ -15,9 +15,12 @@ from local_mlx_gateway import MlxRequestAdmissionClosed, mlx_model_request_lease
 
 
 RESIDENT_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit"
+IQ_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-iQ-MLX-3.3bpw"
 SWAP_MODEL_ID = "ddalcu/Qwen3.8-27B-MLX-Serve-4bit"
-FIXED_LOCAL_MLX_MODEL_IDS = frozenset({RESIDENT_MODEL_ID, SWAP_MODEL_ID})
+FIXED_LOCAL_MLX_MODEL_IDS = frozenset({RESIDENT_MODEL_ID, IQ_MODEL_ID, SWAP_MODEL_ID})
+READINESS_MODEL_IDS = frozenset({IQ_MODEL_ID, SWAP_MODEL_ID})
 MLX_MODELS_URL = "http://127.0.0.1:11234/v1/models"
+IQ_MLX_MODELS_URL = "http://127.0.0.1:11235/v1/models"
 MLX_MODELS_TIMEOUT_SECS = 2.0
 MLX_MODELS_MAX_BYTES = 256 * 1024
 MLX_MODELS_MAX_ROWS = 256
@@ -45,7 +48,7 @@ def _local_only_urlopen(request: urllib.request.Request, *, timeout: float):
 
 
 def canonical_fixed_local_mlx_model_id(value: Any) -> str | None:
-    """Return the prefixless contract ID only for the two fixed local models."""
+    """Return the prefixless contract ID only for fixed local models."""
 
     model = str(value or "").strip()
     if (
@@ -87,14 +90,15 @@ def read_fixed_local_mlx_readiness(
     timeout: float = MLX_MODELS_TIMEOUT_SECS,
     state_root: Path | str | None = None,
 ) -> MlxReadiness:
-    """Read exact 27B readiness from the localhost gateway without loading it."""
+    """Read exact opt-in target readiness without loading model weights."""
 
     wanted = canonical_fixed_local_mlx_model_id(model)
-    if wanted != SWAP_MODEL_ID:
+    if wanted not in READINESS_MODEL_IDS:
         return MlxReadiness(False, "model_prepare_not_allowed")
 
+    models_url = IQ_MLX_MODELS_URL if wanted == IQ_MODEL_ID else MLX_MODELS_URL
     request = urllib.request.Request(
-        MLX_MODELS_URL,
+        models_url,
         method="GET",
         headers={"Accept": "application/json"},
     )

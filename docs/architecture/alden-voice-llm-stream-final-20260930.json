@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-30T08:03:49Z",
+  "model": "mlx/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+  "adapter_sha256": "0be0e2acb4c6ce7e144adad3d480db04b48f67fbd505bb80a59af4b221739dac",
+  "case_sha256": "1237a28987757c44aafa6098f4dda15586a7307ebc9bdc64e3382b84bf392aa2",
+  "architecture": "arm64",
+  "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22937699)\t80%; AC attached; not charging present: true",
+  "condition": "existing resident model; prefix cache and other host jobs remain active",
+  "samples": 2,
+  "correct_fact_count": 2,
+  "adapter_error_count": 0,
+  "full_answer_seconds": {
+    "p50": 1.023802,
+    "p95_nearest_rank": 1.381801
+  },
+  "first_visible_token_seconds": {
+    "samples": 2,
+    "p50": 0.390033,
+    "p95_nearest_rank": 1.120029
+  },
+  "socket_connections": [
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 11234
+    }
+  ],
+  "rows": [
+    {
+      "repeat": 0,
+      "case": "place_followup",
+      "elapsed_seconds": 1.381801,
+      "reply": "3층으로 올라가십시오.",
+      "error": "",
+      "expected_fact_present": true,
+      "adapter_metrics": {
+        "first_model_token_seconds": 1.1200252079870552,
+        "first_visible_token_seconds": 1.1200291661079973,
+        "elapsed_seconds": 1.3810694999992847,
+        "usage": {
+          "prompt_tokens": 157,
+          "completion_tokens": 7,
+          "total_tokens": 164,
+          "prompt_tokens_details": {
+            "cached_tokens": 126
+          }
+        },
+        "finish_reason": "stop"
+      },
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790755426,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "load_before": {
+        "host_cpu_load": "{ 11.95 14.12 15.02 }",
+        "engine": {
+          "vllm:request_cancelled_total": 0.0,
+          "vllm:num_requests_running": 0.0,
+          "mlx_serve:mlx_active_bytes": 21389595408.0
+        }
+      },
+      "load_after": {
+        "host_cpu_load": "{ 11.87 14.07 15.00 }",
+        "engine": {
+          "vllm:request_cancelled_total": 0.0,
+          "vllm:num_requests_running": 0.0,
+          "mlx_serve:mlx_active_bytes": 21389595408.0
+        }
+      }
+    },
+    {
+      "repeat": 0,
+      "case": "latter_selection",
+      "elapsed_seconds": 0.665804,
+      "reply": "알겠습니다. 목요일 오후 2시로 확정하겠습니다.",
+      "error": "",
+      "expected_fact_present": true,
+      "adapter_metrics": {
+        "first_model_token_seconds": 0.3900325840804726,
+        "first_visible_token_seconds": 0.3900334171485156,
+        "elapsed_seconds": 0.665308834053576,
+        "usage": {
+          "prompt_tokens": 159,
+          "completion_tokens": 14,
+          "total_tokens": 173,
+          "prompt_tokens_details": {
+            "cached_tokens": 92
+          }
+        },
+        "finish_reason": "stop"
+      },
+      "catalog": [
+        {
+          "id": "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+          "object": "model",
+          "created": 1790755428,
+          "owned_by": "mlx-serve",
+          "loaded": true,
+          "state": "ready",
+          "bytes_resident": 18196477654,
+          "bytes_on_disk": 18196477654,
+          "context_length": 786432,
+          "max_model_len": 786432,
+          "batched_decode": true,
+          "capabilities": [
+            "chat",
+            "tool_use",
+            "streaming",
+            "reasoning",
+            "json_schema"
+          ],
+          "input_modalities": [
+            "text"
+          ],
+          "meta": {
+            "architecture": "qwen3_5_moe",
+            "engine": "mlx",
+            "vocab_size": 248320,
+            "hidden_size": 5120,
+            "num_layers": 64,
+            "quantization": "4-bit",
+            "context_length": 786432,
+            "model_max_tokens": 262144,
+            "embedding_max_length": null,
+            "is_moe": false,
+            "drafter_loaded": false,
+            "drafter_path": null,
+            "mtp_loaded": true,
+            "mtp_available": true,
+            "kv_quant": "4",
+            "gen_temperature": 1,
+            "gen_top_p": 0.95,
+            "gen_top_k": 20
+          }
+        }
+      ],
+      "load_before": {
+        "host_cpu_load": "{ 11.87 14.07 15.00 }",
+        "engine": {
+          "vllm:request_cancelled_total": 0.0,
+          "vllm:num_requests_running": 0.0,
+          "mlx_serve:mlx_active_bytes": 21389595408.0
+        }
+      },
+      "load_after": {
+        "host_cpu_load": "{ 11.87 14.07 15.00 }",
+        "engine": {
+          "vllm:request_cancelled_total": 0.0,
+          "vllm:num_requests_running": 1.0,
+          "mlx_serve:mlx_active_bytes": 22314562597.0
+        }
+      }
+    }
+  ],
+  "interrupted": "existing inference active; benchmark stopped before next case",
+  "requested_samples": 12,
+  "limits": [
+    "Public synthetic cases; no natural microphone trial",
+    "Fact-presence checks are not a general language-quality score",
+    "Full-answer and first-visible-token latency include catalog/admission",
+    "First visible content excludes a private reasoning channel",
+    "Small-sample p95 is descriptive only",
+    "Different cache state or concurrent host load can confound before/after speed comparisons"
+  ]
+}

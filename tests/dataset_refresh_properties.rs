@@ -227,10 +227,7 @@ fn make_message(at: i64, spec: MsgSpec) -> DatasetMessage {
 
 /// Batches of specs; each batch models one "arrival" processed by one refresh.
 fn batches_strategy() -> impl Strategy<Value = Vec<Vec<MsgSpec>>> {
-    prop::collection::vec(
-        prop::collection::vec((any::<bool>(), 0u8..4), 0..8),
-        1..6,
-    )
+    prop::collection::vec(prop::collection::vec((any::<bool>(), 0u8..4), 0..8), 1..6)
 }
 
 /// A flat message list from a batch layout, with globally increasing `at`.

@@ -1,0 +1,20 @@
+{
+  "artifact": {
+    "path": "alden-history-osk-20261002.html",
+    "sha256": "facbed455ed5c74834587b20b64a8e215cb5338cc41932f336ebf84ffaec3295",
+    "bytes": 812368
+  },
+  "deterministic": {
+    "quality": "showcase",
+    "checks": 9,
+    "errors": 0,
+    "warnings": 0
+  },
+  "browser_evidence": "pass",
+  "visual_review": "passed",
+  "manual_review": [
+    "1440x900 light",
+    "2048x1320 dark"
+  ],
+  "viewerLanguage": "English UI with Korean authored labels"
+}

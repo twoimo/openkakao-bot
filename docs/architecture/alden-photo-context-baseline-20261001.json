@@ -1,0 +1,30 @@
+{
+  "valid": [
+    99
+  ],
+  "future_log": [
+    101
+  ],
+  "future_time": [
+    99
+  ],
+  "foreign_chat": [
+    99
+  ],
+  "missing_time": [
+    99
+  ],
+  "malformed_time": [
+    99
+  ],
+  "nan_time": [
+    99
+  ],
+  "nan_source": [
+    99
+  ],
+  "duplicate_row": [
+    99,
+    99
+  ]
+}

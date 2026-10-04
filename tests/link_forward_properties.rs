@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use openkakao_cli::collector::{
-    Collected, CollectError, CollectFailure, CollectorPath, PageCollector, RoutingCollector,
+    CollectError, CollectFailure, Collected, CollectorPath, PageCollector, RoutingCollector,
     TempScope,
 };
 use openkakao_cli::fakes::{BlockingRealSendPort, ForbiddenNetwork, VirtualClock};
@@ -39,7 +39,7 @@ use openkakao_cli::forward::{
 };
 use openkakao_cli::logging::{FlowKind, HistoryStore, SqliteHistoryStore};
 use openkakao_cli::ports::{
-    AcquireError, ImageAcquisition, ImageAcquirer, ImageBlob, ImageRef, NetworkPort, SendPort,
+    AcquireError, ImageAcquirer, ImageAcquisition, ImageBlob, ImageRef, NetworkPort, SendPort,
 };
 use openkakao_cli::room_catalog::{CatalogRoom, InMemoryRoomCatalog, MapRoomDirectory};
 use proptest::prelude::*;
@@ -269,7 +269,12 @@ impl MentionSpec {
                 } else {
                     base.to_string()
                 };
-                format!("{}{}{}", " ".repeat(*pad_left), base, " ".repeat(*pad_right))
+                format!(
+                    "{}{}{}",
+                    " ".repeat(*pad_left),
+                    base,
+                    " ".repeat(*pad_right)
+                )
             }
             MentionSpec::Junk(s) => s.clone(),
         }

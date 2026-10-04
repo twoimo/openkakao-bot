@@ -1,0 +1,21 @@
+{
+  "tests": 72,
+  "passed": 72,
+  "failures": 0,
+  "errors": 0,
+  "modules": [
+    "test_alden_osk",
+    "test_alden_graph_snapshot_cycle",
+    "test_alden_corpus",
+    "test_alden_history",
+    "test_alden_abort_state",
+    "test_alden_status_mcp"
+  ],
+  "differential_semantic_cases": 16,
+  "differential_passed": 16,
+  "earlier_sandbox_limitation": "history own-PID ps read blocked in default sandbox; resolved with authorized process read; no app control",
+  "final_log_sha256": "c1849e3a5d2a1d30be79e6103c6a7d3d6cd868c00280b1105f0a3f33173791d5",
+  "status_adapter_tests": 24,
+  "candidate_status_version": "0.2.0",
+  "osk_source_hash_unchanged_since_differential_cases": true
+}

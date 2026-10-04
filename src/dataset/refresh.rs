@@ -274,20 +274,12 @@ impl RefreshLease {
         loop {
             match self.state.load(Acquire) {
                 0 => {
-                    if self
-                        .state
-                        .compare_exchange(0, 1, SeqCst, Acquire)
-                        .is_ok()
-                    {
+                    if self.state.compare_exchange(0, 1, SeqCst, Acquire).is_ok() {
                         return LeaseGrant::Granted;
                     }
                 }
                 1 => {
-                    if self
-                        .state
-                        .compare_exchange(1, 2, SeqCst, Acquire)
-                        .is_ok()
-                    {
+                    if self.state.compare_exchange(1, 2, SeqCst, Acquire).is_ok() {
                         return LeaseGrant::Queued;
                     }
                 }

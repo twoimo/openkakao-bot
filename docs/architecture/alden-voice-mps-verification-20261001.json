@@ -1,0 +1,53 @@
+{
+  "scope": "local synthetic presegmented PCM -> real STT/local27B/TTS file; no wake/VAD/microphone/speaker playback/production session",
+  "whisper": {
+    "model": "mlx-community/whisper-large-v3-turbo",
+    "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+    "singleRunSeconds": 3.651783,
+    "inputSeconds": 1.947875,
+    "mlxPeakBytes": 2554400658
+  },
+  "tts": {
+    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    "revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe",
+    "precision": "bf16",
+    "matchedSdkExperiment": {
+      "nEach": 1,
+      "cpuSeconds": 149.975324,
+      "mpsSeconds": 24.601104,
+      "audioSecondsEach": 2.56,
+      "speaker": "aiden",
+      "notes": "Separate bounded SDK canaries before product speaker/cache/admission fixes. Not p50/p95 or installed end-to-end speedup."
+    }
+  },
+  "pipeline": {
+    "nTurns": 2,
+    "textAnswers": [
+      "4입니다.",
+      "12입니다."
+    ],
+    "turn1Seconds": 12.983668,
+    "turn2Seconds": 4.634601,
+    "note": "Source real adapter run before numeral formatting, same retained conversation. MPSbf16, no error; audio files generated.",
+    "rssMaxBytes": 2975367168,
+    "mlxPeakBytes": 2554400658,
+    "lastMpsAllocatedBytes": 4190486272,
+    "lastMpsDriverAllocatedBytes": 6796902400,
+    "scopeOfMemory": "Separate metrics; not additive; shared LLM engine and whole-app memory excluded.",
+    "kernelPressureSamples": "normal only",
+    "network": "four loopback11234connections, zero external inference connections"
+  },
+  "audioReadback": {
+    "first": "4입니다.",
+    "second": "ambiguous automatic ASR, no pronunciation pass",
+    "numericFormatting": "phonetic output generated; ASR ambiguous; no quality improvement claim"
+  },
+  "tests": {
+    "focusedVoiceRuntime": 96,
+    "mandatoryBeforeNumeralFormat": 1106,
+    "skipped": 27,
+    "failed": 0
+  },
+  "installed": "not yet, preserve0.1.7 until candidate delivery",
+  "fullGoal": "active; not complete"
+}

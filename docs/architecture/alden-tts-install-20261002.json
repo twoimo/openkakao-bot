@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "app_version": "0.3.3",
+  "code_commit": "7423e7ca2caa0c3bf1c5089f16e9ef9b712c1c18",
+  "code_ci": {
+    "id": 36980539506,
+    "jobs_passed": 4,
+    "configured_python_total": 1134,
+    "skipped": 27,
+    "failed": 0
+  },
+  "installed": {
+    "version": "0.3.3",
+    "checked_paths": 35,
+    "signature": "ad-hoc deep strict passed",
+    "stable_files_unchanged": [
+      "config",
+      "enrollment",
+      "stable_cli"
+    ],
+    "model_pids_unchanged": [
+      58780,
+      24161
+    ]
+  },
+  "release": {
+    "draft": true,
+    "release_id": 401631789,
+    "url": "https://github.com/twoimo/openkakao-bot/releases/tag/untagged-926ea61d64825fa7f185",
+    "tag": "alden-tts-evidence-20261002-7423e7c",
+    "source_commit": "7423e7ca2caa0c3bf1c5089f16e9ef9b712c1c18",
+    "downloaded_asset_digest_matches": [
+      {
+        "name": "Alden-0.3.3-7423e7c-local.zip",
+        "bytes": 12406046,
+        "sha256": "e5319a11d0361d8050f9e9223e014d78d58c17ee04529e04bc7d6d002a81dbc5",
+        "matched": true
+      },
+      {
+        "name": "Alden-menubar-cpython-3.11.16-macos-arm64.tar.gz",
+        "bytes": 26965707,
+        "sha256": "e1d745b07b6acc0641dbb3237d3c5953deeeed182141bab2242684076fd86547",
+        "matched": true
+      },
+      {
+        "name": "alden-menubar-runtime-v1.json",
+        "bytes": 1533,
+        "sha256": "f7abab54b6e4144f679f2ceec830fdb7322c9ab4eb8e9825c6026e8bdeb71287",
+        "matched": true
+      },
+      {
+        "name": "install-alden-menubar-runtime.sh",
+        "bytes": 12585,
+        "sha256": "adbc19147d2bf9d0366cba51dcd9c827b77f56244765c5020a21ad555a3c10bc",
+        "matched": true
+      },
+      {
+        "name": "package-manifest.json",
+        "bytes": 6984,
+        "sha256": "54ed191f5a8605a494e3383513598c3c7cf228548df57021dcb1d612718b929e",
+        "matched": true
+      },
+      {
+        "name": "SHA256SUMS",
+        "bytes": 494,
+        "sha256": "817244f3b95373d2ed4dd16b61de53f5cbf392ae58958a97c4f7a81b22e69684",
+        "matched": true
+      }
+    ],
+    "asset_count": 6
+  },
+  "voice_file": {
+    "processes": 1,
+    "turns_ended": 2,
+    "visible_original_replies": [
+      "4입니다.",
+      "12입니다."
+    ],
+    "speaker": "sohee",
+    "device": "mps:0",
+    "dtype": "torch.bfloat16",
+    "stage_seconds": [
+      {
+        "turn": 1,
+        "stage": "stt",
+        "seconds": 2.3676682088989764
+      },
+      {
+        "turn": 1,
+        "stage": "llm",
+        "seconds": 3.4658339170273393
+      },
+      {
+        "turn": 1,
+        "stage": "tts_file",
+        "seconds": 16.000441583106294
+      },
+      {
+        "turn": 2,
+        "stage": "stt",
+        "seconds": 0.3518203750718385
+      },
+      {
+        "turn": 2,
+        "stage": "llm",
+        "seconds": 2.3766868750099093
+      },
+      {
+        "turn": 2,
+        "stage": "tts_file",
+        "seconds": 2.154484292026609
+      }
+    ],
+    "independent_readback": [
+      {
+        "file": "pipeline-1.wav",
+        "duration_seconds": 1.6,
+        "frames_over_rms_0_01": 33,
+        "last_active_second": 1.56,
+        "readback": " 숫자는 4입니다."
+      },
+      {
+        "file": "pipeline-2.wav",
+        "duration_seconds": 1.52,
+        "frames_over_rms_0_01": 27,
+        "last_active_second": 1.44,
+        "readback": " 숫자는 12입니다."
+      }
+    ],
+    "mps_allocated_after_close": 8388608,
+    "whisper_cached_after_close": false,
+    "network_scope": "audit only loopback11234; all model files local",
+    "scope": "presegmented synthetic files, actual installed adapters; not wake/VAD/human microphone/speaker playback or physical hotkey"
+  },
+  "primary_ui": "Computer Use absolute app path timeoutReached after reinstall; no new primary screenshot",
+  "remaining": [
+    "21/20일 homophone listening",
+    "human mic/wake/room echo/speaker/physical stop/Retina and first-playback metrics",
+    "macOS other-app access approval/latest live source collection",
+    "Apple signing/notarization and approved production cutover"
+  ],
+  "full_goal": "active; not complete"
+}

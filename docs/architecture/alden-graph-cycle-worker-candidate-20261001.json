@@ -1,0 +1,20 @@
+{
+  "schema": "alden-graph-cycle-worker-candidate-v1",
+  "captured_utc": "2026-09-30T15:44:15.360192+00:00",
+  "code_commit": "1a728e8329e0c2959aa1e4ffd5ec0e07878703f7",
+  "runtime_root": "/private/var/folders/8d/nwv_19w124zbq0dxqx2r1jn40000gn/T/alden-worker-graph-cycle-20261001-tvz5aebx/state/runtime-candidates/alden-0.1.6-graph-cycle-1a728e8",
+  "prepared": true,
+  "activated": false,
+  "assets_verified": 20,
+  "source_files_byte_equal": 18,
+  "chat_selector_count": 3,
+  "selectors_same_as_previously_prepared_candidate": true,
+  "configuration_same_as_previous_candidate": true,
+  "shared_stable_cli_identity_and_sha256_unchanged": true,
+  "graph_source_sha256": "3be77fe7229bc976b0c37d30e77d9e30da32c112c4b5fc2b96c7a471d56880dc",
+  "limits": [
+    "Private state and bin only; no worker launched or existing supervisor adopted/killed.",
+    "Other-session production runtime replacement still awaits explicit human authorization.",
+    "Candidate uses private state; reprepare against preserved live state after authorization."
+  ]
+}
